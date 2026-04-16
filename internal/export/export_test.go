@@ -3,6 +3,7 @@ package export_test
 import (
 	"archive/zip"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -237,6 +238,74 @@ func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
 		assert.Equal(t, content, contents2[name],
 			"entry %s must be identical across placeholder orderings", name)
 	}
+}
+
+// TestExport_HistoryInclusionRules verifies that extractProjectHistory
+// includes a history line under three conditions: a matching `project`
+// field (primary signal), an empty `project` field with an in-body bounded
+// reference, or a malformed line with an in-body bounded reference. It also
+// verifies the exclusions: a line explicitly tagged to a different project
+// is never included, even if it textually mentions projectPath, and a
+// prefix-collision sibling path never triggers a match.
+func TestExport_HistoryInclusionRules(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	// Overwrite the fixture history with a handcrafted set that exercises
+	// every branch of the inclusion rule. Each line is tagged with a
+	// `marker` string so the assertions below can identify it regardless
+	// of any anonymization that runs over the exported bytes.
+	historyLines := []string{
+		// Branch 1 — structured project field matches.
+		`{"marker":"structured-match","project":"/Users/test/Projects/myproject","display":"a"}`,
+		// Branch 2 — empty project + bounded reference in display.
+		`{"marker":"empty-project-with-ref","project":"","display":"open /Users/test/Projects/myproject/main.go"}`,
+		// Branch 3 — malformed JSON with a bounded reference in raw bytes.
+		`{malformed-with-ref "marker":"malformed-with-ref" /Users/test/Projects/myproject/foo.go`,
+		// Exclusion — line tagged to another project that mentions our path.
+		`{"marker":"other-project-with-ref",` +
+			`"project":"/Users/test/Projects/otherproject",` +
+			`"display":"inspired by /Users/test/Projects/myproject"}`,
+		// Exclusion — prefix-collision sibling. A naive substring check
+		// would pull this in; the boundary-aware check must reject it.
+		`{"marker":"prefix-collision","project":"","display":"notes live in /Users/test/Projects/myproject-extras/"}`,
+		// Exclusion — malformed JSON with no reference at all.
+		`{malformed-no-ref "marker":"malformed-no-ref" unrelated content`,
+		// Exclusion — unrelated well-formed line.
+		`{"marker":"unrelated","project":"/Users/test/Projects/otherproject","display":"z"}`,
+	}
+	historyData := []byte(strings.Join(historyLines, "\n") + "\n")
+	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), historyData, 0600))
+
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	require.NoError(t, export.Run(claudeHome, export.Options{
+		ProjectPath: fixtureProjectPath,
+		OutputPath:  outputPath,
+		Categories:  export.CategorySet{History: true},
+		// No placeholders — exported history keeps the literal paths so
+		// marker strings and bounded references remain easy to assert on.
+	}))
+
+	contents := readZipContents(t, outputPath)
+	history := contents["history/history.jsonl"]
+	require.NotEmpty(t, history, "history/history.jsonl must be present")
+
+	// Included markers — all three inclusion branches.
+	assert.Contains(t, history, `"marker":"structured-match"`,
+		"structured project-field match must be included (branch 1)")
+	assert.Contains(t, history, `"marker":"empty-project-with-ref"`,
+		"empty project field + bounded in-body reference must be included (branch 2)")
+	assert.Contains(t, history, `"marker":"malformed-with-ref"`,
+		"malformed line with bounded reference must be included (branch 3)")
+
+	// Excluded markers — every exclusion rule.
+	assert.NotContains(t, history, `"marker":"other-project-with-ref"`,
+		"line tagged to a different project must NOT be included even if it mentions our path")
+	assert.NotContains(t, history, `"marker":"prefix-collision"`,
+		"prefix-collision sibling path (myproject-extras) must NOT register as a match")
+	assert.NotContains(t, history, `"marker":"malformed-no-ref"`,
+		"malformed line without any reference to our path must NOT be included")
+	assert.NotContains(t, history, `"marker":"unrelated"`,
+		"line tagged to a different project with no reference must NOT be included")
 }
 
 func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {

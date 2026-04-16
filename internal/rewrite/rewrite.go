@@ -206,6 +206,21 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
 	return result.Bytes(), count
 }
 
+// ContainsBoundedPath reports whether data contains at least one occurrence
+// of path bounded on the right by a non-path-continuation byte — the same
+// boundary rule ReplacePathInBytes uses when deciding whether a match is a
+// real, independent path reference rather than a prefix of some unrelated
+// path (e.g. "/a/myproject" inside "/a/myproject-extras").
+//
+// Exported because both the export extractor (filtering history lines that
+// belong to a project) and the move rewriter (rewriting the same lines)
+// need to agree on what counts as a bounded reference. Keeping a single
+// source of truth in this package avoids drift between the two call sites.
+func ContainsBoundedPath(data []byte, path string) bool {
+	_, count := ReplacePathInBytes(data, path, path)
+	return count > 0
+}
+
 // HistoryJSONL processes a JSONL file line by line. For each well-formed line,
 // it rewrites occurrences of oldProject to newProject — both the structured
 // `project` field AND any free-text reference (e.g. inside `display`, inside

@@ -21,14 +21,7 @@ way to automate is the two-step manifest flow (`export manifest` /
 
 ## Export
 
-### 2. History is filtered by exact `project` field equality
-
-`internal/export/export.go:extractProjectHistory` only includes lines whose
-`project` field equals the requested project path. History entries that
-reference the project only in `display` or `pastedContents` are excluded
-from the export.
-
-### 3. Binary detection is heuristic, not exhaustive
+### 2. Binary detection is heuristic, not exhaustive
 
 `internal/rewrite/rewrite.go:IsLikelyText` classifies content by scanning
 three 512-byte windows (head, middle, tail) for a `\x00` byte and by
@@ -46,7 +39,7 @@ snapshot rewrite. Two residual risks remain:
 
 ## Import
 
-### 4. Same-filesystem requirement for atomic import
+### 3. Same-filesystem requirement for atomic import
 
 `internal/importer/importer.go:Run` uses a stage-and-swap strategy:
 every destination is staged at a `*.cc-port-import.tmp` sibling path and
@@ -59,7 +52,7 @@ volume), the promote step fails with `EXDEV` and the import aborts —
 correctly leaving no partial state — but the user sees a rename error
 that may look unfamiliar.
 
-### 5. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
+### 4. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
 
 `internal/rewrite/rewrite.go:FindPlaceholderTokens` scans archive bodies
 for placeholder tokens using a byte-walk matching `{{[A-Z0-9_]+}}`. This

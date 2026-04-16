@@ -777,3 +777,57 @@ func TestIsLikelyText(t *testing.T) {
 		assert.True(t, rewrite.IsLikelyText(data))
 	})
 }
+
+func TestContainsBoundedPath(t *testing.T) {
+	projectPath := "/Users/x/myproject"
+
+	t.Run("detects standalone occurrence", func(t *testing.T) {
+		data := []byte(`open /Users/x/myproject please`)
+		assert.True(t, rewrite.ContainsBoundedPath(data, projectPath))
+	})
+
+	t.Run("detects occurrence followed by path separator", func(t *testing.T) {
+		data := []byte(`see /Users/x/myproject/main.go for details`)
+		assert.True(t, rewrite.ContainsBoundedPath(data, projectPath))
+	})
+
+	t.Run("detects occurrence at end of buffer", func(t *testing.T) {
+		data := []byte(`cwd: /Users/x/myproject`)
+		assert.True(t, rewrite.ContainsBoundedPath(data, projectPath))
+	})
+
+	t.Run("detects occurrence terminated by sentence punctuation", func(t *testing.T) {
+		data := []byte(`project is /Users/x/myproject. please review`)
+		assert.True(t, rewrite.ContainsBoundedPath(data, projectPath))
+	})
+
+	t.Run("does not detect prefix collision with sibling directory", func(t *testing.T) {
+		data := []byte(`see /Users/x/myproject-extras/notes.md`)
+		assert.False(t, rewrite.ContainsBoundedPath(data, projectPath),
+			"myproject-extras is a distinct path and must not register as a match")
+	})
+
+	t.Run("does not detect prefix collision with extension", func(t *testing.T) {
+		data := []byte(`backup at /Users/x/myproject.v2/old.log`)
+		assert.False(t, rewrite.ContainsBoundedPath(data, projectPath),
+			"myproject.v2 is a different path and must not register")
+	})
+
+	t.Run("returns false when path is absent", func(t *testing.T) {
+		data := []byte(`no mention of the project here`)
+		assert.False(t, rewrite.ContainsBoundedPath(data, projectPath))
+	})
+
+	t.Run("returns false for empty inputs", func(t *testing.T) {
+		assert.False(t, rewrite.ContainsBoundedPath(nil, projectPath))
+		assert.False(t, rewrite.ContainsBoundedPath([]byte(`something`), ""))
+	})
+
+	t.Run("matches inside JSON-escaped content", func(t *testing.T) {
+		// History lines embed the path inside JSON strings; the bounding
+		// byte after the match is typically `"` — still not a
+		// path-continuation byte, so the match must register.
+		data := []byte(`{"display":"open /Users/x/myproject/main.go"}`)
+		assert.True(t, rewrite.ContainsBoundedPath(data, projectPath))
+	})
+}

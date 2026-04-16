@@ -257,7 +257,28 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeho
 }
 
 // extractProjectHistory reads historyPath line by line and returns a JSONL byte
-// slice containing only entries whose project field matches projectPath.
+// slice containing every entry that belongs to projectPath. A line belongs
+// when any of the following hold:
+//
+//  1. Its structured `project` field equals projectPath (the primary signal —
+//     the authoritative tag Claude Code writes alongside each entry).
+//  2. Its `project` field is empty AND the line body contains a bounded
+//     reference to projectPath (e.g. inside `display` or `pastedContents`).
+//     This captures entries written without a structured tag whose only link
+//     to the project is a free-text path mention.
+//  3. The line is not parseable as JSON AND its raw bytes contain a bounded
+//     reference to projectPath. Such lines predate cc-port and cannot be
+//     repaired, but an obvious textual match is still worth preserving so the
+//     recipient sees what the sender saw.
+//
+// Lines whose `project` field names a different project are NEVER included,
+// even if they happen to quote projectPath in free text — that preserves the
+// privacy property that another project's structurally tagged entries are
+// not leaked just because they reference this project's path.
+//
+// The bounded reference check goes through rewrite.ContainsBoundedPath so
+// prefix-collision paths (e.g. "/a/myproject-extras" when projectPath is
+// "/a/myproject") are not misclassified as in-scope.
 func extractProjectHistory(historyPath, projectPath string) ([]byte, error) {
 	historyFile, err := os.Open(historyPath) //nolint:gosec // G304: path from trusted ClaudeHome
 	if err != nil {
@@ -277,12 +298,7 @@ func extractProjectHistory(historyPath, projectPath string) ([]byte, error) {
 			continue
 		}
 
-		var historyEntry claude.HistoryEntry
-		if err := json.Unmarshal([]byte(line), &historyEntry); err != nil {
-			continue
-		}
-
-		if historyEntry.Project != projectPath {
+		if !historyLineBelongsToProject([]byte(line), projectPath) {
 			continue
 		}
 
@@ -295,6 +311,26 @@ func extractProjectHistory(historyPath, projectPath string) ([]byte, error) {
 	}
 
 	return outputBuffer.Bytes(), nil
+}
+
+// historyLineBelongsToProject encodes the three-branch inclusion rule
+// documented on extractProjectHistory.
+func historyLineBelongsToProject(line []byte, projectPath string) bool {
+	var historyEntry claude.HistoryEntry
+	if err := json.Unmarshal(line, &historyEntry); err != nil {
+		// Malformed JSON — include only when the raw bytes carry a bounded
+		// reference to projectPath. Malformed lines with no such reference
+		// cannot be attributed to any project and are skipped.
+		return rewrite.ContainsBoundedPath(line, projectPath)
+	}
+
+	if historyEntry.Project == projectPath {
+		return true
+	}
+	if historyEntry.Project == "" {
+		return rewrite.ContainsBoundedPath(line, projectPath)
+	}
+	return false
 }
 
 // extractProjectConfig reads the config file at configPath and returns the raw
