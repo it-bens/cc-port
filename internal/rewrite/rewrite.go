@@ -108,7 +108,10 @@ func sampleWindows(data []byte, length int) [][]byte {
 // i.e. whether seeing b immediately after a candidate match means the match is
 // actually a longer, different path (e.g. "myproject" vs "myproject-extras").
 //
-// Path component characters in practice: letters, digits, '_', '.', '-'.
+// Path component characters in practice: letters, digits, '_', '-'. The `.`
+// byte is deliberately excluded here: it is handled by a two-byte lookahead
+// in ReplacePathInBytes so sentence-terminating dots (prose) can be
+// distinguished from extension-separator dots (`.v2`, `.txt`).
 func isPathContinuationByte(b byte) bool {
 	switch {
 	case b >= 'A' && b <= 'Z':
@@ -117,10 +120,29 @@ func isPathContinuationByte(b byte) bool {
 		return true
 	case b >= '0' && b <= '9':
 		return true
-	case b == '_' || b == '.' || b == '-':
+	case b == '_' || b == '-':
 		return true
 	}
 	return false
+}
+
+// isExtensionDotAt reports whether the '.' byte at data[dotIndex] introduces
+// a filename extension rather than sentence-terminating punctuation.
+//
+// A run of consecutive dots is walked past first, so `foo.` at EOF and
+// `foo...` before whitespace are both classified as prose (no extension).
+// A dot is an extension separator only when the first non-dot byte that
+// follows is a filename character (letter, digit, '_', '-'). Anything else
+// — whitespace, quotes, other punctuation, EOF — is prose.
+func isExtensionDotAt(data []byte, dotIndex int) bool {
+	cursor := dotIndex
+	for cursor < len(data) && data[cursor] == '.' {
+		cursor++
+	}
+	if cursor == len(data) {
+		return false
+	}
+	return isPathContinuationByte(data[cursor])
 }
 
 // ReplacePathInBytes replaces occurrences of oldPath with newPath in data,
@@ -152,12 +174,25 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
 			continue
 		}
 
-		// Boundary check: the byte AFTER the match must not be a path-continuation byte.
+		// Boundary check: the byte AFTER the match must not extend the path
+		// component. A '.' is handled specially — it only blocks the match
+		// when it introduces a real extension (e.g. ".v2", ".txt"); a dot
+		// followed by whitespace, punctuation, or EOF is prose (end of
+		// sentence) and must not suppress the rewrite.
 		nextIndex := cursor + len(oldBytes)
-		if nextIndex < len(data) && isPathContinuationByte(data[nextIndex]) {
-			result.WriteByte(data[cursor])
-			cursor++
-			continue
+		if nextIndex < len(data) {
+			nextByte := data[nextIndex]
+			if nextByte == '.' {
+				if isExtensionDotAt(data, nextIndex) {
+					result.WriteByte(data[cursor])
+					cursor++
+					continue
+				}
+			} else if isPathContinuationByte(nextByte) {
+				result.WriteByte(data[cursor])
+				cursor++
+				continue
+			}
 		}
 
 		result.Write(newBytes)

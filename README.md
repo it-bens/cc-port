@@ -19,26 +19,16 @@ the form's `Run()`. There is no non-interactive / `--yes` mode; the only
 way to automate is the two-step manifest flow (`export manifest` /
 `import --from-manifest`), which sidesteps the prompts entirely.
 
-## Move
-
-### 2. A path immediately followed by `.` is left untouched
-
-`internal/rewrite/rewrite.go:ReplacePathInBytes` treats `[A-Za-z0-9_.-]` as
-path-component bytes. This protects prefix collisions like `myproject` vs
-`myproject.v2`. The trade-off: prose such as `"look at
-/Users/x/myproject."` is not rewritten — the trailing `.` is
-indistinguishable from the start of an extension.
-
 ## Export
 
-### 3. History is filtered by exact `project` field equality
+### 2. History is filtered by exact `project` field equality
 
 `internal/export/export.go:extractProjectHistory` only includes lines whose
 `project` field equals the requested project path. History entries that
 reference the project only in `display` or `pastedContents` are excluded
 from the export.
 
-### 4. Binary detection is heuristic, not exhaustive
+### 3. Binary detection is heuristic, not exhaustive
 
 `internal/rewrite/rewrite.go:IsLikelyText` classifies content by scanning
 three 512-byte windows (head, middle, tail) for a `\x00` byte and by
@@ -56,7 +46,7 @@ snapshot rewrite. Two residual risks remain:
 
 ## Import
 
-### 5. Same-filesystem requirement for atomic import
+### 4. Same-filesystem requirement for atomic import
 
 `internal/importer/importer.go:Run` uses a stage-and-swap strategy:
 every destination is staged at a `*.cc-port-import.tmp` sibling path and
@@ -69,7 +59,7 @@ volume), the promote step fails with `EXDEV` and the import aborts —
 correctly leaving no partial state — but the user sees a rename error
 that may look unfamiliar.
 
-### 6. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
+### 5. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
 
 `internal/rewrite/rewrite.go:FindPlaceholderTokens` scans archive bodies
 for placeholder tokens using a byte-walk matching `{{[A-Z0-9_]+}}`. This
@@ -79,6 +69,52 @@ crafted with lowercase keys, punctuation inside braces, whitespace, or
 multi-line tokens are invisible to the gate: such a token would neither
 be flagged as undeclared nor be substituted at resolution time, so it
 would survive verbatim on disk.
+
+## Path-boundary rewrite scope
+
+Every substring-level path substitution in cc-port (`move`, `export`
+anonymization, `import` placeholder resolution) runs through
+`internal/rewrite/rewrite.go:ReplacePathInBytes`. A bare substring replace
+would corrupt unrelated paths that happen to share a prefix with the old
+project path (`/Users/x/myproject` inside `/Users/x/myproject.v2` or
+`/Users/x/myproject-extras`), so the function requires that each match be
+bounded on the right by a byte that cannot extend a path component.
+
+Path-component bytes are `[A-Za-z0-9_-]`. The `.` byte is handled by a
+two-byte lookahead, because `.` appears both as an extension separator
+(`.v2`, `.txt`) — where it must block the rewrite — and as prose
+sentence-ending punctuation (`"look at /Users/x/myproject."`) — where it
+must not. A `.` immediately after a candidate match is classified as an
+extension separator only when the first non-dot byte that follows is
+itself a path-component byte; otherwise (whitespace, quote, other
+punctuation, EOF) the dot is prose and the rewrite proceeds.
+
+Rewritten — these are safely treated as full-component matches:
+
+- `/a/foo` followed by a non-path byte (whitespace, `/`, `"`, `,`, `!`,
+  `?`, `;`, `:`, end of buffer, etc.).
+- `/a/foo` followed by `.` and then a non-path byte: sentence-terminating
+  prose (`"look at /a/foo."`, `see /a/foo. Also see /a/foo`).
+- `/a/foo` followed by a run of dots and then a non-path byte: ellipsis
+  (`see /a/foo... done`).
+
+Not rewritten — the boundary check deliberately suppresses these:
+
+- `/a/foo` immediately followed by another path-component byte
+  (`/a/foo-extras`, `/a/foo2`, `/a/foo_bar`) — a different path.
+- `/a/foo` followed by `.` and then a path-component byte — an extension
+  (`/a/foo.v2`, `/a/foo.txt`, `/a/foo.git`, `/a/foo.2`, `/a/foo._hidden`,
+  `/a/foo.-weird`).
+
+Residual risk — cases this heuristic does not perfectly cover:
+
+- **Directories whose final component ends in a literal trailing `.` or
+  `..`** (e.g. a real path `/a/foo.`) are rewritten when followed by a
+  word-boundary byte, even though a distinct unrelated project named
+  `/a/foo.` would have been preserved by one-byte boundary checking.
+  These names are pathological on Unix and forbidden on Windows; cc-port
+  accepts this trade-off in favour of correctly rewriting sentence-ending
+  prose references.
 
 ## Path encoding scope
 
@@ -227,7 +263,7 @@ Not covered — cases cc-port does not address:
   without the caller supplying `{{KEY}}` are now refused. Migration:
   supply the resolution, or re-export with the key marked
   `Resolvable: false`.
-- **Exotic token shapes.** See limitation #6 — only
+- **Exotic token shapes.** See limitation #5 — only
   `{{[A-Z0-9_]+}}` is recognised by the pre-flight scanner.
 
 ## Concurrency guard scope

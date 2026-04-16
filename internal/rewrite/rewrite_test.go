@@ -135,6 +135,58 @@ func TestReplacePathInBytes(t *testing.T) {
 	})
 }
 
+// TestReplacePathInBytesDotBoundary covers the two-byte lookahead that
+// distinguishes a sentence-terminating '.' (prose) from an extension
+// separator '.' (e.g. ".v2", ".txt"). Prose dots must not block the
+// rewrite; extension dots must still block it.
+func TestReplacePathInBytesDotBoundary(t *testing.T) {
+	t.Run("rewrites path followed by sentence-terminating dot at end of buffer", func(t *testing.T) {
+		input := []byte(`look at /a/foo.`)
+		result, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 1, count)
+		assert.Equal(t, `look at /x/qux.`, string(result))
+	})
+
+	t.Run("rewrites path followed by dot then whitespace", func(t *testing.T) {
+		input := []byte(`look at /a/foo. Also see /a/foo`)
+		result, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 2, count)
+		assert.Equal(t, `look at /x/qux. Also see /x/qux`, string(result))
+	})
+
+	t.Run("rewrites path followed by dot then closing quote", func(t *testing.T) {
+		input := []byte(`"see /a/foo."`)
+		result, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 1, count)
+		assert.Equal(t, `"see /x/qux."`, string(result))
+	})
+
+	t.Run("rewrites path followed by ellipsis", func(t *testing.T) {
+		input := []byte(`see /a/foo... done`)
+		result, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 1, count)
+		assert.Equal(t, `see /x/qux... done`, string(result))
+	})
+
+	t.Run("still skips path followed by dot then extension letters", func(t *testing.T) {
+		input := []byte(`/a/foo.v2 /a/foo.txt /a/foo.git`)
+		_, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 0, count, "extension dots must still block replacement")
+	})
+
+	t.Run("still skips path followed by dot then digit", func(t *testing.T) {
+		input := []byte(`/a/foo.2`)
+		_, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 0, count)
+	})
+
+	t.Run("still skips path followed by dot then underscore or dash", func(t *testing.T) {
+		input := []byte(`/a/foo._hidden /a/foo.-weird`)
+		_, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 0, count)
+	})
+}
+
 func TestSessionFile(t *testing.T) {
 	t.Run("rewrites cwd when it starts with oldProject", func(t *testing.T) {
 		input := []byte(`{"cwd":"/old/project/subdir","extraField":"value"}`)
