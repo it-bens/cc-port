@@ -87,6 +87,56 @@ func TestHome_ProjectDir(t *testing.T) {
 	assert.Equal(t, "/home/user/.claude/projects/-Users-test-Projects-myproject", got)
 }
 
+func TestResolveProjectPath(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Resolve tempDir itself so /var -> /private/var symlinks on macOS do not
+	// make the assertions below compare against the pre-symlink form.
+	realTempDir, err := filepath.EvalSymlinks(tempDir)
+	require.NoError(t, err)
+
+	realProjectDir := filepath.Join(realTempDir, "real", "project")
+	require.NoError(t, os.MkdirAll(realProjectDir, 0o755))
+
+	linkDir := filepath.Join(realTempDir, "link")
+	require.NoError(t, os.Symlink(filepath.Join(realTempDir, "real"), linkDir))
+
+	t.Run("resolves symlink in existing path", func(t *testing.T) {
+		resolved, err := claude.ResolveProjectPath(filepath.Join(linkDir, "project"))
+		require.NoError(t, err)
+		assert.Equal(t, realProjectDir, resolved)
+	})
+
+	t.Run("resolves symlink in parent when leaf does not exist", func(t *testing.T) {
+		resolved, err := claude.ResolveProjectPath(filepath.Join(linkDir, "new-project"))
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(realTempDir, "real", "new-project"), resolved)
+	})
+
+	t.Run("preserves multiple missing trailing components", func(t *testing.T) {
+		resolved, err := claude.ResolveProjectPath(filepath.Join(linkDir, "a", "b", "c"))
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(realTempDir, "real", "a", "b", "c"), resolved)
+	})
+
+	t.Run("returns absolute form of relative path", func(t *testing.T) {
+		workingDir, err := os.Getwd()
+		require.NoError(t, err)
+		realWorkingDir, err := filepath.EvalSymlinks(workingDir)
+		require.NoError(t, err)
+
+		resolved, err := claude.ResolveProjectPath("nonexistent-rel-path")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(realWorkingDir, "nonexistent-rel-path"), resolved)
+	})
+
+	t.Run("fully existing path without symlinks is unchanged", func(t *testing.T) {
+		resolved, err := claude.ResolveProjectPath(realProjectDir)
+		require.NoError(t, err)
+		assert.Equal(t, realProjectDir, resolved)
+	})
+}
+
 func TestHome_Paths(t *testing.T) {
 	home := claude.Home{
 		Dir:        "/home/user/.claude",
