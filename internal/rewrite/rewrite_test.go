@@ -46,20 +46,22 @@ func TestHistoryJSONL(t *testing.T) {
 
 	t.Run("returns zero count when no lines match", func(t *testing.T) {
 		input := []byte(`{"project":"/other/project","command":"ls"}` + "\n")
-		_, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+		_, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
+		assert.Empty(t, malformed)
 	})
 
-	t.Run("preserves malformed JSON lines verbatim and continues", func(t *testing.T) {
+	t.Run("preserves malformed JSON lines verbatim and reports their line numbers", func(t *testing.T) {
 		good := `{"project":"/old/project","display":"a"}`
 		bad := `{ this is not valid json`
 		alsoGood := `{"project":"/old/project","display":"b"}`
 		input := []byte(good + "\n" + bad + "\n" + alsoGood + "\n")
 
-		result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+		result, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
 		require.NoError(t, err)
 		assert.Equal(t, 2, count, "two well-formed lines should be rewritten")
+		assert.Equal(t, []int{2}, malformed, "1-based line number of the malformed line")
 
 		lines := splitLines(result)
 		assert.Equal(t, bad, lines[1], "malformed line must be preserved verbatim")
@@ -69,18 +71,20 @@ func TestHistoryJSONL(t *testing.T) {
 
 	t.Run("rewrites path occurrences inside non-project fields", func(t *testing.T) {
 		input := []byte(`{"project":"/old/project","display":"open /old/project/main.go please"}` + "\n")
-		result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+		result, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
+		assert.Empty(t, malformed)
 		assert.NotContains(t, string(result), "/old/project")
 		assert.Contains(t, string(result), "/new/project/main.go")
 	})
 
 	t.Run("does not rewrite a path that is a prefix of another path", func(t *testing.T) {
 		input := []byte(`{"project":"/old/project-extras","display":"unrelated"}` + "\n")
-		result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+		result, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
 		require.NoError(t, err)
 		assert.Equal(t, 0, count, "path-boundary protection must skip prefix collision")
+		assert.Empty(t, malformed)
 		assert.Contains(t, string(result), "/old/project-extras")
 		assert.NotContains(t, string(result), "/new/project-extras")
 	})
@@ -92,9 +96,10 @@ func assertHistoryJSONLRewritesMatching(t *testing.T) {
 	line3 := `{"project":"/old/project","command":"git status"}`
 	input := []byte(line1 + "\n" + line2 + "\n" + line3 + "\n")
 
-	result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+	result, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
+	assert.Empty(t, malformed)
 
 	lines := splitLines(result)
 	// Last element should be empty string (trailing newline)

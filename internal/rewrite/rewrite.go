@@ -124,16 +124,21 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
 // `pastedContents`) — using path-boundary-aware substring replacement so that
 // unrelated paths sharing a prefix (e.g. "myproject-extras") are not corrupted.
 //
-// The int return is the count of lines whose contents changed. Malformed lines
-// are preserved verbatim (export tolerates them too — see export.extractProjectHistory).
+// Returns the rewritten bytes, the count of lines whose contents changed, and
+// the 1-based line numbers of malformed (non-JSON) lines. Malformed lines are
+// preserved verbatim — cc-port cannot reliably repair data that was already
+// broken before the move. Callers should surface the returned line numbers to
+// the user so the malformed entries can be inspected manually.
+//
 // Empty lines and the trailing newline are preserved.
-func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, error) {
+func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, []int, error) {
 	lines := bytes.Split(data, []byte("\n"))
 
 	var outputLines [][]byte
+	var malformedLineNumbers []int
 	count := 0
 
-	for _, line := range lines {
+	for lineIndex, line := range lines {
 		if len(bytes.TrimSpace(line)) == 0 {
 			outputLines = append(outputLines, line)
 			continue
@@ -142,6 +147,8 @@ func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, erro
 		var probe claude.HistoryEntry
 		if err := json.Unmarshal(line, &probe); err != nil {
 			// Malformed line — preserve verbatim, do not abort the whole file.
+			// Record the 1-based line number so callers can warn the user.
+			malformedLineNumbers = append(malformedLineNumbers, lineIndex+1)
 			outputLines = append(outputLines, append([]byte(nil), line...))
 			continue
 		}
@@ -153,7 +160,7 @@ func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, erro
 		outputLines = append(outputLines, rewritten)
 	}
 
-	return bytes.Join(outputLines, []byte("\n")), count, nil
+	return bytes.Join(outputLines, []byte("\n")), count, malformedLineNumbers, nil
 }
 
 // SessionFile rewrites every occurrence of oldProject to newProject inside

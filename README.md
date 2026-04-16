@@ -29,22 +29,16 @@ path-component bytes. This protects prefix collisions like `myproject` vs
 /Users/x/myproject."` is not rewritten — the trailing `.` is
 indistinguishable from the start of an extension.
 
-### 3. Malformed history lines are preserved silently
-
-`internal/rewrite/rewrite.go:HistoryJSONL` keeps malformed lines verbatim and
-continues. The user receives no warning that those lines exist or that the
-rewriter could not touch them.
-
 ## Export
 
-### 4. History is filtered by exact `project` field equality
+### 3. History is filtered by exact `project` field equality
 
 `internal/export/export.go:extractProjectHistory` only includes lines whose
 `project` field equals the requested project path. History entries that
 reference the project only in `display` or `pastedContents` are excluded
 from the export.
 
-### 5. Binary detection uses a 512-byte null-byte heuristic
+### 4. Binary detection uses a 512-byte null-byte heuristic
 
 `internal/rewrite/rewrite.go:IsLikelyText` checks only the first 512 bytes
 for a `\x00` byte. Files that are binary after a textual header, or binary
@@ -54,7 +48,7 @@ anonymization and `move.Apply`'s file-history snapshot rewrite, so a false
 negative can leak an unrewritten path into an export *or* corrupt a
 snapshot during a move.
 
-### 6. The export anonymizer is not path-boundary aware
+### 5. The export anonymizer is not path-boundary aware
 
 `internal/export/export.go:anonymize` uses `strings.ReplaceAll`. It is
 currently safe only because placeholders are sorted by `Original` length
@@ -64,7 +58,7 @@ other order can corrupt output.
 
 ## Import
 
-### 7. Import has no atomic or rollback guarantee
+### 6. Import has no atomic or rollback guarantee
 
 `internal/importer/importer.go:Run` streams ZIP entries and writes each to
 its final destination as it goes: files into the encoded project directory,
@@ -74,7 +68,7 @@ corrupt entry, a missing resolution — leaves some destinations written and
 others not, with no equivalent of `move.Apply`'s copy-verify-delete
 strategy. Rolling back a partial import is manual.
 
-### 8. Unsupplied placeholders survive import as literal strings
+### 7. Unsupplied placeholders survive import as literal strings
 
 `internal/importer/importer.go:Run` only resolves placeholders the caller
 provided in `Options.Resolutions`. If the archive's `metadata.xml` declares
@@ -149,6 +143,38 @@ Not covered — cases cc-port does not address:
   is the entire remediation surface; the user is expected to inspect each
   hit and decide whether editing it, leaving it, or moving the rule into
   the project is the right call.
+
+## Malformed history entries scope
+
+`~/.claude/history.jsonl` is expected to be one JSON object per line. If
+Claude Code wrote a partial line (crash, disk full, concurrent-write
+race) or another tool corrupted the file, some lines will fail to parse.
+These entries predate any cc-port invocation; the move did not create
+them and cannot reconstruct the intended data from what was written.
+Repairing them is out of scope — cc-port is a relocator, not a history
+repair tool.
+
+Surfaced by cc-port — both paths report malformed lines with their
+1-based line numbers so the user can inspect or delete them manually:
+
+- `cc-port move` (dry-run) includes a `Warning: history.jsonl has N
+  malformed line(s) at […]` block in the plan output when any entries
+  fail to parse.
+- `cc-port move --apply` prints the same warning to stderr (or to the
+  `move.Options.WarningWriter` supplied by callers) after the rewrite
+  completes. The rewrite still succeeds — malformed lines are preserved
+  verbatim, well-formed lines are rewritten normally.
+
+Not covered — cases cc-port deliberately does not address:
+
+- **Automatic repair.** cc-port does not attempt to reconstruct a broken
+  line, drop it, quarantine it, or re-parse fragments. The original
+  bytes land back on disk unchanged.
+- **Detection outside `history.jsonl`.** The same class of corruption
+  can in principle affect session transcripts (`*.jsonl` under the
+  project directory) or session subdir files, but cc-port does not scan
+  those for parse errors — they are rewritten as opaque byte streams
+  with path-boundary-aware substitution.
 
 ## Concurrency guard scope
 

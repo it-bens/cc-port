@@ -1,6 +1,7 @@
 package move_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -309,6 +310,40 @@ func TestApply_AbortsWhenClaudeSessionIsLive(t *testing.T) {
 	// New project dir must not have been created.
 	_, newStatErr := os.Stat(claudeHome.ProjectDir(newProjectPath))
 	assert.True(t, os.IsNotExist(newStatErr), "new project dir should not exist after aborted apply")
+}
+
+func TestDryRun_ReportsMalformedHistoryLines(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	plan, err := move.DryRun(claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+	require.NoError(t, err)
+	// The fixture history.jsonl has exactly one malformed line at line 10.
+	assert.Equal(t, []int{10}, plan.HistoryMalformedLines,
+		"dry-run should surface the 1-based line numbers of malformed history entries")
+}
+
+func TestApply_WarnsOnMalformedHistoryLines(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	var warnings bytes.Buffer
+	err := move.Apply(claudeHome, move.Options{
+		OldPath:       oldProjectPath,
+		NewPath:       newProjectPath,
+		RefsOnly:      true,
+		WarningWriter: &warnings,
+	})
+	require.NoError(t, err)
+
+	output := warnings.String()
+	assert.Contains(t, output, "history.jsonl",
+		"warning should identify history.jsonl")
+	assert.Contains(t, output, "malformed",
+		"warning should name the condition")
+	assert.Contains(t, output, "10",
+		"warning should name the 1-based line number from the fixture")
 }
 
 func TestApply_RewritesFileHistoryTextSnapshots(t *testing.T) {

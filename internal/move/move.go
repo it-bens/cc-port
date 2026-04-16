@@ -4,6 +4,7 @@ package move
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -22,6 +23,12 @@ type Options struct {
 	NewPath            string
 	RewriteTranscripts bool
 	RefsOnly           bool
+
+	// WarningWriter receives human-readable warnings emitted during Apply
+	// (e.g. malformed lines in history.jsonl that the move preserves but
+	// cannot repair). Defaults to os.Stderr when nil. DryRun does not use
+	// this field — it surfaces warnings through Plan instead.
+	WarningWriter io.Writer
 }
 
 // Plan holds the results of a dry-run move operation.
@@ -35,6 +42,11 @@ type Plan struct {
 	ConfigBlockRekey            bool
 	TranscriptReplacements      int
 	FileHistorySnapshotRewrites int
+
+	// HistoryMalformedLines is the 1-based line numbers of history.jsonl
+	// entries that failed JSON parsing. The move preserves them verbatim;
+	// repairing them is out of scope.
+	HistoryMalformedLines []int
 
 	RulesWarnings []scan.Warning
 
@@ -60,7 +72,7 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 		MoveProjectDir: !moveOptions.RefsOnly,
 	}
 
-	plan.HistoryReplacements, err = countHistoryReplacements(claudeHome, moveOptions)
+	plan.HistoryReplacements, plan.HistoryMalformedLines, err = scanHistoryFile(claudeHome, moveOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -101,21 +113,21 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 	return plan, nil
 }
 
-func countHistoryReplacements(claudeHome *claude.Home, moveOptions Options) (int, error) {
+func scanHistoryFile(claudeHome *claude.Home, moveOptions Options) (int, []int, error) {
 	historyFile := claudeHome.HistoryFile()
 	if _, err := os.Stat(historyFile); err != nil {
-		return 0, nil
+		return 0, nil, nil
 	}
 
 	data, err := os.ReadFile(historyFile) //nolint:gosec // path constructed from trusted internal data
 	if err != nil {
-		return 0, fmt.Errorf("read history.jsonl: %w", err)
+		return 0, nil, fmt.Errorf("read history.jsonl: %w", err)
 	}
-	_, count, err := rewrite.HistoryJSONL(data, moveOptions.OldPath, moveOptions.NewPath)
+	_, count, malformed, err := rewrite.HistoryJSONL(data, moveOptions.OldPath, moveOptions.NewPath)
 	if err != nil {
-		return 0, fmt.Errorf("analyse history.jsonl: %w", err)
+		return 0, nil, fmt.Errorf("analyse history.jsonl: %w", err)
 	}
-	return count, nil
+	return count, malformed, nil
 }
 
 func countSessionFileReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
@@ -428,14 +440,31 @@ func rewriteHistoryFile(claudeHome *claude.Home, moveOptions Options, tracker *g
 	if err != nil {
 		return fmt.Errorf("read history.jsonl for backup: %w", err)
 	}
-	rewritten, _, err := rewrite.HistoryJSONL(original, moveOptions.OldPath, moveOptions.NewPath)
+	rewritten, _, malformed, err := rewrite.HistoryJSONL(original, moveOptions.OldPath, moveOptions.NewPath)
 	if err != nil {
 		return fmt.Errorf("rewrite history.jsonl: %w", err)
 	}
 	if err := rewrite.SafeWriteFile(historyFile, rewritten, mode); err != nil {
 		return fmt.Errorf("write history.jsonl: %w", err)
 	}
+	if len(malformed) > 0 {
+		_, _ = fmt.Fprintf(
+			warningWriter(moveOptions),
+			"warning: history.jsonl contains %d malformed line(s) at %v — preserved verbatim, not rewritten\n",
+			len(malformed), malformed,
+		)
+	}
 	return nil
+}
+
+// warningWriter returns the writer to which Apply sends human-readable
+// warnings. It defaults to os.Stderr so unconfigured callers still see
+// warnings; tests inject a buffer via Options.WarningWriter.
+func warningWriter(moveOptions Options) io.Writer {
+	if moveOptions.WarningWriter != nil {
+		return moveOptions.WarningWriter
+	}
+	return os.Stderr
 }
 
 func rewriteSessionFiles(
