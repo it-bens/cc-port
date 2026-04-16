@@ -26,6 +26,7 @@ type HistoryEntry struct {
 // SessionFile is the structure of sessions/<pid>.json.
 type SessionFile struct {
 	Cwd   string                     `json:"cwd"`
+	Pid   int                        `json:"pid"`
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
@@ -124,17 +125,24 @@ func (sessionFile *SessionFile) UnmarshalJSON(data []byte) error {
 		}
 		delete(sessionFile.Extra, "cwd")
 	}
+	if value, ok := sessionFile.Extra["pid"]; ok {
+		if err := json.Unmarshal(value, &sessionFile.Pid); err != nil {
+			return err
+		}
+		delete(sessionFile.Extra, "pid")
+	}
 	return nil
 }
 
 // MarshalJSON implements json.Marshaler for SessionFile,
 // merging Extra fields back into the output.
 func (sessionFile SessionFile) MarshalJSON() ([]byte, error) {
-	merged := make(map[string]any, len(sessionFile.Extra)+1)
+	merged := make(map[string]any, len(sessionFile.Extra)+2)
 	for key, value := range sessionFile.Extra {
 		merged[key] = value
 	}
 	merged["cwd"] = sessionFile.Cwd
+	merged["pid"] = sessionFile.Pid
 	return json.Marshal(merged)
 }
 

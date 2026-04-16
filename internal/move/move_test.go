@@ -225,6 +225,43 @@ func TestApply_WithTranscripts(t *testing.T) {
 	assertSessionSubdirFilesRewritten(t, newProjectDir)
 }
 
+func TestApply_AbortsWhenClaudeSessionIsLive(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	// Write a sessions/*.json that references this test process's PID —
+	// guaranteed alive, so the concurrency guard must abort.
+	sessionsDir := claudeHome.SessionsDir()
+	require.NoError(t, os.MkdirAll(sessionsDir, 0o750))
+	liveSession := claude.SessionFile{Cwd: oldProjectPath, Pid: os.Getpid()}
+	liveSessionData, err := json.Marshal(liveSession)
+	require.NoError(t, err)
+	liveSessionPath := filepath.Join(sessionsDir, "live-session.json")
+	require.NoError(t, os.WriteFile(liveSessionPath, liveSessionData, 0600))
+
+	// Snapshot the encoded project dir before the attempted move so we can
+	// assert Apply left the filesystem untouched on abort.
+	oldProjectDir := claudeHome.ProjectDir(oldProjectPath)
+	before, err := os.ReadDir(oldProjectDir)
+	require.NoError(t, err)
+
+	applyErr := move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.Error(t, applyErr, "Apply must abort when a live Claude Code session is detected")
+	assert.Contains(t, applyErr.Error(), "live Claude Code session")
+
+	// Old project dir must still be there with identical entry count.
+	after, err := os.ReadDir(oldProjectDir)
+	require.NoError(t, err, "old project dir should still exist after aborted apply")
+	assert.Len(t, after, len(before), "no directory entries should have been created or removed")
+
+	// New project dir must not have been created.
+	_, newStatErr := os.Stat(claudeHome.ProjectDir(newProjectPath))
+	assert.True(t, os.IsNotExist(newStatErr), "new project dir should not exist after aborted apply")
+}
+
 // assertSessionSubdirFilesRewritten walks the session subdirectories under
 // newProjectDir and asserts that every file has had the old project path
 // rewritten to the new project path. Covers <uuid>/subagents/*.jsonl and

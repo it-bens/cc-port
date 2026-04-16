@@ -10,6 +10,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/fsutil"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/scan"
 )
@@ -209,7 +210,17 @@ func countTranscriptReplacements(locations *claude.ProjectLocations, moveOptions
 //
 // On any failure, all newly created paths are removed and the originals remain
 // untouched.
+//
+// Before any work, Apply acquires an exclusive advisory lock over claudeHome
+// and aborts if a Claude Code session is currently live or if another
+// cc-port invocation is already operating on the same directory.
 func Apply(claudeHome *claude.Home, moveOptions Options) error {
+	lockHandle, err := lock.Acquire(claudeHome)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lockHandle.Release() }()
+
 	locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
 	if err != nil {
 		return fmt.Errorf("locate project: %w", err)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/lock"
 )
 
 // dirPerm is the mode used for directories created during import.
@@ -33,7 +34,17 @@ type Options struct {
 
 // Run imports a cc-port ZIP archive into claudeHome, routing each file to the
 // correct destination and resolving all placeholders using importOptions.Resolutions.
+//
+// Before any work, Run acquires an exclusive advisory lock over claudeHome
+// and aborts if a Claude Code session is currently live or if another
+// cc-port invocation is already operating on the same directory.
 func Run(claudeHome *claude.Home, importOptions Options) error {
+	lockHandle, err := lock.Acquire(claudeHome)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lockHandle.Release() }()
+
 	if err := ValidateResolutions(importOptions.Resolutions); err != nil {
 		return fmt.Errorf("validate resolutions: %w", err)
 	}
