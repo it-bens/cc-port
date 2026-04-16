@@ -10,8 +10,21 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+
 	"github.com/it-bens/cc-port/internal/claude"
 )
+
+// escapeSJSONKey escapes the characters sjson treats as path meta-characters
+// (`\` and `.`) so an arbitrary string can be used as a single key segment in
+// an sjson path expression. Project paths routinely contain `.` (e.g.
+// "/Users/x/proj.v2"), which would otherwise be parsed as nested keys.
+func escapeSJSONKey(key string) string {
+	key = strings.ReplaceAll(key, `\`, `\\`)
+	key = strings.ReplaceAll(key, `.`, `\.`)
+	return key
+}
 
 // ReplaceInBytes replaces all occurrences of oldString with newString in data.
 // It returns the resulting bytes and the number of replacements made.
@@ -146,42 +159,41 @@ func SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, erro
 	return rewritten, count > 0, nil
 }
 
-// UserConfig parses ~/.claude.json and re-keys the project entry from
-// oldProject to newProject in the projects map. Path references embedded in
-// the block's contents (e.g. mcpServers.*.args, mcpServers.*.env.*,
-// mcpContextUris, exampleFiles) are rewritten with path-boundary-aware
-// substitution so values that hard-coded the old project path follow the
-// rename.
+// UserConfig rewrites ~/.claude.json to re-key the project entry from
+// oldProject to newProject. Path references embedded in the block's
+// contents (e.g. mcpServers.*.args, mcpServers.*.env.*, mcpContextUris,
+// exampleFiles) are rewritten with path-boundary-aware substitution so
+// values that hard-coded the old project path follow the rename.
+//
+// The operation uses sjson to splice only the projects object, which
+// preserves every byte outside the rekeyed entry — original key order,
+// indent style, and trailing newlines all survive.
 //
 // The bool return indicates whether the old key was found and moved. Other
-// project keys and all Extra fields are preserved unchanged.
+// project keys and top-level fields are left untouched.
 func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error) {
-	var userConfig claude.UserConfig
-	if err := json.Unmarshal(data, &userConfig); err != nil {
-		return nil, false, fmt.Errorf("unmarshal user config: %w", err)
+	if !gjson.ValidBytes(data) {
+		return nil, false, fmt.Errorf("invalid user config JSON")
 	}
 
-	projectData, found := userConfig.Projects[oldProject]
-	if !found {
-		result, err := json.Marshal(userConfig)
-		if err != nil {
-			return nil, false, fmt.Errorf("marshal user config: %w", err)
-		}
-		return result, false, nil
+	oldPath := "projects." + escapeSJSONKey(oldProject)
+	existing := gjson.GetBytes(data, oldPath)
+	if !existing.Exists() {
+		return data, false, nil
 	}
 
-	delete(userConfig.Projects, oldProject)
-	if userConfig.Projects == nil {
-		userConfig.Projects = make(map[string]json.RawMessage)
-	}
-	rewrittenProjectData, _ := ReplacePathInBytes(projectData, oldProject, newProject)
-	userConfig.Projects[newProject] = rewrittenProjectData
+	rewrittenBlock, _ := ReplacePathInBytes([]byte(existing.Raw), oldProject, newProject)
 
-	result, err := json.Marshal(userConfig)
+	updated, err := sjson.DeleteBytes(data, oldPath)
 	if err != nil {
-		return nil, false, fmt.Errorf("marshal user config: %w", err)
+		return nil, false, fmt.Errorf("delete old project key: %w", err)
 	}
-	return result, true, nil
+	newPath := "projects." + escapeSJSONKey(newProject)
+	updated, err = sjson.SetRawBytes(updated, newPath, rewrittenBlock)
+	if err != nil {
+		return nil, false, fmt.Errorf("insert new project key: %w", err)
+	}
+	return updated, true, nil
 }
 
 // SafeWriteFile writes data to a temporary file in the same directory as path,

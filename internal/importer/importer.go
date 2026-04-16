@@ -3,12 +3,14 @@ package importer
 
 import (
 	"archive/zip"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
@@ -192,38 +194,44 @@ func appendToHistory(historyPath string, data []byte) error {
 	return nil
 }
 
-// mergeProjectConfig parses the UserConfig at configPath, adds blockData as
-// the project entry under targetPath, and writes the result back.
-// If the config file does not exist, a fresh UserConfig is created.
-func mergeProjectConfig(configPath, targetPath string, blockData []byte) error {
-	var userConfig claude.UserConfig
+// escapeSJSONKey escapes the characters sjson treats as path meta-characters
+// (`\` and `.`) so an arbitrary string can be used as a single key segment
+// in an sjson path expression.
+func escapeSJSONKey(key string) string {
+	key = strings.ReplaceAll(key, `\`, `\\`)
+	key = strings.ReplaceAll(key, `.`, `\.`)
+	return key
+}
 
+// mergeProjectConfig inserts blockData as the project entry under
+// targetPath inside the JSON document at configPath. It uses sjson to
+// splice only the projects object, preserving every byte outside the
+// inserted entry — original key order, indent style, and trailing newlines
+// all survive a merge. If the config file does not exist, a minimal `{}`
+// is used as the base document.
+func mergeProjectConfig(configPath, targetPath string, blockData []byte) error {
 	existingData, err := os.ReadFile(configPath) //nolint:gosec // G304: path comes from trusted ClaudeHome config
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read config file %q: %w", configPath, err)
 	}
 
-	if len(existingData) > 0 {
-		if err := json.Unmarshal(existingData, &userConfig); err != nil {
-			return fmt.Errorf("unmarshal config file %q: %w", configPath, err)
-		}
+	if len(existingData) == 0 {
+		existingData = []byte(`{}`)
+	} else if !gjson.ValidBytes(existingData) {
+		return fmt.Errorf("invalid JSON in config file %q", configPath)
 	}
 
-	if userConfig.Projects == nil {
-		userConfig.Projects = make(map[string]json.RawMessage)
-	}
-
-	userConfig.Projects[targetPath] = json.RawMessage(blockData)
-
-	updatedData, err := json.MarshalIndent(userConfig, "", "  ")
+	path := "projects." + escapeSJSONKey(targetPath)
+	updatedData, err := sjson.SetRawBytes(existingData, path, blockData)
 	if err != nil {
-		return fmt.Errorf("marshal updated config: %w", err)
+		return fmt.Errorf("set project block in config file %q: %w", configPath, err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(configPath), dirPerm); err != nil {
 		return fmt.Errorf("create directories for config file: %w", err)
 	}
 
+	//nolint:gosec // G703: writing attacker-controlled archive contents is the purpose of import
 	if err := os.WriteFile(configPath, updatedData, filePerm); err != nil {
 		return fmt.Errorf("write config file %q: %w", configPath, err)
 	}
