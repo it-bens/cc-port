@@ -61,7 +61,7 @@ func TestExport_AllCategories(t *testing.T) {
 		Placeholders: defaultPlaceholders(),
 	}
 
-	err := export.Run(claudeHome, options)
+	_, err := export.Run(claudeHome, options)
 	require.NoError(t, err)
 
 	contents := readZipContents(t, outputPath)
@@ -113,7 +113,7 @@ func TestExport_PathAnonymization(t *testing.T) {
 		Placeholders: defaultPlaceholders(),
 	}
 
-	err := export.Run(claudeHome, options)
+	_, err := export.Run(claudeHome, options)
 	require.NoError(t, err)
 
 	contents := readZipContents(t, outputPath)
@@ -164,7 +164,7 @@ func TestExport_SelectiveCategories(t *testing.T) {
 		Placeholders: defaultPlaceholders(),
 	}
 
-	err := export.Run(claudeHome, options)
+	_, err := export.Run(claudeHome, options)
 	require.NoError(t, err)
 
 	contents := readZipContents(t, outputPath)
@@ -207,12 +207,13 @@ func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
 	// byte-for-byte equality.
 	claudeHome1 := testutil.SetupFixture(t)
 	out1 := filepath.Join(t.TempDir(), "export-longer-first.zip")
-	require.NoError(t, export.Run(claudeHome1, export.Options{
+	_, err := export.Run(claudeHome1, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   out1,
 		Categories:   export.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
 		Placeholders: defaultPlaceholders(),
-	}))
+	})
+	require.NoError(t, err)
 
 	claudeHome2 := testutil.SetupFixture(t)
 	out2 := filepath.Join(t.TempDir(), "export-shorter-first.zip")
@@ -220,12 +221,13 @@ func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
 		{Key: "{{HOME}}", Original: "/Users/test"},
 		{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
 	}
-	require.NoError(t, export.Run(claudeHome2, export.Options{
+	_, err = export.Run(claudeHome2, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   out2,
 		Categories:   export.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
 		Placeholders: reversed,
-	}))
+	})
+	require.NoError(t, err)
 
 	// Every non-metadata entry must be byte-identical between the two orderings.
 	// metadata.xml is excluded because it encodes a `created` timestamp.
@@ -277,13 +279,14 @@ func TestExport_HistoryInclusionRules(t *testing.T) {
 	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), historyData, 0600))
 
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
-	require.NoError(t, export.Run(claudeHome, export.Options{
+	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories:  export.CategorySet{History: true},
 		// No placeholders — exported history keeps the literal paths so
 		// marker strings and bounded references remain easy to assert on.
-	}))
+	})
+	require.NoError(t, err)
 
 	contents := readZipContents(t, outputPath)
 	history := contents["history/history.jsonl"]
@@ -319,14 +322,15 @@ func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	require.NoError(t, export.Run(claudeHome, export.Options{
+	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories: export.CategorySet{
 			Memory: true, Sessions: true, History: true, Config: true,
 		},
 		Placeholders: defaultPlaceholders(),
-	}))
+	})
+	require.NoError(t, err)
 
 	contents := readZipContents(t, outputPath)
 	memory := contents["memory/project_notes.md"]

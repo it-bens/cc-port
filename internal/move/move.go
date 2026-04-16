@@ -36,12 +36,12 @@ type Plan struct {
 	OldProjectDir string
 	NewProjectDir string
 
-	HistoryReplacements         int
-	SessionFileReplacements     int
-	SettingsReplacements        int
-	ConfigBlockRekey            bool
-	TranscriptReplacements      int
-	FileHistorySnapshotRewrites int
+	HistoryReplacements           int
+	SessionFileReplacements       int
+	SettingsReplacements          int
+	ConfigBlockRekey              bool
+	TranscriptReplacements        int
+	FileHistorySnapshotsPreserved int
 
 	// HistoryMalformedLines is the 1-based line numbers of history.jsonl
 	// entries that failed JSON parsing. The move preserves them verbatim;
@@ -99,7 +99,7 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 		}
 	}
 
-	plan.FileHistorySnapshotRewrites, err = countFileHistorySnapshotRewrites(locations, moveOptions)
+	plan.FileHistorySnapshotsPreserved, err = countFileHistorySnapshots(locations)
 	if err != nil {
 		return nil, err
 	}
@@ -196,32 +196,19 @@ func countTranscriptReplacements(locations *claude.ProjectLocations, moveOptions
 	return total, nil
 }
 
-// countFileHistorySnapshotRewrites returns the number of file-history
-// snapshot files whose bytes will change when rewritten. Binary-classified
-// snapshots (see rewrite.IsLikelyText) are excluded, mirroring what
-// rewriteFileHistorySnapshots does at Apply time.
-func countFileHistorySnapshotRewrites(
-	locations *claude.ProjectLocations, moveOptions Options,
-) (int, error) {
+// countFileHistorySnapshots returns the number of snapshot files under the
+// project's file-history directories. The move preserves every snapshot as-is
+// — their contents are opaque user-file bytes — so the dry-run plan surfaces
+// the count so the user knows how many files will carry over unchanged and
+// may still reference the old project path inside their bytes.
+func countFileHistorySnapshots(locations *claude.ProjectLocations) (int, error) {
 	total := 0
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
 		snapshotPaths, err := listFilesRecursive(fileHistoryDir)
 		if err != nil {
 			return 0, fmt.Errorf("walk file-history dir %s: %w", fileHistoryDir, err)
 		}
-		for _, snapshotPath := range snapshotPaths {
-			data, err := os.ReadFile(snapshotPath) //nolint:gosec // path constructed from trusted internal data
-			if err != nil {
-				return 0, fmt.Errorf("read file-history snapshot %s: %w", snapshotPath, err)
-			}
-			if !rewrite.IsLikelyText(data) {
-				continue
-			}
-			_, count := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
-			if count > 0 {
-				total++
-			}
-		}
+		total += len(snapshotPaths)
 	}
 	return total, nil
 }
@@ -308,6 +295,8 @@ func executeMove(
 	if err := deleteOriginals(oldProjectDir, moveOptions, tracker); err != nil {
 		return err
 	}
+
+	warnFileHistoryPreserved(locations, moveOptions)
 
 	success = true
 	return nil
@@ -424,9 +413,6 @@ func rewriteGlobalFiles(
 	if err := rewriteConfigFile(claudeHome, moveOptions, tracker); err != nil {
 		return err
 	}
-	if err := rewriteFileHistorySnapshots(locations, moveOptions, tracker); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -465,6 +451,35 @@ func warningWriter(moveOptions Options) io.Writer {
 		return moveOptions.WarningWriter
 	}
 	return os.Stderr
+}
+
+// warnFileHistoryPreserved emits a single warning line per move when the
+// project has any file-history snapshots. cc-port never rewrites snapshot
+// contents — they are verbatim copies of user-edited files whose project-
+// path strings are coincidental — and the warning surfaces that invariant
+// so the user is not surprised when a grep across ~/.claude/file-history/
+// still returns the old project path after a move.
+func warnFileHistoryPreserved(locations *claude.ProjectLocations, moveOptions Options) {
+	count := 0
+	for _, fileHistoryDir := range locations.FileHistoryDirs {
+		snapshotPaths, err := listFilesRecursive(fileHistoryDir)
+		if err != nil {
+			// The same walk already succeeded during rewriteGlobalFiles'
+			// preceding work; an error here is unexpected. Skip the warning
+			// rather than fail the apply — the move itself is complete.
+			return
+		}
+		count += len(snapshotPaths)
+	}
+	if count == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(
+		warningWriter(moveOptions),
+		"warning: %d file-history snapshot(s) preserved as-is — contents may still reference the old project path "+
+			"(used for in-session rewinds, not persisted data)\n",
+		count,
+	)
 }
 
 func rewriteSessionFiles(
@@ -521,59 +536,6 @@ func rewriteConfigFile(claudeHome *claude.Home, moveOptions Options, tracker *gl
 	}
 	if err := rewrite.SafeWriteFile(configFile, rewritten, mode); err != nil {
 		return fmt.Errorf("write config file: %w", err)
-	}
-	return nil
-}
-
-// rewriteFileHistorySnapshots rewrites occurrences of the old project path
-// inside every file under each dir in locations.FileHistoryDirs. Snapshots
-// classified as binary by rewrite.IsLikelyText are skipped byte-for-byte;
-// substring-rewriting arbitrary bytes would corrupt them. Every text
-// snapshot whose content changes is backed up via tracker before being
-// written, so a later failure in the move rolls back the in-place edits.
-//
-// Binary snapshots that genuinely contain the old path verbatim (false
-// negatives of the 512-byte null-byte heuristic) remain stale; that residual
-// is the same one the export anonymizer has had since day one.
-func rewriteFileHistorySnapshots(
-	locations *claude.ProjectLocations,
-	moveOptions Options,
-	tracker *globalFileTracker,
-) error {
-	for _, fileHistoryDir := range locations.FileHistoryDirs {
-		snapshotPaths, err := listFilesRecursive(fileHistoryDir)
-		if err != nil {
-			return fmt.Errorf("walk file-history dir %s: %w", fileHistoryDir, err)
-		}
-		for _, snapshotPath := range snapshotPaths {
-			if err := rewriteFileHistorySnapshot(snapshotPath, moveOptions, tracker); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func rewriteFileHistorySnapshot(
-	snapshotPath string, moveOptions Options, tracker *globalFileTracker,
-) error {
-	data, err := os.ReadFile(snapshotPath) //nolint:gosec // path constructed from trusted internal data
-	if err != nil {
-		return fmt.Errorf("read file-history snapshot %s: %w", snapshotPath, err)
-	}
-	if !rewrite.IsLikelyText(data) {
-		return nil
-	}
-	rewritten, count := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
-	if count == 0 {
-		return nil
-	}
-	_, mode, err := tracker.save(snapshotPath)
-	if err != nil {
-		return fmt.Errorf("back up file-history snapshot %s: %w", snapshotPath, err)
-	}
-	if err := rewrite.SafeWriteFile(snapshotPath, rewritten, mode); err != nil {
-		return fmt.Errorf("write file-history snapshot %s: %w", snapshotPath, err)
 	}
 	return nil
 }

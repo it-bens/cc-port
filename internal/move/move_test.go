@@ -346,13 +346,13 @@ func TestApply_WarnsOnMalformedHistoryLines(t *testing.T) {
 		"warning should name the 1-based line number from the fixture")
 }
 
-func TestApply_RewritesFileHistoryTextSnapshots(t *testing.T) {
+func TestApply_PreservesFileHistorySnapshots(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	// Plant a binary snapshot alongside the existing fixture text snapshots.
-	// Binary: starts with a null byte so IsLikelyText returns false. The
-	// snapshot contains the old project path verbatim as a trailing ASCII
-	// substring — the rewriter must not touch it.
+	// Plant a binary-looking snapshot next to the fixture's text snapshot.
+	// Both must round-trip byte-identically through the move: file-history
+	// snapshots are opaque user-file bytes, and cc-port never rewrites their
+	// contents — their project-path strings (if any) are coincidental.
 	fileHistorySessionDir := filepath.Join(
 		claudeHome.FileHistoryDir(), "a1b2c3d4-0000-0000-0000-000000000001",
 	)
@@ -360,8 +360,6 @@ func TestApply_RewritesFileHistoryTextSnapshots(t *testing.T) {
 	binarySnapshotContent := append([]byte{0x00, 0x01, 0x02}, []byte(oldProjectPath)...)
 	require.NoError(t, os.WriteFile(binarySnapshotPath, binarySnapshotContent, 0600))
 
-	// Text snapshot already exists in the fixture (cafebabe11111111@v1) and
-	// contains oldProjectPath — capture its path for later assertion.
 	textSnapshotPath := filepath.Join(fileHistorySessionDir, "cafebabe11111111@v1")
 	textBefore, err := os.ReadFile(textSnapshotPath) //nolint:gosec // test path
 	require.NoError(t, err)
@@ -373,31 +371,35 @@ func TestApply_RewritesFileHistoryTextSnapshots(t *testing.T) {
 		NewPath: newProjectPath,
 	})
 	require.NoError(t, err)
-	assert.Positive(t, plan.FileHistorySnapshotRewrites,
-		"dry-run should count at least the one text snapshot that will be rewritten")
+	assert.Positive(t, plan.FileHistorySnapshotsPreserved,
+		"dry-run should count the snapshots that will be preserved as-is")
 
+	var warnings bytes.Buffer
 	err = move.Apply(claudeHome, move.Options{
-		OldPath:  oldProjectPath,
-		NewPath:  newProjectPath,
-		RefsOnly: true,
+		OldPath:       oldProjectPath,
+		NewPath:       newProjectPath,
+		RefsOnly:      true,
+		WarningWriter: &warnings,
 	})
 	require.NoError(t, err)
 
-	// Text snapshot: old path gone, new path present.
 	textAfter, err := os.ReadFile(textSnapshotPath) //nolint:gosec // test path
 	require.NoError(t, err)
-	textAfterContent := string(textAfter)
-	assert.NotContains(t, textAfterContent, oldProjectPath+"/",
-		"text snapshot should not contain old project path followed by /")
-	assert.Contains(t, textAfterContent, newProjectPath,
-		"text snapshot should contain new project path after rewrite")
+	assert.Equal(t, textBefore, textAfter,
+		"text snapshot must round-trip byte-identically")
+	assert.Contains(t, string(textAfter), oldProjectPath,
+		"text snapshot's old-path substring must survive the move verbatim")
 
-	// Binary snapshot: byte-for-byte identical. The heuristic must have
-	// skipped it even though it contains oldProjectPath as a substring.
 	binaryAfter, err := os.ReadFile(binarySnapshotPath) //nolint:gosec // test path
 	require.NoError(t, err)
 	assert.Equal(t, binarySnapshotContent, binaryAfter,
-		"binary snapshot must not be rewritten")
+		"binary snapshot must round-trip byte-identically")
+
+	output := warnings.String()
+	assert.Contains(t, output, "file-history snapshot",
+		"warning should name the file-history category")
+	assert.Contains(t, output, "preserved",
+		"warning should state the preservation invariant")
 }
 
 // assertSessionSubdirFilesRewritten walks the session subdirectories under

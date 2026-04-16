@@ -19,27 +19,9 @@ the form's `Run()`. There is no non-interactive / `--yes` mode; the only
 way to automate is the two-step manifest flow (`export manifest` /
 `import --from-manifest`), which sidesteps the prompts entirely.
 
-## Export
-
-### 2. Binary detection is heuristic, not exhaustive
-
-`internal/rewrite/rewrite.go:IsLikelyText` classifies content by scanning
-three 512-byte windows (head, middle, tail) for a `\x00` byte and by
-matching a small magic-prefix shortlist (PNG, JPEG, PDF, ZIP, gzip). The
-heuristic gates both export anonymization and `move.Apply`'s file-history
-snapshot rewrite. Two residual risks remain:
-
-- **False negatives** — a binary format outside the magic shortlist (RAR,
-  7z, custom containers) whose three windows are all null-free is still
-  treated as text and substring-rewritten, which corrupts it.
-- **False positives** — a text file whose middle or tail 512 bytes happen
-  to contain a `\x00` (rare but possible in Unicode-escape-heavy content
-  or synthetic fixtures) is classified as binary and skipped, leaving
-  old paths unanonymised in an export or unrewritten in a move.
-
 ## Import
 
-### 3. Same-filesystem requirement for atomic import
+### 2. Same-filesystem requirement for atomic import
 
 `internal/importer/importer.go:Run` uses a stage-and-swap strategy:
 every destination is staged at a `*.cc-port-import.tmp` sibling path and
@@ -52,7 +34,7 @@ volume), the promote step fails with `EXDEV` and the import aborts —
 correctly leaving no partial state — but the user sees a rename error
 that may look unfamiliar.
 
-### 4. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
+### 3. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
 
 `internal/rewrite/rewrite.go:FindPlaceholderTokens` scans archive bodies
 for placeholder tokens using a byte-walk matching `{{[A-Z0-9_]+}}`. This
@@ -178,6 +160,60 @@ Not covered — cases cc-port does not address:
   hit and decide whether editing it, leaving it, or moving the rule into
   the project is the right call.
 
+## File-history scope
+
+cc-port treats every file under `~/.claude/file-history/<session-uuid>/`
+as an opaque byte stream. The directory is indexed by session UUID (not
+by project path), and each `<hash>@vN` entry is a verbatim copy of a
+file the user edited through Claude Code — the in-session rewind feature
+uses it by filename, not by content. Any project-path string that
+appears inside a snapshot body is coincidental (log line, comment,
+string literal) and not load-bearing, so cc-port never inspects or
+rewrites snapshot contents.
+
+Preserved byte-for-byte — these operations copy snapshot bodies verbatim
+and surface a one-line warning so the behaviour is not a surprise:
+
+- `cc-port move` (apply or dry-run) leaves every snapshot under the same
+  UUID directory untouched. The old project path may still appear inside
+  a snapshot body afterwards; the apply path prints
+  `warning: N file-history snapshot(s) preserved as-is …` to stderr (or
+  to `move.Options.WarningWriter`) and the dry-run plan reports the
+  preserved count in the same position.
+- `cc-port export` (with the `file-history` category enabled) writes
+  each snapshot verbatim into the archive under `file-history/<uuid>/…`.
+  No path anonymisation runs over those bytes. The CLI prints
+  `Warning: N file-history snapshot(s) archived as-is …` to stderr when
+  the count is positive.
+- `cc-port import` writes snapshots back to disk as the opaque bytes the
+  archive carried. `ResolvePlaceholders` still runs over every entry for
+  compatibility with older archives (a `{{KEY}}` that somehow survived
+  inside a body will still be substituted), but on snapshots produced by
+  current cc-port the pass is a no-op because no tokens are present.
+
+Not covered — cases cc-port deliberately does not address:
+
+- **Stale path strings inside snapshots after a move.** Grepping
+  `~/.claude/file-history/` for the old project path still returns hits
+  after a successful move. This is by design: editing snapshot bytes
+  means substring-rewriting arbitrary user-file content, which is the
+  class of risk the previous binary-detection heuristic tried (and
+  sometimes failed) to guard against. Rewind continues to work because
+  it resolves by filename, not by content.
+- **Privacy of exported snapshots.** An archive shared with someone else
+  carries the sender's literal project path inside any snapshot that
+  quoted it. If a recipient must not see that path, the `file-history`
+  category has to be excluded up front — `--file-history=false`, the
+  absence of `--file-history` when other `--<category>` flags are set,
+  or unchecking the category in the interactive prompt. There is no
+  scrub pass between export and archive creation; the category flag is
+  the entire opt-out surface.
+- **Decoding snapshot UUIDs back to a project.** Snapshot directories
+  are named by session UUID. To find the owner of a UUID directory,
+  read the matching `~/.claude/sessions/<uuid>.json` and look at its
+  `cwd` field — cc-port does not index file-history in the reverse
+  direction.
+
 ## Malformed history entries scope
 
 `~/.claude/history.jsonl` is expected to be one JSON object per line. If
@@ -256,7 +292,7 @@ Not covered — cases cc-port does not address:
   without the caller supplying `{{KEY}}` are now refused. Migration:
   supply the resolution, or re-export with the key marked
   `Resolvable: false`.
-- **Exotic token shapes.** See limitation #5 — only
+- **Exotic token shapes.** See limitation #3 — only
   `{{[A-Z0-9_]+}}` is recognised by the pre-flight scanner.
 
 ## Concurrency guard scope

@@ -113,7 +113,7 @@ func runExportRoundTrip(t *testing.T, sourceHome *claude.Home, archivePath strin
 		},
 	}
 
-	err := export.Run(sourceHome, exportOptions)
+	_, err := export.Run(sourceHome, exportOptions)
 	require.NoError(t, err, "export should succeed")
 	assert.FileExists(t, archivePath, "archive file should exist after export")
 
@@ -129,6 +129,13 @@ func verifyNoOriginalPathsInZip(t *testing.T, archivePath string) {
 
 	for _, zipFile := range zipReader.File {
 		if zipFile.Name == "metadata.xml" {
+			continue
+		}
+		// File-history snapshots are archived verbatim — their contents are
+		// opaque user-file bytes, not anonymised material. A snapshot may
+		// legitimately carry the original project path inside its body, and
+		// cc-port preserves that by design.
+		if strings.HasPrefix(zipFile.Name, "file-history/") {
 			continue
 		}
 		readCloser, err := zipFile.Open()
@@ -234,7 +241,8 @@ func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	require.NoError(t, export.Run(sourceHome, exportOptions))
+	_, err := export.Run(sourceHome, exportOptions)
+	require.NoError(t, err)
 
 	// Inject a literal {{EXTERNAL_TOOL}} into one of the archive's memory
 	// bodies so the pre-flight gate sees it.
@@ -366,7 +374,7 @@ func TestIntegration_ImportConflict(t *testing.T) {
 		},
 	}
 
-	err := export.Run(sourceHome, exportOptions)
+	_, err := export.Run(sourceHome, exportOptions)
 	require.NoError(t, err, "export should succeed")
 
 	// Try to import back to the same ClaudeHome at the same project path.

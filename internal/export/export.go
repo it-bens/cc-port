@@ -34,19 +34,34 @@ type Options struct {
 	Placeholders []Placeholder
 }
 
+// Result summarises observable side effects of a successful export that the
+// CLI layer may want to surface to the user. Today it carries the number of
+// file-history snapshots archived verbatim; callers render a warning when
+// the count is positive so the user knows the archive contains un-anonymised
+// user-file bytes.
+type Result struct {
+	FileHistorySnapshotsArchived int
+}
+
 // Run executes the export: locates project data, creates a ZIP archive at
-// Options.OutputPath, and writes the requested categories with path anonymization.
-func Run(claudeHome *claude.Home, exportOptions Options) error {
+// Options.OutputPath, and writes the requested categories with path
+// anonymization. File-history snapshots are archived verbatim — their
+// contents are treated as opaque user-file bytes and are not scanned or
+// rewritten. The returned Result carries the number of snapshots included so
+// the caller can surface a warning.
+func Run(claudeHome *claude.Home, exportOptions Options) (Result, error) {
+	var result Result
+
 	locations, err := claude.LocateProject(claudeHome, exportOptions.ProjectPath)
 	if err != nil {
-		return fmt.Errorf("locate project: %w", err)
+		return result, fmt.Errorf("locate project: %w", err)
 	}
 
 	placeholders := exportOptions.Placeholders
 
 	zipFile, err := os.Create(exportOptions.OutputPath)
 	if err != nil {
-		return fmt.Errorf("create output file: %w", err)
+		return result, fmt.Errorf("create output file: %w", err)
 	}
 	defer func() { _ = zipFile.Close() }()
 
@@ -56,43 +71,45 @@ func Run(claudeHome *claude.Home, exportOptions Options) error {
 	metadata := buildMetadata(exportOptions)
 	metadataXMLData, err := buildMetadataXML(metadata)
 	if err != nil {
-		return fmt.Errorf("build metadata XML: %w", err)
+		return result, fmt.Errorf("build metadata XML: %w", err)
 	}
 	if err := writeToZip(archiveWriter, "metadata.xml", metadataXMLData); err != nil {
-		return fmt.Errorf("write metadata.xml: %w", err)
+		return result, fmt.Errorf("write metadata.xml: %w", err)
 	}
 
 	if exportOptions.Categories.Sessions {
 		if err := exportSessions(archiveWriter, locations, placeholders); err != nil {
-			return err
+			return result, err
 		}
 	}
 
 	if exportOptions.Categories.Memory {
 		if err := exportMemory(archiveWriter, locations, placeholders); err != nil {
-			return err
+			return result, err
 		}
 	}
 
 	if exportOptions.Categories.History {
 		if err := exportHistory(archiveWriter, claudeHome, exportOptions, placeholders); err != nil {
-			return err
+			return result, err
 		}
 	}
 
 	if exportOptions.Categories.FileHistory {
-		if err := exportFileHistory(archiveWriter, locations, placeholders); err != nil {
-			return err
+		archived, err := exportFileHistory(archiveWriter, locations)
+		if err != nil {
+			return result, err
 		}
+		result.FileHistorySnapshotsArchived = archived
 	}
 
 	if exportOptions.Categories.Config {
 		if err := exportConfig(archiveWriter, claudeHome, exportOptions, placeholders); err != nil {
-			return err
+			return result, err
 		}
 	}
 
-	return nil
+	return result, nil
 }
 
 // exportSessions writes all session transcripts and session subdirectories to the archive.
@@ -154,18 +171,30 @@ func exportHistory(
 	return nil
 }
 
-// exportFileHistory writes all file-history directories to the archive.
-func exportFileHistory(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
-) error {
+// exportFileHistory writes all file-history directories to the archive,
+// copying each snapshot byte-for-byte. Snapshots are verbatim copies of
+// files the user edited through Claude Code; their contents are opaque
+// user-file bytes, and any project-path string inside a snapshot is
+// coincidental (log line, comment, string literal). Substring-anonymising
+// arbitrary bytes was the origin of the binary-detection heuristic that
+// this path deliberately does not use — the archive carries the sender's
+// literal paths inside snapshots, and callers who care about privacy are
+// expected to exclude the file-history category up front.
+//
+// Returns the number of snapshot files added so the caller can surface a
+// warning to the user.
+func exportFileHistory(archiveWriter *zip.Writer, locations *claude.ProjectLocations) (int, error) {
+	total := 0
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
 		dirName := filepath.Base(fileHistoryDir)
 		zipPrefix := "file-history/" + dirName
-		if err := addDirToZip(archiveWriter, fileHistoryDir, zipPrefix, placeholders); err != nil {
-			return fmt.Errorf("add file-history dir %s: %w", fileHistoryDir, err)
+		count, err := addDirVerbatimToZip(archiveWriter, fileHistoryDir, zipPrefix)
+		if err != nil {
+			return total, fmt.Errorf("add file-history dir %s: %w", fileHistoryDir, err)
 		}
+		total += count
 	}
-	return nil
+	return total, nil
 }
 
 // exportConfig extracts and writes the project config block to the archive.
@@ -221,7 +250,9 @@ func writeToZip(archiveWriter *zip.Writer, name string, data []byte) error {
 }
 
 // addDirToZip recursively walks sourceDir, adding each file under zipPrefix in
-// the archive. Text files are anonymized; binary files are copied as-is.
+// the archive and anonymising path occurrences inside each file's bytes. The
+// only caller is exportSessions' session-subdir walk, whose content is always
+// textual (JSONL transcripts, subagent files, session-memory entries).
 func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeholders []Placeholder) error {
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {
@@ -244,9 +275,7 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeho
 			return fmt.Errorf("read file %s: %w", entryPath, err)
 		}
 
-		if rewrite.IsLikelyText(data) {
-			data = applyPlaceholders(data, placeholders)
-		}
+		data = applyPlaceholders(data, placeholders)
 
 		if err := writeToZip(archiveWriter, entryZipName, data); err != nil {
 			return err
@@ -254,6 +283,44 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeho
 	}
 
 	return nil
+}
+
+// addDirVerbatimToZip recursively walks sourceDir, adding each file under
+// zipPrefix in the archive with its bytes unchanged. Used for file-history
+// snapshots, whose contents are opaque user-file bytes that cc-port must not
+// transform. Returns the number of files written.
+func addDirVerbatimToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string) (int, error) {
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return 0, fmt.Errorf("read directory %s: %w", sourceDir, err)
+	}
+
+	count := 0
+	for _, entry := range entries {
+		entryPath := filepath.Join(sourceDir, entry.Name())
+		entryZipName := zipPrefix + "/" + entry.Name()
+
+		if entry.IsDir() {
+			subCount, err := addDirVerbatimToZip(archiveWriter, entryPath, entryZipName)
+			if err != nil {
+				return count, err
+			}
+			count += subCount
+			continue
+		}
+
+		data, err := os.ReadFile(entryPath) //nolint:gosec // G304: path is constructed from trusted input
+		if err != nil {
+			return count, fmt.Errorf("read file %s: %w", entryPath, err)
+		}
+
+		if err := writeToZip(archiveWriter, entryZipName, data); err != nil {
+			return count, err
+		}
+		count++
+	}
+
+	return count, nil
 }
 
 // extractProjectHistory reads historyPath line by line and returns a JSONL byte
