@@ -183,9 +183,14 @@ func SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, erro
 }
 
 // UserConfig parses ~/.claude.json and re-keys the project entry from
-// oldProject to newProject in the projects map. The bool return indicates whether
-// the old key was found and moved. Other project keys and all Extra fields are
-// preserved unchanged.
+// oldProject to newProject in the projects map. Path references embedded in
+// the block's contents (e.g. mcpServers.*.args, mcpServers.*.env.*,
+// mcpContextUris, exampleFiles) are rewritten with path-boundary-aware
+// substitution so values that hard-coded the old project path follow the
+// rename.
+//
+// The bool return indicates whether the old key was found and moved. Other
+// project keys and all Extra fields are preserved unchanged.
 func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error) {
 	var userConfig claude.UserConfig
 	if err := json.Unmarshal(data, &userConfig); err != nil {
@@ -205,7 +210,8 @@ func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error
 	if userConfig.Projects == nil {
 		userConfig.Projects = make(map[string]json.RawMessage)
 	}
-	userConfig.Projects[newProject] = projectData
+	rewrittenProjectData, _ := ReplacePathInBytes(projectData, oldProject, newProject)
+	userConfig.Projects[newProject] = rewrittenProjectData
 
 	result, err := json.Marshal(userConfig)
 	if err != nil {

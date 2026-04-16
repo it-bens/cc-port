@@ -288,6 +288,69 @@ func TestUserConfig(t *testing.T) {
 		_, _, err := rewrite.UserConfig([]byte(`not json`), "/old", "/new")
 		assert.Error(t, err)
 	})
+
+	t.Run("rewrites embedded path references inside the moved block", assertUserConfigRewritesEmbeddedPaths)
+
+	t.Run("does not rewrite path prefixes inside the moved block", func(t *testing.T) {
+		input := []byte(`{
+			"projects": {
+				"/old/project": {
+					"mcpContextUris": ["/old/project-extras/note.md"]
+				}
+			}
+		}`)
+
+		result, changed, err := rewrite.UserConfig(input, "/old/project", "/new/project")
+		require.NoError(t, err)
+		assert.True(t, changed)
+
+		assert.Contains(t, string(result), "/old/project-extras/note.md",
+			"path-boundary protection must skip prefix collision")
+		assert.NotContains(t, string(result), "/new/project-extras")
+	})
+}
+
+func assertUserConfigRewritesEmbeddedPaths(t *testing.T) {
+	input := []byte(`{
+		"projects": {
+			"/old/project": {
+				"mcpServers": {
+					"example": {
+						"args": ["--root", "/old/project/src"],
+						"env": {"PROJECT_DIR": "/old/project"}
+					}
+				},
+				"mcpContextUris": ["file:///old/project/context.md"],
+				"exampleFiles": ["/old/project/examples/one.txt"]
+			}
+		}
+	}`)
+
+	result, changed, err := rewrite.UserConfig(input, "/old/project", "/new/project")
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	var decoded map[string]interface{}
+	require.NoError(t, json.Unmarshal(result, &decoded))
+
+	projects := decoded["projects"].(map[string]interface{})
+	block := projects["/new/project"].(map[string]interface{})
+
+	mcpServers := block["mcpServers"].(map[string]interface{})
+	example := mcpServers["example"].(map[string]interface{})
+	args := example["args"].([]interface{})
+	assert.Equal(t, "/new/project/src", args[1])
+
+	env := example["env"].(map[string]interface{})
+	assert.Equal(t, "/new/project", env["PROJECT_DIR"])
+
+	contextURIs := block["mcpContextUris"].([]interface{})
+	assert.Equal(t, "file:///new/project/context.md", contextURIs[0])
+
+	exampleFiles := block["exampleFiles"].([]interface{})
+	assert.Equal(t, "/new/project/examples/one.txt", exampleFiles[0])
+
+	assert.NotContains(t, string(result), "/old/project")
 }
 
 func TestRewriteSettingsJSON(t *testing.T) {
