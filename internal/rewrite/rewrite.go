@@ -16,39 +16,92 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 )
 
-// escapeSJSONKey escapes the characters sjson treats as path meta-characters
+// EscapeSJSONKey escapes the characters sjson treats as path meta-characters
 // (`\` and `.`) so an arbitrary string can be used as a single key segment in
 // an sjson path expression. Project paths routinely contain `.` (e.g.
 // "/Users/x/proj.v2"), which would otherwise be parsed as nested keys.
-func escapeSJSONKey(key string) string {
+//
+// This is exported because both the move rewrite path and the import config
+// merge path need to build sjson expressions from user-supplied project paths;
+// keeping a single source of truth avoids drift between the two call sites.
+func EscapeSJSONKey(key string) string {
 	key = strings.ReplaceAll(key, `\`, `\\`)
 	key = strings.ReplaceAll(key, `.`, `\.`)
 	return key
 }
 
+// binaryMagicPrefixes is the shortlist of file-type signatures that IsLikelyText
+// recognises as unambiguously binary. Anything starting with one of these byte
+// sequences is classified as binary regardless of whether it happens to be
+// null-free in the first few hundred bytes.
+var binaryMagicPrefixes = [][]byte{
+	{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, // PNG
+	{0xff, 0xd8, 0xff},                            // JPEG
+	{'%', 'P', 'D', 'F', '-'},                     // PDF
+	{'P', 'K', 0x03, 0x04},                        // ZIP / JAR / etc.
+	{0x1f, 0x8b},                                  // gzip
+}
+
+// windowLength is the size of each of the three windows IsLikelyText samples.
+const windowLength = 512
+
 // IsLikelyText is a binary-detection heuristic used to decide whether a file
 // should be passed through path-substring rewriting. Substring replacement on
 // binary payloads (file-history snapshots can be arbitrary bytes) would
-// corrupt them. A null byte in the first 512 bytes is a strong signal of
-// binary content; conventional UTF-8 text never contains one.
+// corrupt them. The heuristic has two stages:
 //
-// False negatives are possible — a binary file whose first 512 bytes happen
-// to contain no null byte will be treated as text. Callers that rewrite such
-// a file can corrupt it; see the known-limitations README.
+//  1. Magic-byte fast path. If data starts with a prefix in binaryMagicPrefixes
+//     (PNG, JPEG, PDF, ZIP, gzip), return false immediately. These formats
+//     sometimes have long null-free headers that would otherwise fool stage 2.
+//  2. Triple-window null-byte scan. Scan up to three 512-byte windows — at the
+//     start, centred on the middle, and at the end of data. A null byte in any
+//     window classifies the buffer as binary. Conventional UTF-8 text never
+//     contains a null; three samples is a strong signal across files that have
+//     a textual header but binary body (or the reverse).
+//
+// Residual false-positive risk: a text file whose middle or tail 512 bytes
+// happen to contain a null byte (rare but possible) is classified as binary
+// and therefore not rewritten. Residual false-negative risk: a binary format
+// not in the magic shortlist (RAR, 7z, exotic containers) whose three windows
+// all happen to be null-free is still treated as text. Both risks are
+// documented in the known-limitations README.
 func IsLikelyText(data []byte) bool {
-	checkLength := len(data)
-	if checkLength > 512 {
-		checkLength = 512
+	if len(data) == 0 {
+		return true
 	}
-	return !bytes.ContainsRune(data[:checkLength], 0)
+
+	for _, magic := range binaryMagicPrefixes {
+		if bytes.HasPrefix(data, magic) {
+			return false
+		}
+	}
+
+	windows := sampleWindows(data, windowLength)
+	for _, window := range windows {
+		if bytes.ContainsRune(window, 0) {
+			return false
+		}
+	}
+	return true
 }
 
-// ReplaceInBytes replaces all occurrences of oldString with newString in data.
-// It returns the resulting bytes and the number of replacements made.
-func ReplaceInBytes(data []byte, oldString, newString string) ([]byte, int) {
-	count := strings.Count(string(data), oldString)
-	result := bytes.ReplaceAll(data, []byte(oldString), []byte(newString))
-	return result, count
+// sampleWindows returns up to three byte slices of the requested length,
+// sampled at the start, middle, and end of data. Windows may overlap when
+// data is shorter than 3×length; that is fine — scanning overlapping bytes
+// a second time is cheap and preserves the invariant that "null byte in any
+// window means binary" works uniformly regardless of buffer length.
+func sampleWindows(data []byte, length int) [][]byte {
+	if len(data) <= length {
+		return [][]byte{data}
+	}
+
+	head := data[:length]
+	tail := data[len(data)-length:]
+
+	middleStart := (len(data) - length) / 2
+	middle := data[middleStart : middleStart+length]
+
+	return [][]byte{head, middle, tail}
 }
 
 // isPathContinuationByte reports whether b can extend a path component name —
@@ -200,7 +253,7 @@ func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error
 		return nil, false, fmt.Errorf("invalid user config JSON")
 	}
 
-	oldPath := "projects." + escapeSJSONKey(oldProject)
+	oldPath := "projects." + EscapeSJSONKey(oldProject)
 	existing := gjson.GetBytes(data, oldPath)
 	if !existing.Exists() {
 		return data, false, nil
@@ -212,12 +265,257 @@ func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error
 	if err != nil {
 		return nil, false, fmt.Errorf("delete old project key: %w", err)
 	}
-	newPath := "projects." + escapeSJSONKey(newProject)
+	newPath := "projects." + EscapeSJSONKey(newProject)
 	updated, err = sjson.SetRawBytes(updated, newPath, rewrittenBlock)
 	if err != nil {
 		return nil, false, fmt.Errorf("insert new project key: %w", err)
 	}
 	return updated, true, nil
+}
+
+// maxPlaceholderKeyLength bounds the number of bytes FindPlaceholderTokens
+// looks ahead after `{{` for the matching `}}`. A real cc-port placeholder
+// key is a short upper-snake identifier (`PROJECT_PATH`, `HOME`,
+// `UNRESOLVED_1`); 64 is generous and prevents pathological scans on input
+// that contains many `{{` sequences without a close.
+const maxPlaceholderKeyLength = 64
+
+// isPlaceholderKeyByte reports whether b is valid inside a placeholder key.
+// Placeholder keys are `[A-Z0-9_]+` — the upper-snake shape every
+// auto-detected and prompted key emitted by cc-port follows.
+func isPlaceholderKeyByte(b byte) bool {
+	switch {
+	case b >= 'A' && b <= 'Z':
+		return true
+	case b >= '0' && b <= '9':
+		return true
+	case b == '_':
+		return true
+	}
+	return false
+}
+
+// FindPlaceholderTokens returns every distinct placeholder token of the form
+// `{{KEY}}` found in data, where KEY matches `[A-Z0-9_]+`. Tokens are
+// returned with their surrounding braces included (e.g. `{{PROJECT_PATH}}`)
+// in first-occurrence order.
+//
+// Exotic placeholder shapes — lowercase keys, punctuation, whitespace inside
+// braces, nested braces, multi-line keys — are ignored by design. cc-port's
+// export path only ever writes upper-snake keys, so matching anything wider
+// would invite false positives on ordinary JSON or Markdown content that
+// happens to contain `{{`.
+func FindPlaceholderTokens(data []byte) []string {
+	seen := make(map[string]struct{})
+	var tokens []string
+
+	for cursor := 0; cursor < len(data)-3; cursor++ {
+		if data[cursor] != '{' || data[cursor+1] != '{' {
+			continue
+		}
+
+		// Walk key bytes up to the length cap; bail on any non-key byte.
+		keyEnd := cursor + 2
+		for keyEnd < len(data) && keyEnd-cursor-2 < maxPlaceholderKeyLength {
+			if !isPlaceholderKeyByte(data[keyEnd]) {
+				break
+			}
+			keyEnd++
+		}
+
+		if keyEnd == cursor+2 {
+			// No key bytes between braces — `{{}}` or `{{ `; skip.
+			continue
+		}
+		if keyEnd+1 >= len(data) || data[keyEnd] != '}' || data[keyEnd+1] != '}' {
+			// Not closed with `}}` immediately after the key.
+			continue
+		}
+
+		token := string(data[cursor : keyEnd+2])
+		if _, already := seen[token]; !already {
+			seen[token] = struct{}{}
+			tokens = append(tokens, token)
+		}
+		cursor = keyEnd + 1
+	}
+	return tokens
+}
+
+// renameEntry captures one pending rename operation handled by
+// SafeRenamePromoter. `temp` is the already-staged path that Promote will
+// move into `final`. If `final` already exists at promote time, its bytes
+// are backed up so Rollback can restore them; otherwise `existed` stays
+// false and Rollback removes the promoted file.
+type renameEntry struct {
+	temp, final string
+	// promoted is set to true once Promote has moved temp → final.
+	promoted bool
+	// existed captures whether `final` had content before promotion.
+	existed bool
+	// backupBytes are the pre-promote contents of `final`, saved if it
+	// existed at promote time.
+	backupBytes []byte
+	// backupMode is the pre-promote mode of `final`.
+	backupMode os.FileMode
+	// isDir is true when the entry represents a directory rename rather
+	// than a file rename. Directory backups are stored as temp paths on
+	// disk (see backupDir) because in-memory buffering is unbounded.
+	isDir bool
+	// backupDir is the path where the replaced directory (if any) was
+	// relocated before the promote. On rollback, it is renamed back into
+	// place. Empty when `final` did not previously exist or when the
+	// entry is a file.
+	backupDir string
+}
+
+// SafeRenamePromoter stages a sequence of rename operations and applies them
+// atomically from the caller's perspective. Each entry is a
+// (temp, final) pair; Stage records the intent, Promote renames each temp
+// onto its final in registration order (saving any displaced content as a
+// backup), and Rollback walks the promoted entries in reverse order,
+// restoring backups and removing any content that did not previously exist.
+//
+// The promoter is designed for the import stage-and-swap: every destination
+// touched by a successful import is visible all-or-nothing, and any failure
+// mid-sequence leaves the filesystem in its pre-import state except in
+// catastrophic multi-fault cases (documented in the README).
+//
+// Rename atomicity is an `os.Rename` property and only holds when temp and
+// final share a filesystem. Callers are responsible for choosing temp paths
+// adjacent to their destinations; SafeRenamePromoter does not copy across
+// filesystems.
+type SafeRenamePromoter struct {
+	entries []*renameEntry
+	// renameFunc is the hook tests use to inject promote-time failures. In
+	// production it is nil and os.Rename is called directly.
+	renameFunc func(oldpath, newpath string) error
+}
+
+// NewSafeRenamePromoter returns a promoter ready to accept Stage calls.
+func NewSafeRenamePromoter() *SafeRenamePromoter {
+	return &SafeRenamePromoter{}
+}
+
+// SetRenameFunc overrides the underlying rename implementation. Package
+// tests use this to inject EXDEV-like failures; production callers leave
+// it at the zero value so os.Rename is used directly.
+func (p *SafeRenamePromoter) SetRenameFunc(fn func(oldpath, newpath string) error) {
+	p.renameFunc = fn
+}
+
+// StageFile records an intent to rename a staged file at temp onto final at
+// Promote time. If final already exists, its bytes are read and kept as a
+// backup for Rollback.
+func (p *SafeRenamePromoter) StageFile(temp, final string) {
+	p.entries = append(p.entries, &renameEntry{temp: temp, final: final})
+}
+
+// StageDir records an intent to rename a staged directory at temp onto
+// final at Promote time. If final already exists at promote time, it is
+// relocated to a sibling backup path so Rollback can restore it.
+func (p *SafeRenamePromoter) StageDir(temp, final string) {
+	p.entries = append(p.entries, &renameEntry{temp: temp, final: final, isDir: true})
+}
+
+// Promote applies each staged rename in order. On the first failure, it
+// calls Rollback and returns the promote error; callers should not invoke
+// Rollback themselves in that case.
+func (p *SafeRenamePromoter) Promote() error {
+	for _, entry := range p.entries {
+		if err := p.promoteEntry(entry); err != nil {
+			p.Rollback()
+			return fmt.Errorf("promote %s: %w", entry.final, err)
+		}
+	}
+	return nil
+}
+
+// promoteEntry moves a single staged temp onto its final, snapshotting any
+// displaced content for rollback first.
+func (p *SafeRenamePromoter) promoteEntry(entry *renameEntry) error {
+	info, err := os.Stat(entry.final)
+	switch {
+	case err == nil:
+		entry.existed = true
+		entry.backupMode = info.Mode()
+		if entry.isDir {
+			backupDir := entry.final + ".cc-port-rollback"
+			if renameErr := p.doRename(entry.final, backupDir); renameErr != nil {
+				return fmt.Errorf("stash existing directory: %w", renameErr)
+			}
+			entry.backupDir = backupDir
+		} else {
+			data, readErr := os.ReadFile(entry.final)
+			if readErr != nil {
+				return fmt.Errorf("read existing file for backup: %w", readErr)
+			}
+			entry.backupBytes = data
+		}
+	case os.IsNotExist(err):
+		entry.existed = false
+	default:
+		return fmt.Errorf("stat final: %w", err)
+	}
+
+	if err := p.doRename(entry.temp, entry.final); err != nil {
+		// Best-effort restore of any backup already relocated for this entry.
+		if entry.isDir && entry.backupDir != "" {
+			_ = p.doRename(entry.backupDir, entry.final)
+		}
+		return err
+	}
+	entry.promoted = true
+	return nil
+}
+
+// doRename invokes the promoter's rename hook (os.Rename by default).
+func (p *SafeRenamePromoter) doRename(oldpath, newpath string) error {
+	if p.renameFunc != nil {
+		return p.renameFunc(oldpath, newpath)
+	}
+	return os.Rename(oldpath, newpath)
+}
+
+// Rollback walks promoted entries in reverse order and restores the
+// pre-promote state on disk: backups are renamed or rewritten into their
+// finals, and content that did not previously exist is removed. Best
+// effort — a failure to restore one entry is logged by leaving the state
+// as-is and continuing with the remaining entries.
+func (p *SafeRenamePromoter) Rollback() {
+	for index := len(p.entries) - 1; index >= 0; index-- {
+		entry := p.entries[index]
+		if !entry.promoted {
+			// Not yet promoted; best-effort clean up the temp if it still
+			// exists. Ignore errors — the import is already failing.
+			if entry.isDir {
+				_ = os.RemoveAll(entry.temp)
+			} else {
+				_ = os.Remove(entry.temp)
+			}
+			continue
+		}
+		p.rollbackEntry(entry)
+	}
+}
+
+func (p *SafeRenamePromoter) rollbackEntry(entry *renameEntry) {
+	if !entry.existed {
+		if entry.isDir {
+			_ = os.RemoveAll(entry.final)
+		} else {
+			_ = os.Remove(entry.final)
+		}
+		return
+	}
+
+	if entry.isDir {
+		_ = os.RemoveAll(entry.final)
+		_ = p.doRename(entry.backupDir, entry.final)
+		return
+	}
+
+	_ = SafeWriteFile(entry.final, entry.backupBytes, entry.backupMode)
 }
 
 // SafeWriteFile writes data to a temporary file in the same directory as path,

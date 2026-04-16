@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
 )
 
@@ -41,28 +42,21 @@ func TestValidateResolutions(t *testing.T) {
 		{
 			name: "valid absolute paths",
 			resolutions: map[string]string{
-				"__PLACEHOLDER__": "/home/user/project",
+				"{{PLACEHOLDER}}": "/home/user/project",
 			},
 			wantErr: false,
 		},
 		{
-			name: "UNRESOLVED key with empty value is allowed",
+			name: "empty value is always rejected",
 			resolutions: map[string]string{
-				"UNRESOLVED": "",
-			},
-			wantErr: false,
-		},
-		{
-			name: "empty value for non-UNRESOLVED placeholder",
-			resolutions: map[string]string{
-				"__PLACEHOLDER__": "",
+				"{{PLACEHOLDER}}": "",
 			},
 			wantErr: true,
 		},
 		{
 			name: "relative path is rejected",
 			resolutions: map[string]string{
-				"__PLACEHOLDER__": "relative/path",
+				"{{PLACEHOLDER}}": "relative/path",
 			},
 			wantErr: true,
 		},
@@ -78,6 +72,95 @@ func TestValidateResolutions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClassifyPlaceholders(t *testing.T) {
+	for _, testCase := range classifyPlaceholderCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			missing, undeclared := importer.ClassifyPlaceholders(
+				testCase.bodies, testCase.declared, testCase.resolutions,
+			)
+			assert.Equal(t, testCase.wantMissing, missing)
+			assert.Equal(t, testCase.wantUndeclared, undeclared)
+		})
+	}
+}
+
+// classifyPlaceholderCases returns the table feeding TestClassifyPlaceholders.
+// Kept as a helper so the test body stays under funlen while all cases live
+// in one place.
+func classifyPlaceholderCases() []classifyCase {
+	trueVal := true
+	falseVal := false
+	return []classifyCase{
+		{
+			name:   "all present keys resolved",
+			bodies: [][]byte{[]byte(`cwd={{PROJECT_PATH}}, home={{HOME}}`)},
+			declared: []export.Placeholder{
+				{Key: "{{PROJECT_PATH}}", Resolvable: &trueVal},
+				{Key: "{{HOME}}", Resolvable: &trueVal},
+			},
+			resolutions: map[string]string{
+				"{{PROJECT_PATH}}": "/dest/project",
+				"{{HOME}}":         "/dest",
+			},
+		},
+		{
+			name:     "declared Resolvable=false + present + not resolved is clean",
+			bodies:   [][]byte{[]byte(`legacy={{UNRESOLVABLE}}`)},
+			declared: []export.Placeholder{{Key: "{{UNRESOLVABLE}}", Resolvable: &falseVal}},
+		},
+		{
+			name:        "declared nil + not resolved is missing",
+			bodies:      [][]byte{[]byte(`extra={{EXTRA}}`)},
+			declared:    []export.Placeholder{{Key: "{{EXTRA}}", Resolvable: nil}},
+			wantMissing: []string{"{{EXTRA}}"},
+		},
+		{
+			name:        "declared true + not resolved is missing",
+			bodies:      [][]byte{[]byte(`extra={{EXTRA}}`)},
+			declared:    []export.Placeholder{{Key: "{{EXTRA}}", Resolvable: &trueVal}},
+			wantMissing: []string{"{{EXTRA}}"},
+		},
+		{
+			name:           "present but not declared is undeclared",
+			bodies:         [][]byte{[]byte(`leaked={{SECRET}}`)},
+			declared:       []export.Placeholder{{Key: "{{PROJECT_PATH}}", Resolvable: &trueVal}},
+			wantUndeclared: []string{"{{SECRET}}"},
+		},
+		{
+			name:   "both missing and undeclared populated and sorted",
+			bodies: [][]byte{[]byte(`{{ZETA}} {{ALPHA}} {{UNDECLARED_B}} {{UNDECLARED_A}}`)},
+			declared: []export.Placeholder{
+				{Key: "{{ZETA}}", Resolvable: &trueVal},
+				{Key: "{{ALPHA}}", Resolvable: &trueVal},
+			},
+			wantMissing:    []string{"{{ALPHA}}", "{{ZETA}}"},
+			wantUndeclared: []string{"{{UNDECLARED_A}}", "{{UNDECLARED_B}}"},
+		},
+		{
+			name:     "declared but absent from bodies is clean",
+			bodies:   [][]byte{[]byte("no placeholder tokens here")},
+			declared: []export.Placeholder{{Key: "{{UNUSED}}", Resolvable: &trueVal}},
+		},
+		{
+			// importer.Run pre-fills PROJECT_PATH unconditionally.
+			name:     "PROJECT_PATH resolved implicitly even without explicit resolution",
+			bodies:   [][]byte{[]byte(`cwd={{PROJECT_PATH}}`)},
+			declared: []export.Placeholder{{Key: "{{PROJECT_PATH}}", Resolvable: &trueVal}},
+		},
+	}
+}
+
+// classifyCase captures one expected outcome of ClassifyPlaceholders for the
+// table-driven TestClassifyPlaceholders.
+type classifyCase struct {
+	name           string
+	bodies         [][]byte
+	declared       []export.Placeholder
+	resolutions    map[string]string
+	wantMissing    []string
+	wantUndeclared []string
 }
 
 func TestCheckConflict(t *testing.T) {

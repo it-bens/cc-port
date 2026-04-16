@@ -3,6 +3,7 @@ package rewrite_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,23 +23,6 @@ func splitLines(data []byte) []string {
 		result[index] = string(part)
 	}
 	return result
-}
-
-func TestReplaceInBytes(t *testing.T) {
-	t.Run("match replaces all occurrences and returns count", func(t *testing.T) {
-		input := []byte(`{"project": "/old/project", "other": "/old/project"}`)
-		result, count := rewrite.ReplaceInBytes(input, "/old/project", "/new/project")
-		assert.Equal(t, 2, count)
-		assert.Contains(t, string(result), "/new/project")
-		assert.NotContains(t, string(result), "/old/project")
-	})
-
-	t.Run("no match returns original data and zero count", func(t *testing.T) {
-		input := []byte(`{"project": "/other/project"}`)
-		result, count := rewrite.ReplaceInBytes(input, "/old/project", "/new/project")
-		assert.Equal(t, 0, count)
-		assert.Equal(t, input, result)
-	})
 }
 
 func TestHistoryJSONL(t *testing.T) {
@@ -395,7 +379,7 @@ func topLevelKeys(t *testing.T, raw []byte) []string {
 func TestRewriteSettingsJSON(t *testing.T) {
 	t.Run("replaces project path strings in settings content", func(t *testing.T) {
 		input := []byte(`{"allowedPaths":["/old/project","/old/project/subdir"],"other":"value"}`)
-		result, count := rewrite.ReplaceInBytes(input, "/old/project", "/new/project")
+		result, count := rewrite.ReplacePathInBytes(input, "/old/project", "/new/project")
 		assert.Equal(t, 2, count)
 		assert.Contains(t, string(result), "/new/project")
 		assert.NotContains(t, string(result), "/old/project")
@@ -403,7 +387,7 @@ func TestRewriteSettingsJSON(t *testing.T) {
 
 	t.Run("returns zero count when no matches in settings content", func(t *testing.T) {
 		input := []byte(`{"allowedPaths":["/other/project"]}`)
-		result, count := rewrite.ReplaceInBytes(input, "/old/project", "/new/project")
+		result, count := rewrite.ReplacePathInBytes(input, "/old/project", "/new/project")
 		assert.Equal(t, 0, count)
 		assert.Equal(t, input, result)
 	})
@@ -445,5 +429,299 @@ func TestSafeWriteFile(t *testing.T) {
 	t.Run("returns error when directory does not exist", func(t *testing.T) {
 		err := rewrite.SafeWriteFile("/nonexistent/directory/file.json", []byte("data"), 0600)
 		assert.Error(t, err)
+	})
+}
+
+func TestFindPlaceholderTokens(t *testing.T) {
+	t.Run("finds distinct upper-snake tokens", func(t *testing.T) {
+		data := []byte(`cwd={{PROJECT_PATH}}, home={{HOME}}, extra={{UNRESOLVED_1}}`)
+		tokens := rewrite.FindPlaceholderTokens(data)
+		assert.Equal(t, []string{"{{PROJECT_PATH}}", "{{HOME}}", "{{UNRESOLVED_1}}"}, tokens)
+	})
+
+	t.Run("deduplicates repeated occurrences", func(t *testing.T) {
+		data := []byte(`{{KEY}} {{KEY}} and {{KEY}} again`)
+		assert.Equal(t, []string{"{{KEY}}"}, rewrite.FindPlaceholderTokens(data))
+	})
+
+	t.Run("ignores whitespace inside braces", func(t *testing.T) {
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{ }}`)))
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{ KEY }}`)))
+	})
+
+	t.Run("ignores lowercase keys", func(t *testing.T) {
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{lower}}`)))
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{MixedCase}}`)))
+	})
+
+	t.Run("ignores empty braces and unclosed sequences", func(t *testing.T) {
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{}}`)))
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{KEY`)))
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{KEY}`)))
+	})
+
+	t.Run("requires close immediately after key bytes", func(t *testing.T) {
+		// `{{KEY!}}` has a non-key byte before the close — rejected.
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{KEY!}}`)))
+	})
+
+	t.Run("bounds key length to avoid pathological scans", func(t *testing.T) {
+		// 65 A's followed by }} — beyond the 64-byte cap, so not accepted.
+		long := append([]byte(`{{`), bytes.Repeat([]byte("A"), 65)...)
+		long = append(long, []byte(`}}`)...)
+		assert.Empty(t, rewrite.FindPlaceholderTokens(long))
+	})
+
+	t.Run("handles adjacent tokens", func(t *testing.T) {
+		data := []byte(`{{A}}{{B}}`)
+		assert.Equal(t, []string{"{{A}}", "{{B}}"}, rewrite.FindPlaceholderTokens(data))
+	})
+
+	t.Run("handles token-before-text-before-token", func(t *testing.T) {
+		data := []byte(`{{A}} middle {{B}}`)
+		assert.Equal(t, []string{"{{A}}", "{{B}}"}, rewrite.FindPlaceholderTokens(data))
+	})
+
+	t.Run("returns nil on empty input", func(t *testing.T) {
+		assert.Empty(t, rewrite.FindPlaceholderTokens(nil))
+		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte{}))
+	})
+}
+
+func TestSafeRenamePromoter_Files(t *testing.T) {
+	t.Run("promotes a file onto a non-existent final", func(t *testing.T) {
+		dir := t.TempDir()
+		final := filepath.Join(dir, "final.txt")
+		temp := filepath.Join(dir, "final.txt.tmp")
+		require.NoError(t, os.WriteFile(temp, []byte("staged"), 0600))
+
+		promoter := rewrite.NewSafeRenamePromoter()
+		promoter.StageFile(temp, final)
+		require.NoError(t, promoter.Promote())
+
+		data, err := os.ReadFile(final) //nolint:gosec // G304: t.TempDir() path
+		require.NoError(t, err)
+		assert.Equal(t, "staged", string(data))
+		assert.NoFileExists(t, temp)
+	})
+
+	t.Run("promotes a file over an existing final", func(t *testing.T) {
+		dir := t.TempDir()
+		final := filepath.Join(dir, "final.txt")
+		temp := filepath.Join(dir, "final.txt.tmp")
+		require.NoError(t, os.WriteFile(final, []byte("old"), 0600))
+		require.NoError(t, os.WriteFile(temp, []byte("new"), 0600))
+
+		promoter := rewrite.NewSafeRenamePromoter()
+		promoter.StageFile(temp, final)
+		require.NoError(t, promoter.Promote())
+
+		data, err := os.ReadFile(final) //nolint:gosec // G304: t.TempDir() path
+		require.NoError(t, err)
+		assert.Equal(t, "new", string(data))
+	})
+
+	t.Run("rollback restores the pre-promote contents of an existing final", assertRollbackRestoresFile)
+	t.Run("rollback removes a promoted file that did not exist before", assertRollbackRemovesNewFile)
+}
+
+func TestSafeRenamePromoter_Dirs(t *testing.T) {
+	t.Run("promotes a directory onto a non-existent final", func(t *testing.T) {
+		dir := t.TempDir()
+		final := filepath.Join(dir, "project")
+		temp := filepath.Join(dir, "project.tmp")
+		require.NoError(t, os.MkdirAll(filepath.Join(temp, "sub"), 0750))
+		require.NoError(t, os.WriteFile(filepath.Join(temp, "sub", "x.txt"), []byte("x"), 0600))
+
+		promoter := rewrite.NewSafeRenamePromoter()
+		promoter.StageDir(temp, final)
+		require.NoError(t, promoter.Promote())
+
+		data, err := os.ReadFile(filepath.Join(final, "sub", "x.txt")) //nolint:gosec // G304: t.TempDir() path
+		require.NoError(t, err)
+		assert.Equal(t, "x", string(data))
+		assert.NoDirExists(t, temp)
+	})
+
+	t.Run("rollback restores an overwritten directory", assertRollbackRestoresDir)
+}
+
+func assertRollbackRestoresFile(t *testing.T) {
+	dir := t.TempDir()
+	finalA := filepath.Join(dir, "a.txt")
+	tempA := filepath.Join(dir, "a.txt.tmp")
+	finalB := filepath.Join(dir, "b.txt")
+	tempB := filepath.Join(dir, "b.txt.tmp")
+
+	require.NoError(t, os.WriteFile(finalA, []byte("A-old"), 0600))
+	require.NoError(t, os.WriteFile(finalB, []byte("B-old"), 0600))
+	require.NoError(t, os.WriteFile(tempA, []byte("A-new"), 0600))
+	require.NoError(t, os.WriteFile(tempB, []byte("B-new"), 0600))
+
+	promoter := rewrite.NewSafeRenamePromoter()
+	promoter.StageFile(tempA, finalA)
+	promoter.StageFile(tempB, finalB)
+	promoter.SetRenameFunc(failOnCallN(2))
+
+	err := promoter.Promote()
+	require.Error(t, err)
+
+	got, readErr := os.ReadFile(finalA) //nolint:gosec // G304: t.TempDir() path
+	require.NoError(t, readErr)
+	assert.Equal(t, "A-old", string(got))
+
+	got, readErr = os.ReadFile(finalB) //nolint:gosec // G304: t.TempDir() path
+	require.NoError(t, readErr)
+	assert.Equal(t, "B-old", string(got))
+}
+
+func assertRollbackRemovesNewFile(t *testing.T) {
+	dir := t.TempDir()
+	finalA := filepath.Join(dir, "a.txt")
+	tempA := filepath.Join(dir, "a.txt.tmp")
+	finalB := filepath.Join(dir, "b.txt")
+	tempB := filepath.Join(dir, "b.txt.tmp")
+	require.NoError(t, os.WriteFile(tempA, []byte("A-new"), 0600))
+	require.NoError(t, os.WriteFile(tempB, []byte("B-new"), 0600))
+
+	promoter := rewrite.NewSafeRenamePromoter()
+	promoter.StageFile(tempA, finalA)
+	promoter.StageFile(tempB, finalB)
+	promoter.SetRenameFunc(failOnCallN(2))
+
+	err := promoter.Promote()
+	require.Error(t, err)
+
+	assert.NoFileExists(t, finalA)
+	assert.NoFileExists(t, finalB)
+}
+
+func assertRollbackRestoresDir(t *testing.T) {
+	dir := t.TempDir()
+	final := filepath.Join(dir, "project")
+	temp := filepath.Join(dir, "project.tmp")
+
+	require.NoError(t, os.MkdirAll(final, 0750))
+	require.NoError(t, os.WriteFile(filepath.Join(final, "old.txt"), []byte("old"), 0600))
+	require.NoError(t, os.MkdirAll(temp, 0750))
+	require.NoError(t, os.WriteFile(filepath.Join(temp, "new.txt"), []byte("new"), 0600))
+
+	other := filepath.Join(dir, "other.txt")
+	otherTemp := filepath.Join(dir, "other.txt.tmp")
+	require.NoError(t, os.WriteFile(otherTemp, []byte("o"), 0600))
+
+	promoter := rewrite.NewSafeRenamePromoter()
+	promoter.StageDir(temp, final)
+	promoter.StageFile(otherTemp, other)
+	// call 1: stash dir backup; 2: promote dir; 3: promote file (fail).
+	promoter.SetRenameFunc(failOnCallN(3))
+
+	err := promoter.Promote()
+	require.Error(t, err)
+
+	got, readErr := os.ReadFile(filepath.Join(final, "old.txt")) //nolint:gosec // G304: t.TempDir() path
+	require.NoError(t, readErr)
+	assert.Equal(t, "old", string(got))
+	assert.NoFileExists(t, filepath.Join(final, "new.txt"))
+}
+
+// failOnCallN returns a rename hook that invokes os.Rename on every call
+// except the nth, where it returns a simulated failure. Centralises the
+// "fail on call N" pattern shared by the rollback sub-tests.
+func failOnCallN(n int) func(oldpath, newpath string) error {
+	callCount := 0
+	return func(oldpath, newpath string) error {
+		callCount++
+		if callCount == n {
+			return errors.New("simulated failure")
+		}
+		return os.Rename(oldpath, newpath)
+	}
+}
+
+func TestEscapeSJSONKey(t *testing.T) {
+	t.Run("escapes dots so they are not read as nested keys", func(t *testing.T) {
+		assert.Equal(t, `/Users/x/proj\.v2`, rewrite.EscapeSJSONKey("/Users/x/proj.v2"))
+	})
+
+	t.Run("escapes backslashes before dots", func(t *testing.T) {
+		// Order matters: backslash escape must run before dot escape, otherwise
+		// the backslash inserted by dot-escaping would be doubled a second time.
+		assert.Equal(t, `a\\b\.c`, rewrite.EscapeSJSONKey(`a\b.c`))
+	})
+
+	t.Run("leaves keys without metacharacters untouched", func(t *testing.T) {
+		assert.Equal(t, "/plain/key", rewrite.EscapeSJSONKey("/plain/key"))
+	})
+
+	t.Run("handles empty input", func(t *testing.T) {
+		assert.Empty(t, rewrite.EscapeSJSONKey(""))
+	})
+}
+
+func TestIsLikelyText(t *testing.T) {
+	t.Run("empty buffer is treated as text", func(t *testing.T) {
+		assert.True(t, rewrite.IsLikelyText(nil))
+		assert.True(t, rewrite.IsLikelyText([]byte{}))
+	})
+
+	t.Run("plain ASCII text", func(t *testing.T) {
+		assert.True(t, rewrite.IsLikelyText([]byte("hello /Users/x/project world")))
+	})
+
+	t.Run("null byte in first window is detected", func(t *testing.T) {
+		data := append([]byte{0x00}, bytes.Repeat([]byte("a"), 4096)...)
+		assert.False(t, rewrite.IsLikelyText(data))
+	})
+
+	t.Run("null byte only in middle window is detected", func(t *testing.T) {
+		// 4096 bytes of text, then a null, then 4096 bytes of text.
+		// Head window is clean; tail window is clean; middle window must fire.
+		data := bytes.Repeat([]byte("a"), 4096)
+		data = append(data, 0x00)
+		data = append(data, bytes.Repeat([]byte("b"), 4096)...)
+		assert.False(t, rewrite.IsLikelyText(data),
+			"middle-window null must be detected by triple-window heuristic")
+	})
+
+	t.Run("null byte only in tail window is detected", func(t *testing.T) {
+		data := bytes.Repeat([]byte("a"), 4096)
+		// Place null within the last 512 bytes but keep the middle clean.
+		data = append(data, bytes.Repeat([]byte("b"), 1000)...)
+		data = append(data, 0x00)
+		data = append(data, bytes.Repeat([]byte("c"), 50)...)
+		assert.False(t, rewrite.IsLikelyText(data),
+			"tail-window null must be detected by triple-window heuristic")
+	})
+
+	t.Run("short buffer uses single window", func(t *testing.T) {
+		assert.True(t, rewrite.IsLikelyText([]byte("short text no nulls")))
+		assert.False(t, rewrite.IsLikelyText([]byte("short\x00text")))
+	})
+
+	t.Run("magic-byte prefixes classify as binary regardless of nulls", func(t *testing.T) {
+		cases := map[string][]byte{
+			"PNG":  {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
+			"JPEG": {0xff, 0xd8, 0xff, 0xe0},
+			"PDF":  []byte("%PDF-1.7\nhello world plain ASCII tail no nulls"),
+			"ZIP":  {'P', 'K', 0x03, 0x04, 'h', 'e', 'l', 'l', 'o'},
+			"gzip": {0x1f, 0x8b, 'h', 'i'},
+		}
+		for name, magic := range cases {
+			// Pad with text to prove the decision is made by magic bytes,
+			// not by the null-byte scan that would otherwise pass.
+			data := append([]byte{}, magic...)
+			data = append(data, bytes.Repeat([]byte("a"), 2048)...)
+			assert.False(t, rewrite.IsLikelyText(data),
+				"%s-prefixed buffer must be classified as binary", name)
+		}
+	})
+
+	t.Run("non-magic byte sequence resembling PNG header is still text", func(t *testing.T) {
+		// UTF-8 text that happens to begin with 0x89 0x50 but is not the
+		// full PNG magic (0x89 'P' 'N' 'G' '\r' '\n' 0x1a '\n'). Must not
+		// false-positive as binary.
+		data := append([]byte{0x89, 'P'}, []byte(" some text ")...)
+		assert.True(t, rewrite.IsLikelyText(data))
 	})
 }

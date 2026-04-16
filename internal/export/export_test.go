@@ -196,3 +196,79 @@ func TestExport_SelectiveCategories(t *testing.T) {
 	// metadata.xml is always present.
 	assert.Contains(t, contents, "metadata.xml")
 }
+
+func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
+	// The anonymizer sorts placeholders by Original length descending so
+	// nested paths (e.g. {{HOME}}=/Users/test is a prefix of
+	// {{PROJECT_PATH}}=/Users/test/Projects/myproject) always resolve with
+	// the most specific match winning. Caller-declared order must therefore
+	// not affect the output — swap the Placeholder slice order and verify
+	// byte-for-byte equality.
+	claudeHome1 := testutil.SetupFixture(t)
+	out1 := filepath.Join(t.TempDir(), "export-longer-first.zip")
+	require.NoError(t, export.Run(claudeHome1, export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   out1,
+		Categories:   export.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
+		Placeholders: defaultPlaceholders(),
+	}))
+
+	claudeHome2 := testutil.SetupFixture(t)
+	out2 := filepath.Join(t.TempDir(), "export-shorter-first.zip")
+	reversed := []export.Placeholder{
+		{Key: "{{HOME}}", Original: "/Users/test"},
+		{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
+	}
+	require.NoError(t, export.Run(claudeHome2, export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   out2,
+		Categories:   export.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
+		Placeholders: reversed,
+	}))
+
+	// Every non-metadata entry must be byte-identical between the two orderings.
+	// metadata.xml is excluded because it encodes a `created` timestamp.
+	contents1 := readZipContents(t, out1)
+	contents2 := readZipContents(t, out2)
+	for name, content := range contents1 {
+		if name == "metadata.xml" {
+			continue
+		}
+		assert.Equal(t, content, contents2[name],
+			"entry %s must be identical across placeholder orderings", name)
+	}
+}
+
+func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {
+	// The fixture memory file contains a reference to
+	// `/Users/test/Projects/myproject-extras`, a sibling project whose path
+	// is a path-continuation-collision with {{PROJECT_PATH}}. Boundary-aware
+	// anonymise must NOT produce `{{PROJECT_PATH}}-extras` (the bug the old
+	// strings.ReplaceAll had). The HOME prefix may still be anonymised; what
+	// matters is that the `-extras` suffix survives and is not glued onto
+	// the PROJECT_PATH token.
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	require.NoError(t, export.Run(claudeHome, export.Options{
+		ProjectPath: fixtureProjectPath,
+		OutputPath:  outputPath,
+		Categories: export.CategorySet{
+			Memory: true, Sessions: true, History: true, Config: true,
+		},
+		Placeholders: defaultPlaceholders(),
+	}))
+
+	contents := readZipContents(t, outputPath)
+	memory := contents["memory/project_notes.md"]
+	require.NotEmpty(t, memory, "memory/project_notes.md must be present")
+
+	assert.Contains(t, memory, "{{PROJECT_PATH}}",
+		"standalone project path must be anonymized")
+	assert.NotContains(t, memory, "{{PROJECT_PATH}}-extras",
+		"boundary-aware anonymizer must not produce {{PROJECT_PATH}}-extras")
+	// The sibling's myproject-extras suffix must survive verbatim — only
+	// the HOME segment ahead of it may be rewritten.
+	assert.Contains(t, memory, "Projects/myproject-extras",
+		"-extras suffix must not be lost to a broken substitution")
+}

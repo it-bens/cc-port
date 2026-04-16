@@ -3,6 +3,7 @@ package importer_test
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,15 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
+)
+
+// Fixture-wide constants — hardcoded in the test-data directory layout.
+const (
+	fixtureSourceProjectPath = "/Users/test/Projects/myproject"
+	fixtureSourceHomeDir     = "/Users/test"
+	fixtureDestProjectPath   = "/Users/dest/Projects/newproject"
 )
 
 // addEntry is a helper type for adding entries to a test ZIP archive.
@@ -36,11 +45,11 @@ type addEntry func(zipName string, content []byte)
 func buildTestArchive(
 	t *testing.T,
 	sourceClaudeHome *claude.Home,
-	sourceProjectPath string,
-	sourceHomeDir string,
 	archivePath string,
 ) {
 	t.Helper()
+	sourceProjectPath := fixtureSourceProjectPath
+	sourceHomeDir := fixtureSourceHomeDir
 
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
 	require.NoError(t, err, "create archive file")
@@ -176,14 +185,14 @@ func addConfigEntry(
 	entryAdder("config.json", []byte(projectBlock))
 }
 
-// replacePaths replaces occurrences of sourceProjectPath with {{PROJECT_PATH}}
-// and sourceHomeDir with {{HOME}} in content.
+// replacePaths mirrors the production export anonymizer: it rewrites
+// sourceProjectPath to {{PROJECT_PATH}} and sourceHomeDir to {{HOME}} using
+// path-boundary-aware substitution so prefix collisions like
+// /…/myproject-extras are not corrupted into {{PROJECT_PATH}}-extras.
 func replacePaths(content []byte, sourceProjectPath, sourceHomeDir string) []byte {
-	result := content
-	// Replace project path first (it is a sub-path of home).
-	result = []byte(strings.ReplaceAll(string(result), sourceProjectPath, "{{PROJECT_PATH}}"))
-	result = []byte(strings.ReplaceAll(string(result), sourceHomeDir, "{{HOME}}"))
-	return result
+	content, _ = rewrite.ReplacePathInBytes(content, sourceProjectPath, "{{PROJECT_PATH}}")
+	content, _ = rewrite.ReplacePathInBytes(content, sourceHomeDir, "{{HOME}}")
+	return content
 }
 
 // filterHistoryLines returns only JSONL lines whose "project" field matches
@@ -207,11 +216,8 @@ func filterHistoryLines(data []byte, targetProject string) []byte {
 
 func TestImport_Basic(t *testing.T) {
 	sourceClaudeHome := testutil.SetupFixture(t)
-	sourceProjectPath := "/Users/test/Projects/myproject"
-	sourceHomeDir := "/Users/test"
-
 	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceClaudeHome, sourceProjectPath, sourceHomeDir, archivePath)
+	buildTestArchive(t, sourceClaudeHome, archivePath)
 
 	// Create a fresh destination ClaudeHome.
 	destTempDir := t.TempDir()
@@ -227,7 +233,7 @@ func TestImport_Basic(t *testing.T) {
 		ConfigFile: destConfigFile,
 	}
 
-	destProjectPath := "/Users/dest/Projects/newproject"
+	destProjectPath := fixtureDestProjectPath
 	destHomeDir := filepath.Join(destTempDir, "home")
 
 	importOptions := importer.Options{
@@ -283,21 +289,401 @@ func assertConfigMerged(t *testing.T, destClaudeHome *claude.Home, destProjectPa
 	assert.True(t, hasProject, "config should have the imported project entry")
 }
 
-func TestImport_ConflictRefused(t *testing.T) {
+func TestImport_LeavesNoStagingTemps(t *testing.T) {
 	sourceClaudeHome := testutil.SetupFixture(t)
-	sourceProjectPath := "/Users/test/Projects/myproject"
-	sourceHomeDir := "/Users/test"
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceClaudeHome, archivePath)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destProjectPath := fixtureDestProjectPath
+	destHomeDir := filepath.Join(t.TempDir(), "home")
+
+	importOptions := importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  destProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destProjectPath,
+			"{{HOME}}":         destHomeDir,
+		},
+	}
+	require.NoError(t, importer.Run(destClaudeHome, importOptions))
+
+	assertNoStagingTemps(t, destClaudeHome)
+}
+
+func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
+	sourceClaudeHome := testutil.SetupFixture(t)
 
 	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceClaudeHome, sourceProjectPath, sourceHomeDir, archivePath)
+	buildArchiveWithExtraDeclaredKey(
+		t, sourceClaudeHome, archivePath, "{{EXTRA}}", true,
+	)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destProjectPath := fixtureDestProjectPath
+
+	preConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
+	require.NoError(t, err)
+
+	importOptions := importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  destProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destProjectPath,
+			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
+		},
+	}
+	err = importer.Run(destClaudeHome, importOptions)
+	require.Error(t, err, "import must refuse when a declared placeholder is not resolved")
+	assert.Contains(t, err.Error(), "{{EXTRA}}")
+
+	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
+}
+
+func TestImport_AllowsUnresolvableDeclaredKey(t *testing.T) {
+	sourceClaudeHome := testutil.SetupFixture(t)
+
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	// Declare {{LEGACY}} with Resolvable=false and inject a literal
+	// occurrence into the memory body. The caller supplies no resolution;
+	// the preflight gate must allow the import to succeed and the literal
+	// must survive on disk.
+	buildArchiveWithExtraDeclaredKey(
+		t, sourceClaudeHome, archivePath, "{{LEGACY}}", false,
+	)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destProjectPath := fixtureDestProjectPath
+
+	importOptions := importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  destProjectPath,
+		Resolutions: map[string]string{
+			"{{HOME}}": filepath.Join(t.TempDir(), "home"),
+		},
+	}
+	require.NoError(t, importer.Run(destClaudeHome, importOptions))
+
+	memoryPath := filepath.Join(
+		destClaudeHome.ProjectDir(destProjectPath), "memory", "MEMORY.md",
+	)
+	data, err := os.ReadFile(memoryPath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "{{LEGACY}}",
+		"Resolvable=false placeholder must survive import verbatim")
+}
+
+func TestImport_RefusesUndeclaredKey(t *testing.T) {
+	sourceClaudeHome := testutil.SetupFixture(t)
+
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	// Inject {{SECRET}} into a body WITHOUT declaring it in the manifest.
+	buildArchiveWithUndeclaredBodyToken(
+		t, sourceClaudeHome, archivePath, "{{SECRET}}",
+	)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destProjectPath := fixtureDestProjectPath
+
+	preConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
+	require.NoError(t, err)
+
+	importOptions := importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  destProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destProjectPath,
+			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
+		},
+	}
+	err = importer.Run(destClaudeHome, importOptions)
+	require.Error(t, err, "import must refuse an archive carrying an undeclared token")
+	assert.Contains(t, err.Error(), "{{SECRET}}")
+
+	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
+}
+
+func TestImport_AtomicRollbackOnFailure(t *testing.T) {
+	sourceClaudeHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceClaudeHome, archivePath)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destProjectPath := fixtureDestProjectPath
+
+	// Snapshot pre-import bytes so we can assert nothing was mutated after rollback.
+	preConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
+	require.NoError(t, err)
+	preHistoryExists := false
+	if _, err := os.Stat(destClaudeHome.HistoryFile()); err == nil {
+		preHistoryExists = true
+	}
+
+	// Fail the second rename — the first (project dir) has already promoted,
+	// so rollback must un-promote it.
+	callCount := 0
+	injector := func(oldpath, newpath string) error {
+		callCount++
+		if callCount == 2 {
+			return errors.New("simulated promote failure")
+		}
+		return os.Rename(oldpath, newpath)
+	}
+
+	importOptions := importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  destProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destProjectPath,
+			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
+		},
+	}
+	err = importer.RunWithRenameHook(destClaudeHome, importOptions, injector)
+	require.Error(t, err, "import must fail when a promote rename fails")
+
+	// Encoded project dir must not exist — it was promoted then rolled back.
+	assert.NoDirExists(t, destClaudeHome.ProjectDir(destProjectPath),
+		"rollback must remove the promoted project directory")
+
+	// Config file must match pre-import bytes.
+	postConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
+	require.NoError(t, err)
+	assert.Equal(t, preConfigBytes, postConfigBytes,
+		"rollback must restore config file bytes")
+
+	// History file must be in its pre-import state: absent if it was
+	// absent before, or identical bytes if it existed.
+	if preHistoryExists {
+		t.Fatalf("test precondition: destination history file unexpectedly existed before import")
+	}
+	assert.NoFileExists(t, destClaudeHome.HistoryFile(),
+		"rollback must leave history absent when it was absent pre-import")
+
+	// No staging temps must remain.
+	assertNoStagingTemps(t, destClaudeHome)
+}
+
+// buildEmptyDestClaudeHome creates a fresh empty ClaudeHome with a minimal
+// config file. Shared by the import tests that need an untouched target.
+func buildEmptyDestClaudeHome(t *testing.T) *claude.Home {
+	t.Helper()
+
+	destTempDir := t.TempDir()
+	destClaudeDir := filepath.Join(destTempDir, "dotclaude")
+	destConfigFile := filepath.Join(destTempDir, "dotclaude.json")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(destClaudeDir, "projects"), 0755)) //nolint:gosec // G301: test setup
+	initialConfig := []byte(`{"projects":{}}`)
+	require.NoError(t, os.WriteFile(destConfigFile, initialConfig, 0644)) //nolint:gosec // G306: test setup
+
+	return &claude.Home{
+		Dir:        destClaudeDir,
+		ConfigFile: destConfigFile,
+	}
+}
+
+// assertImportLeftDestinationUntouched verifies that a refused import did
+// not mutate the destination.
+func assertImportLeftDestinationUntouched(
+	t *testing.T, destClaudeHome *claude.Home, destProjectPath string, preConfigBytes []byte,
+) {
+	t.Helper()
+
+	assert.NoDirExists(t, destClaudeHome.ProjectDir(destProjectPath),
+		"refused import must not create the encoded project directory")
+	assert.NoFileExists(t, destClaudeHome.HistoryFile(),
+		"refused import must not create the history file")
+
+	postConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
+	require.NoError(t, err)
+	assert.Equal(t, preConfigBytes, postConfigBytes,
+		"refused import must not modify the config file")
+
+	assertNoStagingTemps(t, destClaudeHome)
+}
+
+// assertNoStagingTemps walks the home dir and asserts no *.cc-port-import.tmp
+// paths remain.
+func assertNoStagingTemps(t *testing.T, destClaudeHome *claude.Home) {
+	t.Helper()
+
+	walkRoots := []string{destClaudeHome.Dir, filepath.Dir(destClaudeHome.ConfigFile)}
+	for _, root := range walkRoots {
+		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info == nil {
+				return nil
+			}
+			if strings.HasSuffix(path, ".cc-port-import.tmp") {
+				t.Errorf("staging temp %q must not remain after run", path)
+			}
+			return nil
+		})
+	}
+}
+
+// buildArchiveWithExtraDeclaredKey builds a test archive identical to
+// buildTestArchive but additionally declares extraKey in the manifest with
+// the given Resolvable value and injects one literal occurrence of extraKey
+// into the MEMORY.md body so it is guaranteed to show up in preflight.
+func buildArchiveWithExtraDeclaredKey(
+	t *testing.T,
+	sourceClaudeHome *claude.Home,
+	archivePath string,
+	extraKey string,
+	resolvable bool,
+) {
+	t.Helper()
+	buildArchiveWithOverrides(t, archiveOverrides{
+		sourceClaudeHome: sourceClaudeHome,
+		archivePath:      archivePath,
+		extraDeclaredKey: extraKey,
+		extraResolvable:  &resolvable,
+		memoryInjection:  extraKey,
+	})
+}
+
+// buildArchiveWithUndeclaredBodyToken injects tokenInBody into the memory
+// body without declaring it in the manifest.
+func buildArchiveWithUndeclaredBodyToken(
+	t *testing.T,
+	sourceClaudeHome *claude.Home,
+	archivePath string,
+	tokenInBody string,
+) {
+	t.Helper()
+	buildArchiveWithOverrides(t, archiveOverrides{
+		sourceClaudeHome: sourceClaudeHome,
+		archivePath:      archivePath,
+		memoryInjection:  tokenInBody,
+	})
+}
+
+// archiveOverrides parameterises buildArchiveWithOverrides. Fields are
+// optional; the zero values produce an archive identical to the one
+// buildTestArchive builds. sourceProjectPath and sourceHomeDir are always
+// the fixture constants.
+type archiveOverrides struct {
+	sourceClaudeHome *claude.Home
+	archivePath      string
+	extraDeclaredKey string
+	extraResolvable  *bool
+	memoryInjection  string
+}
+
+// buildArchiveWithOverrides is a lower-level builder that allows test
+// archives to deviate from the default shape: declaring additional keys in
+// the manifest and/or injecting literal tokens into the memory body.
+func buildArchiveWithOverrides(t *testing.T, overrides archiveOverrides) {
+	t.Helper()
+
+	archiveFile, err := os.Create(overrides.archivePath)
+	require.NoError(t, err)
+	defer func() { _ = archiveFile.Close() }()
+
+	zipWriter := zip.NewWriter(archiveFile)
+	defer func() { _ = zipWriter.Close() }()
+
+	writeMetadataEntryWithOverrides(t, zipWriter, overrides)
+
+	encodedProjectDir := overrides.sourceClaudeHome.ProjectDir(fixtureSourceProjectPath)
+
+	entryAdder := addEntry(func(zipName string, content []byte) {
+		t.Helper()
+		if overrides.memoryInjection != "" && zipName == "memory/MEMORY.md" {
+			content = append(content, []byte("\n"+overrides.memoryInjection+"\n")...)
+		}
+		content = replacePaths(content, fixtureSourceProjectPath, fixtureSourceHomeDir)
+		writer, err := zipWriter.Create(zipName)
+		require.NoError(t, err)
+		_, err = writer.Write(content)
+		require.NoError(t, err)
+	})
+
+	fileAdder := func(zipName, sourcePath string) {
+		t.Helper()
+		data, err := os.ReadFile(sourcePath) //nolint:gosec // G304: test helper reading fixture files
+		require.NoError(t, err)
+		entryAdder(zipName, data)
+	}
+
+	sessionEntry := filepath.Join(overrides.sourceClaudeHome.Dir, "sessions", "99999.json")
+	if _, statErr := os.Stat(sessionEntry); statErr == nil {
+		fileAdder("sessions/99999.json", sessionEntry)
+	}
+
+	memoryEntries, err := os.ReadDir(filepath.Join(encodedProjectDir, "memory"))
+	require.NoError(t, err)
+	for _, memoryEntry := range memoryEntries {
+		if memoryEntry.IsDir() {
+			continue
+		}
+		fileAdder("memory/"+memoryEntry.Name(),
+			filepath.Join(encodedProjectDir, "memory", memoryEntry.Name()))
+	}
+
+	historyData, err := os.ReadFile(overrides.sourceClaudeHome.HistoryFile())
+	require.NoError(t, err)
+	entryAdder("history/history.jsonl",
+		filterHistoryLines(historyData, fixtureSourceProjectPath))
+
+	addFileHistoryEntries(t, overrides.sourceClaudeHome, fileAdder)
+	addConfigEntry(t, overrides.sourceClaudeHome, fixtureSourceProjectPath, entryAdder)
+}
+
+// writeMetadataEntryWithOverrides is the parameterised cousin of
+// writeMetadataEntry that honours archiveOverrides.extraDeclaredKey and
+// extraResolvable.
+func writeMetadataEntryWithOverrides(t *testing.T, zipWriter *zip.Writer, overrides archiveOverrides) {
+	t.Helper()
+
+	trueVal := true
+	placeholders := []export.Placeholder{
+		{Key: "{{PROJECT_PATH}}", Original: fixtureSourceProjectPath, Resolvable: &trueVal},
+		{Key: "{{HOME}}", Original: fixtureSourceHomeDir, Resolvable: &trueVal},
+	}
+	if overrides.extraDeclaredKey != "" {
+		placeholders = append(placeholders, export.Placeholder{
+			Key:        overrides.extraDeclaredKey,
+			Original:   overrides.extraDeclaredKey,
+			Resolvable: overrides.extraResolvable,
+		})
+	}
+
+	metadata := &export.Metadata{
+		Export: export.Info{
+			Created: time.Now(),
+			Categories: []export.Category{
+				{Name: "sessions", Included: true},
+				{Name: "memory", Included: true},
+				{Name: "history", Included: true},
+				{Name: "file-history", Included: true},
+				{Name: "config", Included: true},
+			},
+		},
+		Placeholders: placeholders,
+	}
+	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
+	require.NoError(t, export.WriteManifest(metadataPath, metadata))
+	metadataData, err := os.ReadFile(metadataPath) //nolint:gosec // G304: test helper reading temp file
+	require.NoError(t, err)
+	xmlEntry, err := zipWriter.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = xmlEntry.Write(metadataData)
+	require.NoError(t, err)
+}
+
+func TestImport_ConflictRefused(t *testing.T) {
+	sourceClaudeHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceClaudeHome, archivePath)
 
 	// Import back to the same ClaudeHome at the same project path → conflict.
 	importOptions := importer.Options{
 		ArchivePath: archivePath,
-		TargetPath:  sourceProjectPath,
+		TargetPath:  fixtureSourceProjectPath,
 		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": sourceProjectPath,
-			"{{HOME}}":         sourceHomeDir,
+			"{{PROJECT_PATH}}": fixtureSourceProjectPath,
+			"{{HOME}}":         fixtureSourceHomeDir,
 		},
 	}
 

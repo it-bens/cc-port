@@ -203,6 +203,114 @@ func verifyImportedProject(t *testing.T, destinationHome *claude.Home, destinati
 	assert.Positive(t, historyEntryCount, "imported history should have at least one entry")
 }
 
+// TestIntegration_ExportImport_ResolvableFalseRoundTrip verifies that a
+// placeholder marked Resolvable: false at export time survives an import
+// as literal `{{KEY}}` bytes when the caller does not supply a resolution
+// for it. The pre-flight gate must allow the import to proceed; the token
+// must land on disk unchanged in the destination.
+func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+
+	archivePath := filepath.Join(t.TempDir(), "export-unresolvable.zip")
+
+	trueVal := true
+	falseVal := false
+	exportOptions := export.Options{
+		ProjectPath: fixtureProjectPath,
+		OutputPath:  archivePath,
+		Categories: export.CategorySet{
+			Sessions: true, Memory: true, History: true, FileHistory: true, Config: true,
+		},
+		Placeholders: []export.Placeholder{
+			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath, Resolvable: &trueVal},
+			{Key: "{{HOME}}", Original: fixtureHomeDir, Resolvable: &trueVal},
+			// Declare a placeholder whose literal occurrence we will inject
+			// into the archive AFTER export — the sender acknowledges the
+			// receiver has no mapping for this path.
+			{
+				Key:        "{{EXTERNAL_TOOL}}",
+				Original:   "/opt/external-tool",
+				Resolvable: &falseVal,
+			},
+		},
+	}
+	require.NoError(t, export.Run(sourceHome, exportOptions))
+
+	// Inject a literal {{EXTERNAL_TOOL}} into one of the archive's memory
+	// bodies so the pre-flight gate sees it.
+	injectTokenIntoMemoryEntry(t, archivePath, "memory/MEMORY.md", "{{EXTERNAL_TOOL}}")
+
+	destinationHome := setupDestinationHome(t)
+	destinationProjectPath := "/home/newuser/projects/cool-project"
+	destinationHomeDir := "/home/newuser"
+
+	// Supply ONLY PROJECT_PATH and HOME resolutions. EXTERNAL_TOOL is
+	// deliberately omitted; the Resolvable: false manifest flag must be
+	// what allows the import through.
+	importOptions := importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  destinationProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destinationProjectPath,
+			"{{HOME}}":         destinationHomeDir,
+		},
+	}
+	require.NoError(t, importer.Run(destinationHome, importOptions))
+
+	// The literal {{EXTERNAL_TOOL}} must survive in the imported memory file.
+	memoryPath := filepath.Join(
+		destinationHome.ProjectDir(destinationProjectPath), "memory", "MEMORY.md",
+	)
+	data, err := os.ReadFile(memoryPath) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "{{EXTERNAL_TOOL}}",
+		"Resolvable: false placeholder must survive import as literal {{KEY}}")
+}
+
+// injectTokenIntoMemoryEntry rewrites the zip at archivePath, appending
+// the given token to the named memory entry. Used to test pre-flight
+// classification of Resolvable: false placeholders whose occurrence was
+// not placed there by export itself.
+func injectTokenIntoMemoryEntry(t *testing.T, archivePath, entryName, token string) {
+	t.Helper()
+
+	reader, err := zip.OpenReader(archivePath)
+	require.NoError(t, err)
+
+	// Read existing entries into memory first, then rewrite the archive.
+	type keptEntry struct {
+		name    string
+		content []byte
+	}
+	var kept []keptEntry
+	for _, zipFile := range reader.File {
+		rc, openErr := zipFile.Open()
+		require.NoError(t, openErr)
+		content, readErr := io.ReadAll(rc)
+		_ = rc.Close()
+		require.NoError(t, readErr)
+		if zipFile.Name == entryName {
+			content = append(content, '\n')
+			content = append(content, []byte(token)...)
+			content = append(content, '\n')
+		}
+		kept = append(kept, keptEntry{name: zipFile.Name, content: content})
+	}
+	_ = reader.Close()
+
+	out, err := os.Create(archivePath) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	defer func() { _ = out.Close() }()
+	writer := zip.NewWriter(out)
+	for _, entry := range kept {
+		w, createErr := writer.Create(entry.name)
+		require.NoError(t, createErr)
+		_, writeErr := w.Write(entry.content)
+		require.NoError(t, writeErr)
+	}
+	require.NoError(t, writer.Close())
+}
+
 // TestIntegration_MoveRefsOnly verifies that a refs-only move updates ClaudeHome data
 // without touching the actual project directory on disk.
 func TestIntegration_MoveRefsOnly(t *testing.T) {

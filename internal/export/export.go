@@ -42,7 +42,7 @@ func Run(claudeHome *claude.Home, exportOptions Options) error {
 		return fmt.Errorf("locate project: %w", err)
 	}
 
-	replacements := buildReplacementMap(exportOptions.Placeholders)
+	placeholders := exportOptions.Placeholders
 
 	zipFile, err := os.Create(exportOptions.OutputPath)
 	if err != nil {
@@ -63,31 +63,31 @@ func Run(claudeHome *claude.Home, exportOptions Options) error {
 	}
 
 	if exportOptions.Categories.Sessions {
-		if err := exportSessions(archiveWriter, locations, replacements); err != nil {
+		if err := exportSessions(archiveWriter, locations, placeholders); err != nil {
 			return err
 		}
 	}
 
 	if exportOptions.Categories.Memory {
-		if err := exportMemory(archiveWriter, locations, replacements); err != nil {
+		if err := exportMemory(archiveWriter, locations, placeholders); err != nil {
 			return err
 		}
 	}
 
 	if exportOptions.Categories.History {
-		if err := exportHistory(archiveWriter, claudeHome, exportOptions, replacements); err != nil {
+		if err := exportHistory(archiveWriter, claudeHome, exportOptions, placeholders); err != nil {
 			return err
 		}
 	}
 
 	if exportOptions.Categories.FileHistory {
-		if err := exportFileHistory(archiveWriter, locations, replacements); err != nil {
+		if err := exportFileHistory(archiveWriter, locations, placeholders); err != nil {
 			return err
 		}
 	}
 
 	if exportOptions.Categories.Config {
-		if err := exportConfig(archiveWriter, claudeHome, exportOptions, replacements); err != nil {
+		if err := exportConfig(archiveWriter, claudeHome, exportOptions, placeholders); err != nil {
 			return err
 		}
 	}
@@ -97,14 +97,14 @@ func Run(claudeHome *claude.Home, exportOptions Options) error {
 
 // exportSessions writes all session transcripts and session subdirectories to the archive.
 func exportSessions(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, replacements [][2]string,
+	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
 ) error {
 	for _, transcriptPath := range locations.SessionTranscripts {
 		data, err := os.ReadFile(transcriptPath) //nolint:gosec // G304: path from trusted ClaudeHome
 		if err != nil {
 			return fmt.Errorf("read session transcript %s: %w", transcriptPath, err)
 		}
-		anonymizedData := anonymize(data, replacements)
+		anonymizedData := applyPlaceholders(data, placeholders)
 		zipName := "sessions/" + filepath.Base(transcriptPath)
 		if err := writeToZip(archiveWriter, zipName, anonymizedData); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
@@ -114,7 +114,7 @@ func exportSessions(
 	for _, subdirPath := range locations.SessionSubdirs {
 		dirName := filepath.Base(subdirPath)
 		zipPrefix := "sessions/" + dirName
-		if err := addDirToZip(archiveWriter, subdirPath, zipPrefix, replacements); err != nil {
+		if err := addDirToZip(archiveWriter, subdirPath, zipPrefix, placeholders); err != nil {
 			return fmt.Errorf("add session subdir %s: %w", subdirPath, err)
 		}
 	}
@@ -123,14 +123,14 @@ func exportSessions(
 
 // exportMemory writes all memory files to the archive.
 func exportMemory(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, replacements [][2]string,
+	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
 ) error {
 	for _, memoryFilePath := range locations.MemoryFiles {
 		data, err := os.ReadFile(memoryFilePath) //nolint:gosec // G304: path from trusted ClaudeHome
 		if err != nil {
 			return fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
 		}
-		anonymizedData := anonymize(data, replacements)
+		anonymizedData := applyPlaceholders(data, placeholders)
 		zipName := "memory/" + filepath.Base(memoryFilePath)
 		if err := writeToZip(archiveWriter, zipName, anonymizedData); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
@@ -141,13 +141,13 @@ func exportMemory(
 
 // exportHistory extracts and writes project history to the archive.
 func exportHistory(
-	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, replacements [][2]string,
+	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []Placeholder,
 ) error {
 	historyData, err := extractProjectHistory(claudeHome.HistoryFile(), exportOptions.ProjectPath)
 	if err != nil {
 		return fmt.Errorf("extract project history: %w", err)
 	}
-	anonymizedHistory := anonymize(historyData, replacements)
+	anonymizedHistory := applyPlaceholders(historyData, placeholders)
 	if err := writeToZip(archiveWriter, "history/history.jsonl", anonymizedHistory); err != nil {
 		return fmt.Errorf("write history/history.jsonl: %w", err)
 	}
@@ -156,12 +156,12 @@ func exportHistory(
 
 // exportFileHistory writes all file-history directories to the archive.
 func exportFileHistory(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, replacements [][2]string,
+	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
 ) error {
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
 		dirName := filepath.Base(fileHistoryDir)
 		zipPrefix := "file-history/" + dirName
-		if err := addDirToZip(archiveWriter, fileHistoryDir, zipPrefix, replacements); err != nil {
+		if err := addDirToZip(archiveWriter, fileHistoryDir, zipPrefix, placeholders); err != nil {
 			return fmt.Errorf("add file-history dir %s: %w", fileHistoryDir, err)
 		}
 	}
@@ -170,44 +170,42 @@ func exportFileHistory(
 
 // exportConfig extracts and writes the project config block to the archive.
 func exportConfig(
-	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, replacements [][2]string,
+	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []Placeholder,
 ) error {
 	configData, err := extractProjectConfig(claudeHome.ConfigFile, exportOptions.ProjectPath)
 	if err != nil {
 		return fmt.Errorf("extract project config: %w", err)
 	}
-	anonymizedConfig := anonymize(configData, replacements)
+	anonymizedConfig := applyPlaceholders(configData, placeholders)
 	if err := writeToZip(archiveWriter, "config.json", anonymizedConfig); err != nil {
 		return fmt.Errorf("write config.json: %w", err)
 	}
 	return nil
 }
 
-// buildReplacementMap converts placeholders into ordered replacement pairs
-// [original, key], sorted by original length descending to avoid partial
-// replacements when one path is a prefix of another.
-func buildReplacementMap(placeholders []Placeholder) [][2]string {
+// applyPlaceholders rewrites every placeholder's Original path to its Key
+// token in data, using rewrite.ReplacePathInBytes so sibling-path prefix
+// collisions (e.g. `/Users/x/myproject-extras` vs `/Users/x/myproject`) are
+// never corrupted by substring replacement.
+//
+// Placeholders are applied in descending Original length because
+// boundary-aware replacement only prevents collisions that cross a
+// path-component boundary (`myproject` vs `myproject-extras`); it does NOT
+// prevent a shorter placeholder from consuming a legitimate prefix of a
+// longer one that ends at a real `/` boundary. For example, substituting
+// `/Users/x` → `{{HOME}}` before `/Users/x/project` → `{{PROJECT_PATH}}`
+// would leave `{{HOME}}/project` where `{{PROJECT_PATH}}` was intended.
+// Sorting longest-first resolves this.
+func applyPlaceholders(data []byte, placeholders []Placeholder) []byte {
 	sorted := make([]Placeholder, len(placeholders))
 	copy(sorted, placeholders)
 	sort.Slice(sorted, func(i, j int) bool {
 		return len(sorted[i].Original) > len(sorted[j].Original)
 	})
-
-	pairs := make([][2]string, len(sorted))
-	for index, placeholder := range sorted {
-		pairs[index] = [2]string{placeholder.Original, placeholder.Key}
+	for _, placeholder := range sorted {
+		data, _ = rewrite.ReplacePathInBytes(data, placeholder.Original, placeholder.Key)
 	}
-	return pairs
-}
-
-// anonymize applies all replacement pairs to data, replacing real paths with
-// placeholder keys.
-func anonymize(data []byte, replacements [][2]string) []byte {
-	result := string(data)
-	for _, pair := range replacements {
-		result = strings.ReplaceAll(result, pair[0], pair[1])
-	}
-	return []byte(result)
+	return data
 }
 
 // writeToZip adds a file with the given name and data to the archive.
@@ -224,7 +222,7 @@ func writeToZip(archiveWriter *zip.Writer, name string, data []byte) error {
 
 // addDirToZip recursively walks sourceDir, adding each file under zipPrefix in
 // the archive. Text files are anonymized; binary files are copied as-is.
-func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, replacements [][2]string) error {
+func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeholders []Placeholder) error {
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {
 		return fmt.Errorf("read directory %s: %w", sourceDir, err)
@@ -235,7 +233,7 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, replace
 		entryZipName := zipPrefix + "/" + entry.Name()
 
 		if entry.IsDir() {
-			if err := addDirToZip(archiveWriter, entryPath, entryZipName, replacements); err != nil {
+			if err := addDirToZip(archiveWriter, entryPath, entryZipName, placeholders); err != nil {
 				return err
 			}
 			continue
@@ -247,7 +245,7 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, replace
 		}
 
 		if rewrite.IsLikelyText(data) {
-			data = anonymize(data, replacements)
+			data = applyPlaceholders(data, placeholders)
 		}
 
 		if err := writeToZip(archiveWriter, entryZipName, data); err != nil {

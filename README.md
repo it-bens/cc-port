@@ -38,42 +38,47 @@ indistinguishable from the start of an extension.
 reference the project only in `display` or `pastedContents` are excluded
 from the export.
 
-### 4. Binary detection uses a 512-byte null-byte heuristic
+### 4. Binary detection is heuristic, not exhaustive
 
-`internal/rewrite/rewrite.go:IsLikelyText` checks only the first 512 bytes
-for a `\x00` byte. Files that are binary after a textual header, or binary
-formats that happen to start with non-null bytes, are treated as text and
-substring-rewritten — which corrupts them. The heuristic gates both export
-anonymization and `move.Apply`'s file-history snapshot rewrite, so a false
-negative can leak an unrewritten path into an export *or* corrupt a
-snapshot during a move.
+`internal/rewrite/rewrite.go:IsLikelyText` classifies content by scanning
+three 512-byte windows (head, middle, tail) for a `\x00` byte and by
+matching a small magic-prefix shortlist (PNG, JPEG, PDF, ZIP, gzip). The
+heuristic gates both export anonymization and `move.Apply`'s file-history
+snapshot rewrite. Two residual risks remain:
 
-### 5. The export anonymizer is not path-boundary aware
-
-`internal/export/export.go:anonymize` uses `strings.ReplaceAll`. It is
-currently safe only because placeholders are sorted by `Original` length
-descending, which handles the common HOME-prefix-of-PROJECT case. Adding
-placeholders whose `Original` strings are substrings of each other in any
-other order can corrupt output.
+- **False negatives** — a binary format outside the magic shortlist (RAR,
+  7z, custom containers) whose three windows are all null-free is still
+  treated as text and substring-rewritten, which corrupts it.
+- **False positives** — a text file whose middle or tail 512 bytes happen
+  to contain a `\x00` (rare but possible in Unicode-escape-heavy content
+  or synthetic fixtures) is classified as binary and skipped, leaving
+  old paths unanonymised in an export or unrewritten in a move.
 
 ## Import
 
-### 6. Import has no atomic or rollback guarantee
+### 5. Same-filesystem requirement for atomic import
 
-`internal/importer/importer.go:Run` streams ZIP entries and writes each to
-its final destination as it goes: files into the encoded project directory,
-appends to `~/.claude/history.jsonl`, an in-place rewrite of
-`~/.claude.json`. A failure midway — out of disk, permission error, a
-corrupt entry, a missing resolution — leaves some destinations written and
-others not, with no equivalent of `move.Apply`'s copy-verify-delete
-strategy. Rolling back a partial import is manual.
+`internal/importer/importer.go:Run` uses a stage-and-swap strategy:
+every destination is staged at a `*.cc-port-import.tmp` sibling path and
+promoted via `os.Rename`. `os.Rename` is atomic only within a single
+filesystem. On the common macOS and Linux layout where `~/.claude/`,
+`~/.claude.json`, and `~/.claude/file-history/` all live on the user's
+home filesystem, this holds. If any of these paths is a symlink across a
+filesystem boundary (e.g. `~/.claude/file-history` pointed at an external
+volume), the promote step fails with `EXDEV` and the import aborts —
+correctly leaving no partial state — but the user sees a rename error
+that may look unfamiliar.
 
-### 7. Unsupplied placeholders survive import as literal strings
+### 6. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
 
-`internal/importer/importer.go:Run` only resolves placeholders the caller
-provided in `Options.Resolutions`. If the archive's `metadata.xml` declares
-a placeholder the caller did not supply, the literal `{{KEY}}` string
-remains in every imported file — there is no validation gate.
+`internal/rewrite/rewrite.go:FindPlaceholderTokens` scans archive bodies
+for placeholder tokens using a byte-walk matching `{{[A-Z0-9_]+}}`. This
+is the shape cc-port's export path always emits, so the pre-flight gate
+correctly classifies every archive this tool produces. Archives hand-
+crafted with lowercase keys, punctuation inside braces, whitespace, or
+multi-line tokens are invisible to the gate: such a token would neither
+be flagged as undeclared nor be substituted at resolution time, so it
+would survive verbatim on disk.
 
 ## Path encoding scope
 
@@ -175,6 +180,55 @@ Not covered — cases cc-port deliberately does not address:
   project directory) or session subdir files, but cc-port does not scan
   those for parse errors — they are rewritten as opaque byte streams
   with path-boundary-aware substitution.
+
+## Import contract scope
+
+`cc-port import` treats every archive as a closed contract: every
+placeholder token a body contains must be accounted for before any
+destination is written. The pre-flight gate in
+`internal/importer/importer.go:Run` scans every ZIP entry, diffs against
+the manifest's declared placeholders and the caller's resolutions, and
+refuses the import on any mismatch. The rollback surface (see below)
+means a refused import leaves the destination untouched — no partial
+writes, no dangling staging temps.
+
+Atomicity — every destination is staged at a sibling
+`*.cc-port-import.tmp` path and promoted via `os.Rename`:
+
+- `<encoded-project-dir>.cc-port-import.tmp` → `<encoded-project-dir>`
+- `~/.claude/history.jsonl.cc-port-import.tmp` → `~/.claude/history.jsonl`
+- `~/.claude.json.cc-port-import.tmp` → `~/.claude.json`
+- per-entry file-history temps → their final `~/.claude/file-history/…`
+  destinations
+
+`internal/rewrite/rewrite.go:SafeRenamePromoter` drives the promote and
+owns the rollback: if any rename step fails, every earlier rename is
+reversed from the saved pre-promote bytes of each replaced destination.
+
+Refused by cc-port — these paths abort before any write:
+
+- Archive declares a placeholder marked `Resolvable: true` (or
+  unspecified) whose key is not in `Options.Resolutions` and is not
+  cc-port's implicit `{{PROJECT_PATH}}`. The error lists every missing
+  key in alphabetical order.
+- Archive body contains a `{{KEY}}` that the manifest does not declare
+  at all. The error lists every undeclared key in alphabetical order.
+
+Allowed-to-remain-symbolic — a placeholder marked `Resolvable: false` in
+the manifest stays verbatim on disk even if no resolution was supplied.
+This is the explicit escape hatch for "the sender acknowledges this
+path has no meaning on the recipient's machine".
+
+Not covered — cases cc-port does not address:
+
+- **Pre-refactor archives with implicit unresolved keys.** Archives
+  written by older cc-port versions whose manifest declared
+  `{{KEY}}` (with `Resolvable: nil`, now meaning "must be resolved")
+  without the caller supplying `{{KEY}}` are now refused. Migration:
+  supply the resolution, or re-export with the key marked
+  `Resolvable: false`.
+- **Exotic token shapes.** See limitation #6 — only
+  `{{[A-Z0-9_]+}}` is recognised by the pre-flight scanner.
 
 ## Concurrency guard scope
 
