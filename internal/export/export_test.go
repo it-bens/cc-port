@@ -66,7 +66,6 @@ func TestExport_AllCategories(t *testing.T) {
 	contents := readZipContents(t, outputPath)
 
 	assert.Contains(t, contents, "metadata.xml", "metadata.xml must be present")
-	assert.Contains(t, contents, "sessions-index.json", "sessions-index.json must be present")
 
 	// At least one session transcript should be present under sessions/
 	hasSession := false
@@ -133,10 +132,18 @@ func TestExport_PathAnonymization(t *testing.T) {
 			"file %s must not contain original home path", name)
 	}
 
-	// Verify placeholders appear in the anonymized files
-	sessionsIndex := contents["sessions-index.json"]
-	assert.Contains(t, sessionsIndex, "{{PROJECT_PATH}}",
-		"sessions-index.json must contain project path placeholder")
+	// Verify placeholders appear in the anonymized files. Transcripts always
+	// carry the project path in their `cwd` field, so at least one
+	// sessions/*.jsonl entry must contain {{PROJECT_PATH}} after anonymization.
+	foundProjectPlaceholder := false
+	for name, content := range contents {
+		if strings.HasPrefix(name, "sessions/") && strings.Contains(content, "{{PROJECT_PATH}}") {
+			foundProjectPlaceholder = true
+			break
+		}
+	}
+	assert.True(t, foundProjectPlaceholder,
+		"at least one anonymized session file must contain the project path placeholder")
 }
 
 func TestExport_SelectiveCategories(t *testing.T) {
@@ -186,7 +193,6 @@ func TestExport_SelectiveCategories(t *testing.T) {
 	assert.NotContains(t, contents, "config.json",
 		"config must not be present when Config category is disabled")
 
-	// metadata.xml and sessions-index.json are always present (if they exist)
+	// metadata.xml is always present.
 	assert.Contains(t, contents, "metadata.xml")
-	assert.Contains(t, contents, "sessions-index.json")
 }

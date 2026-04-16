@@ -37,7 +37,6 @@ func TestDryRun(t *testing.T) {
 	assert.Equal(t, claudeHome.ProjectDir(oldProjectPath), plan.OldProjectDir)
 	assert.Equal(t, claudeHome.ProjectDir(newProjectPath), plan.NewProjectDir)
 
-	assert.Positive(t, plan.SessionsIndexReplacements, "expected sessions-index replacements")
 	assert.Positive(t, plan.HistoryReplacements, "expected history replacements")
 	assert.Positive(t, plan.SessionFileReplacements, "expected session file replacements")
 	assert.Positive(t, plan.SettingsReplacements, "expected settings replacements")
@@ -114,20 +113,6 @@ func TestApply(t *testing.T) {
 	_, err = os.Stat(newProjectDir)
 	require.NoError(t, err, "new project data dir should exist")
 
-	// sessions-index.json should reference the new path.
-	sessionsIndexPath := filepath.Join(newProjectDir, "sessions-index.json")
-	sessionsIndexData, err := os.ReadFile(sessionsIndexPath) //nolint:gosec // test file path
-	require.NoError(t, err)
-
-	var sessionsIndex claude.SessionsIndex
-	require.NoError(t, json.Unmarshal(sessionsIndexData, &sessionsIndex))
-	for _, entry := range sessionsIndex.Entries {
-		assert.Equal(t, newProjectPath, entry.ProjectPath,
-			"sessions-index entry should have new project path")
-		assert.NotContains(t, entry.ProjectPath, oldProjectPath,
-			"sessions-index entry should not contain old project path")
-	}
-
 	// history.jsonl should reference the new path. Use path-boundary semantics:
 	// substrings of unrelated paths sharing a prefix (e.g. "myproject-extras")
 	// must remain untouched, so we cannot assert a raw substring absence.
@@ -168,17 +153,14 @@ func TestApply_RefsOnly(t *testing.T) {
 	_, statErr := os.Stat(oldProjectDir)
 	assert.True(t, os.IsNotExist(statErr), "old project data dir should be removed")
 
-	// New project data dir should exist.
+	// New project data dir should exist and contain the copied transcripts.
 	newProjectDir := claudeHome.ProjectDir(newProjectPath)
 	_, err = os.Stat(newProjectDir)
 	require.NoError(t, err, "new project data dir should exist")
 
-	// OldPath disk directory should NOT have been created (it doesn't exist in fixture).
-	// With RefsOnly=true, we simply don't touch the actual project directory on disk.
-	// We verify the new encoded dir was created by checking its contents.
-	sessionsIndexPath := filepath.Join(newProjectDir, "sessions-index.json")
-	_, err = os.Stat(sessionsIndexPath)
-	require.NoError(t, err, "sessions-index.json should exist in new project data dir")
+	transcriptPath := filepath.Join(newProjectDir, "a1b2c3d4-0000-0000-0000-000000000001.jsonl")
+	_, err = os.Stat(transcriptPath)
+	require.NoError(t, err, "copied transcript should exist in new project data dir")
 }
 
 func TestApply_WithTranscripts(t *testing.T) {

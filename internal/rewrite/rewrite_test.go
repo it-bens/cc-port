@@ -40,69 +40,6 @@ func TestReplaceInBytes(t *testing.T) {
 	})
 }
 
-func TestSessionsIndex(t *testing.T) {
-	t.Run("rewrites matching entries and preserves unknown fields", func(t *testing.T) {
-		input := []byte(`{
-			"version": 1,
-			"entries": [
-				{
-					"sessionId": "abc123",
-					"projectPath": "/old/project",
-					"fullPath": "/home/user/.claude/projects/-old-project",
-					"customField": "preserved"
-				},
-				{
-					"sessionId": "def456",
-					"projectPath": "/other/project",
-					"fullPath": "/home/user/.claude/projects/-other-project",
-					"customField": "also-preserved"
-				}
-			]
-		}`)
-
-		result, count, err := rewrite.SessionsIndex(
-			input,
-			"/old/project",
-			"/new/project",
-			"/home/user/.claude/projects/-old-project",
-			"/home/user/.claude/projects/-new-project",
-		)
-
-		require.NoError(t, err)
-		assert.Equal(t, 1, count)
-
-		var decoded map[string]interface{}
-		require.NoError(t, json.Unmarshal(result, &decoded))
-
-		entries := decoded["entries"].([]interface{})
-		assert.Len(t, entries, 2)
-
-		firstEntry := entries[0].(map[string]interface{})
-		assert.Equal(t, "/new/project", firstEntry["projectPath"])
-		assert.Equal(t, "/home/user/.claude/projects/-new-project", firstEntry["fullPath"])
-		assert.Equal(t, "preserved", firstEntry["customField"])
-
-		secondEntry := entries[1].(map[string]interface{})
-		assert.Equal(t, "/other/project", secondEntry["projectPath"])
-		assert.Equal(t, "/home/user/.claude/projects/-other-project", secondEntry["fullPath"])
-		assert.Equal(t, "also-preserved", secondEntry["customField"])
-	})
-
-	t.Run("returns zero count when no entries match", func(t *testing.T) {
-		input := []byte(
-			`{"version": 1, "entries": [{"sessionId": "abc", "projectPath": "/other/project", "fullPath": "/some/path"}]}`,
-		)
-		_, count, err := rewrite.SessionsIndex(input, "/old/project", "/new/project", "/old/dir", "/new/dir")
-		require.NoError(t, err)
-		assert.Equal(t, 0, count)
-	})
-
-	t.Run("returns error on invalid JSON", func(t *testing.T) {
-		_, _, err := rewrite.SessionsIndex([]byte(`not json`), "/old", "/new", "/old/dir", "/new/dir")
-		assert.Error(t, err)
-	})
-}
-
 func TestHistoryJSONL(t *testing.T) {
 	t.Run("rewrites matching lines and preserves non-matching lines", assertHistoryJSONLRewritesMatching)
 

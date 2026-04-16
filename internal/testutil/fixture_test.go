@@ -25,9 +25,6 @@ func TestSetupFixture(t *testing.T) {
 	_, err = os.Stat(projectDir)
 	require.NoError(t, err)
 
-	_, err = os.Stat(filepath.Join(projectDir, "sessions-index.json"))
-	require.NoError(t, err)
-
 	_, err = os.Stat(filepath.Join(home.Dir, "history.jsonl"))
 	require.NoError(t, err)
 }

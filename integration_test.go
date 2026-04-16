@@ -40,7 +40,7 @@ func TestIntegration_MoveRoundTrip(t *testing.T) {
 		RefsOnly: true,
 	})
 	require.NoError(t, err)
-	assert.Positive(t, plan.SessionsIndexReplacements, "dry run should detect sessions-index replacements")
+	assert.Positive(t, plan.HistoryReplacements, "dry run should detect history replacements")
 
 	// Apply the move. RefsOnly=true avoids trying to copy a non-existent disk directory.
 	err = move.Apply(sourceHome, move.Options{
@@ -62,7 +62,6 @@ func TestIntegration_MoveRoundTrip(t *testing.T) {
 	// LocateProject on new path should succeed and have expected fields.
 	locations, err := claude.LocateProject(sourceHome, newPath)
 	require.NoError(t, err, "LocateProject should succeed for new project path")
-	assert.NotEmpty(t, locations.SessionsIndex, "new project should have a sessions-index file")
 	assert.True(t, locations.HasConfigBlock, "new project should have a config block")
 }
 
@@ -172,17 +171,19 @@ func verifyImportedProject(t *testing.T, destinationHome *claude.Home, destinati
 	// LocateProject on target path should succeed.
 	locations, err := claude.LocateProject(destinationHome, destinationProjectPath)
 	require.NoError(t, err, "LocateProject should succeed on imported project")
+	assert.NotEmpty(t, locations.SessionTranscripts,
+		"imported project should have at least one session transcript")
 
-	// sessions-index should have no placeholder strings and should contain resolved paths.
-	require.NotEmpty(t, locations.SessionsIndex, "imported project should have a sessions-index file")
-	sessionsIndexData, err := os.ReadFile(locations.SessionsIndex)
-	require.NoError(t, err)
-	assert.NotContains(t, string(sessionsIndexData), "{{PROJECT_PATH}}",
-		"sessions-index should have no unresolved PROJECT_PATH placeholders")
-	assert.NotContains(t, string(sessionsIndexData), "{{HOME}}",
-		"sessions-index should have no unresolved HOME placeholders")
-	assert.Contains(t, string(sessionsIndexData), destinationProjectPath,
-		"sessions-index should contain resolved project path")
+	// Imported session transcripts should have no unresolved placeholders and
+	// should contain the destination project path.
+	for _, transcriptPath := range locations.SessionTranscripts {
+		transcriptData, err := os.ReadFile(transcriptPath) //nolint:gosec // test-controlled path
+		require.NoError(t, err)
+		assert.NotContains(t, string(transcriptData), "{{PROJECT_PATH}}",
+			"transcript %s should have no unresolved PROJECT_PATH placeholders", transcriptPath)
+		assert.NotContains(t, string(transcriptData), "{{HOME}}",
+			"transcript %s should have no unresolved HOME placeholders", transcriptPath)
+	}
 
 	// History file should have entries.
 	historyData, err := os.ReadFile(destinationHome.HistoryFile())

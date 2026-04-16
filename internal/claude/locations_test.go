@@ -33,8 +33,6 @@ func TestLocateProject(t *testing.T) {
 	assert.Equal(t, testProjectPath, projectLocations.ProjectPath)
 	assert.NotEmpty(t, projectLocations.ProjectDir)
 
-	assert.NotEmpty(t, projectLocations.SessionsIndex, "sessions-index.json should be found")
-
 	// Shape checks: required artefacts must be present, but we do not pin the
 	// exact count so the fixture can grow without invalidating these tests.
 	assert.NotEmpty(t, projectLocations.SessionTranscripts, "expected at least one transcript .jsonl file")

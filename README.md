@@ -54,10 +54,10 @@ operations on the same file produce visibly different layouts.
 
 ### 4. `~/.claude/file-history/<session-uuid>/<hash>@vN` snapshots are never rewritten
 
-`internal/move/move.go:Apply` rewrites sessions-index, transcripts, memory,
-history, session files, settings, and config. It does not call any rewriter
-on file-history snapshot contents. Snapshots that captured file contents
-containing the old project path remain stale.
+`internal/move/move.go:Apply` rewrites transcripts, memory, history, session
+files, settings, and config. It does not call any rewriter on file-history
+snapshot contents. Snapshots that captured file contents containing the old
+project path remain stale.
 
 ### 5. Rules files are scanned, never rewritten
 
@@ -123,16 +123,6 @@ provided in `Options.Resolutions`. If the archive's `metadata.xml` declares
 a placeholder the caller did not supply, the literal `{{KEY}}` string
 remains in every imported file — there is no validation gate.
 
-## Sessions-index
-
-### 13. Real installations do not maintain `sessions-index.json`
-
-The tool reads `sessions-index.json` for session metadata (`firstPrompt`,
-`summary`, `gitBranch`, `messageCount`). Production installations of Claude
-Code do not appear to write this file; `LocateProject` falls back to
-filename-based UUID discovery, but the metadata fields are then unavailable
-and the export carries no equivalent index entry.
-
 ## Concurrency guard scope
 
 Before mutating shared files under `~/.claude/`, cc-port acquires an
@@ -157,5 +147,5 @@ without locking or session detection:
   `~/.claude/` and write only to the output archive or manifest file
   outside it. A concurrent Claude Code write during a long export can
   produce an internally inconsistent archive (e.g. a history snapshot
-  that does not line up with a sessions-index snapshot), but nothing
-  under `~/.claude/` changes.
+  that does not line up with a transcript snapshot), but nothing under
+  `~/.claude/` changes.

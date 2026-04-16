@@ -27,7 +27,6 @@ type addEntry func(zipName string, content []byte)
 //
 // The archive contains:
 //   - metadata.xml
-//   - sessions-index.json  (with {{PROJECT_PATH}} and {{HOME}} placeholders)
 //   - sessions/99999.json  (from fixture sessions/ directory)
 //   - memory/MEMORY.md
 //   - memory/project_notes.md
@@ -72,7 +71,6 @@ func buildTestArchive(
 	writeMetadataEntry(t, zipWriter, sourceProjectPath, sourceHomeDir)
 
 	encodedProjectDir := sourceClaudeHome.ProjectDir(sourceProjectPath)
-	fileAdder("sessions-index.json", filepath.Join(encodedProjectDir, "sessions-index.json"))
 
 	// --- sessions/99999.json ---
 	sessionEntry := filepath.Join(sourceClaudeHome.Dir, "sessions", "99999.json")
@@ -252,15 +250,6 @@ func assertImportResults(t *testing.T, destClaudeHome *claude.Home, destProjectP
 
 	encodedDestProjectDir := destClaudeHome.ProjectDir(destProjectPath)
 	assert.DirExists(t, encodedDestProjectDir, "encoded project dir should exist")
-
-	// Verify sessions-index.json exists and has resolved paths.
-	sessionsIndexPath := filepath.Join(encodedDestProjectDir, "sessions-index.json")
-	require.FileExists(t, sessionsIndexPath, "sessions-index.json should exist")
-	sessionsIndexData, err := os.ReadFile(sessionsIndexPath) //nolint:gosec // G304: test helper reading imported file
-	require.NoError(t, err)
-	assert.NotContains(t, string(sessionsIndexData), "{{PROJECT_PATH}}",
-		"sessions-index should have no unresolved placeholders")
-	assert.Contains(t, string(sessionsIndexData), destProjectPath, "sessions-index should contain resolved project path")
 
 	// Verify memory files exist.
 	assert.FileExists(t, filepath.Join(encodedDestProjectDir, "memory", "MEMORY.md"))

@@ -3,20 +3,6 @@ package claude
 
 import "encoding/json"
 
-// SessionsIndex is the top-level structure of sessions-index.json.
-type SessionsIndex struct {
-	Version int                 `json:"version"`
-	Entries []SessionIndexEntry `json:"entries"`
-}
-
-// SessionIndexEntry is one entry in sessions-index.json.
-type SessionIndexEntry struct {
-	SessionID   string                     `json:"sessionId"`
-	FullPath    string                     `json:"fullPath"`
-	ProjectPath string                     `json:"projectPath"`
-	Extra       map[string]json.RawMessage `json:"-"`
-}
-
 // HistoryEntry is one line of history.jsonl.
 type HistoryEntry struct {
 	Project string                     `json:"project"`
@@ -45,46 +31,6 @@ type SettingsMarketplaceSource struct {
 // SettingsMarketplace holds the marketplace configuration from settings.
 type SettingsMarketplace struct {
 	Source SettingsMarketplaceSource `json:"source"`
-}
-
-// UnmarshalJSON implements json.Unmarshaler for SessionIndexEntry,
-// preserving unknown fields in Extra.
-func (entry *SessionIndexEntry) UnmarshalJSON(data []byte) error {
-	if err := json.Unmarshal(data, &entry.Extra); err != nil {
-		return err
-	}
-	if value, ok := entry.Extra["sessionId"]; ok {
-		if err := json.Unmarshal(value, &entry.SessionID); err != nil {
-			return err
-		}
-		delete(entry.Extra, "sessionId")
-	}
-	if value, ok := entry.Extra["fullPath"]; ok {
-		if err := json.Unmarshal(value, &entry.FullPath); err != nil {
-			return err
-		}
-		delete(entry.Extra, "fullPath")
-	}
-	if value, ok := entry.Extra["projectPath"]; ok {
-		if err := json.Unmarshal(value, &entry.ProjectPath); err != nil {
-			return err
-		}
-		delete(entry.Extra, "projectPath")
-	}
-	return nil
-}
-
-// MarshalJSON implements json.Marshaler for SessionIndexEntry,
-// merging Extra fields back into the output.
-func (entry SessionIndexEntry) MarshalJSON() ([]byte, error) {
-	merged := make(map[string]any, len(entry.Extra)+3)
-	for key, value := range entry.Extra {
-		merged[key] = value
-	}
-	merged["sessionId"] = entry.SessionID
-	merged["fullPath"] = entry.FullPath
-	merged["projectPath"] = entry.ProjectPath
-	return json.Marshal(merged)
 }
 
 // UnmarshalJSON implements json.Unmarshaler for HistoryEntry,

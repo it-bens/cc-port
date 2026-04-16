@@ -21,7 +21,6 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 type ProjectLocations struct {
 	ProjectPath        string
 	ProjectDir         string
-	SessionsIndex      string
 	SessionTranscripts []string
 	SessionSubdirs     []string
 	MemoryFiles        []string
@@ -33,8 +32,8 @@ type ProjectLocations struct {
 
 // LocateProject enumerates all data locations for the given project path under
 // the provided Home. It returns an error if the project directory does
-// not exist. Optional resources (sessions-index.json, memory files, history
-// entries, etc.) are collected with zero values when absent.
+// not exist. Optional resources (memory files, history entries, etc.) are
+// collected with zero values when absent.
 func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, error) {
 	projectDir := claudeHome.ProjectDir(projectPath)
 
@@ -48,10 +47,6 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 	locations := &ProjectLocations{
 		ProjectPath: projectPath,
 		ProjectDir:  projectDir,
-	}
-
-	if err := collectSessionsIndex(locations, projectDir); err != nil {
-		return nil, err
 	}
 
 	sessionUUIDs, err := collectProjectDirEntries(locations, projectDir)
@@ -80,16 +75,6 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 	}
 
 	return locations, nil
-}
-
-func collectSessionsIndex(locations *ProjectLocations, projectDir string) error {
-	sessionsIndexPath := filepath.Join(projectDir, "sessions-index.json")
-	if _, err := os.Stat(sessionsIndexPath); err == nil {
-		locations.SessionsIndex = sessionsIndexPath
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat sessions-index.json: %w", err)
-	}
-	return nil
 }
 
 // collectProjectDirEntries reads the project directory, populating

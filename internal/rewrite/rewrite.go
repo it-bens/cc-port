@@ -88,37 +88,6 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
 	return result.Bytes(), count
 }
 
-// SessionsIndex parses the sessions-index JSON, rewrites all entries where
-// projectPath matches oldProject (setting projectPath to newProject and fullPath to
-// newProjectDir), and re-serialises to JSON. The int return is the number of entries
-// rewritten. Unknown fields are preserved via the Extra round-trip in SessionIndexEntry.
-func SessionsIndex(data []byte, oldProject, newProject, oldProjectDir, newProjectDir string) ([]byte, int, error) {
-	var sessionsIndex claude.SessionsIndex
-	if err := json.Unmarshal(data, &sessionsIndex); err != nil {
-		return nil, 0, fmt.Errorf("unmarshal sessions index: %w", err)
-	}
-
-	count := 0
-	for index := range sessionsIndex.Entries {
-		if sessionsIndex.Entries[index].ProjectPath == oldProject {
-			sessionsIndex.Entries[index].ProjectPath = newProject
-			sessionsIndex.Entries[index].FullPath = strings.Replace(
-				sessionsIndex.Entries[index].FullPath,
-				oldProjectDir,
-				newProjectDir,
-				1,
-			)
-			count++
-		}
-	}
-
-	result, err := json.Marshal(sessionsIndex)
-	if err != nil {
-		return nil, 0, fmt.Errorf("marshal sessions index: %w", err)
-	}
-	return result, count, nil
-}
-
 // HistoryJSONL processes a JSONL file line by line. For each well-formed line,
 // it rewrites occurrences of oldProject to newProject — both the structured
 // `project` field AND any free-text reference (e.g. inside `display`, inside

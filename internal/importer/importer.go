@@ -122,7 +122,6 @@ func readZipFile(zipFile *zip.File) ([]byte, error) {
 // based on its path prefix.
 //
 // Routing rules:
-//   - sessions-index.json     → encoded project dir
 //   - sessions/*              → encoded project dir (structure preserved)
 //   - memory/*                → encoded project dir/memory/
 //   - history/history.jsonl   → append to claudeHome history file
@@ -132,10 +131,6 @@ func writeImportedFile(
 	claudeHome *claude.Home, encodedProjectDir, targetPath, zipEntryName string, content []byte,
 ) error {
 	switch {
-	case zipEntryName == "sessions-index.json":
-		destinationPath := filepath.Join(encodedProjectDir, "sessions-index.json")
-		return writeFile(destinationPath, content)
-
 	case strings.HasPrefix(zipEntryName, "sessions/"):
 		relativePath := strings.TrimPrefix(zipEntryName, "sessions/")
 		destinationPath := filepath.Join(encodedProjectDir, relativePath)

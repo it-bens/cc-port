@@ -10,33 +10,6 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 )
 
-func TestSessionIndexEntry_RoundTrip(t *testing.T) {
-	input := `{"sessionId":"abc-123","fullPath":"/home/.claude/projects/-test/abc-123.jsonl",` +
-		`"fileMtime":1234567890,"firstPrompt":"hello","projectPath":"/test","isSidechain":false}`
-
-	var entry claude.SessionIndexEntry
-	err := json.Unmarshal([]byte(input), &entry)
-	require.NoError(t, err)
-
-	assert.Equal(t, "abc-123", entry.SessionID)
-	assert.Equal(t, "/home/.claude/projects/-test/abc-123.jsonl", entry.FullPath)
-	assert.Equal(t, "/test", entry.ProjectPath)
-
-	entry.FullPath = "/new/.claude/projects/-new/abc-123.jsonl"
-	entry.ProjectPath = "/new"
-
-	out, err := json.Marshal(entry)
-	require.NoError(t, err)
-
-	var roundTripped map[string]any
-	require.NoError(t, json.Unmarshal(out, &roundTripped))
-	assert.InDelta(t, float64(1234567890), roundTripped["fileMtime"], 0)
-	assert.Equal(t, "hello", roundTripped["firstPrompt"])
-	assert.Equal(t, false, roundTripped["isSidechain"])
-	assert.Equal(t, "/new/.claude/projects/-new/abc-123.jsonl", roundTripped["fullPath"])
-	assert.Equal(t, "/new", roundTripped["projectPath"])
-}
-
 func TestHistoryEntry_RoundTrip(t *testing.T) {
 	input := `{"display":"test prompt","timestamp":1234567890,"project":"/Users/test/myproject"}`
 

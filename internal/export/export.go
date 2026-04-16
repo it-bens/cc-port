@@ -61,10 +61,6 @@ func Run(claudeHome *claude.Home, exportOptions Options) error {
 		return fmt.Errorf("write metadata.xml: %w", err)
 	}
 
-	if err := exportSessionsIndex(archiveWriter, locations, replacements); err != nil {
-		return err
-	}
-
 	if exportOptions.Categories.Sessions {
 		if err := exportSessions(archiveWriter, locations, replacements); err != nil {
 			return err
@@ -95,24 +91,6 @@ func Run(claudeHome *claude.Home, exportOptions Options) error {
 		}
 	}
 
-	return nil
-}
-
-// exportSessionsIndex writes the sessions-index.json file to the archive if it exists.
-func exportSessionsIndex(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, replacements [][2]string,
-) error {
-	if locations.SessionsIndex == "" {
-		return nil
-	}
-	indexData, err := os.ReadFile(locations.SessionsIndex)
-	if err != nil {
-		return fmt.Errorf("read sessions-index.json: %w", err)
-	}
-	anonymizedIndex := anonymize(indexData, replacements)
-	if err := writeToZip(archiveWriter, "sessions-index.json", anonymizedIndex); err != nil {
-		return fmt.Errorf("write sessions-index.json: %w", err)
-	}
 	return nil
 }
 

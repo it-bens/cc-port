@@ -29,12 +29,11 @@ type Plan struct {
 	OldProjectDir string
 	NewProjectDir string
 
-	SessionsIndexReplacements int
-	HistoryReplacements       int
-	SessionFileReplacements   int
-	SettingsReplacements      int
-	ConfigBlockRekey          bool
-	TranscriptReplacements    int
+	HistoryReplacements     int
+	SessionFileReplacements int
+	SettingsReplacements    int
+	ConfigBlockRekey        bool
+	TranscriptReplacements  int
 
 	RulesWarnings []scan.Warning
 
@@ -58,11 +57,6 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 		OldProjectDir:  claudeHome.ProjectDir(moveOptions.OldPath),
 		NewProjectDir:  claudeHome.ProjectDir(moveOptions.NewPath),
 		MoveProjectDir: !moveOptions.RefsOnly,
-	}
-
-	plan.SessionsIndexReplacements, err = countSessionsIndexReplacements(locations, claudeHome, moveOptions)
-	if err != nil {
-		return nil, err
 	}
 
 	plan.HistoryReplacements, err = countHistoryReplacements(claudeHome, moveOptions)
@@ -99,32 +93,6 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 	plan.RulesWarnings = warnings
 
 	return plan, nil
-}
-
-func countSessionsIndexReplacements(
-	locations *claude.ProjectLocations,
-	claudeHome *claude.Home,
-	moveOptions Options,
-) (int, error) {
-	if locations.SessionsIndex == "" {
-		return 0, nil
-	}
-
-	data, err := os.ReadFile(locations.SessionsIndex)
-	if err != nil {
-		return 0, fmt.Errorf("read sessions-index.json: %w", err)
-	}
-	_, count, err := rewrite.SessionsIndex(
-		data,
-		moveOptions.OldPath,
-		moveOptions.NewPath,
-		claudeHome.ProjectDir(moveOptions.OldPath),
-		claudeHome.ProjectDir(moveOptions.NewPath),
-	)
-	if err != nil {
-		return 0, fmt.Errorf("analyse sessions-index.json: %w", err)
-	}
-	return count, nil
 }
 
 func countHistoryReplacements(claudeHome *claude.Home, moveOptions Options) (int, error) {
@@ -267,7 +235,7 @@ func executeMove(
 
 	tracker := &globalFileTracker{}
 
-	if err := rewriteNewProjectDir(newProjectDir, oldProjectDir, moveOptions); err != nil {
+	if err := rewriteNewProjectDir(newProjectDir, moveOptions); err != nil {
 		return err
 	}
 
@@ -297,15 +265,8 @@ func executeMove(
 	return nil
 }
 
-// rewriteNewProjectDir rewrites the copied project dir: sessions-index, transcripts, memory files.
-func rewriteNewProjectDir(newProjectDir, oldProjectDir string, moveOptions Options) error {
-	newSessionsIndex := filepath.Join(newProjectDir, "sessions-index.json")
-	if _, err := os.Stat(newSessionsIndex); err == nil {
-		if err := rewriteSessionsIndexFile(newSessionsIndex, oldProjectDir, newProjectDir, moveOptions); err != nil {
-			return err
-		}
-	}
-
+// rewriteNewProjectDir rewrites the copied project dir: transcripts and memory files.
+func rewriteNewProjectDir(newProjectDir string, moveOptions Options) error {
 	if moveOptions.RewriteTranscripts {
 		if err := rewriteTranscriptsInDir(newProjectDir, moveOptions); err != nil {
 			return err
@@ -316,27 +277,6 @@ func rewriteNewProjectDir(newProjectDir, oldProjectDir string, moveOptions Optio
 		return err
 	}
 
-	return nil
-}
-
-func rewriteSessionsIndexFile(path, oldProjectDir, newProjectDir string, moveOptions Options) error {
-	data, err := os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
-	if err != nil {
-		return fmt.Errorf("read new sessions-index.json: %w", err)
-	}
-	rewritten, _, err := rewrite.SessionsIndex(
-		data,
-		moveOptions.OldPath,
-		moveOptions.NewPath,
-		oldProjectDir,
-		newProjectDir,
-	)
-	if err != nil {
-		return fmt.Errorf("rewrite sessions-index.json: %w", err)
-	}
-	if err := rewrite.SafeWriteFile(path, rewritten, 0644); err != nil {
-		return fmt.Errorf("write new sessions-index.json: %w", err)
-	}
 	return nil
 }
 
@@ -585,8 +525,7 @@ func checkEncodedDirCollision(claudeHome *claude.Home, oldPath, newPath string) 
 // under each session subdirectory (covering <uuid>/subagents/*.jsonl and
 // <uuid>/session-memory/**).
 //
-// `memory/` is handled separately by rewriteMemoryFilesInDir, and
-// sessions-index.json is handled by rewriteSessionsIndexFile, so those are
+// `memory/` is handled separately by rewriteMemoryFilesInDir, so it is
 // excluded here.
 func listTranscriptFiles(projectDir string) ([]string, error) {
 	entries, err := os.ReadDir(projectDir)
