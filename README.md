@@ -21,21 +21,14 @@ way to automate is the two-step manifest flow (`export manifest` /
 
 ## Move
 
-### 2. `~/.claude/file-history/<session-uuid>/<hash>@vN` snapshots are never rewritten
-
-`internal/move/move.go:Apply` rewrites transcripts, memory, history, session
-files, settings, and config. It does not call any rewriter on file-history
-snapshot contents. Snapshots that captured file contents containing the old
-project path remain stale.
-
-### 3. Rules files are scanned, never rewritten
+### 2. Rules files are scanned, never rewritten
 
 `internal/scan/rules.go:Rules` reports occurrences of the old path as
 `Warning`s. `move.Apply` does not modify anything under `~/.claude/rules/`.
 Rules that hard-code the old project path require manual editing after a
 move.
 
-### 4. A path immediately followed by `.` is left untouched
+### 3. A path immediately followed by `.` is left untouched
 
 `internal/rewrite/rewrite.go:ReplacePathInBytes` treats `[A-Za-z0-9_.-]` as
 path-component bytes. This protects prefix collisions like `myproject` vs
@@ -43,7 +36,7 @@ path-component bytes. This protects prefix collisions like `myproject` vs
 /Users/x/myproject."` is not rewritten — the trailing `.` is
 indistinguishable from the start of an extension.
 
-### 5. Malformed history lines are preserved silently
+### 4. Malformed history lines are preserved silently
 
 `internal/rewrite/rewrite.go:HistoryJSONL` keeps malformed lines verbatim and
 continues. The user receives no warning that those lines exist or that the
@@ -51,21 +44,24 @@ rewriter could not touch them.
 
 ## Export
 
-### 6. History is filtered by exact `project` field equality
+### 5. History is filtered by exact `project` field equality
 
 `internal/export/export.go:extractProjectHistory` only includes lines whose
 `project` field equals the requested project path. History entries that
 reference the project only in `display` or `pastedContents` are excluded
 from the export.
 
-### 7. Binary detection uses a 512-byte null-byte heuristic
+### 6. Binary detection uses a 512-byte null-byte heuristic
 
-`internal/export/export.go:isLikelyText` checks only the first 512 bytes for
-a `\x00` byte. Files that are binary after a textual header, or binary
+`internal/rewrite/rewrite.go:IsLikelyText` checks only the first 512 bytes
+for a `\x00` byte. Files that are binary after a textual header, or binary
 formats that happen to start with non-null bytes, are treated as text and
-substring-rewritten — which corrupts them.
+substring-rewritten — which corrupts them. The heuristic gates both export
+anonymization and `move.Apply`'s file-history snapshot rewrite, so a false
+negative can leak an unrewritten path into an export *or* corrupt a
+snapshot during a move.
 
-### 8. The export anonymizer is not path-boundary aware
+### 7. The export anonymizer is not path-boundary aware
 
 `internal/export/export.go:anonymize` uses `strings.ReplaceAll`. It is
 currently safe only because placeholders are sorted by `Original` length
@@ -75,7 +71,7 @@ other order can corrupt output.
 
 ## Import
 
-### 9. Import has no atomic or rollback guarantee
+### 8. Import has no atomic or rollback guarantee
 
 `internal/importer/importer.go:Run` streams ZIP entries and writes each to
 its final destination as it goes: files into the encoded project directory,
@@ -85,7 +81,7 @@ corrupt entry, a missing resolution — leaves some destinations written and
 others not, with no equivalent of `move.Apply`'s copy-verify-delete
 strategy. Rolling back a partial import is manual.
 
-### 10. Unsupplied placeholders survive import as literal strings
+### 9. Unsupplied placeholders survive import as literal strings
 
 `internal/importer/importer.go:Run` only resolves placeholders the caller
 provided in `Options.Resolutions`. If the archive's `metadata.xml` declares

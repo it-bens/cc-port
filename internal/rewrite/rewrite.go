@@ -26,6 +26,23 @@ func escapeSJSONKey(key string) string {
 	return key
 }
 
+// IsLikelyText is a binary-detection heuristic used to decide whether a file
+// should be passed through path-substring rewriting. Substring replacement on
+// binary payloads (file-history snapshots can be arbitrary bytes) would
+// corrupt them. A null byte in the first 512 bytes is a strong signal of
+// binary content; conventional UTF-8 text never contains one.
+//
+// False negatives are possible — a binary file whose first 512 bytes happen
+// to contain no null byte will be treated as text. Callers that rewrite such
+// a file can corrupt it; see the known-limitations README.
+func IsLikelyText(data []byte) bool {
+	checkLength := len(data)
+	if checkLength > 512 {
+		checkLength = 512
+	}
+	return !bytes.ContainsRune(data[:checkLength], 0)
+}
+
 // ReplaceInBytes replaces all occurrences of oldString with newString in data.
 // It returns the resulting bytes and the number of replacements made.
 func ReplaceInBytes(data []byte, oldString, newString string) ([]byte, int) {

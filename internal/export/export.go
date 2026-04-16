@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
 // CategorySet specifies which data categories to include in the export.
@@ -245,7 +246,7 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, replace
 			return fmt.Errorf("read file %s: %w", entryPath, err)
 		}
 
-		if isLikelyText(data) {
+		if rewrite.IsLikelyText(data) {
 			data = anonymize(data, replacements)
 		}
 
@@ -255,19 +256,6 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, replace
 	}
 
 	return nil
-}
-
-// isLikelyText is a binary-detection heuristic used to decide whether a file
-// should be passed through path anonymization. We anonymize text content by
-// substring replacement, which would corrupt binary payloads (file-history
-// snapshots can be arbitrary bytes). A null byte in the first 512 bytes is a
-// strong signal of binary content; conventional UTF-8 text never contains one.
-func isLikelyText(data []byte) bool {
-	checkLength := len(data)
-	if checkLength > 512 {
-		checkLength = 512
-	}
-	return !bytes.ContainsRune(data[:checkLength], 0)
 }
 
 // extractProjectHistory reads historyPath line by line and returns a JSONL byte

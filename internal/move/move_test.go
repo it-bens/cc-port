@@ -311,6 +311,60 @@ func TestApply_AbortsWhenClaudeSessionIsLive(t *testing.T) {
 	assert.True(t, os.IsNotExist(newStatErr), "new project dir should not exist after aborted apply")
 }
 
+func TestApply_RewritesFileHistoryTextSnapshots(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	// Plant a binary snapshot alongside the existing fixture text snapshots.
+	// Binary: starts with a null byte so IsLikelyText returns false. The
+	// snapshot contains the old project path verbatim as a trailing ASCII
+	// substring — the rewriter must not touch it.
+	fileHistorySessionDir := filepath.Join(
+		claudeHome.FileHistoryDir(), "a1b2c3d4-0000-0000-0000-000000000001",
+	)
+	binarySnapshotPath := filepath.Join(fileHistorySessionDir, "binary0000000000@v1")
+	binarySnapshotContent := append([]byte{0x00, 0x01, 0x02}, []byte(oldProjectPath)...)
+	require.NoError(t, os.WriteFile(binarySnapshotPath, binarySnapshotContent, 0600))
+
+	// Text snapshot already exists in the fixture (cafebabe11111111@v1) and
+	// contains oldProjectPath — capture its path for later assertion.
+	textSnapshotPath := filepath.Join(fileHistorySessionDir, "cafebabe11111111@v1")
+	textBefore, err := os.ReadFile(textSnapshotPath) //nolint:gosec // test path
+	require.NoError(t, err)
+	require.Contains(t, string(textBefore), oldProjectPath,
+		"fixture precondition: text snapshot must reference old path")
+
+	plan, err := move.DryRun(claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+	require.NoError(t, err)
+	assert.Positive(t, plan.FileHistorySnapshotRewrites,
+		"dry-run should count at least the one text snapshot that will be rewritten")
+
+	err = move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	// Text snapshot: old path gone, new path present.
+	textAfter, err := os.ReadFile(textSnapshotPath) //nolint:gosec // test path
+	require.NoError(t, err)
+	textAfterContent := string(textAfter)
+	assert.NotContains(t, textAfterContent, oldProjectPath+"/",
+		"text snapshot should not contain old project path followed by /")
+	assert.Contains(t, textAfterContent, newProjectPath,
+		"text snapshot should contain new project path after rewrite")
+
+	// Binary snapshot: byte-for-byte identical. The heuristic must have
+	// skipped it even though it contains oldProjectPath as a substring.
+	binaryAfter, err := os.ReadFile(binarySnapshotPath) //nolint:gosec // test path
+	require.NoError(t, err)
+	assert.Equal(t, binarySnapshotContent, binaryAfter,
+		"binary snapshot must not be rewritten")
+}
+
 // assertSessionSubdirFilesRewritten walks the session subdirectories under
 // newProjectDir and asserts that every file has had the old project path
 // rewritten to the new project path. Covers <uuid>/subagents/*.jsonl and
