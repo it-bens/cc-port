@@ -3,8 +3,10 @@ package move
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/fsutil"
@@ -185,8 +187,13 @@ func checkConfigBlockRekey(claudeHome *claude.Home, moveOptions Options) (bool, 
 }
 
 func countTranscriptReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
+	transcriptPaths, err := listTranscriptFiles(locations.ProjectDir)
+	if err != nil {
+		return 0, err
+	}
+
 	total := 0
-	for _, transcriptPath := range locations.SessionTranscripts {
+	for _, transcriptPath := range transcriptPaths {
 		data, err := os.ReadFile(transcriptPath) //nolint:gosec // path constructed from trusted internal data
 		if err != nil {
 			return 0, fmt.Errorf("read transcript %s: %w", transcriptPath, err)
@@ -302,7 +309,7 @@ func rewriteSessionsIndexFile(path, oldProjectDir, newProjectDir string, moveOpt
 }
 
 func rewriteTranscriptsInDir(newProjectDir string, moveOptions Options) error {
-	newTranscripts, err := collectNewDirTranscripts(newProjectDir)
+	newTranscripts, err := listTranscriptFiles(newProjectDir)
 	if err != nil {
 		return fmt.Errorf("collect transcripts in new dir: %w", err)
 	}
@@ -503,19 +510,57 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 	return nil
 }
 
-// collectNewDirTranscripts returns paths to all .jsonl files directly in the
-// given project directory (not recursively).
-func collectNewDirTranscripts(projectDir string) ([]string, error) {
+// listTranscriptFiles returns every file under projectDir that
+// RewriteTranscripts should rewrite: top-level `.jsonl` files, plus every file
+// under each session subdirectory (covering <uuid>/subagents/*.jsonl and
+// <uuid>/session-memory/**).
+//
+// `memory/` is handled separately by rewriteMemoryFilesInDir, and
+// sessions-index.json is handled by rewriteSessionsIndexFile, so those are
+// excluded here.
+func listTranscriptFiles(projectDir string) ([]string, error) {
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
-		return nil, fmt.Errorf("read directory: %w", err)
+		return nil, fmt.Errorf("read project directory: %w", err)
 	}
 
 	var transcripts []string
 	for _, entry := range entries {
-		if !entry.IsDir() && len(entry.Name()) > 6 && entry.Name()[len(entry.Name())-6:] == ".jsonl" {
-			transcripts = append(transcripts, filepath.Join(projectDir, entry.Name()))
+		name := entry.Name()
+		fullPath := filepath.Join(projectDir, name)
+		if !entry.IsDir() {
+			if strings.HasSuffix(name, ".jsonl") {
+				transcripts = append(transcripts, fullPath)
+			}
+			continue
 		}
+		if name == "memory" || name == "sessions" {
+			continue
+		}
+		subdirFiles, err := listFilesRecursive(fullPath)
+		if err != nil {
+			return nil, err
+		}
+		transcripts = append(transcripts, subdirFiles...)
 	}
 	return transcripts, nil
+}
+
+// listFilesRecursive returns every file path under dir, skipping directories.
+func listFilesRecursive(dir string) ([]string, error) {
+	var files []string
+	walkErr := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	if walkErr != nil {
+		return nil, fmt.Errorf("walk %s: %w", dir, walkErr)
+	}
+	return files, nil
 }

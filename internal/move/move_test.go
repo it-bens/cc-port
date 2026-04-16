@@ -2,6 +2,7 @@ package move_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -220,4 +221,54 @@ func TestApply_WithTranscripts(t *testing.T) {
 			"transcript should contain new project path after rewrite")
 	}
 	assert.True(t, foundTranscript, "expected at least one transcript file in new project dir")
+
+	assertSessionSubdirFilesRewritten(t, newProjectDir)
+}
+
+// assertSessionSubdirFilesRewritten walks the session subdirectories under
+// newProjectDir and asserts that every file has had the old project path
+// rewritten to the new project path. Covers <uuid>/subagents/*.jsonl and
+// <uuid>/session-memory/** — the files that were silently skipped before #7
+// was fixed.
+func assertSessionSubdirFilesRewritten(t *testing.T, newProjectDir string) {
+	t.Helper()
+
+	topLevel, err := os.ReadDir(newProjectDir)
+	require.NoError(t, err)
+
+	var subdirFiles []string
+	for _, entry := range topLevel {
+		if !entry.IsDir() || entry.Name() == "memory" || entry.Name() == "sessions" {
+			continue
+		}
+		err := filepath.WalkDir(
+			filepath.Join(newProjectDir, entry.Name()),
+			func(path string, walked fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if walked.IsDir() {
+					return nil
+				}
+				subdirFiles = append(subdirFiles, path)
+				return nil
+			},
+		)
+		require.NoError(t, err)
+	}
+
+	require.NotEmpty(t, subdirFiles,
+		"fixture must include session-subdir files to exercise the fix for #7")
+
+	for _, filePath := range subdirFiles {
+		data, err := os.ReadFile(filePath) //nolint:gosec // test file path
+		require.NoError(t, err)
+		content := string(data)
+		assert.NotContains(t, content, oldProjectPath+"/",
+			"subdir file %s should not contain old project path followed by /", filePath)
+		assert.NotContains(t, content, `"`+oldProjectPath+`"`,
+			"subdir file %s should not contain old project path as a quoted JSON value", filePath)
+		assert.Contains(t, content, newProjectPath,
+			"subdir file %s should contain new project path after rewrite", filePath)
+	}
 }
