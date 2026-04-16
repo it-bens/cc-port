@@ -247,6 +247,36 @@ func TestSessionFile(t *testing.T) {
 		_, _, err := rewrite.SessionFile([]byte(`not json`), "/old", "/new")
 		assert.Error(t, err)
 	})
+
+	t.Run("rewrites occurrences embedded outside the cwd field", assertSessionFileRewritesEmbedded)
+
+	t.Run("does not rewrite a path that is a prefix of another path", func(t *testing.T) {
+		input := []byte(`{"cwd":"/old/project-extras"}`)
+		result, changed, err := rewrite.SessionFile(input, "/old/project", "/new/project")
+		require.NoError(t, err)
+		assert.False(t, changed)
+		assert.Contains(t, string(result), "/old/project-extras",
+			"path-boundary protection must skip prefix collision")
+		assert.NotContains(t, string(result), "/new/project-extras")
+	})
+}
+
+func assertSessionFileRewritesEmbedded(t *testing.T) {
+	input := []byte(
+		`{"cwd":"/old/project","history":["/old/project/main.go"],` +
+			`"notes":"opened /old/project/README.md today"}`,
+	)
+	result, changed, err := rewrite.SessionFile(input, "/old/project", "/new/project")
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	assert.NotContains(t, string(result), `"/old/project"`,
+		"quoted cwd occurrence must be rewritten")
+	assert.NotContains(t, string(result), "/old/project/",
+		"path-followed-by-/ occurrences must be rewritten")
+	assert.Contains(t, string(result), "/new/project")
+	assert.Contains(t, string(result), "/new/project/main.go")
+	assert.Contains(t, string(result), "/new/project/README.md")
 }
 
 func TestUserConfig(t *testing.T) {

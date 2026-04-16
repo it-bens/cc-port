@@ -157,29 +157,24 @@ func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, erro
 	return bytes.Join(outputLines, []byte("\n")), count, nil
 }
 
-// SessionFile parses a session JSON file and replaces the cwd field if it
-// starts with oldProject. The bool return indicates whether cwd was changed.
-// Unknown fields are preserved via the Extra round-trip in SessionFile.
+// SessionFile rewrites every occurrence of oldProject to newProject inside
+// the session JSON using path-boundary-aware substitution. The top-level
+// `cwd` field is covered, as is any occurrence embedded elsewhere in the
+// file — including nested values that JSON-decode into the preserved Extra
+// map (free-form payload state that Claude Code sometimes writes alongside
+// the core fields).
+//
+// The bool return indicates whether at least one occurrence was rewritten.
+// Malformed JSON is rejected so callers can rely on the input being a
+// well-formed session file before any bytes are returned.
 func SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error) {
 	var sessionFile claude.SessionFile
 	if err := json.Unmarshal(data, &sessionFile); err != nil {
 		return nil, false, fmt.Errorf("unmarshal session file: %w", err)
 	}
 
-	if !strings.HasPrefix(sessionFile.Cwd, oldProject) {
-		result, err := json.Marshal(sessionFile)
-		if err != nil {
-			return nil, false, fmt.Errorf("marshal session file: %w", err)
-		}
-		return result, false, nil
-	}
-
-	sessionFile.Cwd = newProject + strings.TrimPrefix(sessionFile.Cwd, oldProject)
-	result, err := json.Marshal(sessionFile)
-	if err != nil {
-		return nil, false, fmt.Errorf("marshal session file: %w", err)
-	}
-	return result, true, nil
+	rewritten, count := ReplacePathInBytes(data, oldProject, newProject)
+	return rewritten, count > 0, nil
 }
 
 // UserConfig parses ~/.claude.json and re-keys the project entry from

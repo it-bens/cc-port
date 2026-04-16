@@ -86,29 +86,23 @@ indistinguishable from the start of an extension.
 continues. The user receives no warning that those lines exist or that the
 rewriter could not touch them.
 
-### 9. `cwd` rewrite requires the old path as a strict prefix
-
-`internal/rewrite/rewrite.go:SessionFile` calls `strings.HasPrefix`. A
-`session.cwd` value that holds the project path in any other position (e.g.
-inside a JSON-encoded payload) will not be rewritten.
-
 ## Export
 
-### 10. History is filtered by exact `project` field equality
+### 9. History is filtered by exact `project` field equality
 
 `internal/export/export.go:extractProjectHistory` only includes lines whose
 `project` field equals the requested project path. History entries that
 reference the project only in `display` or `pastedContents` are excluded
 from the export.
 
-### 11. Binary detection uses a 512-byte null-byte heuristic
+### 10. Binary detection uses a 512-byte null-byte heuristic
 
 `internal/export/export.go:isLikelyText` checks only the first 512 bytes for
 a `\x00` byte. Files that are binary after a textual header, or binary
 formats that happen to start with non-null bytes, are treated as text and
 substring-rewritten — which corrupts them.
 
-### 12. The export anonymizer is not path-boundary aware
+### 11. The export anonymizer is not path-boundary aware
 
 `internal/export/export.go:anonymize` uses `strings.ReplaceAll`. It is
 currently safe only because placeholders are sorted by `Original` length
@@ -118,7 +112,7 @@ other order can corrupt output.
 
 ## Import
 
-### 13. Import has no atomic or rollback guarantee
+### 12. Import has no atomic or rollback guarantee
 
 `internal/importer/importer.go:Run` streams ZIP entries and writes each to
 its final destination as it goes: files into the encoded project directory,
@@ -128,7 +122,7 @@ corrupt entry, a missing resolution — leaves some destinations written and
 others not, with no equivalent of `move.Apply`'s copy-verify-delete
 strategy. Rolling back a partial import is manual.
 
-### 14. Unsupplied placeholders survive import as literal strings
+### 13. Unsupplied placeholders survive import as literal strings
 
 `internal/importer/importer.go:Run` only resolves placeholders the caller
 provided in `Options.Resolutions`. If the archive's `metadata.xml` declares
@@ -137,7 +131,7 @@ remains in every imported file — there is no validation gate.
 
 ## Sessions-index
 
-### 15. Real installations do not maintain `sessions-index.json`
+### 14. Real installations do not maintain `sessions-index.json`
 
 The tool reads `sessions-index.json` for session metadata (`firstPrompt`,
 `summary`, `gitBranch`, `messageCount`). Production installations of Claude
