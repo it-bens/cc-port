@@ -21,14 +21,7 @@ way to automate is the two-step manifest flow (`export manifest` /
 
 ## Move
 
-### 2. Rules files are scanned, never rewritten
-
-`internal/scan/rules.go:Rules` reports occurrences of the old path as
-`Warning`s. `move.Apply` does not modify anything under `~/.claude/rules/`.
-Rules that hard-code the old project path require manual editing after a
-move.
-
-### 3. A path immediately followed by `.` is left untouched
+### 2. A path immediately followed by `.` is left untouched
 
 `internal/rewrite/rewrite.go:ReplacePathInBytes` treats `[A-Za-z0-9_.-]` as
 path-component bytes. This protects prefix collisions like `myproject` vs
@@ -36,7 +29,7 @@ path-component bytes. This protects prefix collisions like `myproject` vs
 /Users/x/myproject."` is not rewritten — the trailing `.` is
 indistinguishable from the start of an extension.
 
-### 4. Malformed history lines are preserved silently
+### 3. Malformed history lines are preserved silently
 
 `internal/rewrite/rewrite.go:HistoryJSONL` keeps malformed lines verbatim and
 continues. The user receives no warning that those lines exist or that the
@@ -44,14 +37,14 @@ rewriter could not touch them.
 
 ## Export
 
-### 5. History is filtered by exact `project` field equality
+### 4. History is filtered by exact `project` field equality
 
 `internal/export/export.go:extractProjectHistory` only includes lines whose
 `project` field equals the requested project path. History entries that
 reference the project only in `display` or `pastedContents` are excluded
 from the export.
 
-### 6. Binary detection uses a 512-byte null-byte heuristic
+### 5. Binary detection uses a 512-byte null-byte heuristic
 
 `internal/rewrite/rewrite.go:IsLikelyText` checks only the first 512 bytes
 for a `\x00` byte. Files that are binary after a textual header, or binary
@@ -61,7 +54,7 @@ anonymization and `move.Apply`'s file-history snapshot rewrite, so a false
 negative can leak an unrewritten path into an export *or* corrupt a
 snapshot during a move.
 
-### 7. The export anonymizer is not path-boundary aware
+### 6. The export anonymizer is not path-boundary aware
 
 `internal/export/export.go:anonymize` uses `strings.ReplaceAll`. It is
 currently safe only because placeholders are sorted by `Original` length
@@ -71,7 +64,7 @@ other order can corrupt output.
 
 ## Import
 
-### 8. Import has no atomic or rollback guarantee
+### 7. Import has no atomic or rollback guarantee
 
 `internal/importer/importer.go:Run` streams ZIP entries and writes each to
 its final destination as it goes: files into the encoded project directory,
@@ -81,7 +74,7 @@ corrupt entry, a missing resolution — leaves some destinations written and
 others not, with no equivalent of `move.Apply`'s copy-verify-delete
 strategy. Rolling back a partial import is manual.
 
-### 9. Unsupplied placeholders survive import as literal strings
+### 8. Unsupplied placeholders survive import as literal strings
 
 `internal/importer/importer.go:Run` only resolves placeholders the caller
 provided in `Options.Resolutions`. If the archive's `metadata.xml` declares
@@ -129,6 +122,33 @@ Not covered — cases cc-port cannot detect or mitigate:
   operation takes the original path as input and encodes forward. To find
   the owner of a stored directory, read `cwd` from a `sessions/*.json`
   file or the matching `~/.claude.json` project key.
+
+## Rules files scope
+
+cc-port treats `~/.claude/rules/*.md` as user-scoped guidance that should
+stay untouched by a project move. Rules live one directory up from any
+single project; if a rule needs a project path, the rule belongs inside
+the project (e.g. `CLAUDE.md` at the project root), not in the global
+rules directory. An in-place rewrite under `~/.claude/rules/` would
+silently edit content the user likely wants reviewed by hand.
+
+Scanned but not rewritten — `move` surfaces these so the user can edit
+them manually:
+
+- `cc-port move` (apply or dry-run) runs `internal/scan/rules.go:Rules`
+  over every `.md` file in `~/.claude/rules/` and reports each line that
+  contains the old project path as a `Warning` alongside the rest of the
+  plan output. The files on disk are not modified.
+
+Not covered — cases cc-port does not address:
+
+- **Files outside `~/.claude/rules/`.** Only the top-level `.md` files in
+  that directory are scanned. Nested subdirectories, non-`.md` extensions,
+  and rules kept anywhere else on the system are ignored.
+- **Automatic rewrite.** There is no `--rewrite-rules` flag. The warning
+  is the entire remediation surface; the user is expected to inspect each
+  hit and decide whether editing it, leaving it, or moving the rule into
+  the project is the right call.
 
 ## Concurrency guard scope
 
