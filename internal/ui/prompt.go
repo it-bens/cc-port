@@ -3,14 +3,33 @@ package ui
 
 import (
 	"fmt"
+	"os"
 
 	"charm.land/huh/v2"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/it-bens/cc-port/internal/export"
 )
 
+// requireTTY fails fast when stdin is not a terminal, with a message naming
+// the non-interactive alternative for the calling surface. huh's own error in
+// that situation is an opaque "open /dev/tty" failure after the form has
+// already taken over the terminal.
+func requireTTY(remediation string) error {
+	if term.IsTerminal(os.Stdin.Fd()) {
+		return nil
+	}
+	return fmt.Errorf("interactive prompt requires a TTY: %s", remediation)
+}
+
 // SelectCategories presents an interactive multi-select for export categories.
 func SelectCategories() (export.CategorySet, error) {
+	if err := requireTTY(
+		"rerun with --all or explicit category flags " +
+			"(--sessions, --memory, --history, --file-history, --config)",
+	); err != nil {
+		return export.CategorySet{}, err
+	}
 	var selectedCategories []string
 
 	form := huh.NewForm(
@@ -52,6 +71,17 @@ func SelectCategories() (export.CategorySet, error) {
 
 // ResolvePlaceholder prompts the user to resolve a single placeholder.
 func ResolvePlaceholder(key, original, autoValue string) (string, error) {
+	if err := requireTTY(
+		fmt.Sprintf(
+			"cannot prompt for placeholder %s; "+
+				"use the two-step manifest flow "+
+				"(export manifest / import --from-manifest) to supply resolutions non-interactively",
+			key,
+		),
+	); err != nil {
+		return "", err
+	}
+
 	resolvedValue := autoValue
 
 	title := fmt.Sprintf("Resolve %s", key)
@@ -76,6 +106,10 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 
 // ConfirmApply asks the user to confirm the move operation.
 func ConfirmApply(description string) (bool, error) {
+	if err := requireTTY("no non-interactive confirmation path is available"); err != nil {
+		return false, err
+	}
+
 	var confirmed bool
 
 	form := huh.NewForm(
