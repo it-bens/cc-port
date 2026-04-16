@@ -21,20 +21,7 @@ way to automate is the two-step manifest flow (`export manifest` /
 
 ## Import
 
-### 2. Same-filesystem requirement for atomic import
-
-`internal/importer/importer.go:Run` uses a stage-and-swap strategy:
-every destination is staged at a `*.cc-port-import.tmp` sibling path and
-promoted via `os.Rename`. `os.Rename` is atomic only within a single
-filesystem. On the common macOS and Linux layout where `~/.claude/`,
-`~/.claude.json`, and `~/.claude/file-history/` all live on the user's
-home filesystem, this holds. If any of these paths is a symlink across a
-filesystem boundary (e.g. `~/.claude/file-history` pointed at an external
-volume), the promote step fails with `EXDEV` and the import aborts —
-correctly leaving no partial state — but the user sees a rename error
-that may look unfamiliar.
-
-### 3. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
+### 2. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
 
 `internal/rewrite/rewrite.go:FindPlaceholderTokens` scans archive bodies
 for placeholder tokens using a byte-walk matching `{{[A-Z0-9_]+}}`. This
@@ -245,6 +232,78 @@ Not covered — cases cc-port deliberately does not address:
   project directory) or session subdir files, but cc-port does not scan
   those for parse errors — they are rewritten as opaque byte streams
   with path-boundary-aware substitution.
+
+## Atomic import staging scope
+
+`cc-port import` makes every destination visible all-or-nothing by
+staging each write at a sibling `*.cc-port-import.tmp` path and
+promoting it with `os.Rename`. `os.Rename` is atomic only within a
+single filesystem, and a bare-sibling temp path would sit on the
+wrong side of the boundary whenever a destination's parent is a
+symlink to another volume (a common layout for
+`~/.claude/file-history` pointed at an external disk), so the
+promote step would fail mid-import with `EXDEV`.
+
+`internal/importer/importer.go:stagingTempPath` resolves the parent
+directory of each final destination through any symlinks before
+forming the temp path, so temp and final are siblings of the
+*resolved* parent and therefore always share a filesystem. The walk
+handles missing trailing components the same way
+`internal/claude/paths.go:ResolveProjectPath` handles nonexistent
+project paths: the longest existing prefix is symlink-resolved, and
+any missing tail is re-attached unchanged so `MkdirAll` creates it on
+the resolved filesystem at stage time.
+
+`internal/importer/importer.go:checkStagingFilesystems` runs this
+resolution once up front for every destination the importer will
+touch (the encoded project directory, `history.jsonl`,
+`.claude.json`, and the file-history base) and aggregates any
+failures into a single error before the archive is read or any temp
+is written. This turns an obscure mid-promote rename failure into a
+clear "resolve staging parent for X" message that fires before the
+import has touched anything.
+
+Handled — layouts where promotion stays atomic:
+
+- All four destinations on the same filesystem (the common macOS and
+  Linux layout with everything under the home directory).
+- Any subset of destinations whose *parent directory* is a symlink
+  crossing a filesystem boundary (e.g. `~/.claude/file-history`
+  pointed at an external volume). The temp is staged on the external
+  volume alongside its final, and `os.Rename` remains intra-filesystem.
+- Destinations whose parent directory does not exist yet. The
+  ancestor walk finds the closest existing prefix, resolves it, and
+  `MkdirAll` creates the missing components on that filesystem.
+
+Refused before any write — these paths abort at preflight with a
+single aggregated error:
+
+- A destination's symlinked parent is broken or otherwise
+  unresolvable (`EvalSymlinks` returns a non-`ENOENT` error).
+- A destination's parent ancestor walk fails with a non-`ENOENT`
+  stat error (permission denied on an intermediate component, etc.).
+
+Not covered — cases this approach deliberately does not address:
+
+- **Final destination is itself a cross-filesystem symlink.** If
+  `~/.claude/projects/<encoded>`, `~/.claude/history.jsonl`, or
+  `~/.claude.json` already exists as a symlink whose target lives on
+  a different filesystem than the symlink's parent,
+  `CheckConflict`/merge refuses or overwrites based on existing-file
+  rules, not on symlink topology. For the project directory
+  specifically, `CheckConflict` refuses when the encoded directory
+  already exists, so a pre-existing symlinked leaf does not reach
+  the rename. A symlinked `history.jsonl` or `.claude.json` leaf
+  would still route through `os.Rename` on the symlink's parent
+  filesystem; if the symlink itself straddles a boundary the
+  promote fails and the rollback surface (see **Import contract
+  scope**) restores pre-import state.
+- **Filesystem topology changes mid-import.** The preflight resolves
+  parents once. A concurrent operation that replaces a resolved
+  parent with a cross-filesystem symlink between preflight and
+  promote can still produce `EXDEV` at rename time; the promoter
+  rolls back and the import aborts, but the friendly preflight
+  error does not fire.
 
 ## Import contract scope
 

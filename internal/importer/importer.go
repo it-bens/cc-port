@@ -3,6 +3,7 @@ package importer
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +35,89 @@ const filePerm = os.FileMode(0644)
 // filesystem inspection if a crash ever leaves one behind.
 const stagingSuffix = ".cc-port-import.tmp"
 
+// stagingTempPath returns the temp path used to stage finalPath before
+// atomic promotion. The temp is formed inside the symlink-resolved parent
+// of finalPath so that temp and final always live on the same filesystem,
+// which os.Rename requires. Without this, a symlinked parent pointing at
+// another volume (e.g. ~/.claude/file-history -> /Volumes/ext/...) would
+// place the sibling temp on one side of the boundary and the rename
+// target on the other, and the promote step would fail with EXDEV.
+func stagingTempPath(finalPath string) (string, error) {
+	resolvedParent, err := resolveExistingAncestor(filepath.Dir(finalPath))
+	if err != nil {
+		return "", fmt.Errorf("resolve staging parent for %q: %w", finalPath, err)
+	}
+	return filepath.Join(resolvedParent, filepath.Base(finalPath)+stagingSuffix), nil
+}
+
+// resolveExistingAncestor walks dir upward to the longest prefix that
+// exists on disk, evaluates symlinks on that prefix, and re-attaches any
+// missing trailing components unchanged. This mirrors the behaviour of
+// claude.ResolveProjectPath but operates on arbitrary directory paths —
+// notably the parents of destinations like ~/.claude/history.jsonl whose
+// final leaf does not yet exist at preflight time.
+func resolveExistingAncestor(dir string) (string, error) {
+	existingPrefix := dir
+	var missingSuffix string
+	for {
+		if _, err := os.Lstat(existingPrefix); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("stat %q: %w", existingPrefix, err)
+		}
+		if existingPrefix == "/" || existingPrefix == "." {
+			break
+		}
+		parent, child := filepath.Split(existingPrefix)
+		existingPrefix = strings.TrimSuffix(parent, "/")
+		if existingPrefix == "" {
+			existingPrefix = "/"
+		}
+		if missingSuffix == "" {
+			missingSuffix = child
+		} else {
+			missingSuffix = filepath.Join(child, missingSuffix)
+		}
+	}
+
+	resolvedPrefix, err := filepath.EvalSymlinks(existingPrefix)
+	if err != nil {
+		return "", fmt.Errorf("evaluate symlinks for %q: %w", existingPrefix, err)
+	}
+	if missingSuffix == "" {
+		return resolvedPrefix, nil
+	}
+	return filepath.Join(resolvedPrefix, missingSuffix), nil
+}
+
+// checkStagingFilesystems resolves the parent directory of every final
+// destination up front. Any resolution error is surfaced as a single
+// aggregate error before the archive is read or any temp is created, so
+// users whose ~/.claude layout contains a broken symlink see one clear
+// message instead of a rename failure mid-promote.
+//
+// File-history snapshot destinations are represented by their shared base
+// directory; per-snapshot parents created inside that base (one per
+// session UUID) are resolved at stage time via stagingTempPath.
+func checkStagingFilesystems(claudeHome *claude.Home, encodedProjectDir string) error {
+	destinations := []string{
+		encodedProjectDir,
+		claudeHome.HistoryFile(),
+		claudeHome.ConfigFile,
+		filepath.Join(claudeHome.FileHistoryDir(), "placeholder"),
+	}
+	var errs []string
+	for _, dest := range destinations {
+		if _, err := stagingTempPath(dest); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("staging filesystem check: %s", strings.Join(errs, "; "))
+}
+
 // Options configures an import operation.
 type Options struct {
 	ArchivePath string
@@ -59,7 +143,9 @@ type archiveEntry struct {
 //  3. Resolve the manifest's placeholder classification against the caller's
 //     resolutions; refuse before any write if the archive would leave
 //     unresolved or undeclared tokens on disk.
-//  4. Stage every final destination at a sibling *.cc-port-import.tmp path.
+//  4. Stage every final destination at a *.cc-port-import.tmp path inside
+//     the symlink-resolved parent of the destination (so temp and final
+//     always share a filesystem).
 //  5. Promote all staged temps atomically via SafeRenamePromoter; on any
 //     promote failure, the promoter rolls back every already-promoted entry
 //     to its pre-import state.
@@ -81,6 +167,10 @@ func Run(claudeHome *claude.Home, importOptions Options) error {
 	encodedProjectDir := claudeHome.ProjectDir(importOptions.TargetPath)
 	if err := CheckConflict(encodedProjectDir); err != nil {
 		return fmt.Errorf("conflict check: %w", err)
+	}
+
+	if err := checkStagingFilesystems(claudeHome, encodedProjectDir); err != nil {
+		return err
 	}
 
 	entries, metadata, err := loadArchive(importOptions.ArchivePath)
@@ -238,6 +328,34 @@ func (plan *importPlan) cleanupTemps() {
 	}
 }
 
+// newImportPlan computes the temp-path for every destination the importer
+// will touch and returns an empty plan with those paths filled in. The
+// temp paths come from stagingTempPath so temp and final always share a
+// filesystem even when a parent directory is a symlink crossing a
+// filesystem boundary.
+func newImportPlan(claudeHome *claude.Home, encodedProjectDir string) (*importPlan, error) {
+	tempProjectDir, err := stagingTempPath(encodedProjectDir)
+	if err != nil {
+		return nil, err
+	}
+	tempHistoryFile, err := stagingTempPath(claudeHome.HistoryFile())
+	if err != nil {
+		return nil, err
+	}
+	tempConfigFile, err := stagingTempPath(claudeHome.ConfigFile)
+	if err != nil {
+		return nil, err
+	}
+	return &importPlan{
+		encodedProjectDir: encodedProjectDir,
+		tempProjectDir:    tempProjectDir,
+		historyFile:       claudeHome.HistoryFile(),
+		tempHistoryFile:   tempHistoryFile,
+		configFile:        claudeHome.ConfigFile,
+		tempConfigFile:    tempConfigFile,
+	}, nil
+}
+
 // buildImportPlan routes each archive entry to its staged temp destination
 // and writes it there. Caller must either call promotePlan (success path)
 // or plan.cleanupTemps (failure path).
@@ -247,13 +365,9 @@ func buildImportPlan(
 	encodedProjectDir string,
 	entries []archiveEntry,
 ) (*importPlan, error) {
-	plan := &importPlan{
-		encodedProjectDir: encodedProjectDir,
-		tempProjectDir:    encodedProjectDir + stagingSuffix,
-		historyFile:       claudeHome.HistoryFile(),
-		tempHistoryFile:   claudeHome.HistoryFile() + stagingSuffix,
-		configFile:        claudeHome.ConfigFile,
-		tempConfigFile:    claudeHome.ConfigFile + stagingSuffix,
+	plan, err := newImportPlan(claudeHome, encodedProjectDir)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := ensureEmptyDir(plan.tempProjectDir); err != nil {
@@ -328,7 +442,10 @@ func stageUnknownEntry(tempProjectDir, zipName string, content []byte) error {
 func stageFileHistory(fileHistoryBaseDir, zipName string, content []byte) (fileHistoryStaged, error) {
 	relativePath := strings.TrimPrefix(zipName, "file-history/")
 	finalPath := filepath.Join(fileHistoryBaseDir, relativePath)
-	tempPath := finalPath + stagingSuffix
+	tempPath, err := stagingTempPath(finalPath)
+	if err != nil {
+		return fileHistoryStaged{}, err
+	}
 	if err := writeStagedFile(tempPath, content); err != nil {
 		return fileHistoryStaged{}, err
 	}
