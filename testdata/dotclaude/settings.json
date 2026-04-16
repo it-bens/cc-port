@@ -1,13 +1,71 @@
 {
-  "env": {},
+  "model": "sonnet",
+  "advisorModel": "haiku",
+  "effortLevel": "medium",
+  "autoDreamEnabled": false,
+  "promptSuggestionEnabled": true,
+  "env": {
+    "EDITOR": "nano",
+    "PROJECT_ROOT": "/Users/test/Projects/myproject"
+  },
   "permissions": {
-    "allow": ["Bash(git:*)"]
+    "allow": [
+      "Bash(git:*)",
+      "Bash(go test:*)",
+      "Bash(go build:*)",
+      "Bash(jq:*)",
+      "WebFetch(domain:pkg.go.dev)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "mcp__fs__list",
+      "mcp__fs__read"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {"type": "command", "command": "echo session started in /Users/test/Projects/myproject"}
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "/Users/test/Projects/myproject/scripts/precheck.sh"}
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "echo myproject"
+  },
+  "enabledPlugins": {
+    "test-marketplace/sample-plugin": true
   },
   "extraKnownMarketplaces": {
     "test-marketplace": {
       "source": {
         "source": "directory",
         "path": "/Users/test/Projects/myproject/plugins"
+      }
+    },
+    "extras-marketplace": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/test/Projects/myproject-extras/plugins"
+      }
+    },
+    "external-marketplace": {
+      "source": {
+        "source": "directory",
+        "path": "/opt/shared/marketplace"
       }
     }
   }

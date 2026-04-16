@@ -1,1 +1,1 @@
-{"pid":99999,"sessionId":"a1b2c3d4-0000-0000-0000-000000000001","cwd":"/Users/test/Projects/myproject","startedAt":1700000000000,"kind":"interactive"}
+{"pid":99999,"sessionId":"a1b2c3d4-0000-0000-0000-000000000001","cwd":"/Users/test/Projects/myproject","startedAt":1700000000000,"kind":"interactive","entrypoint":"cli","bridgeSessionId":"session_test_0001"}

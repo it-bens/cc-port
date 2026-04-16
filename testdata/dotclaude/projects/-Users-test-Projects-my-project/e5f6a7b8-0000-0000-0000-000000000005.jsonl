@@ -1,0 +1,3 @@
+{"type":"human","message":{"role":"user","content":"open the readme"},"cwd":"/Users/test/Projects/my project","sessionId":"e5f6a7b8-0000-0000-0000-000000000005"}
+{"type":"assistant","message":{"role":"assistant","content":"Looking at /Users/test/Projects/my project/README.md."},"cwd":"/Users/test/Projects/my project","sessionId":"e5f6a7b8-0000-0000-0000-000000000005"}
+{"type":"tool_use","name":"Read","input":{"file_path":"/Users/test/Projects/my project/README.md"},"cwd":"/Users/test/Projects/my project","sessionId":"e5f6a7b8-0000-0000-0000-000000000005"}

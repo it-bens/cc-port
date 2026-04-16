@@ -1,13 +1,70 @@
 {
+  "anonymousId": "anon-0000000000000000",
+  "autoCompactEnabled": true,
+  "autoUpdates": true,
+  "cachedStatsigGates": {},
+  "firstStartTime": "2024-09-01T08:00:00.000Z",
+  "hasCompletedOnboarding": true,
+  "installMethod": "homebrew",
+  "lastOnboardingVersion": "2.1.0",
   "numStartups": 42,
   "theme": "dark",
   "projects": {
     "/Users/test/Projects/myproject": {
-      "allowedTools": ["Bash(git:*)"],
-      "mcpServers": {},
+      "allowedTools": ["Bash(git:*)", "Bash(go test:*)", "WebFetch(domain:pkg.go.dev)"],
+      "disabledMcpjsonServers": [],
+      "enabledMcpjsonServers": ["fs"],
+      "exampleFiles": ["main.go", "internal/foo/foo.go"],
+      "exampleFilesGeneratedAt": "2026-01-15T09:00:00.000Z",
+      "hasClaudeMdExternalIncludesApproved": true,
+      "hasClaudeMdExternalIncludesWarningShown": true,
+      "hasCompletedProjectOnboarding": true,
       "hasTrustDialogAccepted": true,
+      "lastAPIDuration": 1234,
       "lastCost": 1.5,
-      "lastSessionId": "a1b2c3d4-0000-0000-0000-000000000001"
+      "lastDuration": 9876,
+      "lastLinesAdded": 42,
+      "lastLinesRemoved": 7,
+      "lastSessionId": "a1b2c3d4-0000-0000-0000-000000000001",
+      "lastToolDuration": 321,
+      "lastTotalCacheCreationInputTokens": 4096,
+      "lastTotalCacheReadInputTokens": 16384,
+      "lastTotalInputTokens": 2048,
+      "lastTotalOutputTokens": 1024,
+      "lastTotalWebSearchRequests": 0,
+      "mcpContextUris": ["file:///Users/test/Projects/myproject/CLAUDE.md"],
+      "mcpServers": {
+        "fs": {
+          "command": "node",
+          "args": ["/Users/test/Projects/myproject/mcp/fs-server.js"],
+          "env": {"FS_ROOT": "/Users/test/Projects/myproject"}
+        }
+      },
+      "projectOnboardingSeenCount": 3
+    },
+    "/Users/test/Projects/myproject-extras": {
+      "allowedTools": ["Bash(make:*)"],
+      "hasTrustDialogAccepted": true,
+      "lastSessionId": "d4e5f6a7-0000-0000-0000-000000000004",
+      "mcpServers": {}
+    },
+    "/Users/test/Projects/my project": {
+      "allowedTools": [],
+      "hasTrustDialogAccepted": false,
+      "lastSessionId": "e5f6a7b8-0000-0000-0000-000000000005",
+      "mcpServers": {}
+    },
+    "/Users/test/Projects/my project.v2": {
+      "allowedTools": ["Bash(npm:*)"],
+      "hasTrustDialogAccepted": true,
+      "lastSessionId": "f6a7b8c9-0000-0000-0000-000000000006",
+      "mcpServers": {
+        "fs-de": {
+          "command": "node",
+          "args": ["/Users/test/Projects/my project.v2/mcp/server.js"],
+          "env": {"WORKSPACE": "/Users/test/Projects/my project.v2"}
+        }
+      }
     },
     "/Users/test/Projects/otherproject": {
       "allowedTools": [],

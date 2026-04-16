@@ -21,6 +21,73 @@ func ReplaceInBytes(data []byte, oldString, newString string) ([]byte, int) {
 	return result, count
 }
 
+// isPathContinuationByte reports whether b can extend a path component name —
+// i.e. whether seeing b immediately after a candidate match means the match is
+// actually a longer, different path (e.g. "myproject" vs "myproject-extras").
+//
+// Path component characters in practice: letters, digits, '_', '.', '-'.
+func isPathContinuationByte(b byte) bool {
+	switch {
+	case b >= 'A' && b <= 'Z':
+		return true
+	case b >= 'a' && b <= 'z':
+		return true
+	case b >= '0' && b <= '9':
+		return true
+	case b == '_' || b == '.' || b == '-':
+		return true
+	}
+	return false
+}
+
+// ReplacePathInBytes replaces occurrences of oldPath with newPath in data,
+// but only when the match is bounded on both sides by a non-path-continuation
+// byte (or by the start/end of the buffer).
+//
+// This avoids the prefix-collision corruption that plain substring replacement
+// causes: replacing "/a/myproject" inside "/a/myproject-extras" would otherwise
+// produce "/a/renamed-extras", silently corrupting an unrelated project's data.
+//
+// It returns the resulting bytes and the number of replacements made.
+func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
+	if len(oldPath) == 0 || len(data) == 0 {
+		return append([]byte(nil), data...), 0
+	}
+
+	oldBytes := []byte(oldPath)
+	newBytes := []byte(newPath)
+
+	var result bytes.Buffer
+	result.Grow(len(data))
+
+	count := 0
+	cursor := 0
+	for cursor <= len(data)-len(oldBytes) {
+		if !bytes.Equal(data[cursor:cursor+len(oldBytes)], oldBytes) {
+			result.WriteByte(data[cursor])
+			cursor++
+			continue
+		}
+
+		// Boundary check: the byte AFTER the match must not be a path-continuation byte.
+		nextIndex := cursor + len(oldBytes)
+		if nextIndex < len(data) && isPathContinuationByte(data[nextIndex]) {
+			result.WriteByte(data[cursor])
+			cursor++
+			continue
+		}
+
+		result.Write(newBytes)
+		cursor = nextIndex
+		count++
+	}
+	if cursor < len(data) {
+		result.Write(data[cursor:])
+	}
+
+	return result.Bytes(), count
+}
+
 // SessionsIndex parses the sessions-index JSON, rewrites all entries where
 // projectPath matches oldProject (setting projectPath to newProject and fullPath to
 // newProjectDir), and re-serialises to JSON. The int return is the number of entries
@@ -52,10 +119,15 @@ func SessionsIndex(data []byte, oldProject, newProject, oldProjectDir, newProjec
 	return result, count, nil
 }
 
-// HistoryJSONL processes a JSONL file line by line. For each line whose
-// project field equals oldProject, the field is replaced with newProject.
-// The int return is the count of lines rewritten. Empty lines are skipped but
-// the trailing newline is preserved in the output.
+// HistoryJSONL processes a JSONL file line by line. For each well-formed line,
+// it rewrites occurrences of oldProject to newProject — both the structured
+// `project` field AND any free-text reference (e.g. inside `display`, inside
+// `pastedContents`) — using path-boundary-aware substring replacement so that
+// unrelated paths sharing a prefix (e.g. "myproject-extras") are not corrupted.
+//
+// The int return is the count of lines whose contents changed. Malformed lines
+// are preserved verbatim (export tolerates them too — see export.extractProjectHistory).
+// Empty lines and the trailing newline are preserved.
 func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, error) {
 	lines := bytes.Split(data, []byte("\n"))
 
@@ -68,19 +140,16 @@ func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, erro
 			continue
 		}
 
-		var historyEntry claude.HistoryEntry
-		if err := json.Unmarshal(line, &historyEntry); err != nil {
-			return nil, 0, fmt.Errorf("unmarshal history entry: %w", err)
+		var probe claude.HistoryEntry
+		if err := json.Unmarshal(line, &probe); err != nil {
+			// Malformed line — preserve verbatim, do not abort the whole file.
+			outputLines = append(outputLines, append([]byte(nil), line...))
+			continue
 		}
 
-		if historyEntry.Project == oldProject {
-			historyEntry.Project = newProject
+		rewritten, replaced := ReplacePathInBytes(line, oldProject, newProject)
+		if replaced > 0 {
 			count++
-		}
-
-		rewritten, err := json.Marshal(historyEntry)
-		if err != nil {
-			return nil, 0, fmt.Errorf("marshal history entry: %w", err)
 		}
 		outputLines = append(outputLines, rewritten)
 	}

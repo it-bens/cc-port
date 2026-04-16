@@ -1,0 +1,8 @@
+// snapshot v3 of /Users/test/Projects/myproject/main.go
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("hello from /Users/test/Projects/myproject")
+}

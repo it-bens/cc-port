@@ -127,14 +127,18 @@ func TestApply(t *testing.T) {
 			"sessions-index entry should not contain old project path")
 	}
 
-	// history.jsonl should reference the new path.
+	// history.jsonl should reference the new path. Use path-boundary semantics:
+	// substrings of unrelated paths sharing a prefix (e.g. "myproject-extras")
+	// must remain untouched, so we cannot assert a raw substring absence.
 	historyData, err := os.ReadFile(claudeHome.HistoryFile())
 	require.NoError(t, err)
 	historyContent := string(historyData)
 	assert.Contains(t, historyContent, newProjectPath,
 		"history.jsonl should contain new project path")
-	assert.NotContains(t, historyContent, oldProjectPath,
-		"history.jsonl should not contain old project path")
+	assert.NotContains(t, historyContent, oldProjectPath+"/",
+		"history.jsonl should not contain old project path followed by /")
+	assert.NotContains(t, historyContent, `"`+oldProjectPath+`"`,
+		"history.jsonl should not contain old project path as a quoted JSON value")
 
 	// User config should have new key, not old key.
 	configData, err := os.ReadFile(claudeHome.ConfigFile)
@@ -202,8 +206,16 @@ func TestApply_WithTranscripts(t *testing.T) {
 		transcriptData, err := os.ReadFile(transcriptPath) //nolint:gosec // test file path
 		require.NoError(t, err)
 		content := string(transcriptData)
-		assert.NotContains(t, content, oldProjectPath,
-			"transcript should not contain old project path after rewrite")
+		// Path-boundary semantics: a raw substring of oldProjectPath may still
+		// remain if it is followed by a path-component byte (e.g. a sentence
+		// "look at /Users/test/Projects/myproject." — the trailing '.' could
+		// also be the start of an extension like ".v2", so we cannot rewrite
+		// it safely without context. Verify the path-as-path occurrences are
+		// gone instead.
+		assert.NotContains(t, content, oldProjectPath+"/",
+			"transcript should not contain old project path followed by /")
+		assert.NotContains(t, content, `"`+oldProjectPath+`"`,
+			"transcript should not contain old project path as a quoted JSON value")
 		assert.Contains(t, content, newProjectPath,
 			"transcript should contain new project path after rewrite")
 	}

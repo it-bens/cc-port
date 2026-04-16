@@ -2,7 +2,6 @@
 package move
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -165,7 +164,7 @@ func countSettingsReplacements(claudeHome *claude.Home, moveOptions Options) (in
 	if err != nil {
 		return 0, fmt.Errorf("read settings.json: %w", err)
 	}
-	_, count := rewrite.ReplaceInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+	_, count := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
 	return count, nil
 }
 
@@ -192,7 +191,8 @@ func countTranscriptReplacements(locations *claude.ProjectLocations, moveOptions
 		if err != nil {
 			return 0, fmt.Errorf("read transcript %s: %w", transcriptPath, err)
 		}
-		total += bytes.Count(data, []byte(moveOptions.OldPath))
+		_, count := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+		total += count
 	}
 	return total, nil
 }
@@ -311,7 +311,7 @@ func rewriteTranscriptsInDir(newProjectDir string, moveOptions Options) error {
 		if err != nil {
 			return fmt.Errorf("read transcript %s: %w", transcriptPath, err)
 		}
-		rewritten, _ := rewrite.ReplaceInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+		rewritten, _ := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
 		if err := rewrite.SafeWriteFile(transcriptPath, rewritten, 0644); err != nil {
 			return fmt.Errorf("write transcript %s: %w", transcriptPath, err)
 		}
@@ -338,7 +338,7 @@ func rewriteMemoryFilesInDir(newProjectDir string, moveOptions Options) error {
 		if err != nil {
 			return fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
 		}
-		rewritten, _ := rewrite.ReplaceInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+		rewritten, _ := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
 		if err := rewrite.SafeWriteFile(memoryFilePath, rewritten, 0644); err != nil {
 			return fmt.Errorf("write memory file %s: %w", memoryFilePath, err)
 		}
@@ -451,7 +451,7 @@ func rewriteSettingsFile(claudeHome *claude.Home, moveOptions Options, tracker *
 	if err != nil {
 		return fmt.Errorf("read settings.json for backup: %w", err)
 	}
-	rewritten, _ := rewrite.ReplaceInBytes(original, moveOptions.OldPath, moveOptions.NewPath)
+	rewritten, _ := rewrite.ReplacePathInBytes(original, moveOptions.OldPath, moveOptions.NewPath)
 	if err := rewrite.SafeWriteFile(settingsFile, rewritten, mode); err != nil {
 		return fmt.Errorf("write settings.json: %w", err)
 	}

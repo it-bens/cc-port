@@ -1,0 +1,3 @@
+{"type":"human","message":{"role":"user","content":"Bitte überprüfe die Dokumentation"},"cwd":"/Users/test/Projects/my project.v2","sessionId":"f6a7b8c9-0000-0000-0000-000000000006"}
+{"type":"assistant","message":{"role":"assistant","content":"Ich lese /Users/test/Projects/my project.v2/Dokumentation/README.md."},"cwd":"/Users/test/Projects/my project.v2","sessionId":"f6a7b8c9-0000-0000-0000-000000000006"}
+{"type":"tool_use","name":"Read","input":{"file_path":"/Users/test/Projects/my project.v2/Dokumentation/Über-uns.md"},"cwd":"/Users/test/Projects/my project.v2","sessionId":"f6a7b8c9-0000-0000-0000-000000000006"}

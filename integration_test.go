@@ -221,11 +221,17 @@ func TestIntegration_MoveRefsOnly(t *testing.T) {
 	newProjectDataDir := sourceHome.ProjectDir(newPath)
 	assert.DirExists(t, newProjectDataDir, "new encoded project data dir should exist")
 
-	// History should not contain old path.
+	// History should no longer reference the moved project. Use path-boundary
+	// semantics: an unrelated project sharing the same prefix (e.g.
+	// "myproject-extras") must remain untouched, so a raw substring check is
+	// not valid here.
 	historyData, err := os.ReadFile(sourceHome.HistoryFile())
 	require.NoError(t, err)
-	assert.NotContains(t, string(historyData), oldPath,
-		"history should not contain old project path after refs-only move")
+	historyContent := string(historyData)
+	assert.NotContains(t, historyContent, oldPath+"/",
+		"history should not contain old path followed by /")
+	assert.NotContains(t, historyContent, `"`+oldPath+`"`,
+		"history should not contain old path as a quoted JSON value")
 }
 
 // TestIntegration_ImportConflict verifies that importing back to a ClaudeHome where

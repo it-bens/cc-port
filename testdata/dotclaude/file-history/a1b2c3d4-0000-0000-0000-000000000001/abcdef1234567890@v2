@@ -1,0 +1,6 @@
+// snapshot v2 of /Users/test/Projects/myproject/main.go
+package main
+
+func main() {
+	println("hello from /Users/test/Projects/myproject")
+}

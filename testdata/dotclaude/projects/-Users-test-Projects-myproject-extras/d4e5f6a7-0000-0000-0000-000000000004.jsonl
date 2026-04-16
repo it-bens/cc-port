@@ -1,0 +1,2 @@
+{"type":"human","message":{"role":"user","content":"build the docker image"},"sessionId":"d4e5f6a7-0000-0000-0000-000000000004","cwd":"/Users/test/Projects/myproject-extras"}
+{"type":"assistant","message":{"role":"assistant","content":"Building from /Users/test/Projects/myproject-extras/Dockerfile."},"sessionId":"d4e5f6a7-0000-0000-0000-000000000004"}

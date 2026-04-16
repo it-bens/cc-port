@@ -1,3 +1,12 @@
-{"display":"help me with this project","timestamp":1700000000000,"project":"/Users/test/Projects/myproject"}
-{"display":"fix the bug","timestamp":1700000001000,"project":"/Users/test/Projects/myproject"}
-{"display":"deploy the app","timestamp":1700000002000,"project":"/Users/test/Projects/otherproject"}
+{"display":"help me with this project","pastedContents":{},"timestamp":1700000000000,"project":"/Users/test/Projects/myproject"}
+{"display":"fix the bug","pastedContents":{},"timestamp":1700000001000,"project":"/Users/test/Projects/myproject"}
+{"display":"deploy the app","pastedContents":{},"timestamp":1700000002000,"project":"/Users/test/Projects/otherproject"}
+{"display":"open /Users/test/Projects/myproject/main.go and explain it","pastedContents":{},"timestamp":1700000003000,"project":"/Users/test/Projects/myproject"}
+{"display":"Bitte überprüfe die Dokumentation im Projekt","pastedContents":{},"timestamp":1700000004000,"project":"/Users/test/Projects/my project.v2"}
+{"display":"refactor the parser\nand add a unit test\nfor the new branch","pastedContents":{"pasted-1":"package main\n\nfunc main() {}\n"},"timestamp":1700000005000,"project":"/Users/test/Projects/myproject"}
+{"display":"check the README","pastedContents":{},"timestamp":1700000006000,"project":"/Users/test/Projects/my project"}
+{"display":"build the docker image","pastedContents":{},"timestamp":1700000007000,"project":"/Users/test/Projects/myproject-extras"}
+{"display":"work on the feature","pastedContents":{},"timestamp":1700000008000,"project":"/Users/test/Projects/unknown-project"}
+{ this line is not valid json and should be skipped silently
+{"display":"prep release v2","pastedContents":{},"timestamp":1700000009000,"project":"/Users/test/Projects/my project.v2"}
+{"display":"why does \"my project\" share encoded dir with \"my-project\"?","pastedContents":{},"timestamp":1700000010000,"project":"/Users/test/Projects/my project"}

@@ -1,0 +1,4 @@
+{"type":"system","subtype":"subagent_start","agentName":"parser-inspector","cwd":"/Users/test/Projects/myproject","sessionId":"c3d4e5f6-0000-0000-0000-000000000003"}
+{"type":"human","message":{"role":"user","content":"Inspect the parser at /Users/test/Projects/myproject/internal/parser"}}
+{"type":"assistant","message":{"role":"assistant","content":"Looking at the parser package."}}
+{"type":"tool_use","name":"Glob","input":{"pattern":"internal/parser/*.go"}}

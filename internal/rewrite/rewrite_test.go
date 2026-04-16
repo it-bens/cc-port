@@ -137,10 +137,72 @@ func TestHistoryJSONL(t *testing.T) {
 		assert.Equal(t, 0, count)
 	})
 
-	t.Run("returns error on invalid JSON line", func(t *testing.T) {
-		input := []byte("not json\n")
-		_, _, err := rewrite.HistoryJSONL(input, "/old", "/new")
-		assert.Error(t, err)
+	t.Run("preserves malformed JSON lines verbatim and continues", func(t *testing.T) {
+		good := `{"project":"/old/project","display":"a"}`
+		bad := `{ this is not valid json`
+		alsoGood := `{"project":"/old/project","display":"b"}`
+		input := []byte(good + "\n" + bad + "\n" + alsoGood + "\n")
+
+		result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+		require.NoError(t, err)
+		assert.Equal(t, 2, count, "two well-formed lines should be rewritten")
+
+		lines := splitLines(result)
+		assert.Equal(t, bad, lines[1], "malformed line must be preserved verbatim")
+		assert.Contains(t, lines[0], "/new/project")
+		assert.Contains(t, lines[2], "/new/project")
+	})
+
+	t.Run("rewrites path occurrences inside non-project fields", func(t *testing.T) {
+		input := []byte(`{"project":"/old/project","display":"open /old/project/main.go please"}` + "\n")
+		result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+		assert.NotContains(t, string(result), "/old/project")
+		assert.Contains(t, string(result), "/new/project/main.go")
+	})
+
+	t.Run("does not rewrite a path that is a prefix of another path", func(t *testing.T) {
+		input := []byte(`{"project":"/old/project-extras","display":"unrelated"}` + "\n")
+		result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+		require.NoError(t, err)
+		assert.Equal(t, 0, count, "path-boundary protection must skip prefix collision")
+		assert.Contains(t, string(result), "/old/project-extras")
+		assert.NotContains(t, string(result), "/new/project-extras")
+	})
+}
+
+func TestReplacePathInBytes(t *testing.T) {
+	t.Run("replaces full-component matches", func(t *testing.T) {
+		input := []byte(`prefix /a/foo/bar /a/foo "/a/foo" /a/foo`)
+		result, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 4, count)
+		assert.NotContains(t, string(result), "/a/foo")
+	})
+
+	t.Run("does not corrupt prefix collisions on the right boundary", func(t *testing.T) {
+		input := []byte(`/a/foo-extras /a/foo /a/foo2 /a/foo_bar /a/foo.txt`)
+		result, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 1, count, "only the standalone /a/foo should match")
+		assert.Contains(t, string(result), "/a/foo-extras")
+		assert.Contains(t, string(result), "/a/foo2")
+		assert.Contains(t, string(result), "/a/foo_bar")
+		assert.Contains(t, string(result), "/a/foo.txt")
+		assert.Contains(t, string(result), "/x/qux ")
+	})
+
+	t.Run("matches at end of buffer", func(t *testing.T) {
+		input := []byte(`tail /a/foo`)
+		result, count := rewrite.ReplacePathInBytes(input, "/a/foo", "/x/qux")
+		assert.Equal(t, 1, count)
+		assert.Equal(t, `tail /x/qux`, string(result))
+	})
+
+	t.Run("returns original on empty inputs", func(t *testing.T) {
+		input := []byte(`some data`)
+		result, count := rewrite.ReplacePathInBytes(input, "", "/x")
+		assert.Equal(t, 0, count)
+		assert.Equal(t, input, result)
 	})
 }
 
