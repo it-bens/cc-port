@@ -2,6 +2,7 @@
 package move
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -44,6 +45,10 @@ type Plan struct {
 // It locates all project data, counts replacements for each file type,
 // and scans rules files for warnings.
 func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
+	if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
+		return nil, err
+	}
+
 	locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
 	if err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
@@ -221,6 +226,10 @@ func Apply(claudeHome *claude.Home, moveOptions Options) error {
 	}
 	defer func() { _ = lockHandle.Release() }()
 
+	if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
+		return err
+	}
+
 	locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
 	if err != nil {
 		return fmt.Errorf("locate project: %w", err)
@@ -228,7 +237,19 @@ func Apply(claudeHome *claude.Home, moveOptions Options) error {
 
 	oldProjectDir := claudeHome.ProjectDir(moveOptions.OldPath)
 	newProjectDir := claudeHome.ProjectDir(moveOptions.NewPath)
+	return executeMove(claudeHome, locations, oldProjectDir, newProjectDir, moveOptions)
+}
 
+// executeMove performs the copy-verify-delete sequence on disk after the
+// preflight checks in Apply have passed. It owns the rollback of partial
+// state: on any failure, newly created paths are removed and any globally
+// modified files are restored from the tracker.
+func executeMove(
+	claudeHome *claude.Home,
+	locations *claude.ProjectLocations,
+	oldProjectDir, newProjectDir string,
+	moveOptions Options,
+) error {
 	var createdPaths []string
 	success := false
 	defer func() {
@@ -518,6 +539,44 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 			return fmt.Errorf("remove old project dir on disk: %w", err)
 		}
 	}
+	return nil
+}
+
+// checkEncodedDirCollision refuses a move whose new project directory would
+// collide with existing storage on disk. Two kinds of collision are caught:
+//
+//   - oldPath and newPath encode to the same directory name (EncodePath
+//     collapses '/', '.', and ' ' to '-', so e.g. "/x/my project" and
+//     "/x/my-project" share a storage dir). cc-port cannot perform the
+//     filesystem copy when the source and destination are the same inode.
+//   - newPath's encoded directory already exists. Another real project path
+//     has claimed that storage (either directly by being stored there, or by
+//     coincidental encoding). Proceeding would silently merge or overwrite
+//     the other project's data.
+//
+// A non-existent newPath encoded dir is the only accepted state.
+func checkEncodedDirCollision(claudeHome *claude.Home, oldPath, newPath string) error {
+	oldEncodedDir := claudeHome.ProjectDir(oldPath)
+	newEncodedDir := claudeHome.ProjectDir(newPath)
+
+	if oldEncodedDir == newEncodedDir {
+		return fmt.Errorf(
+			"refusing to move: %q and %q both encode to directory %s — "+
+				"the encoder is lossy on '/', '.', and ' ', so both paths share on-disk storage",
+			oldPath, newPath, filepath.Base(newEncodedDir),
+		)
+	}
+
+	if _, err := os.Stat(newEncodedDir); err == nil {
+		return fmt.Errorf(
+			"refusing to move: new project directory %s already exists — "+
+				"another real project path encodes to the same name",
+			newEncodedDir,
+		)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat new project directory %s: %w", newEncodedDir, err)
+	}
+
 	return nil
 }
 

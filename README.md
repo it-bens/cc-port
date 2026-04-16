@@ -35,15 +35,9 @@ All three become `-Users-x-Projects-my-project`. The original cannot be
 recovered from the encoded form — recovery requires reading `cwd` /
 `projectPath` from inside the project's data files.
 
-### 3. No collision detection across encoded directories
-
-The tool does not warn when two real project paths encode to the same
-directory name. The second project to be created will silently share data
-with, or overwrite, the first. There is no check before write.
-
 ## Move
 
-### 4. `~/.claude.json` is read, re-marshaled, and rewritten as a whole on every run
+### 3. `~/.claude.json` is read, re-marshaled, and rewritten as a whole on every run
 
 `internal/rewrite/rewrite.go:UserConfig` and
 `internal/importer/importer.go:mergeProjectConfig` both load the entire
@@ -58,21 +52,21 @@ writes compact single-line JSON via `json.Marshal`, while `import` writes
 two-space-indented JSON via `json.MarshalIndent`, so back-to-back
 operations on the same file produce visibly different layouts.
 
-### 5. `~/.claude/file-history/<session-uuid>/<hash>@vN` snapshots are never rewritten
+### 4. `~/.claude/file-history/<session-uuid>/<hash>@vN` snapshots are never rewritten
 
 `internal/move/move.go:Apply` rewrites sessions-index, transcripts, memory,
 history, session files, settings, and config. It does not call any rewriter
 on file-history snapshot contents. Snapshots that captured file contents
 containing the old project path remain stale.
 
-### 6. Rules files are scanned, never rewritten
+### 5. Rules files are scanned, never rewritten
 
 `internal/scan/rules.go:Rules` reports occurrences of the old path as
 `Warning`s. `move.Apply` does not modify anything under `~/.claude/rules/`.
 Rules that hard-code the old project path require manual editing after a
 move.
 
-### 7. A path immediately followed by `.` is left untouched
+### 6. A path immediately followed by `.` is left untouched
 
 `internal/rewrite/rewrite.go:ReplacePathInBytes` treats `[A-Za-z0-9_.-]` as
 path-component bytes. This protects prefix collisions like `myproject` vs
@@ -80,7 +74,7 @@ path-component bytes. This protects prefix collisions like `myproject` vs
 /Users/x/myproject."` is not rewritten — the trailing `.` is
 indistinguishable from the start of an extension.
 
-### 8. Malformed history lines are preserved silently
+### 7. Malformed history lines are preserved silently
 
 `internal/rewrite/rewrite.go:HistoryJSONL` keeps malformed lines verbatim and
 continues. The user receives no warning that those lines exist or that the
@@ -88,21 +82,21 @@ rewriter could not touch them.
 
 ## Export
 
-### 9. History is filtered by exact `project` field equality
+### 8. History is filtered by exact `project` field equality
 
 `internal/export/export.go:extractProjectHistory` only includes lines whose
 `project` field equals the requested project path. History entries that
 reference the project only in `display` or `pastedContents` are excluded
 from the export.
 
-### 10. Binary detection uses a 512-byte null-byte heuristic
+### 9. Binary detection uses a 512-byte null-byte heuristic
 
 `internal/export/export.go:isLikelyText` checks only the first 512 bytes for
 a `\x00` byte. Files that are binary after a textual header, or binary
 formats that happen to start with non-null bytes, are treated as text and
 substring-rewritten — which corrupts them.
 
-### 11. The export anonymizer is not path-boundary aware
+### 10. The export anonymizer is not path-boundary aware
 
 `internal/export/export.go:anonymize` uses `strings.ReplaceAll`. It is
 currently safe only because placeholders are sorted by `Original` length
@@ -112,7 +106,7 @@ other order can corrupt output.
 
 ## Import
 
-### 12. Import has no atomic or rollback guarantee
+### 11. Import has no atomic or rollback guarantee
 
 `internal/importer/importer.go:Run` streams ZIP entries and writes each to
 its final destination as it goes: files into the encoded project directory,
@@ -122,7 +116,7 @@ corrupt entry, a missing resolution — leaves some destinations written and
 others not, with no equivalent of `move.Apply`'s copy-verify-delete
 strategy. Rolling back a partial import is manual.
 
-### 13. Unsupplied placeholders survive import as literal strings
+### 12. Unsupplied placeholders survive import as literal strings
 
 `internal/importer/importer.go:Run` only resolves placeholders the caller
 provided in `Options.Resolutions`. If the archive's `metadata.xml` declares
@@ -131,7 +125,7 @@ remains in every imported file — there is no validation gate.
 
 ## Sessions-index
 
-### 14. Real installations do not maintain `sessions-index.json`
+### 13. Real installations do not maintain `sessions-index.json`
 
 The tool reads `sessions-index.json` for session metadata (`firstPrompt`,
 `summary`, `gitBranch`, `messageCount`). Production installations of Claude

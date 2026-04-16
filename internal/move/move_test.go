@@ -225,6 +225,73 @@ func TestApply_WithTranscripts(t *testing.T) {
 	assertSessionSubdirFilesRewritten(t, newProjectDir)
 }
 
+func TestDryRun_AbortsOnEncodedDirCollision(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	// Another real project path that encodes to the same directory as
+	// "/Users/test/Projects/renamed" would (EncodePath collapses '.' to '-').
+	collidingPath := "/Users/test/Projects/renamed.v2"
+	collidingOther := "/Users/test/Projects/renamed-v2"
+
+	// Create the encoded directory for "renamed-v2" so the later move to
+	// "renamed.v2" finds it occupied.
+	occupiedDir := claudeHome.ProjectDir(collidingOther)
+	require.NoError(t, os.MkdirAll(occupiedDir, 0o750))
+
+	_, err := move.DryRun(claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: collidingPath,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+}
+
+func TestDryRun_AbortsWhenOldAndNewEncodeIdentically(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	// "/Users/test/Projects/my.project" and "/Users/test/Projects/my-project"
+	// both encode to -Users-test-Projects-my-project.
+	identicalEncoding := "/Users/test/Projects/my.project"
+
+	_, err := move.DryRun(claudeHome, move.Options{
+		OldPath: "/Users/test/Projects/my-project",
+		NewPath: identicalEncoding,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "both encode to")
+}
+
+func TestApply_AbortsOnEncodedDirCollision(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	collidingPath := "/Users/test/Projects/renamed.v2"
+	collidingOther := "/Users/test/Projects/renamed-v2"
+
+	occupiedDir := claudeHome.ProjectDir(collidingOther)
+	require.NoError(t, os.MkdirAll(occupiedDir, 0o750))
+
+	// Drop a sentinel file so we can confirm Apply left the occupier untouched.
+	sentinelPath := filepath.Join(occupiedDir, "sentinel.txt")
+	require.NoError(t, os.WriteFile(sentinelPath, []byte("do-not-touch"), 0600))
+
+	err := move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  collidingPath,
+		RefsOnly: true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+
+	// Old project's data dir must be unchanged.
+	oldProjectDir := claudeHome.ProjectDir(oldProjectPath)
+	assert.DirExists(t, oldProjectDir, "old project dir should still exist")
+
+	// Occupier's sentinel must be untouched.
+	sentinelData, readErr := os.ReadFile(sentinelPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+	assert.Equal(t, "do-not-touch", string(sentinelData))
+}
+
 func TestApply_AbortsWhenClaudeSessionIsLive(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
