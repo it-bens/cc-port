@@ -1,0 +1,14 @@
+{
+  "env": {},
+  "permissions": {
+    "allow": ["Bash(git:*)"]
+  },
+  "extraKnownMarketplaces": {
+    "test-marketplace": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/test/Projects/myproject/plugins"
+      }
+    }
+  }
+}

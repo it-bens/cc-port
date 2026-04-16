@@ -1,0 +1,17 @@
+{
+  "numStartups": 42,
+  "theme": "dark",
+  "projects": {
+    "/Users/test/Projects/myproject": {
+      "allowedTools": ["Bash(git:*)"],
+      "mcpServers": {},
+      "hasTrustDialogAccepted": true,
+      "lastCost": 1.5,
+      "lastSessionId": "a1b2c3d4-0000-0000-0000-000000000001"
+    },
+    "/Users/test/Projects/otherproject": {
+      "allowedTools": [],
+      "hasTrustDialogAccepted": false
+    }
+  }
+}

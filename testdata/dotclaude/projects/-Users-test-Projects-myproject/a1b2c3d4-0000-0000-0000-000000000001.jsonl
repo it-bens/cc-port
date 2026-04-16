@@ -1,0 +1,3 @@
+{"type":"human","message":"help me with my project at /Users/test/Projects/myproject"}
+{"type":"assistant","message":"I can see the project at /Users/test/Projects/myproject. Let me look at the files."}
+{"type":"tool_use","name":"Read","input":{"file_path":"/Users/test/Projects/myproject/main.go"}}

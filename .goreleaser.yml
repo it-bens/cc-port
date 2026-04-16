@@ -1,0 +1,43 @@
+version: 2
+
+builds:
+  - main: ./cmd/cc-port
+    binary: cc-port
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+brews:
+  - name: cc-port
+    directory: Formula
+    homepage: "https://github.com/it-bens/cc-port"
+    description: "Claude Code project portability tool"
+    license: MIT
+    install: |
+      bin.install "cc-port"
+    test: |
+      system "#{bin}/cc-port", "version"
+    repository:
+      owner: it-bens
+      name: cc-port
+      branch: main
