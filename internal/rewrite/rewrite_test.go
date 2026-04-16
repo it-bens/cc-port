@@ -104,31 +104,7 @@ func TestSessionsIndex(t *testing.T) {
 }
 
 func TestHistoryJSONL(t *testing.T) {
-	t.Run("rewrites matching lines and preserves non-matching lines", func(t *testing.T) {
-		line1 := `{"project":"/old/project","command":"ls"}`
-		line2 := `{"project":"/other/project","command":"pwd"}`
-		line3 := `{"project":"/old/project","command":"git status"}`
-		input := []byte(line1 + "\n" + line2 + "\n" + line3 + "\n")
-
-		result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.Equal(t, 2, count)
-
-		lines := splitLines(result)
-		// Last element should be empty string (trailing newline)
-		assert.Empty(t, lines[len(lines)-1])
-
-		var entry1, entry2, entry3 map[string]interface{}
-		require.NoError(t, json.Unmarshal([]byte(lines[0]), &entry1))
-		require.NoError(t, json.Unmarshal([]byte(lines[1]), &entry2))
-		require.NoError(t, json.Unmarshal([]byte(lines[2]), &entry3))
-
-		assert.Equal(t, "/new/project", entry1["project"])
-		assert.Equal(t, "ls", entry1["command"])
-		assert.Equal(t, "/other/project", entry2["project"])
-		assert.Equal(t, "/new/project", entry3["project"])
-		assert.Equal(t, "git status", entry3["command"])
-	})
+	t.Run("rewrites matching lines and preserves non-matching lines", assertHistoryJSONLRewritesMatching)
 
 	t.Run("returns zero count when no lines match", func(t *testing.T) {
 		input := []byte(`{"project":"/other/project","command":"ls"}` + "\n")
@@ -170,6 +146,32 @@ func TestHistoryJSONL(t *testing.T) {
 		assert.Contains(t, string(result), "/old/project-extras")
 		assert.NotContains(t, string(result), "/new/project-extras")
 	})
+}
+
+func assertHistoryJSONLRewritesMatching(t *testing.T) {
+	line1 := `{"project":"/old/project","command":"ls"}`
+	line2 := `{"project":"/other/project","command":"pwd"}`
+	line3 := `{"project":"/old/project","command":"git status"}`
+	input := []byte(line1 + "\n" + line2 + "\n" + line3 + "\n")
+
+	result, count, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	lines := splitLines(result)
+	// Last element should be empty string (trailing newline)
+	assert.Empty(t, lines[len(lines)-1])
+
+	var entry1, entry2, entry3 map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &entry1))
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &entry2))
+	require.NoError(t, json.Unmarshal([]byte(lines[2]), &entry3))
+
+	assert.Equal(t, "/new/project", entry1["project"])
+	assert.Equal(t, "ls", entry1["command"])
+	assert.Equal(t, "/other/project", entry2["project"])
+	assert.Equal(t, "/new/project", entry3["project"])
+	assert.Equal(t, "git status", entry3["command"])
 }
 
 func TestReplacePathInBytes(t *testing.T) {

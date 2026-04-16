@@ -26,11 +26,12 @@ func SetupFixture(t *testing.T) *claude.Home {
 	}
 
 	sourceConfigPath := filepath.Join(claudeDir, ".claude.json")
-	configData, err := os.ReadFile(sourceConfigPath) //nolint:gosec // G304: sourceConfigPath is inside t.TempDir() (test-only fixture)
+	configData, err := os.ReadFile(sourceConfigPath) //nolint:gosec // G304: path inside t.TempDir()
 	if err != nil {
 		t.Fatalf("read fixture .claude.json: %v", err)
 	}
-	if err := os.WriteFile(configFilePath, configData, 0600); err != nil { //nolint:gosec // G306: 0600 is intentional for the test fixture's user config copy
+	//nolint:gosec // G306: 0600 intentional for fixture
+	if err := os.WriteFile(configFilePath, configData, 0600); err != nil {
 		t.Fatalf("write config file: %v", err)
 	}
 	_ = os.Remove(sourceConfigPath)

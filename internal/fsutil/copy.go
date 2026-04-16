@@ -24,7 +24,7 @@ func CopyDir(source, destination string) error {
 			return os.MkdirAll(destinationPath, 0750)
 		}
 
-		fileData, err := os.ReadFile(path) //nolint:gosec // G304: path is a walked entry under the caller-supplied source tree
+		fileData, err := os.ReadFile(path) //nolint:gosec // G304: walked entry under caller-supplied source
 		if err != nil {
 			return err
 		}
@@ -35,6 +35,6 @@ func CopyDir(source, destination string) error {
 		}
 		// Preserve the source file's mode bits so executables and read-only files
 		// survive the copy intact.
-		return os.WriteFile(destinationPath, fileData, fileInfo.Mode()) //nolint:gosec // G703: mode intentionally inherited from source
+		return os.WriteFile(destinationPath, fileData, fileInfo.Mode()) //nolint:gosec // G703: mode inherited from source
 	})
 }
