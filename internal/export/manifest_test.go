@@ -21,7 +21,6 @@ func TestMetadata_MarshalUnmarshal(t *testing.T) {
 	created := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 
 	original := &export.Metadata{
-		Version: 1,
 		Export: export.Info{
 			Created: created,
 			Categories: []export.Category{
@@ -61,7 +60,6 @@ func TestMetadata_XMLFormat(t *testing.T) {
 	created := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	metadata := &export.Metadata{
-		Version: 2,
 		Export: export.Info{
 			Created: created,
 			Categories: []export.Category{
@@ -93,7 +91,6 @@ func TestMetadata_XMLFormat(t *testing.T) {
 	}{
 		{"XML declaration", xml.Header[:5]},
 		{"root element cc-port", "<cc-port"},
-		{"version attribute", `version="2"`},
 		{"export element", "<export>"},
 		{"categories wrapper", "<categories>"},
 		{"category element with name attribute", `name="sessions"`},
@@ -115,7 +112,6 @@ func TestManifest_WithResolve(t *testing.T) {
 	created := time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC)
 
 	original := &export.Metadata{
-		Version: 1,
 		Export: export.Info{
 			Created:    created,
 			Categories: []export.Category{},

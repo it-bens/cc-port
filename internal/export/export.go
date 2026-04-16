@@ -369,7 +369,6 @@ func buildMetadata(exportOptions Options) *Metadata {
 	}
 
 	return &Metadata{
-		Version: 1,
 		Export: Info{
 			Created:    time.Now(),
 			Categories: categories,

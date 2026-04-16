@@ -11,7 +11,6 @@ import (
 // Metadata is the root element of the manifest XML file.
 type Metadata struct {
 	XMLName      xml.Name      `xml:"cc-port"`
-	Version      int           `xml:"version,attr"`
 	Export       Info          `xml:"export"`
 	Placeholders []Placeholder `xml:"placeholders>placeholder"`
 }

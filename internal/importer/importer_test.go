@@ -112,7 +112,6 @@ func writeMetadataEntry(
 
 	trueVal := true
 	metadata := &export.Metadata{
-		Version: 1,
 		Export: export.Info{
 			Created: time.Now(),
 			Categories: []export.Category{

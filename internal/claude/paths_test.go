@@ -96,7 +96,7 @@ func TestResolveProjectPath(t *testing.T) {
 	require.NoError(t, err)
 
 	realProjectDir := filepath.Join(realTempDir, "real", "project")
-	require.NoError(t, os.MkdirAll(realProjectDir, 0o755))
+	require.NoError(t, os.MkdirAll(realProjectDir, 0o750))
 
 	linkDir := filepath.Join(realTempDir, "link")
 	require.NoError(t, os.Symlink(filepath.Join(realTempDir, "real"), linkDir))

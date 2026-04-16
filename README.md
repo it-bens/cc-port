@@ -151,18 +151,7 @@ corrupt entry, a missing resolution — leaves some destinations written and
 others not, with no equivalent of `move.Apply`'s copy-verify-delete
 strategy. Rolling back a partial import is manual.
 
-### 17. The archive `version` attribute is parsed but never validated
-
-`internal/export/manifest.go` declares and writes `<cc-port version="1">`,
-and `export.ReadManifestFromZip` unmarshals it into `Metadata.Version`. In
-`internal/importer/importer.go:Run` the manifest is read purely for
-structural validation (`if _, err := export.ReadManifestFromZip(...)`) —
-the returned value is discarded. An archive claiming any `version` value is
-accepted as long as the XML structure is valid, so a future cc-port format
-change cannot be signaled through the version attribute without code
-changes.
-
-### 18. Unsupplied placeholders survive import as literal strings
+### 17. Unsupplied placeholders survive import as literal strings
 
 `internal/importer/importer.go:Run` only resolves placeholders the caller
 provided in `Options.Resolutions`. If the archive's `metadata.xml` declares
@@ -171,7 +160,7 @@ remains in every imported file — there is no validation gate.
 
 ## Sessions-index
 
-### 19. Real installations do not maintain `sessions-index.json`
+### 18. Real installations do not maintain `sessions-index.json`
 
 The tool reads `sessions-index.json` for session metadata (`firstPrompt`,
 `summary`, `gitBranch`, `messageCount`). Production installations of Claude
