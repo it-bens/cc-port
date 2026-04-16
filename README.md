@@ -19,22 +19,6 @@ the form's `Run()`. There is no non-interactive / `--yes` mode; the only
 way to automate is the two-step manifest flow (`export manifest` /
 `import --from-manifest`), which sidesteps the prompts entirely.
 
-## Path encoding
-
-### 2. The encoder is lossy and irreversible
-
-`internal/claude/paths.go:22-29` collapses `/`, `.`, and ` ` to `-` and
-prepends a `-`. Three distinct project paths can encode to the same directory
-name:
-
-- `/Users/x/Projects/my project`
-- `/Users/x/Projects/my-project`
-- `/Users/x/Projects/my.project`
-
-All three become `-Users-x-Projects-my-project`. The original cannot be
-recovered from the encoded form — recovery requires reading `cwd` /
-`projectPath` from inside the project's data files.
-
 ## Move
 
 ### 3. `~/.claude.json` is read, re-marshaled, and rewritten as a whole on every run
@@ -122,6 +106,48 @@ strategy. Rolling back a partial import is manual.
 provided in `Options.Resolutions`. If the archive's `metadata.xml` declares
 a placeholder the caller did not supply, the literal `{{KEY}}` string
 remains in every imported file — there is no validation gate.
+
+## Path encoding scope
+
+cc-port identifies every project by its encoded directory name under
+`~/.claude/projects/`. The encoding is inherited from Claude Code:
+the input path is first resolved through the filesystem (following
+symlinks), then `/`, `.`, and space are each replaced with `-`, and a `-`
+is prepended. It is lossy — three distinct paths collapse to the same
+name:
+
+- `/Users/x/Projects/my project`
+- `/Users/x/Projects/my-project`
+- `/Users/x/Projects/my.project`
+
+All three encode to `-Users-x-Projects-my-project`. cc-port uses the same
+encoding (and the same symlink resolution on user-supplied paths) because
+the encoded name must match what Claude Code writes on disk; the original
+path cannot be recovered from the encoded form.
+
+Refused by cc-port — these operations abort before touching anything:
+
+- `cc-port move` (apply or dry-run) where old and new paths encode to the
+  same directory name. The copy-and-delete sequence cannot run against a
+  single on-disk location, and proceeding would destroy data.
+- `cc-port move` (apply or dry-run) where the target encoded directory
+  already exists. Another real project path has claimed that storage;
+  proceeding would silently merge or overwrite its data.
+- `cc-port import` where the target encoded directory already exists.
+  Same reasoning.
+
+Not covered — cases cc-port cannot detect or mitigate:
+
+- **Pre-existing collisions.** If two distinct paths were already stored
+  in the same encoded directory before cc-port ran — because Claude Code
+  itself wrote both there — the data is interleaved and cc-port cannot
+  untangle it. Operations targeting either path will read and write the
+  shared storage.
+- **Decoding a directory name back to a path.** One encoded name maps to
+  any of several real paths. cc-port never tries to decode; every
+  operation takes the original path as input and encodes forward. To find
+  the owner of a stored directory, read `cwd` from a `sessions/*.json`
+  file or the matching `~/.claude.json` project key.
 
 ## Concurrency guard scope
 
