@@ -19,18 +19,62 @@ the form's `Run()`. There is no non-interactive / `--yes` mode; the only
 way to automate is the two-step manifest flow (`export manifest` /
 `import --from-manifest`), which sidesteps the prompts entirely.
 
-## Import
+## Placeholder resolution scope
 
-### 2. `FindPlaceholderTokens` recognises only `{{[A-Z0-9_]+}}`
+The import pre-flight gate in
+`internal/importer/resolve.go:ClassifyPlaceholders` decides which keys
+the archive embeds, which of those still need a resolution, and which
+tokens the archive embeds without having declared them. A scanner that
+parsed placeholder tokens directly out of body bytes would have to
+commit to a grammar — and any grammar narrow enough to avoid false
+positives on ordinary JSON or Markdown `{{…}}` content would be too
+narrow to catch exotic keys a future exporter might emit.
 
-`internal/rewrite/rewrite.go:FindPlaceholderTokens` scans archive bodies
-for placeholder tokens using a byte-walk matching `{{[A-Z0-9_]+}}`. This
-is the shape cc-port's export path always emits, so the pre-flight gate
-correctly classifies every archive this tool produces. Archives hand-
-crafted with lowercase keys, punctuation inside braces, whitespace, or
-multi-line tokens are invisible to the gate: such a token would neither
-be flagged as undeclared nor be substituted at resolution time, so it
-would survive verbatim on disk.
+The manifest is authoritative instead. Every key cc-port's export path
+embeds is also written into `metadata.xml` as a `<placeholder>` entry,
+so the importer iterates the declared set and decides presence with a
+literal `bytes.Contains` per key. No body grammar is parsed on the
+resolution path; the exporter's key shape, whatever it is, is correctly
+classified by construction. `internal/rewrite/rewrite.go:FindPlaceholderTokens`
+is retained only as a tamper-defense scan: upper-snake `{{KEY}}` tokens
+in bodies that are absent from the manifest are reported as undeclared,
+so an archive whose bodies and manifest disagree is refused before any
+write.
+
+Correctly classified — by construction, regardless of key shape:
+
+- Any declared key embedded in at least one body, with a matching
+  resolution: substituted at resolve time.
+- Any declared key embedded in at least one body, with no resolution
+  and `Resolvable` unset or `true`: flagged `missing`, archive refused.
+- Any declared key marked `Resolvable: false`: allowed to survive on
+  disk verbatim, even when no resolution is supplied.
+- Any declared key that does not appear in any body: ignored. The
+  archive may legitimately publish metadata about keys it considered
+  but did not embed.
+- `{{PROJECT_PATH}}`: resolved implicitly by `importer.Run` from the
+  import target path, so it is treated as resolved even when absent
+  from the caller's resolution map.
+
+Caught by the tamper-defense scan — upper-snake shape only:
+
+- An `{{UPPER_SNAKE}}` token embedded in a body that the manifest does
+  not declare: reported as `undeclared`, archive refused.
+
+Residual risk — cases this design does not cover:
+
+- **Undeclared exotic-shape tokens in bodies.** A hand-crafted or
+  tampered archive whose body contains a lowercase, punctuated, or
+  whitespace-bearing token (e.g. `{{my-weird.key}}`) that is not
+  declared in `metadata.xml` is invisible to the tamper-defense scan.
+  The token would neither be flagged as undeclared nor substituted at
+  resolution time, and would survive verbatim on disk. Widening the
+  scanner's grammar to catch these would produce false positives on
+  legitimate `{{…}}` content embedded in transcripts (Handlebars,
+  Mustache, Jinja). Tool-produced archives are not affected because
+  cc-port's export path publishes every key it embeds; hand-crafted
+  archives that want the full contract must list every embedded key
+  in the manifest.
 
 ## Path-boundary rewrite scope
 
@@ -351,8 +395,11 @@ Not covered — cases cc-port does not address:
   without the caller supplying `{{KEY}}` are now refused. Migration:
   supply the resolution, or re-export with the key marked
   `Resolvable: false`.
-- **Exotic token shapes.** See limitation #3 — only
-  `{{[A-Z0-9_]+}}` is recognised by the pre-flight scanner.
+- **Undeclared exotic token shapes in bodies.** See
+  _Placeholder resolution scope_ above — the tamper-defense scan is
+  grammar-bounded and does not catch lowercase, punctuated, or
+  whitespace-bearing tokens in bodies that the manifest fails to
+  declare. Resolution of declared keys is unaffected.
 
 ## Concurrency guard scope
 

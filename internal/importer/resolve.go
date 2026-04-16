@@ -62,10 +62,21 @@ func ValidateResolutions(resolutions map[string]string) error {
 // strings on disk or would silently substitute keys the archive never
 // declared.
 //
+// The manifest is authoritative for resolution: every key subject to the
+// resolution contract must appear in declared. For each declared key, a
+// literal substring search over the bodies decides whether the key is
+// actually embedded — so the classifier recognises every key shape the
+// exporter chose to emit, without having to parse token grammar out of body
+// bytes. The upper-snake scanner is retained only to detect undeclared
+// tokens: an archive-contract violation where a body contains a `{{KEY}}`
+// the manifest forgot to publish. That defense is best-effort, bounded by
+// the scanner's grammar.
+//
 // Inputs:
 //   - bodies: every ZIP entry's content (after metadata.xml has been
-//     excluded). Order and length are irrelevant; only the union of
-//     placeholder tokens matters.
+//     excluded). Order and length are irrelevant; only substring membership
+//     matters for the missing check, and only the union of upper-snake
+//     tokens matters for the undeclared check.
 //   - declared: the manifest's declared placeholders. Resolvable semantics —
 //     nil and *true both mean "must be resolved", *false means "explicitly
 //     allowed to remain symbolic".
@@ -73,12 +84,13 @@ func ValidateResolutions(resolutions map[string]string) error {
 //     to ResolvePlaceholders.
 //
 // Returns two alphabetically sorted slices:
-//   - missing: keys that appear in at least one body and are either (a)
-//     declared with Resolvable != *false OR (b) the implicit PROJECT_PATH,
-//     but are absent from resolutions.
-//   - undeclared: keys that appear in at least one body but are not listed
-//     in declared at all. These are archive-contract violations — the
-//     archive writer knew about a key it didn't publish in metadata.xml.
+//   - missing: declared keys that are embedded in at least one body, are
+//     subject to the resolution contract (Resolvable != *false, not the
+//     implicit PROJECT_PATH), and are absent from resolutions.
+//   - undeclared: upper-snake `{{KEY}}` tokens that appear in at least one
+//     body but are not listed in declared at all. These are archive-
+//     contract violations — the archive writer knew about a key it didn't
+//     publish in metadata.xml.
 //
 // A declared key that never appears in any body is fine: the archive may
 // legitimately include "metadata about paths we considered but did not
@@ -88,32 +100,35 @@ func ClassifyPlaceholders(
 	declared []export.Placeholder,
 	resolutions map[string]string,
 ) (missing, undeclared []string) {
-	present := collectPresentTokens(bodies)
-
 	declaredByKey := make(map[string]export.Placeholder, len(declared))
 	for _, placeholder := range declared {
 		declaredByKey[placeholder.Key] = placeholder
 	}
 
-	for token := range present {
-		placeholder, isDeclared := declaredByKey[token]
-		if !isDeclared {
-			undeclared = append(undeclared, token)
-			continue
-		}
+	for _, placeholder := range declared {
 		if placeholder.Resolvable != nil && !*placeholder.Resolvable {
 			// Explicitly allowed to remain symbolic.
 			continue
 		}
-		if _, isResolved := resolutions[token]; isResolved {
+		if _, isResolved := resolutions[placeholder.Key]; isResolved {
 			continue
 		}
-		if token == projectPathKey {
+		if placeholder.Key == projectPathKey {
 			// Run injects PROJECT_PATH unconditionally; treat as resolved
 			// even if the caller did not list it explicitly.
 			continue
 		}
-		missing = append(missing, token)
+		if !anyBodyContains(bodies, placeholder.Key) {
+			continue
+		}
+		missing = append(missing, placeholder.Key)
+	}
+
+	for token := range scanUpperSnakeTokens(bodies) {
+		if _, isDeclared := declaredByKey[token]; isDeclared {
+			continue
+		}
+		undeclared = append(undeclared, token)
 	}
 
 	sort.Strings(missing)
@@ -121,9 +136,25 @@ func ClassifyPlaceholders(
 	return missing, undeclared
 }
 
-// collectPresentTokens returns the set of placeholder tokens found in any of
-// the given bodies.
-func collectPresentTokens(bodies [][]byte) map[string]struct{} {
+// anyBodyContains reports whether token appears as a literal substring in any
+// of bodies. Bodies are searched in order; the search short-circuits on the
+// first hit.
+func anyBodyContains(bodies [][]byte, token string) bool {
+	needle := []byte(token)
+	for _, body := range bodies {
+		if bytes.Contains(body, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// scanUpperSnakeTokens returns the set of upper-snake `{{KEY}}` tokens the
+// body-byte scanner can see across bodies. The scanner's grammar is narrow
+// by design (see rewrite.FindPlaceholderTokens) — this set is only used to
+// detect undeclared tokens as a best-effort tamper check, never to drive
+// resolution.
+func scanUpperSnakeTokens(bodies [][]byte) map[string]struct{} {
 	present := make(map[string]struct{})
 	for _, body := range bodies {
 		for _, token := range rewrite.FindPlaceholderTokens(body) {
