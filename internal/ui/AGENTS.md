@@ -1,0 +1,17 @@
+# internal/ui — agent notes
+
+Interactive terminal prompts. See `README.md` for the full contract.
+
+## Before editing
+
+- Every new prompt must call `requireTTY` before constructing a `huh` form — non-TTY stdin must fail fast with a typed error, not reach `Run()` (README §Interactive prompts require a TTY).
+- Refusal messages must point at a non-interactive alternative for the surface (manifest flow, category flags); don't say "no alternative" (README §Interactive prompts require a TTY).
+- Do not extend the preflight to stdout/stderr — `huh` writes to `/dev/tty` directly and redirected streams are already handled (README §Interactive prompts require a TTY §Not covered).
+
+## Navigation
+
+- Entry: `prompt.go:SelectCategories`, `prompt.go:ResolvePlaceholder`, `prompt.go:ConfirmApply`.
+- Preflight: `prompt.go:requireTTY`.
+- Tests: no dedicated test — exercised via `integration_test.go` at repo root.
+
+Read `README.md` before changing anything under `## Contracts`.

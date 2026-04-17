@@ -1,0 +1,92 @@
+# internal/ui
+
+## Purpose
+
+Interactive terminal prompts used by the CLI's `export`, `export manifest`, and `import` surfaces. Backed by `charm.land/huh/v2` forms.
+
+Not a general UI layer — the only prompts this package exposes are the three listed below, and callers with a non-interactive alternative should skip this package entirely.
+
+## Public API
+
+- **Prompt entry points**
+  - `SelectCategories() (export.CategorySet, error)` — interactive category picker for `export` / `export manifest`.
+  - `ResolvePlaceholder(key, original, autoValue string) (string, error)` — resolves a single manifest placeholder at `export` manifest time or at `import` time.
+  - `ConfirmApply(description string) (bool, error)` — yes/no confirmation scaffold; no caller wires it today, retained for future apply-time gates.
+
+## Contracts
+
+### Interactive prompts require a TTY
+
+cc-port's prompt surface lives in `internal/ui/prompt.go` and uses
+`charm.land/huh/v2` forms for category selection (`SelectCategories`),
+placeholder resolution (`ResolvePlaceholder`), and apply confirmation
+(`ConfirmApply`). Each form takes over the terminal when `Run()` is
+called, so an invocation without a controlling TTY — piping into another
+process, a CI job, a shell script without a `tty` allocation — would
+either block on input it will never receive or surface huh's opaque
+`open /dev/tty: device not configured` failure after the form has already
+grabbed the screen.
+
+`internal/ui/prompt.go:requireTTY` runs at the top of every prompt entry
+point and checks `term.IsTerminal(os.Stdin.Fd())` before any form is
+constructed. On non-TTY stdin the function returns a typed error naming
+the missing input and the non-interactive alternative for that surface,
+so the failure is actionable and the terminal state is never perturbed.
+
+Refused before any form runs — the preflight aborts with a surface-specific
+remediation message:
+
+- `SelectCategories` (interactive category picker for `export` /
+  `export manifest`): refused with a pointer to `--all` or the
+  per-category flags (`--sessions`, `--memory`, `--history`,
+  `--file-history`, `--config`).
+- `ResolvePlaceholder` (used by `export` for non-auto-detected path
+  suggestions and by `import` for manifest keys with no pre-filled
+  `<resolve>`): refused with a pointer to the two-step manifest flow
+  (`export manifest` / `import --from-manifest`), which is the only
+  path that supplies resolutions without prompting.
+- `ConfirmApply`: refused with "no non-interactive confirmation path is
+  available". No caller wires this form in today; the guard is in place
+  so a future caller cannot silently reintroduce the hang.
+
+Handled — invocations that never trip the preflight:
+
+- Any category-flag combination on `export` / `export manifest`. The
+  interactive picker is skipped in `resolveExportCategories` before
+  `SelectCategories` is reached.
+- `export --from-manifest` and `import --from-manifest`. The manifest
+  already carries every category and every placeholder resolution, so
+  neither form runs.
+- `import` of an archive whose every declared placeholder is either
+  `{{PROJECT_PATH}}` (resolved implicitly from the target path) or
+  already carries a non-empty `<resolve>` in the manifest — no
+  placeholder prompt is needed.
+- Any invocation with stdin attached to a real terminal — `requireTTY`
+  returns nil and the form runs unchanged.
+
+Not covered — cases this guard deliberately does not address:
+
+- **No single-command non-interactive resolution.** There is no
+  `--placeholder KEY=VALUE` or `--resolve KEY=VALUE` flag surface. A
+  caller who wants to resolve placeholders without producing a manifest
+  first is still refused — the preflight converts a hang into a clear
+  error, not into success. The manifest flow is the intended automation
+  path.
+- **Stdin-only detection.** The check looks at `os.Stdin.Fd()` only. An
+  invocation whose stdin is a TTY but whose stdout or stderr is
+  redirected (`cc-port export … | tee log`) is classified as
+  interactive and the form runs normally — huh writes directly to
+  `/dev/tty` in that setup, which is the desired behaviour. Conversely,
+  a setup where stdin is a TTY but huh still cannot open the
+  controlling terminal (detached session, unusual sandbox) will reach
+  the form and fail inside `Run()`; the preflight cannot detect that
+  class.
+- **Concurrent stdin closure.** A process that closes the preflighted
+  stdin between `requireTTY` returning nil and the form opening the
+  TTY is not re-checked. This is a race a caller would have to
+  deliberately engineer; normal shell and CI environments do not
+  produce it.
+
+## Tests
+
+No dedicated `prompt_test.go` — the `huh` forms take over `/dev/tty` and are not exercised under `go test`. The `requireTTY` preflight is exercised indirectly by `integration_test.go` at the repo root, which runs the CLI end-to-end.
