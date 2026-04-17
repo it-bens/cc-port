@@ -19,9 +19,7 @@ import (
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
-// dirPerm is the mode used for directories created during import.
-// rwxr-xr-x — group/others need execute to traverse into project subdirs that
-// the user may share read access to (e.g. memory files surfaced to tooling).
+// dirPerm — 0755, so group/others can traverse project subdirs shared with tooling.
 const dirPerm = os.FileMode(0755)
 
 // filePerm is the mode used for files written during import.
@@ -149,10 +147,6 @@ type archiveEntry struct {
 //  5. Promote all staged temps atomically via SafeRenamePromoter; on any
 //     promote failure, the promoter rolls back every already-promoted entry
 //     to its pre-import state.
-//
-// Before any work, Run acquires an exclusive advisory lock over claudeHome
-// and aborts if a Claude Code session is currently live or if another
-// cc-port invocation is already operating on the same directory.
 func Run(claudeHome *claude.Home, importOptions Options) error {
 	lockHandle, err := lock.Acquire(claudeHome)
 	if err != nil {
@@ -200,10 +194,6 @@ func Run(claudeHome *claude.Home, importOptions Options) error {
 	return promotePlan(plan, importOptions.renameHook)
 }
 
-// loadArchive opens archivePath, parses metadata.xml, and returns every
-// other entry's bytes paired with its zip name. It is the single entry
-// point for "read everything into memory" — downstream steps operate on
-// the in-memory slice.
 func loadArchive(archivePath string) ([]archiveEntry, *export.Metadata, error) {
 	zipReader, err := zip.OpenReader(archivePath)
 	if err != nil {
@@ -414,23 +404,18 @@ func buildImportPlan(
 	return plan, nil
 }
 
-// stageProjectFile stages a session entry (or similar) under tempProjectDir,
-// stripping the given zip prefix.
 func stageProjectFile(tempProjectDir, zipName, zipPrefix string, content []byte) error {
 	relativePath := strings.TrimPrefix(zipName, zipPrefix)
 	destinationPath := filepath.Join(tempProjectDir, relativePath)
 	return writeStagedFile(destinationPath, content)
 }
 
-// stageMemoryFile stages a memory entry under <tempProjectDir>/memory/.
 func stageMemoryFile(tempProjectDir, zipName string, content []byte) error {
 	relativePath := strings.TrimPrefix(zipName, "memory/")
 	destinationPath := filepath.Join(tempProjectDir, "memory", relativePath)
 	return writeStagedFile(destinationPath, content)
 }
 
-// stageUnknownEntry stages a zip entry whose prefix did not match any known
-// route. Preserves the basename inside tempProjectDir.
 func stageUnknownEntry(tempProjectDir, zipName string, content []byte) error {
 	destinationPath := filepath.Join(tempProjectDir, filepath.Base(zipName))
 	return writeStagedFile(destinationPath, content)
@@ -514,8 +499,6 @@ func promotePlan(plan *importPlan, renameHook func(oldpath, newpath string) erro
 	return promoter.Promote()
 }
 
-// ensureEmptyDir creates path as an empty directory, removing any stale
-// leftover from a previous aborted import.
 func ensureEmptyDir(path string) error {
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("remove stale staging directory %q: %w", path, err)
@@ -526,8 +509,6 @@ func ensureEmptyDir(path string) error {
 	return nil
 }
 
-// readExistingOrEmpty reads path or returns an empty slice if it does not
-// exist. Other errors propagate.
 func readExistingOrEmpty(path string) ([]byte, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: trusted ClaudeHome path
 	if err != nil {
@@ -539,8 +520,6 @@ func readExistingOrEmpty(path string) ([]byte, error) {
 	return data, nil
 }
 
-// writeStagedFile writes content to path, creating any missing parent
-// directories. Used for every staged-temp write.
 func writeStagedFile(path string, content []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
 		return fmt.Errorf("create directories for %q: %w", path, err)
@@ -551,7 +530,6 @@ func writeStagedFile(path string, content []byte) error {
 	return nil
 }
 
-// readZipFile opens zipFile, reads all its content, and closes it.
 func readZipFile(zipFile *zip.File) ([]byte, error) {
 	readCloser, err := zipFile.Open()
 	if err != nil {

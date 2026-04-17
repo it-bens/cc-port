@@ -1,20 +1,8 @@
-// Package lock provides concurrency guards that prevent cc-port from running
-// while another cc-port invocation or a live Claude Code session is writing
-// to the same ~/.claude directory.
+// Package lock guards ~/.claude against concurrent cc-port runs and live
+// Claude Code sessions.
 //
-// Two distinct races are guarded:
-//
-//  1. cc-port vs another cc-port — an exclusive advisory lock is taken on
-//     ~/.claude/.cc-port.lock via flock(2). A second invocation fails
-//     immediately instead of racing on the shared files.
-//  2. cc-port vs a live Claude Code session — every ~/.claude/sessions/*.json
-//     file is inspected; if its PID is alive on the host, cc-port aborts.
-//     Stale session files left behind by crashed Claude Code runs are ignored
-//     because the recorded PID will not be alive.
-//
-// Release MUST be called on every exit path — the kernel releases the flock
-// when the file descriptor is closed, but callers should still Close
-// explicitly for timely cleanup and deterministic error reporting.
+// Release MUST be called on every exit path: the kernel drops the flock at
+// process exit, but callers should Close explicitly for deterministic cleanup.
 package lock
 
 import (

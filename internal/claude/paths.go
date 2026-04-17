@@ -8,17 +8,10 @@ import (
 	"strings"
 )
 
-// EncodePath converts an absolute filesystem path to the directory name format
-// used by Claude Code under ~/.claude/projects/.
-//
-// The encoding is lossy: "/", ".", and " " all become "-", and a "-" is prepended.
-// A literal "-" in the original path is indistinguishable from these replacements.
-// The original path cannot be reliably recovered from the encoded form.
-//
-// Callers must pass a fully symlink-resolved path — Claude Code stores projects
-// under the resolved path's encoded form (e.g. /tmp/foo on macOS is written as
-// -private-tmp-foo because /tmp links to /private/tmp). Use ResolveProjectPath
-// on any path that came from user input before encoding.
+// EncodePath converts an absolute, symlink-resolved filesystem path into the
+// directory-name form Claude Code uses under ~/.claude/projects/. The encoding
+// is lossy (/, ., space all collapse to -); pass pre-resolved paths or the
+// result will not match what Claude Code wrote.
 func EncodePath(absPath string) string {
 	replacer := strings.NewReplacer(
 		"/", "-",
@@ -28,18 +21,10 @@ func EncodePath(absPath string) string {
 	return replacer.Replace(absPath)
 }
 
-// ResolveProjectPath normalizes a user-supplied project path so its encoded
-// form matches what Claude Code writes on disk. It converts the path to
-// absolute form, then resolves symlinks on the longest existing prefix. Any
-// trailing components that do not yet exist are preserved unchanged.
-//
-// This matters because Claude Code resolves symlinks through the filesystem
-// before encoding — on macOS, a project started under /tmp/foo is stored as
-// -private-tmp-foo (/tmp links to /private/tmp). Without this step,
-// `cc-port move /tmp/foo ...` would look for -tmp-foo and report "project
-// directory not found".
-//
-// macOS and Linux only. Windows path semantics are not handled.
+// ResolveProjectPath normalises a user-supplied project path through symlinks
+// so its encoded form matches what Claude Code wrote. Required for correctness
+// on macOS and Linux, where /tmp is a symlink: without this step,
+// cc-port move /tmp/foo would encode to -tmp-foo and miss the real directory.
 func ResolveProjectPath(path string) (string, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {

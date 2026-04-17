@@ -58,8 +58,6 @@ func Rules(rulesDir string, paths ...string) ([]Warning, error) {
 	return warnings, nil
 }
 
-// scanFile scans a single file for occurrences of any of the given paths.
-// At most one warning is produced per line, even if multiple paths match.
 func scanFile(filePath string, fileName string, paths []string) ([]Warning, error) {
 	file, err := os.Open(filePath) //nolint:gosec // G304: entry from caller-supplied rulesDir
 	if err != nil {

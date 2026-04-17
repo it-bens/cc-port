@@ -112,7 +112,6 @@ func Run(claudeHome *claude.Home, exportOptions Options) (Result, error) {
 	return result, nil
 }
 
-// exportSessions writes all session transcripts and session subdirectories to the archive.
 func exportSessions(
 	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
 ) error {
@@ -138,7 +137,6 @@ func exportSessions(
 	return nil
 }
 
-// exportMemory writes all memory files to the archive.
 func exportMemory(
 	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
 ) error {
@@ -156,7 +154,6 @@ func exportMemory(
 	return nil
 }
 
-// exportHistory extracts and writes project history to the archive.
 func exportHistory(
 	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []Placeholder,
 ) error {
@@ -171,18 +168,8 @@ func exportHistory(
 	return nil
 }
 
-// exportFileHistory writes all file-history directories to the archive,
-// copying each snapshot byte-for-byte. Snapshots are verbatim copies of
-// files the user edited through Claude Code; their contents are opaque
-// user-file bytes, and any project-path string inside a snapshot is
-// coincidental (log line, comment, string literal). Substring-anonymising
-// arbitrary bytes was the origin of the binary-detection heuristic that
-// this path deliberately does not use — the archive carries the sender's
-// literal paths inside snapshots, and callers who care about privacy are
-// expected to exclude the file-history category up front.
-//
-// Returns the number of snapshot files added so the caller can surface a
-// warning to the user.
+// exportFileHistory archives every file under ~/.claude/file-history verbatim.
+// No body inspection, no anonymisation — opaque by policy.
 func exportFileHistory(archiveWriter *zip.Writer, locations *claude.ProjectLocations) (int, error) {
 	total := 0
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
@@ -197,7 +184,6 @@ func exportFileHistory(archiveWriter *zip.Writer, locations *claude.ProjectLocat
 	return total, nil
 }
 
-// exportConfig extracts and writes the project config block to the archive.
 func exportConfig(
 	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []Placeholder,
 ) error {
@@ -237,7 +223,6 @@ func applyPlaceholders(data []byte, placeholders []Placeholder) []byte {
 	return data
 }
 
-// writeToZip adds a file with the given name and data to the archive.
 func writeToZip(archiveWriter *zip.Writer, name string, data []byte) error {
 	writer, err := archiveWriter.Create(name)
 	if err != nil {
@@ -444,7 +429,6 @@ func buildMetadata(exportOptions Options) *Metadata {
 	}
 }
 
-// buildMetadataXML marshals metadata to indented XML with a standard XML declaration header.
 func buildMetadataXML(metadata *Metadata) ([]byte, error) {
 	xmlBody, err := xml.MarshalIndent(metadata, "", "  ")
 	if err != nil {

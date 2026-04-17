@@ -565,19 +565,9 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 	return nil
 }
 
-// checkEncodedDirCollision refuses a move whose new project directory would
-// collide with existing storage on disk. Two kinds of collision are caught:
-//
-//   - oldPath and newPath encode to the same directory name (EncodePath
-//     collapses '/', '.', and ' ' to '-', so e.g. "/x/my project" and
-//     "/x/my-project" share a storage dir). cc-port cannot perform the
-//     filesystem copy when the source and destination are the same inode.
-//   - newPath's encoded directory already exists. Another real project path
-//     has claimed that storage (either directly by being stored there, or by
-//     coincidental encoding). Proceeding would silently merge or overwrite
-//     the other project's data.
-//
-// A non-existent newPath encoded dir is the only accepted state.
+// checkEncodedDirCollision refuses moves that would overwrite existing encoded
+// storage or collapse old and new onto the same directory. See internal/claude
+// README §Path encoding for the lossy encoding the check defends against.
 func checkEncodedDirCollision(claudeHome *claude.Home, oldPath, newPath string) error {
 	oldEncodedDir := claudeHome.ProjectDir(oldPath)
 	newEncodedDir := claudeHome.ProjectDir(newPath)
