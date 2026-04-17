@@ -51,7 +51,7 @@ Not covered — cases cc-port deliberately does not address:
 
 ### File-history handling (move)
 
-File-history snapshots under `~/.claude/file-history/<session-uuid>/` are opaque byte streams; cc-port never inspects or rewrites their content. See root README §File-history policy for the cross-cutting framing that governs every command. This section covers the move-specific handling.
+File-history snapshots under `~/.claude/file-history/<session-uuid>/` are opaque byte streams; cc-port never inspects or rewrites their content. See [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command. This section covers the move-specific handling.
 
 Handled — these calls copy verbatim and warn:
 

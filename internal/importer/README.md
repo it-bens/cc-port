@@ -208,7 +208,7 @@ The rollback surface is driven by `SafeRenamePromoter` — see `internal/rewrite
 
 ### File-history handling (import)
 
-File-history snapshots are opaque byte streams; see root README §File-history policy for the cross-cutting framing that governs every command.
+File-history snapshots are opaque byte streams; see [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command.
 
 Handled — `cc-port import` writes snapshots back to disk as the opaque bytes the archive carried. `ResolvePlaceholders` still runs over every entry for compatibility with older archives (a `{{KEY}}` that somehow survived inside a body will still be substituted), but on snapshots produced by current cc-port the pass is a no-op because no tokens are present.
 

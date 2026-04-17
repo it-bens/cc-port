@@ -6,7 +6,7 @@ See README.md for the project overview and contract index.
 ## Before editing anywhere
 
 - File-history snapshots are opaque bytes — no module inspects or
-  rewrites them (root README §File-history policy).
+  rewrites them (docs/architecture.md §File-history policy (cross-cutting)).
 - All path-substring rewrites route through
   `internal/rewrite.ReplacePathInBytes` — never hand-roll
   `strings.ReplaceAll` on user paths (see `internal/rewrite/README.md`).
@@ -33,9 +33,7 @@ See README.md for the project overview and contract index.
 - Fixtures via `internal/testutil`.
 - Run: `go test ./...`.
 
-## Commits + history
+## Commits
 
 - Conventional commits; scope is a module directory name where applicable
   (`fix(importer): …`, `refactor!: …`).
-- Design specs archived under `docs/superpowers/specs/`; plans under
-  `docs/superpowers/plans/`.

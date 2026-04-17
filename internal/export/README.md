@@ -26,7 +26,7 @@ Not a file-level exporter — this module's unit is one project. Not a path-anon
 
 ### File-history handling (export)
 
-File-history snapshots are opaque byte streams; see root README §File-history policy for the cross-cutting framing that governs every command.
+File-history snapshots are opaque byte streams; see [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command.
 
 Handled — `cc-port export` (with the `file-history` category enabled) writes each snapshot verbatim into the archive under `file-history/<uuid>/…`. No path anonymisation runs over those bytes. The CLI prints `Warning: N file-history snapshot(s) archived as-is …` to stderr when the count is positive.
 
