@@ -69,6 +69,34 @@ The consumers of this encoding that enforce the "refused on collision" behaviour
 - `internal/move/README.md` §Malformed history entries preserved — and the surrounding move plan — aborts when old and new encode identically, or when the target encoded directory already exists.
 - `internal/importer/README.md` §Import contract — `CheckConflict` refuses when the encoded target directory already exists.
 
+### Project enumeration
+
+`LocateProject` returns a `ProjectLocations` struct whose fields cover every
+file and directory tied to the project. The fields enumerate:
+
+- `HistoryEntries` — `~/.claude/history.jsonl` lines whose `cwd` matches the
+  project path.
+- `SessionFiles` — `~/.claude/projects/<encoded>/sessions/*.json`.
+- `MemoryFiles` — `~/.claude/projects/<encoded>/memory/` subtree.
+- `TranscriptFiles` — `~/.claude/projects/<encoded>/*.jsonl` transcripts.
+- `SettingsFile` — `~/.claude/settings.json` (global settings; included
+  because it may contain project-keyed blocks).
+- `TodoFiles` — `~/.claude/todos/<sid1>-agent-<sid2>.json` where **either**
+  UUID is in the project's session set. The filename allows for sub-agent
+  spawns; both parent and child session UUIDs receive independent visibility.
+- `UsageDataSessionMeta` — `~/.claude/usage-data/session-meta/<sid>.json`;
+  `<sid>` in session set.
+- `UsageDataFacets` — `~/.claude/usage-data/facets/<sid>.json`; `<sid>` in
+  session set.
+- `PluginsDataDirs` — `~/.claude/plugins/data/<ns>/<sid>/` subtrees; `<sid>`
+  in session set. Plugin namespace `<ns>` is opaque and preserved verbatim.
+- `TaskDirs` — `~/.claude/tasks/<sid>/`; `<sid>` in session set. `.lock` and
+  `.highwatermark` sidecars are runtime-only and excluded at enumerate time.
+
+Each session-keyed collector returns empty when its parent directory is absent
+(the directory may not exist if the feature has never been used). This matches
+the behaviour of `collectMemoryFiles`.
+
 ## Tests
 
 Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`. Coverage: encoding round-trip for representative paths, symlink resolution with and without trailing non-existent components, round-trip marshal/unmarshal of each schema type, `LocateProject` hit/miss paths.

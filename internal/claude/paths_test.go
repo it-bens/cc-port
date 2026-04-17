@@ -150,3 +150,12 @@ func TestHome_Paths(t *testing.T) {
 	assert.Equal(t, "/home/user/.claude/rules", home.RulesDir())
 	assert.Equal(t, "/home/user/.claude/file-history", home.FileHistoryDir())
 }
+
+func TestHome_NewAccessors(t *testing.T) {
+	home := &claude.Home{Dir: "/tmp/claude", ConfigFile: "/tmp/claude.json"}
+
+	assert.Equal(t, "/tmp/claude/todos", home.TodosDir())
+	assert.Equal(t, "/tmp/claude/usage-data", home.UsageDataDir())
+	assert.Equal(t, "/tmp/claude/plugins/data", home.PluginsDataDir())
+	assert.Equal(t, "/tmp/claude/tasks", home.TasksDir())
+}

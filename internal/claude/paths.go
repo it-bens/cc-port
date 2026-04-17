@@ -131,3 +131,23 @@ func (claudeHome *Home) RulesDir() string {
 func (claudeHome *Home) FileHistoryDir() string {
 	return filepath.Join(claudeHome.Dir, "file-history")
 }
+
+// TodosDir returns the path to the ~/.claude/todos directory.
+func (claudeHome *Home) TodosDir() string {
+	return filepath.Join(claudeHome.Dir, "todos")
+}
+
+// UsageDataDir returns the path to the ~/.claude/usage-data directory.
+func (claudeHome *Home) UsageDataDir() string {
+	return filepath.Join(claudeHome.Dir, "usage-data")
+}
+
+// PluginsDataDir returns the path to the ~/.claude/plugins/data directory.
+func (claudeHome *Home) PluginsDataDir() string {
+	return filepath.Join(claudeHome.Dir, "plugins", "data")
+}
+
+// TasksDir returns the path to the ~/.claude/tasks directory.
+func (claudeHome *Home) TasksDir() string {
+	return filepath.Join(claudeHome.Dir, "tasks")
+}

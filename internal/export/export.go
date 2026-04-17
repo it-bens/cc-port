@@ -24,6 +24,10 @@ type CategorySet struct {
 	History     bool
 	FileHistory bool
 	Config      bool
+	Todos       bool
+	UsageData   bool
+	PluginsData bool
+	Tasks       bool
 }
 
 // Options holds all parameters for an export operation.
@@ -57,8 +61,6 @@ func Run(claudeHome *claude.Home, exportOptions Options) (Result, error) {
 		return result, fmt.Errorf("locate project: %w", err)
 	}
 
-	placeholders := exportOptions.Placeholders
-
 	zipFile, err := os.Create(exportOptions.OutputPath)
 	if err != nil {
 		return result, fmt.Errorf("create output file: %w", err)
@@ -68,31 +70,14 @@ func Run(claudeHome *claude.Home, exportOptions Options) (Result, error) {
 	archiveWriter := zip.NewWriter(zipFile)
 	defer func() { _ = archiveWriter.Close() }()
 
-	metadata := buildMetadata(exportOptions)
-	metadataXMLData, err := buildMetadataXML(metadata)
-	if err != nil {
-		return result, fmt.Errorf("build metadata XML: %w", err)
-	}
-	if err := writeToZip(archiveWriter, "metadata.xml", metadataXMLData); err != nil {
-		return result, fmt.Errorf("write metadata.xml: %w", err)
+	if err := writeMetadataToZip(archiveWriter, exportOptions); err != nil {
+		return result, err
 	}
 
-	if exportOptions.Categories.Sessions {
-		if err := exportSessions(archiveWriter, locations, placeholders); err != nil {
-			return result, err
-		}
-	}
+	placeholders := exportOptions.Placeholders
 
-	if exportOptions.Categories.Memory {
-		if err := exportMemory(archiveWriter, locations, placeholders); err != nil {
-			return result, err
-		}
-	}
-
-	if exportOptions.Categories.History {
-		if err := exportHistory(archiveWriter, claudeHome, exportOptions, placeholders); err != nil {
-			return result, err
-		}
+	if err := exportCoreCategories(archiveWriter, claudeHome, locations, exportOptions, placeholders); err != nil {
+		return result, err
 	}
 
 	if exportOptions.Categories.FileHistory {
@@ -110,6 +95,48 @@ func Run(claudeHome *claude.Home, exportOptions Options) (Result, error) {
 	}
 
 	return result, nil
+}
+
+func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions Options) error {
+	metadata := buildMetadata(exportOptions)
+	metadataXMLData, err := buildMetadataXML(metadata)
+	if err != nil {
+		return fmt.Errorf("build metadata XML: %w", err)
+	}
+	if err := writeToZip(archiveWriter, "metadata.xml", metadataXMLData); err != nil {
+		return fmt.Errorf("write metadata.xml: %w", err)
+	}
+	return nil
+}
+
+// exportCoreCategories runs Sessions, Memory, the four session-keyed groups,
+// and History. Extracted from Run to stay within the linter's line-count
+// budget.
+func exportCoreCategories(
+	archiveWriter *zip.Writer, claudeHome *claude.Home,
+	locations *claude.ProjectLocations, exportOptions Options, placeholders []Placeholder,
+) error {
+	if exportOptions.Categories.Sessions {
+		if err := exportSessions(archiveWriter, locations, placeholders); err != nil {
+			return err
+		}
+	}
+	if exportOptions.Categories.Memory {
+		if err := exportMemory(archiveWriter, locations, placeholders); err != nil {
+			return err
+		}
+	}
+	if err := exportSessionKeyed(
+		archiveWriter, claudeHome, locations, exportOptions.Categories, placeholders,
+	); err != nil {
+		return err
+	}
+	if exportOptions.Categories.History {
+		if err := exportHistory(archiveWriter, claudeHome, exportOptions, placeholders); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func exportSessions(
@@ -149,6 +176,134 @@ func exportMemory(
 		zipName := "memory/" + filepath.Base(memoryFilePath)
 		if err := writeToZip(archiveWriter, zipName, anonymizedData); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
+		}
+	}
+	return nil
+}
+
+// exportSessionKeyed runs the four session-keyed export categories (Todos,
+// UsageData, PluginsData, Tasks). Extracted from Run to stay within the
+// function-length budget enforced by the linter.
+func exportSessionKeyed(
+	archiveWriter *zip.Writer, claudeHome *claude.Home,
+	locations *claude.ProjectLocations, categories CategorySet, placeholders []Placeholder,
+) error {
+	if categories.Todos {
+		if err := exportTodos(archiveWriter, locations, placeholders); err != nil {
+			return err
+		}
+	}
+	if categories.UsageData {
+		if err := exportUsageData(archiveWriter, locations, placeholders); err != nil {
+			return err
+		}
+	}
+	if categories.PluginsData {
+		if err := exportPluginsData(archiveWriter, claudeHome, locations, placeholders); err != nil {
+			return err
+		}
+	}
+	if categories.Tasks {
+		if err := exportTasks(archiveWriter, locations, placeholders); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func exportTodos(
+	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
+) error {
+	for _, todoFilePath := range locations.TodoFiles {
+		data, err := os.ReadFile(todoFilePath) //nolint:gosec // G304: path from trusted ClaudeHome
+		if err != nil {
+			return fmt.Errorf("read todo file %s: %w", todoFilePath, err)
+		}
+		anonymized := applyPlaceholders(data, placeholders)
+		zipName := "todos/" + filepath.Base(todoFilePath)
+		if err := writeToZip(archiveWriter, zipName, anonymized); err != nil {
+			return fmt.Errorf("write %s: %w", zipName, err)
+		}
+	}
+	return nil
+}
+
+func exportUsageData(
+	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
+) error {
+	for _, kind := range []struct {
+		paths     []string
+		zipPrefix string
+	}{
+		{locations.UsageDataSessionMeta, "usage-data/session-meta/"},
+		{locations.UsageDataFacets, "usage-data/facets/"},
+	} {
+		for _, p := range kind.paths {
+			data, err := os.ReadFile(p) //nolint:gosec // G304: path from trusted ClaudeHome
+			if err != nil {
+				return fmt.Errorf("read usage-data file %s: %w", p, err)
+			}
+			anonymized := applyPlaceholders(data, placeholders)
+			zipName := kind.zipPrefix + filepath.Base(p)
+			if err := writeToZip(archiveWriter, zipName, anonymized); err != nil {
+				return fmt.Errorf("write %s: %w", zipName, err)
+			}
+		}
+	}
+	return nil
+}
+
+// exportPluginsData writes every file under each plugins-data session subtree
+// to the archive at plugins-data/<ns>/<sid>/<basename>. The plugin namespace
+// segment is preserved verbatim. Bodies are anonymised through applyPlaceholders.
+func exportPluginsData(
+	archiveWriter *zip.Writer, claudeHome *claude.Home,
+	locations *claude.ProjectLocations, placeholders []Placeholder,
+) error {
+	pluginsDataBase := claudeHome.PluginsDataDir()
+	for _, sessionDir := range locations.PluginsDataDirs {
+		relative, err := filepath.Rel(pluginsDataBase, sessionDir)
+		if err != nil {
+			return fmt.Errorf("compute relative path for %s: %w", sessionDir, err)
+		}
+		zipPrefix := "plugins-data/" + filepath.ToSlash(relative)
+		if err := addDirToZip(archiveWriter, sessionDir, zipPrefix, placeholders); err != nil {
+			return fmt.Errorf("add plugins-data subtree %s: %w", sessionDir, err)
+		}
+	}
+	return nil
+}
+
+// exportTasks writes every JSON file under each tasks/<sid>/ subtree to the
+// archive at tasks/<sid>/<basename>. .lock and .highwatermark sidecars are
+// excluded — they are runtime-only state.
+func exportTasks(
+	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
+) error {
+	for _, taskDir := range locations.TaskDirs {
+		dirName := filepath.Base(taskDir)
+		entries, err := os.ReadDir(taskDir)
+		if err != nil {
+			return fmt.Errorf("read task dir %s: %w", taskDir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == ".lock" || name == ".highwatermark" {
+				continue
+			}
+			filePath := filepath.Join(taskDir, name)
+			data, err := os.ReadFile(filePath) //nolint:gosec // G304: path from trusted ClaudeHome
+			if err != nil {
+				return fmt.Errorf("read task file %s: %w", filePath, err)
+			}
+			anonymized := applyPlaceholders(data, placeholders)
+			zipName := "tasks/" + dirName + "/" + name
+			if err := writeToZip(archiveWriter, zipName, anonymized); err != nil {
+				return fmt.Errorf("write %s: %w", zipName, err)
+			}
 		}
 	}
 	return nil
@@ -418,6 +573,10 @@ func buildMetadata(exportOptions Options) *Metadata {
 		{Name: "history", Included: exportOptions.Categories.History},
 		{Name: "file-history", Included: exportOptions.Categories.FileHistory},
 		{Name: "config", Included: exportOptions.Categories.Config},
+		{Name: "todos", Included: exportOptions.Categories.Todos},
+		{Name: "usage-data", Included: exportOptions.Categories.UsageData},
+		{Name: "plugins-data", Included: exportOptions.Categories.PluginsData},
+		{Name: "tasks", Included: exportOptions.Categories.Tasks},
 	}
 
 	return &Metadata{

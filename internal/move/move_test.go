@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	oldProjectPath = "/Users/test/Projects/myproject"
-	newProjectPath = "/Users/test/Projects/newproject"
+	oldProjectPath     = "/Users/test/Projects/myproject"
+	newProjectPath     = "/Users/test/Projects/newproject"
+	renamedProjectPath = "/Users/test/Projects/renamed"
 )
 
 func TestDryRun(t *testing.T) {
@@ -400,6 +401,156 @@ func TestApply_PreservesFileHistorySnapshots(t *testing.T) {
 		"warning should name the file-history category")
 	assert.Contains(t, output, "preserved",
 		"warning should state the preservation invariant")
+}
+
+func TestDryRun_CountsSessionKeyedReplacements(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	plan, err := move.DryRun(claudeHome, move.Options{
+		OldPath:  "/Users/test/Projects/myproject",
+		NewPath:  renamedProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	assert.Positive(t, plan.TodosReplacements, "todo file mentions oldPath in fixture")
+	assert.Positive(t, plan.UsageDataSessionMetaReplacements, "session-meta has project_path")
+	assert.Positive(t, plan.PluginsDataReplacements, "plugin tracker has the abs path as JSON key")
+	assert.Positive(t, plan.TasksReplacements, "task description mentions oldPath")
+}
+
+func TestApply_Rollback_RestoresAllShapesOnFailure(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	// Snapshot current todo + usage-data + plugin + task contents
+	originalLocations, err := claude.LocateProject(claudeHome, oldProjectPath)
+	require.NoError(t, err)
+
+	beforeBytes := func(paths []string) map[string][]byte {
+		result := make(map[string][]byte, len(paths))
+		for _, p := range paths {
+			b, readErr := os.ReadFile(p) //nolint:gosec // test-controlled path
+			require.NoError(t, readErr)
+			result[p] = b
+		}
+		return result
+	}
+	todoBefore := beforeBytes(originalLocations.TodoFiles)
+	metaBefore := beforeBytes(originalLocations.UsageDataSessionMeta)
+
+	// Force failure: supply a NewPath that collides with an existing encoded project dir
+	// (refused by checkEncodedDirCollision before any write).
+	collidingNewPath := "/Users/test/Projects/my-project-v2"
+
+	err = move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  collidingNewPath,
+		RefsOnly: true,
+	})
+	require.Error(t, err, "encoded-dir collision must abort the move before any write")
+
+	// Verify original bytes are unchanged
+	for path, expected := range todoBefore {
+		actual, readErr := os.ReadFile(path) //nolint:gosec // test-controlled path
+		require.NoError(t, readErr)
+		assert.Equal(t, expected, actual, "todo file %s must be untouched after refused move", path)
+	}
+	for path, expected := range metaBefore {
+		actual, readErr := os.ReadFile(path) //nolint:gosec // test-controlled path
+		require.NoError(t, readErr)
+		assert.Equal(t, expected, actual, "usage-data file %s must be untouched after refused move", path)
+	}
+}
+
+func TestApply_RewritesTasks_SkipsSidecars(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	err := move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  renamedProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	newLocations, err := claude.LocateProject(claudeHome, renamedProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, newLocations.TaskDirs)
+
+	taskJSON := filepath.Join(newLocations.TaskDirs[0], "1.json")
+	body, err := os.ReadFile(taskJSON) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Contains(t, string(body), renamedProjectPath)
+	assert.NotContains(t, string(body), oldProjectPath)
+
+	// .lock and .highwatermark must still exist but be untouched
+	lockPath := filepath.Join(newLocations.TaskDirs[0], ".lock")
+	_, err = os.Stat(lockPath)
+	require.NoError(t, err, ".lock sidecar must be preserved verbatim")
+	hwPath := filepath.Join(newLocations.TaskDirs[0], ".highwatermark")
+	hwBody, err := os.ReadFile(hwPath) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Equal(t, "1", string(hwBody), ".highwatermark must be preserved verbatim")
+}
+
+func TestApply_RewritesPluginsData(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	err := move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  renamedProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	newLocations, err := claude.LocateProject(claudeHome, renamedProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, newLocations.PluginsDataDirs)
+
+	pluginFile := filepath.Join(newLocations.PluginsDataDirs[0], "tracker-main.json")
+	body, err := os.ReadFile(pluginFile) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Contains(t, string(body), renamedProjectPath)
+	assert.NotContains(t, string(body), oldProjectPath)
+}
+
+func TestApply_RewritesUsageData(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	err := move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  renamedProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	newLocations, err := claude.LocateProject(claudeHome, renamedProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, newLocations.UsageDataSessionMeta)
+
+	body, err := os.ReadFile(newLocations.UsageDataSessionMeta[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"project_path":"`+renamedProjectPath+`"`)
+	assert.NotContains(t, string(body), oldProjectPath)
+}
+
+func TestApply_RewritesTodos(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	err := move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  renamedProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	newLocations, err := claude.LocateProject(claudeHome, renamedProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, newLocations.TodoFiles)
+
+	body, err := os.ReadFile(newLocations.TodoFiles[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(body), renamedProjectPath)
+	assert.NotContains(t, string(body), oldProjectPath)
 }
 
 // assertSessionSubdirFilesRewritten walks the session subdirectories under

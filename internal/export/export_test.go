@@ -311,6 +311,145 @@ func TestExport_HistoryInclusionRules(t *testing.T) {
 		"line tagged to a different project with no reference must NOT be included")
 }
 
+func TestExport_IncludesTodos(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "out.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath: "/Users/test/Projects/myproject",
+		OutputPath:  archivePath,
+		Categories:  export.CategorySet{Todos: true},
+	})
+	require.NoError(t, err)
+
+	zipReader, err := zip.OpenReader(archivePath)
+	require.NoError(t, err)
+	defer func() { _ = zipReader.Close() }()
+
+	var todoNames []string
+	for _, f := range zipReader.File {
+		if strings.HasPrefix(f.Name, "todos/") {
+			todoNames = append(todoNames, f.Name)
+		}
+	}
+	assert.NotEmpty(t, todoNames, "archive must contain at least one todos/ entry")
+}
+
+func TestExport_IncludesUsageData(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "out.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath: "/Users/test/Projects/myproject",
+		OutputPath:  archivePath,
+		Categories:  export.CategorySet{UsageData: true},
+	})
+	require.NoError(t, err)
+
+	zipReader, err := zip.OpenReader(archivePath)
+	require.NoError(t, err)
+	defer func() { _ = zipReader.Close() }()
+
+	var sessionMetaNames, facetsNames []string
+	for _, f := range zipReader.File {
+		switch {
+		case strings.HasPrefix(f.Name, "usage-data/session-meta/"):
+			sessionMetaNames = append(sessionMetaNames, f.Name)
+		case strings.HasPrefix(f.Name, "usage-data/facets/"):
+			facetsNames = append(facetsNames, f.Name)
+		}
+	}
+	assert.NotEmpty(t, sessionMetaNames)
+	assert.NotEmpty(t, facetsNames)
+}
+
+func TestExport_IncludesPluginsData(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "out.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath: "/Users/test/Projects/myproject",
+		OutputPath:  archivePath,
+		Categories:  export.CategorySet{PluginsData: true},
+	})
+	require.NoError(t, err)
+
+	zipReader, err := zip.OpenReader(archivePath)
+	require.NoError(t, err)
+	defer func() { _ = zipReader.Close() }()
+
+	var names []string
+	for _, f := range zipReader.File {
+		if strings.HasPrefix(f.Name, "plugins-data/") {
+			names = append(names, f.Name)
+		}
+	}
+	assert.NotEmpty(t, names)
+	assert.Contains(t, names[0], "example-plugin/",
+		"plugin namespace must appear in the zip path")
+}
+
+func TestExport_IncludesTasks_SkipsSidecars(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "out.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath: "/Users/test/Projects/myproject",
+		OutputPath:  archivePath,
+		Categories:  export.CategorySet{Tasks: true},
+	})
+	require.NoError(t, err)
+
+	zipReader, err := zip.OpenReader(archivePath)
+	require.NoError(t, err)
+	defer func() { _ = zipReader.Close() }()
+
+	var hasTaskJSON, hasLock, hasHWM bool
+	for _, f := range zipReader.File {
+		if strings.HasPrefix(f.Name, "tasks/") {
+			switch filepath.Base(f.Name) {
+			case ".lock":
+				hasLock = true
+			case ".highwatermark":
+				hasHWM = true
+			default:
+				hasTaskJSON = true
+			}
+		}
+	}
+	assert.True(t, hasTaskJSON, "task JSON file must be in the archive")
+	assert.False(t, hasLock, ".lock sidecar must be excluded")
+	assert.False(t, hasHWM, ".highwatermark sidecar must be excluded")
+}
+
+func TestExport_ManifestDeclaresAllNineCategories(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "out.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath: "/Users/test/Projects/myproject",
+		OutputPath:  archivePath,
+		Categories:  export.CategorySet{Sessions: true},
+	})
+	require.NoError(t, err)
+
+	metadata, err := export.ReadManifestFromZip(archivePath)
+	require.NoError(t, err)
+
+	expected := []string{"sessions", "memory", "history", "file-history", "config",
+		"todos", "usage-data", "plugins-data", "tasks"}
+	var got []string
+	for _, c := range metadata.Export.Categories {
+		got = append(got, c.Name)
+	}
+	assert.ElementsMatch(t, expected, got, "every export must declare all 9 category names")
+}
+
 func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {
 	// The fixture memory file contains a reference to
 	// `/Users/test/Projects/myproject-extras`, a sibling project whose path

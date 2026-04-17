@@ -24,6 +24,29 @@ Not a file-level exporter — this module's unit is one project. Not a path-anon
 
 ## Contracts
 
+### Import contract
+
+Every `cc-port export` archive declares all 9 category names in `metadata.xml`
+(even when a category was not included in the archive). The importer treats
+the category list as a closed manifest and hard-fails on any missing or unknown
+name. The 9 required category names are:
+
+`sessions`, `memory`, `history`, `file-history`, `config`, `todos`,
+`usage-data`, `plugins-data`, `tasks`.
+
+### Anonymisation
+
+Every body written into the archive passes through `applyPlaceholders`, which
+substitutes known path prefixes with `{{KEY}}` tokens before the bytes land in
+the ZIP. This applies to all 9 categories that carry JSON or JSONL content.
+The 4 new session-keyed categories (todos, usage-data, plugins-data, tasks)
+receive the same `applyPlaceholders` pass — the privacy guarantee is
+preserved across all body types.
+
+The one exception is file-history snapshots: they are archived verbatim with
+no anonymisation pass. See §File-history handling (export) for the opt-out
+surface.
+
 ### File-history handling (export)
 
 File-history snapshots are opaque byte streams; see [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command.

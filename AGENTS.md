@@ -7,6 +7,11 @@ See README.md for the project overview and contract index.
 
 - File-history snapshots are opaque bytes — no module inspects or
   rewrites them (docs/architecture.md §File-history policy (cross-cutting)).
+- Five `~/.claude/` directories beyond the project's encoded dir carry
+  per-session state for the project (todos, usage-data/session-meta,
+  usage-data/facets, plugins/data, tasks). All flow through `LocateProject`
+  and the existing move/export/import paths. See
+  [docs/architecture.md §Session-UUID-keyed user-wide data](docs/architecture.md).
 - All path-substring rewrites route through
   `internal/rewrite.ReplacePathInBytes` — never hand-roll
   `strings.ReplaceAll` on user paths (see `internal/rewrite/README.md`).

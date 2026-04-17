@@ -66,3 +66,59 @@ func TestLocateProject_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, projectLocations)
 }
+
+func TestLocateProject_CollectsUsageData(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	require.NoError(t, err)
+
+	assert.Len(t, projectLocations.UsageDataSessionMeta, 1)
+	assert.True(t,
+		containsBaseName(projectLocations.UsageDataSessionMeta,
+			"a1b2c3d4-0000-0000-0000-000000000001.json"),
+		"session-meta JSON for primary session UUID must be located")
+
+	assert.Len(t, projectLocations.UsageDataFacets, 1)
+	assert.True(t,
+		containsBaseName(projectLocations.UsageDataFacets,
+			"a1b2c3d4-0000-0000-0000-000000000001.json"),
+		"facets JSON for primary session UUID must be located")
+}
+
+func TestLocateProject_CollectsPluginsData(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	require.NoError(t, err)
+
+	assert.Len(t, projectLocations.PluginsDataDirs, 1)
+	assert.True(t,
+		containsBaseName(projectLocations.PluginsDataDirs, "a1b2c3d4-0000-0000-0000-000000000001"),
+		"plugin-namespace session subdir for primary UUID must be located")
+}
+
+func TestLocateProject_CollectsTaskDirs(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	require.NoError(t, err)
+
+	assert.Len(t, projectLocations.TaskDirs, 1)
+	assert.True(t,
+		containsBaseName(projectLocations.TaskDirs, "a1b2c3d4-0000-0000-0000-000000000001"),
+		"task subdir for primary session UUID must be located")
+}
+
+func TestLocateProject_CollectsTodos(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	require.NoError(t, err)
+
+	assert.Len(t, projectLocations.TodoFiles, 1, "exactly one todo file matches a project session UUID")
+	assert.True(t,
+		containsBaseName(projectLocations.TodoFiles,
+			"a1b2c3d4-0000-0000-0000-000000000001-agent-a1b2c3d4-0000-0000-0000-000000000001.json"),
+		"the matching todo file must be located")
+}

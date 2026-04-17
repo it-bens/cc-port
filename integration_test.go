@@ -351,6 +351,102 @@ func TestIntegration_MoveRefsOnly(t *testing.T) {
 		"history should not contain old path as a quoted JSON value")
 }
 
+// TestIntegration_ExportImportRoundTrip_AllCategories verifies an end-to-end
+// export + import round-trip with all 9 categories enabled. It asserts that
+// every category lands in the destination and that path rewriting worked
+// inside at least one session-keyed body (usage-data/session-meta).
+func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export-all-categories.zip")
+
+	trueVal := true
+	_, err := export.Run(sourceHome, export.Options{
+		ProjectPath: fixtureProjectPath,
+		OutputPath:  archivePath,
+		Categories: export.CategorySet{
+			Sessions:    true,
+			Memory:      true,
+			History:     true,
+			FileHistory: true,
+			Config:      true,
+			Todos:       true,
+			UsageData:   true,
+			PluginsData: true,
+			Tasks:       true,
+		},
+		Placeholders: []export.Placeholder{
+			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath, Resolvable: &trueVal},
+			{Key: "{{HOME}}", Original: fixtureHomeDir, Resolvable: &trueVal},
+		},
+	})
+	require.NoError(t, err, "export with all categories should succeed")
+
+	// Confirm archive has entries for every new category prefix.
+	zipReader, err := zip.OpenReader(archivePath)
+	require.NoError(t, err, "should be able to open exported archive")
+	t.Cleanup(func() { _ = zipReader.Close() })
+	var hasTodos, hasSessionMeta, hasFacets, hasPluginsData, hasTasks bool
+	for _, f := range zipReader.File {
+		switch {
+		case strings.HasPrefix(f.Name, "todos/"):
+			hasTodos = true
+		case strings.HasPrefix(f.Name, "usage-data/session-meta/"):
+			hasSessionMeta = true
+		case strings.HasPrefix(f.Name, "usage-data/facets/"):
+			hasFacets = true
+		case strings.HasPrefix(f.Name, "plugins-data/"):
+			hasPluginsData = true
+		case strings.HasPrefix(f.Name, "tasks/"):
+			hasTasks = true
+		}
+	}
+	assert.True(t, hasTodos, "archive must include todos/ entries")
+	assert.True(t, hasSessionMeta, "archive must include usage-data/session-meta/ entries")
+	assert.True(t, hasFacets, "archive must include usage-data/facets/ entries")
+	assert.True(t, hasPluginsData, "archive must include plugins-data/ entries")
+	assert.True(t, hasTasks, "archive must include tasks/ entries")
+
+	// Import into a fresh home at a new project path.
+	destinationHome := setupDestinationHome(t)
+	destinationProjectPath := "/home/newuser/projects/cool-project"
+	destinationHomeDir := "/home/newuser"
+
+	err = importer.Run(destinationHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  destinationProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destinationProjectPath,
+			"{{HOME}}":         destinationHomeDir,
+		},
+	})
+	require.NoError(t, err, "import should succeed")
+
+	// Assert all 9 categories land in the destination.
+	imported, err := claude.LocateProject(destinationHome, destinationProjectPath)
+	require.NoError(t, err, "LocateProject should succeed on imported project")
+	assert.NotEmpty(t, imported.SessionTranscripts, "sessions must be imported")
+	assert.NotEmpty(t, imported.MemoryFiles, "memory must be imported")
+	assert.Positive(t, imported.HistoryEntryCount, "history must be imported")
+	assert.True(t, imported.HasConfigBlock, "config block must be imported")
+	assert.NotEmpty(t, imported.FileHistoryDirs, "file-history must be imported")
+	assert.NotEmpty(t, imported.TodoFiles, "todos must be imported")
+	assert.NotEmpty(t, imported.UsageDataSessionMeta, "usage-data/session-meta must be imported")
+	assert.NotEmpty(t, imported.UsageDataFacets, "usage-data/facets must be imported")
+	assert.NotEmpty(t, imported.PluginsDataDirs, "plugins-data must be imported")
+	assert.NotEmpty(t, imported.TaskDirs, "tasks must be imported")
+
+	// Spot-check path rewriting in a session-keyed file that carries the project path.
+	require.NotEmpty(t, imported.UsageDataSessionMeta)
+	metaBody, err := os.ReadFile(imported.UsageDataSessionMeta[0]) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Contains(t, string(metaBody), destinationProjectPath,
+		"usage-data/session-meta body must carry the new project path")
+	assert.NotContains(t, string(metaBody), fixtureProjectPath,
+		"usage-data/session-meta body must not carry the original project path")
+	assert.NotContains(t, string(metaBody), "{{PROJECT_PATH}}",
+		"no unresolved placeholder tokens must remain in usage-data/session-meta")
+}
+
 // TestIntegration_ImportConflict verifies that importing back to a ClaudeHome where
 // the same project path already exists produces an "already exists" error.
 func TestIntegration_ImportConflict(t *testing.T) {

@@ -127,6 +127,10 @@ func writeMetadataEntry(
 				{Name: "history", Included: true},
 				{Name: "file-history", Included: true},
 				{Name: "config", Included: true},
+				{Name: "todos", Included: false},
+				{Name: "usage-data", Included: false},
+				{Name: "plugins-data", Included: false},
+				{Name: "tasks", Included: false},
 			},
 		},
 		Placeholders: []export.Placeholder{
@@ -658,6 +662,10 @@ func writeMetadataEntryWithOverrides(t *testing.T, zipWriter *zip.Writer, overri
 				{Name: "history", Included: true},
 				{Name: "file-history", Included: true},
 				{Name: "config", Included: true},
+				{Name: "todos", Included: false},
+				{Name: "usage-data", Included: false},
+				{Name: "plugins-data", Included: false},
+				{Name: "tasks", Included: false},
 			},
 		},
 		Placeholders: placeholders,
@@ -690,6 +698,155 @@ func TestImport_ConflictRefused(t *testing.T) {
 	err := importer.Run(sourceClaudeHome, importOptions)
 	require.Error(t, err, "import to existing project should fail")
 	assert.Contains(t, err.Error(), "already exists", "error should mention conflict")
+}
+
+func TestImport_RoundTrip_NewCategories(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "out.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath: fixtureSourceProjectPath,
+		OutputPath:  archivePath,
+		Categories: export.CategorySet{
+			Sessions: true, Memory: true, History: true, Config: true,
+			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
+		},
+	})
+	require.NoError(t, err)
+
+	freshHome := testutil.SetupFixture(t)
+	require.NoError(t, os.RemoveAll(freshHome.TodosDir()))
+	require.NoError(t, os.RemoveAll(freshHome.UsageDataDir()))
+	require.NoError(t, os.RemoveAll(freshHome.PluginsDataDir()))
+	require.NoError(t, os.RemoveAll(freshHome.TasksDir()))
+	// freshHome already has the project dir, so remove it to avoid CheckConflict.
+	require.NoError(t, os.RemoveAll(freshHome.ProjectDir(fixtureSourceProjectPath)))
+
+	err = importer.Run(freshHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  fixtureSourceProjectPath,
+	})
+	require.NoError(t, err)
+
+	imported, err := claude.LocateProject(freshHome, fixtureSourceProjectPath)
+	require.NoError(t, err)
+	assert.NotEmpty(t, imported.TodoFiles)
+	assert.NotEmpty(t, imported.UsageDataSessionMeta)
+	assert.NotEmpty(t, imported.UsageDataFacets)
+	assert.NotEmpty(t, imported.PluginsDataDirs)
+	assert.NotEmpty(t, imported.TaskDirs)
+}
+
+func TestImport_HardFailsOnUnknownManifestCategory(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	require.NoError(t, os.RemoveAll(claudeHome.ProjectDir(fixtureSourceProjectPath)))
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "bad-manifest.zip")
+
+	zipFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	zw := zip.NewWriter(zipFile)
+	w, err := zw.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+		`<cc-port><export><categories>` +
+		`<category name="sessions" included="false"></category>` +
+		`<category name="memory" included="false"></category>` +
+		`<category name="history" included="false"></category>` +
+		`<category name="file-history" included="false"></category>` +
+		`<category name="config" included="false"></category>` +
+		`<category name="todos" included="false"></category>` +
+		`<category name="usage-data" included="false"></category>` +
+		`<category name="plugins-data" included="false"></category>` +
+		`<category name="tasks" included="false"></category>` +
+		`<category name="bogus" included="true"></category>` +
+		`</categories></export><placeholders></placeholders></cc-port>`))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.NoError(t, zipFile.Close())
+
+	err = importer.Run(claudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  fixtureSourceProjectPath,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bogus")
+}
+
+func TestImport_HardFailsOnMissingManifestCategory(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	require.NoError(t, os.RemoveAll(claudeHome.ProjectDir(fixtureSourceProjectPath)))
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "incomplete-manifest.zip")
+
+	zipFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	zw := zip.NewWriter(zipFile)
+	w, err := zw.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+		`<cc-port><export><categories>` +
+		`<category name="sessions" included="false"></category>` +
+		`<category name="memory" included="false"></category>` +
+		`<category name="history" included="false"></category>` +
+		`<category name="file-history" included="false"></category>` +
+		`<category name="config" included="false"></category>` +
+		`</categories></export><placeholders></placeholders></cc-port>`))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.NoError(t, zipFile.Close())
+
+	err = importer.Run(claudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  fixtureSourceProjectPath,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing")
+}
+
+func TestImport_HardFailsOnUnknownEntryPrefix(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	// Remove the encoded project dir to avoid CheckConflict.
+	require.NoError(t, os.RemoveAll(claudeHome.ProjectDir(fixtureSourceProjectPath)))
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "rogue.zip")
+
+	zipFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	zw := zip.NewWriter(zipFile)
+	w, err := zw.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+		`<cc-port><export><categories>` +
+		`<category name="sessions" included="true"></category>` +
+		`<category name="memory" included="false"></category>` +
+		`<category name="history" included="false"></category>` +
+		`<category name="file-history" included="false"></category>` +
+		`<category name="config" included="false"></category>` +
+		`<category name="todos" included="false"></category>` +
+		`<category name="usage-data" included="false"></category>` +
+		`<category name="plugins-data" included="false"></category>` +
+		`<category name="tasks" included="false"></category>` +
+		`</categories></export><placeholders></placeholders></cc-port>`))
+	require.NoError(t, err)
+	w, err = zw.Create("rogue/file.txt")
+	require.NoError(t, err)
+	_, err = w.Write([]byte("content"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.NoError(t, zipFile.Close())
+
+	err = importer.Run(claudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  fixtureSourceProjectPath,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown archive entry")
+	assert.Contains(t, err.Error(), "rogue/file.txt")
 }
 
 // assertNoPendingPlaceholders walks dirPath and fails the test if any file

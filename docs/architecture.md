@@ -26,16 +26,40 @@ Each non-trivial directory has a `README.md`; directories with hard editing rule
 
 One invariant per row; click through to the owning module for the full `Handled / Refused / Not covered` breakdown.
 
-| Invariant | Owner |
-| --- | --- |
-| Interactive prompts require a TTY | [`internal/ui/README.md`](../internal/ui/README.md) |
-| Path substring rewrites respect component boundaries | [`internal/rewrite/README.md`](../internal/rewrite/README.md) |
-| Project paths use a lossy encoding; collisions refused | [`internal/claude/README.md`](../internal/claude/README.md) |
-| `~/.claude/rules/*.md` never rewritten in place | [`internal/scan/README.md`](../internal/scan/README.md) |
-| Malformed `history.jsonl` lines preserved, not repaired | [`internal/move/README.md`](../internal/move/README.md) |
-| Archives are a closed placeholder contract | [`internal/importer/README.md`](../internal/importer/README.md) §Import contract |
-| Import writes are atomic with rollback | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging |
-| Mutating commands lock + refuse during live sessions | [`internal/lock/README.md`](../internal/lock/README.md) |
+| Invariant                                               | Owner                                                                            |
+|---------------------------------------------------------|----------------------------------------------------------------------------------|
+| Interactive prompts require a TTY                       | [`internal/ui/README.md`](../internal/ui/README.md)                              |
+| Path substring rewrites respect component boundaries    | [`internal/rewrite/README.md`](../internal/rewrite/README.md)                    |
+| Project paths use a lossy encoding; collisions refused  | [`internal/claude/README.md`](../internal/claude/README.md)                      |
+| `~/.claude/rules/*.md` never rewritten in place         | [`internal/scan/README.md`](../internal/scan/README.md)                          |
+| Malformed `history.jsonl` lines preserved, not repaired | [`internal/move/README.md`](../internal/move/README.md)                          |
+| Archives are a closed placeholder contract              | [`internal/importer/README.md`](../internal/importer/README.md) §Import contract |
+| Import writes are atomic with rollback                  | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
+| Mutating commands lock + refuse during live sessions    | [`internal/lock/README.md`](../internal/lock/README.md)                          |
+| Session-keyed user-wide directories follow the project  | [`internal/claude/README.md`](../internal/claude/README.md) §Project enumeration |
+
+## Session-UUID-keyed user-wide data (cross-cutting)
+
+Five `~/.claude/` directories carry per-session state belonging to a project:
+`todos/<sid>-agent-<sid>.json`,
+`usage-data/{session-meta,facets}/<sid>.json`,
+`plugins/data/<ns>/<sid>/**`, and
+`tasks/<sid>/**`. Each is enumerated through the project's session-UUID set (the
+same set computed by `collectProjectDirEntries`). Per-command handling lives in
+the relevant module:
+
+- [`internal/move/README.md`](../internal/move/README.md) §Apply contract — copy
+  + rewrite + tracker rollback, with `tasks/.lock` and `tasks/.highwatermark`
+  excluded.
+- [`internal/export/README.md`](../internal/export/README.md) §Import contract
+  — opt-in via `--todos`, `--usage-data`, `--plugins-data`, `--tasks`, included
+  in `--all`; bodies pass through `applyPlaceholders`.
+- [`internal/importer/README.md`](../internal/importer/README.md) §Atomic
+  staging — 4 new prefix arms staged at sibling temps, promoted last in the
+  order so the most load-bearing data settles first.
+
+`~/.claude/teams/<team>/**` is intentionally NOT in this set — team directories
+are user-wide workspaces with no inspectable per-project attribution.
 
 ## File-history policy (cross-cutting)
 

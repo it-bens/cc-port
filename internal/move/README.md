@@ -49,6 +49,26 @@ Not covered — cases cc-port deliberately does not address:
   those for parse errors — they are rewritten as opaque byte streams
   with path-boundary-aware substitution.
 
+### Apply contract
+
+`cc-port move --apply` copies, verifies, and rewrites every file that belongs
+to the project. Beyond the encoded project directory, history, sessions, and
+settings, the following session-keyed user-wide shapes receive copy + rewrite
++ rollback:
+
+- `~/.claude/todos/<sid>-agent-<sid>.json`
+- `~/.claude/usage-data/session-meta/<sid>.json`
+- `~/.claude/usage-data/facets/<sid>.json`
+- `~/.claude/plugins/data/<ns>/<sid>/**`
+- `~/.claude/tasks/<sid>/**`
+
+`tasks/.lock` and `tasks/.highwatermark` are runtime-only and skipped during
+move — they are not copied and not rewritten.
+
+All five shapes flow through the same `globalFileTracker` rollback as the
+existing history/sessions/settings/config files. No separate tracker is
+introduced for the session-keyed categories.
+
 ### File-history handling (move)
 
 File-history snapshots under `~/.claude/file-history/<session-uuid>/` are opaque byte streams; cc-port never inspects or rewrites their content. See [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command. This section covers the move-specific handling.

@@ -26,7 +26,8 @@ func requireTTY(remediation string) error {
 func SelectCategories() (export.CategorySet, error) {
 	if err := requireTTY(
 		"rerun with --all or explicit category flags " +
-			"(--sessions, --memory, --history, --file-history, --config)",
+			"(--sessions, --memory, --history, --file-history, --config, " +
+			"--todos, --usage-data, --plugins-data, --tasks)",
 	); err != nil {
 		return export.CategorySet{}, err
 	}
@@ -42,6 +43,10 @@ func SelectCategories() (export.CategorySet, error) {
 					huh.NewOption("History (command history entries)", "history").Selected(true),
 					huh.NewOption("File history (file version snapshots)", "file-history"),
 					huh.NewOption("Config (project config from ~/.claude.json)", "config").Selected(true),
+					huh.NewOption("Todos (in-progress TodoWrite task lists)", "todos"),
+					huh.NewOption("Usage data (session metadata + token facets)", "usage-data"),
+					huh.NewOption("Plugin data (per-session plugin state)", "plugins-data"),
+					huh.NewOption("Tasks (numbered agent-task lists)", "tasks"),
 				).
 				Value(&selectedCategories),
 		),
@@ -64,6 +69,14 @@ func SelectCategories() (export.CategorySet, error) {
 			categories.FileHistory = true
 		case "config":
 			categories.Config = true
+		case "todos":
+			categories.Todos = true
+		case "usage-data":
+			categories.UsageData = true
+		case "plugins-data":
+			categories.PluginsData = true
+		case "tasks":
+			categories.Tasks = true
 		}
 	}
 	return categories, nil

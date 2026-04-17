@@ -206,6 +206,38 @@ Not covered — cases this approach deliberately does not address:
 
 The rollback surface is driven by `SafeRenamePromoter` — see `internal/rewrite/README.md` §Boundary rules for the promoter's public API; the import flow itself owns the staging temp-path resolution in `internal/importer/importer.go:stagingTempPath`.
 
+#### New prefix arms
+
+Four new prefix arms are staged alongside the existing ones:
+
+- `todos/` — staged to `~/.claude/todos/`
+- `usage-data/` — staged to `~/.claude/usage-data/`
+- `plugins-data/` — staged to `~/.claude/plugins/data/`
+- `tasks/` — staged to `~/.claude/tasks/`
+
+These four arms are promoted last, after the encoded project directory,
+history, config, and file-history entries, in the order:
+todos → usage-data → plugins-data → tasks.
+
+### Strict archive contract
+
+`cc-port import` validates the manifest's category list before reading any
+ZIP entry:
+
+- **Unknown manifest category names hard-fail.** Any category name in
+  `metadata.xml` that is not in the 9 expected names is rejected before any
+  write.
+- **Missing manifest category names hard-fail.** Any of the 9 expected names
+  absent from `metadata.xml` is rejected before any write. All 9 must be
+  declared even when `Included: false`.
+- **Unknown ZIP entry prefixes hard-fail.** Any ZIP entry whose path does not
+  match a known prefix (`sessions/`, `memory/`, `history/`, `file-history/`,
+  `config.json`, `todos/`, `usage-data/`, `plugins-data/`, `tasks/`) is
+  rejected before any write.
+- **There is no tolerant fallback.** `stageUnknownEntry` was removed. Archives
+  from older or modified cc-port versions that carry unrecognised entries are
+  refused in full; partial staging does not occur.
+
 ### File-history handling (import)
 
 File-history snapshots are opaque byte streams; see [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command.

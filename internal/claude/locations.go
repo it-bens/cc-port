@@ -19,15 +19,20 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 
 // ProjectLocations holds all data locations for a specific project.
 type ProjectLocations struct {
-	ProjectPath        string
-	ProjectDir         string
-	SessionTranscripts []string
-	SessionSubdirs     []string
-	MemoryFiles        []string
-	FileHistoryDirs    []string
-	SessionFiles       []string
-	HistoryEntryCount  int
-	HasConfigBlock     bool
+	ProjectPath          string
+	ProjectDir           string
+	SessionTranscripts   []string
+	SessionSubdirs       []string
+	MemoryFiles          []string
+	FileHistoryDirs      []string
+	SessionFiles         []string
+	HistoryEntryCount    int
+	HasConfigBlock       bool
+	TodoFiles            []string
+	UsageDataSessionMeta []string
+	UsageDataFacets      []string
+	PluginsDataDirs      []string
+	TaskDirs             []string
 }
 
 // LocateProject enumerates all data locations for the given project path under
@@ -63,6 +68,22 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 	}
 
 	if err := collectSessionFiles(locations, claudeHome, projectPath); err != nil {
+		return nil, err
+	}
+
+	if err := collectTodos(locations, claudeHome, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := collectUsageData(locations, claudeHome, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := collectPluginsData(locations, claudeHome, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := collectTaskDirs(locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
@@ -146,6 +167,153 @@ func collectFileHistoryDirs(locations *ProjectLocations, claudeHome *Home, sessi
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("stat file-history directory for session %s: %w", uuid, err)
 		}
+	}
+	return nil
+}
+
+// collectTodos enumerates ~/.claude/todos/<sid1>-agent-<sid2>.json files,
+// including any file where either UUID is in sessionUUIDs.
+//
+// The two-UUID filename pattern admits sub-agent spawns: the parent agent
+// embeds its own session UUID and its child's session UUID in the filename.
+// Including a file when either UUID matches catches todo state for sub-agents
+// whose parent session belongs to the project; in practice the two UUIDs are
+// equal in every existing file, but the format admits the divergent case.
+func collectTodos(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	todosDir := claudeHome.TodosDir()
+	entries, err := os.ReadDir(todosDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read todos directory: %w", err)
+	}
+
+	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
+	for _, uuid := range sessionUUIDs {
+		uuidSet[uuid] = struct{}{}
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		base := strings.TrimSuffix(name, ".json")
+		parts := strings.SplitN(base, "-agent-", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if !uuidPattern.MatchString(parts[0]) || !uuidPattern.MatchString(parts[1]) {
+			continue
+		}
+		if _, ok := uuidSet[parts[0]]; ok {
+			locations.TodoFiles = append(locations.TodoFiles, filepath.Join(todosDir, name))
+			continue
+		}
+		if _, ok := uuidSet[parts[1]]; ok {
+			locations.TodoFiles = append(locations.TodoFiles, filepath.Join(todosDir, name))
+		}
+	}
+	return nil
+}
+
+// collectUsageData enumerates ~/.claude/usage-data/{session-meta,facets}/<sid>.json
+// for each session UUID in the project's set. Both subdirectories are checked
+// independently — either may exist without the other on older Claude Code
+// installs.
+func collectUsageData(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	base := claudeHome.UsageDataDir()
+	for _, subdir := range []struct {
+		name string
+		dest *[]string
+	}{
+		{"session-meta", &locations.UsageDataSessionMeta},
+		{"facets", &locations.UsageDataFacets},
+	} {
+		dir := filepath.Join(base, subdir.name)
+		if _, err := os.Stat(dir); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("stat usage-data/%s: %w", subdir.name, err)
+		}
+		for _, uuid := range sessionUUIDs {
+			candidate := filepath.Join(dir, uuid+".json")
+			if _, err := os.Stat(candidate); err == nil {
+				*subdir.dest = append(*subdir.dest, candidate)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("stat usage-data/%s/%s: %w", subdir.name, uuid, err)
+			}
+		}
+	}
+	return nil
+}
+
+// collectPluginsData enumerates ~/.claude/plugins/data/<ns>/<sid>/ subtrees
+// where <sid> is in the project's session set. Plugin namespace <ns> is opaque
+// — the walk visits every namespace and treats them identically.
+func collectPluginsData(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	base := claudeHome.PluginsDataDir()
+	namespaces, err := os.ReadDir(base)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read plugins/data directory: %w", err)
+	}
+
+	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
+	for _, uuid := range sessionUUIDs {
+		uuidSet[uuid] = struct{}{}
+	}
+
+	for _, namespace := range namespaces {
+		if !namespace.IsDir() {
+			continue
+		}
+		namespaceDir := filepath.Join(base, namespace.Name())
+		sessionEntries, err := os.ReadDir(namespaceDir)
+		if err != nil {
+			return fmt.Errorf("read plugins/data/%s: %w", namespace.Name(), err)
+		}
+		for _, sessionEntry := range sessionEntries {
+			if !sessionEntry.IsDir() {
+				continue
+			}
+			if _, ok := uuidSet[sessionEntry.Name()]; !ok {
+				continue
+			}
+			locations.PluginsDataDirs = append(locations.PluginsDataDirs,
+				filepath.Join(namespaceDir, sessionEntry.Name()))
+		}
+	}
+	return nil
+}
+
+// collectTaskDirs enumerates ~/.claude/tasks/<sid>/ subdirectories where
+// <sid> is in the project's session set. The directory contents (numbered
+// JSON files plus .lock and .highwatermark sidecars) are not enumerated
+// here — consumers that copy or rewrite the subtree are responsible for
+// filtering .lock and .highwatermark out at copy time.
+func collectTaskDirs(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	base := claudeHome.TasksDir()
+	for _, uuid := range sessionUUIDs {
+		candidate := filepath.Join(base, uuid)
+		info, err := os.Stat(candidate)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("stat tasks/%s: %w", uuid, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		locations.TaskDirs = append(locations.TaskDirs, candidate)
 	}
 	return nil
 }

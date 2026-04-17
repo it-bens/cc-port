@@ -36,12 +36,17 @@ type Plan struct {
 	OldProjectDir string
 	NewProjectDir string
 
-	HistoryReplacements           int
-	SessionFileReplacements       int
-	SettingsReplacements          int
-	ConfigBlockRekey              bool
-	TranscriptReplacements        int
-	FileHistorySnapshotsPreserved int
+	HistoryReplacements              int
+	SessionFileReplacements          int
+	SettingsReplacements             int
+	ConfigBlockRekey                 bool
+	TranscriptReplacements           int
+	FileHistorySnapshotsPreserved    int
+	TodosReplacements                int
+	UsageDataSessionMetaReplacements int
+	UsageDataFacetsReplacements      int
+	PluginsDataReplacements          int
+	TasksReplacements                int
 
 	// HistoryMalformedLines is the 1-based line numbers of history.jsonl
 	// entries that failed JSON parsing. The move preserves them verbatim;
@@ -101,6 +106,10 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 
 	plan.FileHistorySnapshotsPreserved, err = countFileHistorySnapshots(locations)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := countSessionKeyedReplacements(plan, locations, moveOptions); err != nil {
 		return nil, err
 	}
 
@@ -204,13 +213,136 @@ func countTranscriptReplacements(locations *claude.ProjectLocations, moveOptions
 func countFileHistorySnapshots(locations *claude.ProjectLocations) (int, error) {
 	total := 0
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
-		snapshotPaths, err := listFilesRecursive(fileHistoryDir)
+		snapshotPaths, err := ListFilesRecursive(fileHistoryDir)
 		if err != nil {
 			return 0, fmt.Errorf("walk file-history dir %s: %w", fileHistoryDir, err)
 		}
 		total += len(snapshotPaths)
 	}
 	return total, nil
+}
+
+// countSessionKeyedReplacements populates the five session-keyed count fields
+// of plan that were added in Phase 2. It is extracted from DryRun to keep
+// that function within the line-count limit enforced by the linter.
+func countSessionKeyedReplacements(plan *Plan, locations *claude.ProjectLocations, moveOptions Options) error {
+	var err error
+	if plan.TodosReplacements, err = countTodosReplacements(locations, moveOptions); err != nil {
+		return err
+	}
+	n, err := countUsageDataSessionMetaReplacements(locations, moveOptions)
+	if err != nil {
+		return err
+	}
+	plan.UsageDataSessionMetaReplacements = n
+	if plan.UsageDataFacetsReplacements, err = countUsageDataFacetsReplacements(locations, moveOptions); err != nil {
+		return err
+	}
+	if plan.PluginsDataReplacements, err = countPluginsDataReplacements(locations, moveOptions); err != nil {
+		return err
+	}
+	if plan.TasksReplacements, err = countTasksReplacements(locations, moveOptions); err != nil {
+		return err
+	}
+	return nil
+}
+
+// countTodosReplacements counts the number of todo files whose contents would
+// change under the byte-level path rewrite. Files with no occurrences of
+// OldPath are excluded.
+func countTodosReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
+	count := 0
+	for _, p := range locations.TodoFiles {
+		data, err := os.ReadFile(p) //nolint:gosec // path constructed from trusted internal data
+		if err != nil {
+			return 0, fmt.Errorf("read todo file %s: %w", p, err)
+		}
+		_, n := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+		if n > 0 {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func countUsageDataSessionMetaReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
+	count := 0
+	for _, p := range locations.UsageDataSessionMeta {
+		data, err := os.ReadFile(p) //nolint:gosec // path constructed from trusted internal data
+		if err != nil {
+			return 0, fmt.Errorf("read session-meta %s: %w", p, err)
+		}
+		_, n := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+		if n > 0 {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func countUsageDataFacetsReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
+	count := 0
+	for _, p := range locations.UsageDataFacets {
+		data, err := os.ReadFile(p) //nolint:gosec // path constructed from trusted internal data
+		if err != nil {
+			return 0, fmt.Errorf("read facets %s: %w", p, err)
+		}
+		_, n := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+		if n > 0 {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func countPluginsDataReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
+	count := 0
+	for _, dir := range locations.PluginsDataDirs {
+		files, err := ListFilesRecursive(dir)
+		if err != nil {
+			return 0, err
+		}
+		for _, p := range files {
+			data, err := os.ReadFile(p) //nolint:gosec // path constructed from trusted internal data
+			if err != nil {
+				return 0, fmt.Errorf("read plugins-data file %s: %w", p, err)
+			}
+			_, n := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+			if n > 0 {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+func countTasksReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
+	count := 0
+	for _, dir := range locations.TaskDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return 0, fmt.Errorf("read task dir %s: %w", dir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == ".lock" || name == ".highwatermark" {
+				continue
+			}
+			filePath := filepath.Join(dir, name)
+			data, err := os.ReadFile(filePath) //nolint:gosec // path constructed from trusted internal data
+			if err != nil {
+				return 0, fmt.Errorf("read task file %s: %w", filePath, err)
+			}
+			_, n := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+			if n > 0 {
+				count++
+			}
+		}
+	}
+	return count, nil
 }
 
 // Apply performs the project move. It uses a copy-verify-delete strategy so that
@@ -413,6 +545,18 @@ func rewriteGlobalFiles(
 	if err := rewriteConfigFile(claudeHome, moveOptions, tracker); err != nil {
 		return err
 	}
+	if err := rewriteTodos(locations, moveOptions, tracker); err != nil {
+		return err
+	}
+	if err := rewriteUsageData(locations, moveOptions, tracker); err != nil {
+		return err
+	}
+	if err := rewritePluginsData(locations, moveOptions, tracker); err != nil {
+		return err
+	}
+	if err := rewriteTasks(locations, moveOptions, tracker); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -462,7 +606,7 @@ func warningWriter(moveOptions Options) io.Writer {
 func warnFileHistoryPreserved(locations *claude.ProjectLocations, moveOptions Options) {
 	count := 0
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
-		snapshotPaths, err := listFilesRecursive(fileHistoryDir)
+		snapshotPaths, err := ListFilesRecursive(fileHistoryDir)
 		if err != nil {
 			// The same walk already succeeded during rewriteGlobalFiles'
 			// preceding work; an error here is unexpected. Skip the warning
@@ -498,6 +642,117 @@ func rewriteSessionFiles(
 		}
 		if err := rewrite.SafeWriteFile(sessionFilePath, rewritten, mode); err != nil {
 			return fmt.Errorf("write session file %s: %w", sessionFilePath, err)
+		}
+	}
+	return nil
+}
+
+// rewriteTodos rewrites every ~/.claude/todos/ file enumerated for the project,
+// snapshotting originals into the tracker for rollback. Body content goes through
+// the boundary-aware byte rewriter; free-text task descriptions that mention the
+// project path are updated in place.
+func rewriteTodos(
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+	tracker *globalFileTracker,
+) error {
+	for _, todoFilePath := range locations.TodoFiles {
+		original, mode, err := tracker.save(todoFilePath)
+		if err != nil {
+			return fmt.Errorf("read todo file %s for backup: %w", todoFilePath, err)
+		}
+		rewritten, _ := rewrite.ReplacePathInBytes(original, moveOptions.OldPath, moveOptions.NewPath)
+		if err := rewrite.SafeWriteFile(todoFilePath, rewritten, mode); err != nil {
+			return fmt.Errorf("write todo file %s: %w", todoFilePath, err)
+		}
+	}
+	return nil
+}
+
+// rewriteUsageData rewrites every ~/.claude/usage-data/{session-meta,facets}/
+// file enumerated for the project. session-meta carries a literal project_path
+// field that is updated by the byte-level rewrite; facets bodies usually do not
+// contain paths but are still rewritten defensively for consistency.
+func rewriteUsageData(
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+	tracker *globalFileTracker,
+) error {
+	all := append(append([]string{}, locations.UsageDataSessionMeta...), locations.UsageDataFacets...)
+	for _, filePath := range all {
+		original, mode, err := tracker.save(filePath)
+		if err != nil {
+			return fmt.Errorf("read usage-data file %s for backup: %w", filePath, err)
+		}
+		rewritten, _ := rewrite.ReplacePathInBytes(original, moveOptions.OldPath, moveOptions.NewPath)
+		if err := rewrite.SafeWriteFile(filePath, rewritten, mode); err != nil {
+			return fmt.Errorf("write usage-data file %s: %w", filePath, err)
+		}
+	}
+	return nil
+}
+
+// rewritePluginsData walks every plugins/data session subtree enumerated for
+// the project, rewriting each file's bytes through the boundary-aware
+// rewriter. Plugin-defined JSON shapes are arbitrary; absolute project paths
+// can appear as JSON keys (e.g. "files":{"/abs/path":...}) or values, and the
+// byte-level rewrite handles both uniformly.
+func rewritePluginsData(
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+	tracker *globalFileTracker,
+) error {
+	for _, pluginsDataDir := range locations.PluginsDataDirs {
+		files, err := ListFilesRecursive(pluginsDataDir)
+		if err != nil {
+			return err
+		}
+		for _, filePath := range files {
+			original, mode, err := tracker.save(filePath)
+			if err != nil {
+				return fmt.Errorf("read plugins-data file %s for backup: %w", filePath, err)
+			}
+			rewritten, _ := rewrite.ReplacePathInBytes(original, moveOptions.OldPath, moveOptions.NewPath)
+			if err := rewrite.SafeWriteFile(filePath, rewritten, mode); err != nil {
+				return fmt.Errorf("write plugins-data file %s: %w", filePath, err)
+			}
+		}
+	}
+	return nil
+}
+
+// rewriteTasks walks every tasks/<sid>/ subtree enumerated for the project,
+// rewriting numbered JSON task files through the boundary-aware rewriter.
+// .lock and .highwatermark sidecars are skipped — they are runtime-only state
+// recreated by Claude Code on next access; touching them risks corrupting an
+// in-progress task list.
+func rewriteTasks(
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+	tracker *globalFileTracker,
+) error {
+	for _, taskDir := range locations.TaskDirs {
+		entries, err := os.ReadDir(taskDir)
+		if err != nil {
+			return fmt.Errorf("read task dir %s: %w", taskDir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == ".lock" || name == ".highwatermark" {
+				continue
+			}
+			filePath := filepath.Join(taskDir, name)
+			original, mode, err := tracker.save(filePath)
+			if err != nil {
+				return fmt.Errorf("read task file %s for backup: %w", filePath, err)
+			}
+			rewritten, _ := rewrite.ReplacePathInBytes(original, moveOptions.OldPath, moveOptions.NewPath)
+			if err := rewrite.SafeWriteFile(filePath, rewritten, mode); err != nil {
+				return fmt.Errorf("write task file %s: %w", filePath, err)
+			}
 		}
 	}
 	return nil
@@ -619,7 +874,7 @@ func listTranscriptFiles(projectDir string) ([]string, error) {
 		if name == "memory" || name == "sessions" {
 			continue
 		}
-		subdirFiles, err := listFilesRecursive(fullPath)
+		subdirFiles, err := ListFilesRecursive(fullPath)
 		if err != nil {
 			return nil, err
 		}
@@ -628,8 +883,8 @@ func listTranscriptFiles(projectDir string) ([]string, error) {
 	return transcripts, nil
 }
 
-// listFilesRecursive returns every file path under dir, skipping directories.
-func listFilesRecursive(dir string) ([]string, error) {
+// ListFilesRecursive returns every file path under dir, skipping directories.
+func ListFilesRecursive(dir string) ([]string, error) {
 	var files []string
 	walkErr := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
