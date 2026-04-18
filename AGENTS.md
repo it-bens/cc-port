@@ -12,6 +12,11 @@ See README.md for the project overview and contract index.
   usage-data/facets, plugins/data, tasks). All flow through `LocateProject`
   and the existing move/export/import paths. See
   [docs/architecture.md §Session-UUID-keyed user-wide data](docs/architecture.md).
+- The five session-keyed directories are enumerated by
+  `claude.SessionKeyedGroups`; archive layout lives in
+  `transport.SessionKeyedTargets`. Adding a sixth group means editing
+  both slices plus `move.planCategories` — the alignment test in
+  `internal/transport` catches drift.
 - All path-substring rewrites route through
   `internal/rewrite.ReplacePathInBytes` — never hand-roll
   `strings.ReplaceAll` on user paths (see `internal/rewrite/README.md`).

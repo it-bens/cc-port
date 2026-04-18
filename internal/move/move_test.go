@@ -39,9 +39,9 @@ func TestDryRun(t *testing.T) {
 	assert.Equal(t, claudeHome.ProjectDir(oldProjectPath), plan.OldProjectDir)
 	assert.Equal(t, claudeHome.ProjectDir(newProjectPath), plan.NewProjectDir)
 
-	assert.Positive(t, plan.HistoryReplacements, "expected history replacements")
-	assert.Positive(t, plan.SessionFileReplacements, "expected session file replacements")
-	assert.Positive(t, plan.SettingsReplacements, "expected settings replacements")
+	assert.Positive(t, plan.ReplacementsByCategory["history"], "expected history replacements")
+	assert.Positive(t, plan.ReplacementsByCategory["sessions"], "expected session file replacements")
+	assert.Positive(t, plan.ReplacementsByCategory["settings"], "expected settings replacements")
 
 	assert.True(t, plan.ConfigBlockRekey, "expected config block to be rekeyed")
 
@@ -372,7 +372,7 @@ func TestApply_PreservesFileHistorySnapshots(t *testing.T) {
 		NewPath: newProjectPath,
 	})
 	require.NoError(t, err)
-	assert.Positive(t, plan.FileHistorySnapshotsPreserved,
+	assert.Positive(t, plan.ReplacementsByCategory["file-history-snapshots"],
 		"dry-run should count the snapshots that will be preserved as-is")
 
 	var warnings bytes.Buffer
@@ -413,10 +413,10 @@ func TestDryRun_CountsSessionKeyedReplacements(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Positive(t, plan.TodosReplacements, "todo file mentions oldPath in fixture")
-	assert.Positive(t, plan.UsageDataSessionMetaReplacements, "session-meta has project_path")
-	assert.Positive(t, plan.PluginsDataReplacements, "plugin tracker has the abs path as JSON key")
-	assert.Positive(t, plan.TasksReplacements, "task description mentions oldPath")
+	assert.Positive(t, plan.ReplacementsByCategory["todos"], "todo file mentions oldPath in fixture")
+	assert.Positive(t, plan.ReplacementsByCategory["usage-data/session-meta"], "session-meta has project_path")
+	assert.Positive(t, plan.ReplacementsByCategory["plugins-data"], "plugin tracker has the abs path as JSON key")
+	assert.Positive(t, plan.ReplacementsByCategory["tasks"], "task description mentions oldPath")
 }
 
 func TestApply_Rollback_RestoresAllShapesOnFailure(t *testing.T) {
@@ -474,19 +474,33 @@ func TestApply_RewritesTasks_SkipsSidecars(t *testing.T) {
 
 	newLocations, err := claude.LocateProject(claudeHome, renamedProjectPath)
 	require.NoError(t, err)
-	require.NotEmpty(t, newLocations.TaskDirs)
+	require.NotEmpty(t, newLocations.TaskFiles)
 
-	taskJSON := filepath.Join(newLocations.TaskDirs[0], "1.json")
+	// TaskFiles is a flat slice that (post Task 1) still contains .lock and
+	// .highwatermark sidecars — the filter lives on SessionKeyedGroup.
+	byName := func(paths []string, name string) string {
+		for _, p := range paths {
+			if filepath.Base(p) == name {
+				return p
+			}
+		}
+		return ""
+	}
+
+	taskJSON := byName(newLocations.TaskFiles, "1.json")
+	require.NotEmpty(t, taskJSON, "expected 1.json in TaskFiles")
 	body, err := os.ReadFile(taskJSON) //nolint:gosec // test-controlled path
 	require.NoError(t, err)
 	assert.Contains(t, string(body), renamedProjectPath)
 	assert.NotContains(t, string(body), oldProjectPath)
 
 	// .lock and .highwatermark must still exist but be untouched
-	lockPath := filepath.Join(newLocations.TaskDirs[0], ".lock")
+	lockPath := byName(newLocations.TaskFiles, ".lock")
+	require.NotEmpty(t, lockPath, "expected .lock sidecar in TaskFiles")
 	_, err = os.Stat(lockPath)
 	require.NoError(t, err, ".lock sidecar must be preserved verbatim")
-	hwPath := filepath.Join(newLocations.TaskDirs[0], ".highwatermark")
+	hwPath := byName(newLocations.TaskFiles, ".highwatermark")
+	require.NotEmpty(t, hwPath, "expected .highwatermark sidecar in TaskFiles")
 	hwBody, err := os.ReadFile(hwPath) //nolint:gosec // test-controlled path
 	require.NoError(t, err)
 	assert.Equal(t, "1", string(hwBody), ".highwatermark must be preserved verbatim")
@@ -504,9 +518,16 @@ func TestApply_RewritesPluginsData(t *testing.T) {
 
 	newLocations, err := claude.LocateProject(claudeHome, renamedProjectPath)
 	require.NoError(t, err)
-	require.NotEmpty(t, newLocations.PluginsDataDirs)
+	require.NotEmpty(t, newLocations.PluginsDataFiles)
 
-	pluginFile := filepath.Join(newLocations.PluginsDataDirs[0], "tracker-main.json")
+	var pluginFile string
+	for _, p := range newLocations.PluginsDataFiles {
+		if filepath.Base(p) == "tracker-main.json" {
+			pluginFile = p
+			break
+		}
+	}
+	require.NotEmpty(t, pluginFile, "expected tracker-main.json in PluginsDataFiles")
 	body, err := os.ReadFile(pluginFile) //nolint:gosec // test-controlled path
 	require.NoError(t, err)
 	assert.Contains(t, string(body), renamedProjectPath)

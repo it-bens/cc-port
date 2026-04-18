@@ -15,6 +15,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/transport"
 )
 
 // CategorySet specifies which data categories to include in the export.
@@ -181,129 +182,44 @@ func exportMemory(
 	return nil
 }
 
-// exportSessionKeyed runs the four session-keyed export categories (Todos,
-// UsageData, PluginsData, Tasks). Extracted from Run to stay within the
-// function-length budget enforced by the linter.
+// exportSessionKeyed drives the zip layout for the five session-keyed groups
+// from the transport registry, iterating locations.AllFlatFiles() once and
+// skipping groups whose category flag is off.
 func exportSessionKeyed(
 	archiveWriter *zip.Writer, claudeHome *claude.Home,
 	locations *claude.ProjectLocations, categories CategorySet, placeholders []Placeholder,
 ) error {
-	if categories.Todos {
-		if err := exportTodos(archiveWriter, locations, placeholders); err != nil {
-			return err
-		}
+	included := map[string]bool{
+		"todos":                   categories.Todos,
+		"usage-data/session-meta": categories.UsageData,
+		"usage-data/facets":       categories.UsageData,
+		"plugins-data":            categories.PluginsData,
+		"tasks":                   categories.Tasks,
 	}
-	if categories.UsageData {
-		if err := exportUsageData(archiveWriter, locations, placeholders); err != nil {
-			return err
-		}
-	}
-	if categories.PluginsData {
-		if err := exportPluginsData(archiveWriter, claudeHome, locations, placeholders); err != nil {
-			return err
-		}
-	}
-	if categories.Tasks {
-		if err := exportTasks(archiveWriter, locations, placeholders); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
-func exportTodos(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
-) error {
-	for _, todoFilePath := range locations.TodoFiles {
-		data, err := os.ReadFile(todoFilePath) //nolint:gosec // G304: path from trusted ClaudeHome
+	baseByGroup := make(map[string]string, len(transport.SessionKeyedTargets))
+	prefixByGroup := make(map[string]string, len(transport.SessionKeyedTargets))
+	for _, target := range transport.SessionKeyedTargets {
+		baseByGroup[target.Group] = target.HomeBaseDir(claudeHome)
+		prefixByGroup[target.Group] = target.ZipPrefix
+	}
+
+	for group, path := range locations.AllFlatFiles() {
+		if !included[group.Name] {
+			continue
+		}
+		relative, err := filepath.Rel(baseByGroup[group.Name], path)
 		if err != nil {
-			return fmt.Errorf("read todo file %s: %w", todoFilePath, err)
+			return fmt.Errorf("compute relative path for %s: %w", path, err)
+		}
+		data, err := os.ReadFile(path) //nolint:gosec // G304: path from trusted ProjectLocations
+		if err != nil {
+			return fmt.Errorf("read %s file %s: %w", group.Name, path, err)
 		}
 		anonymized := applyPlaceholders(data, placeholders)
-		zipName := "todos/" + filepath.Base(todoFilePath)
+		zipName := prefixByGroup[group.Name] + filepath.ToSlash(relative)
 		if err := writeToZip(archiveWriter, zipName, anonymized); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
-		}
-	}
-	return nil
-}
-
-func exportUsageData(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
-) error {
-	for _, kind := range []struct {
-		paths     []string
-		zipPrefix string
-	}{
-		{locations.UsageDataSessionMeta, "usage-data/session-meta/"},
-		{locations.UsageDataFacets, "usage-data/facets/"},
-	} {
-		for _, p := range kind.paths {
-			data, err := os.ReadFile(p) //nolint:gosec // G304: path from trusted ClaudeHome
-			if err != nil {
-				return fmt.Errorf("read usage-data file %s: %w", p, err)
-			}
-			anonymized := applyPlaceholders(data, placeholders)
-			zipName := kind.zipPrefix + filepath.Base(p)
-			if err := writeToZip(archiveWriter, zipName, anonymized); err != nil {
-				return fmt.Errorf("write %s: %w", zipName, err)
-			}
-		}
-	}
-	return nil
-}
-
-// exportPluginsData writes every file under each plugins-data session subtree
-// to the archive at plugins-data/<ns>/<sid>/<basename>. The plugin namespace
-// segment is preserved verbatim. Bodies are anonymised through applyPlaceholders.
-func exportPluginsData(
-	archiveWriter *zip.Writer, claudeHome *claude.Home,
-	locations *claude.ProjectLocations, placeholders []Placeholder,
-) error {
-	pluginsDataBase := claudeHome.PluginsDataDir()
-	for _, sessionDir := range locations.PluginsDataDirs {
-		relative, err := filepath.Rel(pluginsDataBase, sessionDir)
-		if err != nil {
-			return fmt.Errorf("compute relative path for %s: %w", sessionDir, err)
-		}
-		zipPrefix := "plugins-data/" + filepath.ToSlash(relative)
-		if err := addDirToZip(archiveWriter, sessionDir, zipPrefix, placeholders); err != nil {
-			return fmt.Errorf("add plugins-data subtree %s: %w", sessionDir, err)
-		}
-	}
-	return nil
-}
-
-// exportTasks writes every JSON file under each tasks/<sid>/ subtree to the
-// archive at tasks/<sid>/<basename>. .lock and .highwatermark sidecars are
-// excluded — they are runtime-only state.
-func exportTasks(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
-) error {
-	for _, taskDir := range locations.TaskDirs {
-		dirName := filepath.Base(taskDir)
-		entries, err := os.ReadDir(taskDir)
-		if err != nil {
-			return fmt.Errorf("read task dir %s: %w", taskDir, err)
-		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if name == ".lock" || name == ".highwatermark" {
-				continue
-			}
-			filePath := filepath.Join(taskDir, name)
-			data, err := os.ReadFile(filePath) //nolint:gosec // G304: path from trusted ClaudeHome
-			if err != nil {
-				return fmt.Errorf("read task file %s: %w", filePath, err)
-			}
-			anonymized := applyPlaceholders(data, placeholders)
-			zipName := "tasks/" + dirName + "/" + name
-			if err := writeToZip(archiveWriter, zipName, anonymized); err != nil {
-				return fmt.Errorf("write %s: %w", zipName, err)
-			}
 		}
 	}
 	return nil

@@ -40,7 +40,7 @@ func TestIntegration_MoveRoundTrip(t *testing.T) {
 		RefsOnly: true,
 	})
 	require.NoError(t, err)
-	assert.Positive(t, plan.HistoryReplacements, "dry run should detect history replacements")
+	assert.Positive(t, plan.ReplacementsByCategory["history"], "dry run should detect history replacements")
 
 	// Apply the move. RefsOnly=true avoids trying to copy a non-existent disk directory.
 	err = move.Apply(sourceHome, move.Options{
@@ -432,8 +432,8 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	assert.NotEmpty(t, imported.TodoFiles, "todos must be imported")
 	assert.NotEmpty(t, imported.UsageDataSessionMeta, "usage-data/session-meta must be imported")
 	assert.NotEmpty(t, imported.UsageDataFacets, "usage-data/facets must be imported")
-	assert.NotEmpty(t, imported.PluginsDataDirs, "plugins-data must be imported")
-	assert.NotEmpty(t, imported.TaskDirs, "tasks must be imported")
+	assert.NotEmpty(t, imported.PluginsDataFiles, "plugins-data must be imported")
+	assert.NotEmpty(t, imported.TaskFiles, "tasks must be imported")
 
 	// Spot-check path rewriting in a session-keyed file that carries the project path.
 	require.NotEmpty(t, imported.UsageDataSessionMeta)

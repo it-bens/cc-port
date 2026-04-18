@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,8 +32,8 @@ type ProjectLocations struct {
 	TodoFiles            []string
 	UsageDataSessionMeta []string
 	UsageDataFacets      []string
-	PluginsDataDirs      []string
-	TaskDirs             []string
+	PluginsDataFiles     []string
+	TaskFiles            []string
 }
 
 // LocateProject enumerates all data locations for the given project path under
@@ -83,7 +84,7 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 		return nil, err
 	}
 
-	if err := collectTaskDirs(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectTaskFiles(locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
@@ -253,9 +254,11 @@ func collectUsageData(locations *ProjectLocations, claudeHome *Home, sessionUUID
 	return nil
 }
 
-// collectPluginsData enumerates ~/.claude/plugins/data/<ns>/<sid>/ subtrees
+// collectPluginsData enumerates every file under ~/.claude/plugins/data/<ns>/<sid>/
 // where <sid> is in the project's session set. Plugin namespace <ns> is opaque
-// — the walk visits every namespace and treats them identically.
+// — the walk visits every namespace and treats them identically. The subtree
+// is flattened to a list of absolute file paths so downstream consumers see a
+// uniform shape across session-keyed groups.
 func collectPluginsData(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
 	base := claudeHome.PluginsDataDir()
 	namespaces, err := os.ReadDir(base)
@@ -287,19 +290,22 @@ func collectPluginsData(locations *ProjectLocations, claudeHome *Home, sessionUU
 			if _, ok := uuidSet[sessionEntry.Name()]; !ok {
 				continue
 			}
-			locations.PluginsDataDirs = append(locations.PluginsDataDirs,
-				filepath.Join(namespaceDir, sessionEntry.Name()))
+			sessionDir := filepath.Join(namespaceDir, sessionEntry.Name())
+			if err := appendFilesRecursive(&locations.PluginsDataFiles, sessionDir); err != nil {
+				return fmt.Errorf("walk plugins/data/%s/%s: %w",
+					namespace.Name(), sessionEntry.Name(), err)
+			}
 		}
 	}
 	return nil
 }
 
-// collectTaskDirs enumerates ~/.claude/tasks/<sid>/ subdirectories where
-// <sid> is in the project's session set. The directory contents (numbered
-// JSON files plus .lock and .highwatermark sidecars) are not enumerated
-// here — consumers that copy or rewrite the subtree are responsible for
-// filtering .lock and .highwatermark out at copy time.
-func collectTaskDirs(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+// collectTaskFiles enumerates every non-directory entry under ~/.claude/tasks/<sid>/
+// where <sid> is in the project's session set, including `.lock` and
+// `.highwatermark` sidecars. This collector deliberately reports every file;
+// consumers iterating via the registry apply the sidecar filter so the policy
+// decision lives in one place.
+func collectTaskFiles(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
 	base := claudeHome.TasksDir()
 	for _, uuid := range sessionUUIDs {
 		candidate := filepath.Join(base, uuid)
@@ -313,7 +319,9 @@ func collectTaskDirs(locations *ProjectLocations, claudeHome *Home, sessionUUIDs
 		if !info.IsDir() {
 			continue
 		}
-		locations.TaskDirs = append(locations.TaskDirs, candidate)
+		if err := appendFilesRecursive(&locations.TaskFiles, candidate); err != nil {
+			return fmt.Errorf("walk tasks/%s: %w", uuid, err)
+		}
 	}
 	return nil
 }
@@ -403,4 +411,19 @@ func checkConfigBlock(locations *ProjectLocations, claudeHome *Home, projectPath
 		locations.HasConfigBlock = true
 	}
 	return nil
+}
+
+// appendFilesRecursive walks dir and appends every non-directory entry's
+// absolute path to *dst. Filtering (e.g. sidecars) is the caller's responsibility.
+func appendFilesRecursive(dst *[]string, dir string) error {
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		*dst = append(*dst, path)
+		return nil
+	})
 }

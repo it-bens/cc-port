@@ -47,6 +47,18 @@ The one exception is file-history snapshots: they are archived verbatim with
 no anonymisation pass. See §File-history handling (export) for the opt-out
 surface.
 
+### Session-keyed zip layout
+
+The five session-keyed categories (`todos`, `usage-data/session-meta`,
+`usage-data/facets`, `plugins-data`, `tasks`) are written to the archive by a
+single registry-driven loop: `exportSessionKeyed` iterates
+`locations.AllFlatFiles()` once, skips groups whose `CategorySet` flag is off,
+and resolves each entry's zip prefix and relative-path base from
+`transport.SessionKeyedTargets`. There are no per-group helpers — the zip
+layout for all five groups is the transport registry, and adding a sixth
+group means appending to `claude.SessionKeyedGroups` and
+`transport.SessionKeyedTargets` rather than editing this package.
+
 ### File-history handling (export)
 
 File-history snapshots are opaque byte streams; see [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command.

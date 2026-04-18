@@ -58,6 +58,19 @@ the relevant module:
   staging — 4 new prefix arms staged at sibling temps, promoted last in the
   order so the most load-bearing data settles first.
 
+### Registry source of truth
+
+The canonical enumeration of session-keyed groups is
+`claude.SessionKeyedGroups` (see
+[`internal/claude/README.md`](../internal/claude/README.md) §Session-keyed
+registry). Archive layout (zip prefix + import home base directory) lives in
+`transport.SessionKeyedTargets`, index-aligned with `SessionKeyedGroups` and
+verified by an alignment unit test in `internal/transport`. Every per-command
+consumer (move, export, import, CLI renderers) iterates these registries
+instead of open-coding the five group names. Adding a sixth session-keyed
+group means editing both slices in the same commit plus one entry in
+`internal/move`'s `planCategories`.
+
 `~/.claude/teams/<team>/**` is intentionally NOT in this set — team directories
 are user-wide workspaces with no inspectable per-project attribution.
 

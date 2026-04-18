@@ -88,14 +88,46 @@ file and directory tied to the project. The fields enumerate:
   `<sid>` in session set.
 - `UsageDataFacets` — `~/.claude/usage-data/facets/<sid>.json`; `<sid>` in
   session set.
-- `PluginsDataDirs` — `~/.claude/plugins/data/<ns>/<sid>/` subtrees; `<sid>`
+- `PluginsDataFiles` — `~/.claude/plugins/data/<ns>/<sid>/` subtrees; `<sid>`
   in session set. Plugin namespace `<ns>` is opaque and preserved verbatim.
-- `TaskDirs` — `~/.claude/tasks/<sid>/`; `<sid>` in session set. `.lock` and
+- `TaskFiles` — `~/.claude/tasks/<sid>/`; `<sid>` in session set. `.lock` and
   `.highwatermark` sidecars are runtime-only and excluded at enumerate time.
 
 Each session-keyed collector returns empty when its parent directory is absent
 (the directory may not exist if the feature has never been used). This matches
 the behaviour of `collectMemoryFiles`.
+
+### Session-keyed registry
+
+The five session-keyed groups above are also published as a canonical
+registry so downstream consumers (move, export, import, CLI renderers) do
+not open-code the group names:
+
+- `SessionKeyedGroup` — a descriptor struct carrying `Name` (stable
+  machine key and display label), `Files func(*ProjectLocations) []string`
+  (enumerates the group's absolute paths from a located project), and
+  `SidecarFilter func(name string) bool` (returns true for basenames
+  that must be skipped; `nil` means "keep every file").
+- `SessionKeyedGroups` — the ordered slice that IS the registry. Slice
+  order is the display and iteration order used everywhere downstream,
+  and is index-aligned with `transport.SessionKeyedTargets` (see
+  [`internal/transport/README.md`](../transport/README.md)).
+- `(*ProjectLocations).AllFlatFiles() iter.Seq2[SessionKeyedGroup, string]`
+  — a pure-enumeration iterator that yields `(group, absolute path)`
+  pairs in canonical registry order, applying each group's
+  `SidecarFilter`. It performs no I/O and supports early termination
+  via `break`. Consumers that need to walk every session-keyed file
+  exactly once (move replacement counting, export zip layout, import
+  dispatch loop) iterate `AllFlatFiles()` instead of special-casing
+  each group.
+- `isTaskSidecar` — the only `SidecarFilter` currently populated;
+  matches `.lock` and `.highwatermark` under `tasks/` as the runtime-
+  only files the `tasks` group excludes at enumerate time.
+
+Adding a sixth session-keyed group means appending one entry to
+`SessionKeyedGroups` in this package, one index-aligned entry to
+`transport.SessionKeyedTargets`, and one entry to `move.planCategories`;
+the alignment test in `internal/transport` fails if the first two drift.
 
 ## Tests
 

@@ -206,18 +206,37 @@ Not covered — cases this approach deliberately does not address:
 
 The rollback surface is driven by `SafeRenamePromoter` — see `internal/rewrite/README.md` §Boundary rules for the promoter's public API; the import flow itself owns the staging temp-path resolution in `internal/importer/importer.go:stagingTempPath`.
 
-#### New prefix arms
+#### Session-keyed prefix arms
 
-Four new prefix arms are staged alongside the existing ones:
+The five session-keyed prefixes are staged alongside the existing ones:
 
 - `todos/` — staged to `~/.claude/todos/`
-- `usage-data/` — staged to `~/.claude/usage-data/`
+- `usage-data/session-meta/` — staged to `~/.claude/usage-data/session-meta/`
+- `usage-data/facets/` — staged to `~/.claude/usage-data/facets/`
 - `plugins-data/` — staged to `~/.claude/plugins/data/`
 - `tasks/` — staged to `~/.claude/tasks/`
 
-These four arms are promoted last, after the encoded project directory,
-history, config, and file-history entries, in the order:
-todos → usage-data → plugins-data → tasks.
+The prefix-to-destination mapping is owned by
+`transport.SessionKeyedTargets` (see
+[`internal/transport/README.md`](../transport/README.md)); this package
+does not hard-code any of the five prefixes. Dispatch inside
+`stageArchiveEntries` runs one loop — `dispatchSessionKeyed` — that walks
+the transport registry and routes an entry to `stageSessionKeyedFile` on
+the first `ZipPrefix` match. There are no per-group staging helpers; the
+unified staged-files slice `importPlan.sessionKeyedStagedFiles`
+accumulates every session-keyed entry regardless of group, and the
+same slice drives promotion and cleanup.
+
+Promotion order after the encoded project directory, history, config,
+and file-history entries follows `transport.SessionKeyedTargets` order:
+todos → usage-data/session-meta → usage-data/facets → plugins-data →
+tasks.
+
+`importPlan.cleanupTemps()` returns `error`; accumulated `os.Remove` /
+`os.RemoveAll` failures across every staged artifact (project dir,
+history, config, file-history, session-keyed) are aggregated via
+`errors.Join` so callers log a single diagnostic when the enclosing
+import path has already failed.
 
 ### Strict archive contract
 

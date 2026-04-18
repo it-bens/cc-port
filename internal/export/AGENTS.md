@@ -10,6 +10,10 @@ Produce a cc-port archive + manifest for one project. See `README.md` for the fu
 - Path anonymisation must be order-independent across runs: a re-export of the same project must produce the same placeholder set (README §File-history handling (export) — covered by `export_test.go:TestExport_PathAnonymization_OrderIndependent`).
 - Every export must declare all 9 categories in `metadata.xml`; the importer
   hard-fails on missing or unknown names (README §Import contract).
+- The session-keyed zip layout (`todos/`, `usage-data/…`, `plugins-data/`,
+  `tasks/`) is owned by `transport.SessionKeyedTargets` — never hard-code
+  a zip prefix or home base directory in this package; read it from the
+  registry (README §Session-keyed zip layout).
 
 ## Navigation
 

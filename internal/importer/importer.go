@@ -17,6 +17,7 @@ import (
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/transport"
 )
 
 // dirPerm — 0755, so group/others can traverse project subdirs shared with tooling.
@@ -195,7 +196,7 @@ func Run(claudeHome *claude.Home, importOptions Options) error {
 		// error. buildImportPlan always returns a non-nil plan (including on
 		// early failures), but guard explicitly so static analysis is happy.
 		if plan != nil {
-			plan.cleanupTemps()
+			_ = plan.cleanupTemps()
 		}
 		return err
 	}
@@ -345,49 +346,53 @@ type importPlan struct {
 	tempConfigFile string
 	configStaged   bool
 
-	fileHistoryFiles []stagedFile
-	todoFiles        []stagedFile
-	usageDataFiles   []stagedFile
-	pluginsDataFiles []stagedFile
-	taskFiles        []stagedFile
+	fileHistoryFiles        []stagedFile
+	sessionKeyedStagedFiles []stagedFile
 }
 
 // stagedFile is one artifact staged for atomic promotion onto its final path.
 type stagedFile struct {
+	group     string
 	finalPath string
 	tempPath  string
 }
 
 // cleanupTemps best-effort removes every temp artifact the plan created.
-// Used when buildImportPlan itself fails partway.
-func (plan *importPlan) cleanupTemps() {
+// Used when buildImportPlan itself fails partway. Any accumulated removal
+// errors are joined and returned so callers can log a diagnostic; the
+// caller is expected to discard the aggregate since the enclosing path has
+// already failed.
+func (plan *importPlan) cleanupTemps() error {
 	if plan == nil {
-		return
+		return nil
 	}
+	var errs []error
 	if plan.projectDirCreated {
-		_ = os.RemoveAll(plan.tempProjectDir)
+		if err := os.RemoveAll(plan.tempProjectDir); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if plan.historyStaged {
-		_ = os.Remove(plan.tempHistoryFile)
+		if err := os.Remove(plan.tempHistoryFile); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if plan.configStaged {
-		_ = os.Remove(plan.tempConfigFile)
+		if err := os.Remove(plan.tempConfigFile); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	for _, entry := range plan.fileHistoryFiles {
-		_ = os.Remove(entry.tempPath)
+		if err := os.Remove(entry.tempPath); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	for _, entry := range plan.todoFiles {
-		_ = os.Remove(entry.tempPath)
+	for _, entry := range plan.sessionKeyedStagedFiles {
+		if err := os.Remove(entry.tempPath); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	for _, entry := range plan.usageDataFiles {
-		_ = os.Remove(entry.tempPath)
-	}
-	for _, entry := range plan.pluginsDataFiles {
-		_ = os.Remove(entry.tempPath)
-	}
-	for _, entry := range plan.taskFiles {
-		_ = os.Remove(entry.tempPath)
-	}
+	return errors.Join(errs...)
 }
 
 // newImportPlan computes the temp-path for every destination the importer
@@ -428,6 +433,11 @@ func stageArchiveEntries(
 	entries []archiveEntry,
 ) (historyAppends [][]byte, configBlock []byte, err error) {
 	for _, entry := range entries {
+		if handled, err := dispatchSessionKeyed(claudeHome, plan, entry); err != nil {
+			return nil, nil, err
+		} else if handled {
+			continue
+		}
 		switch {
 		case strings.HasPrefix(entry.name, "sessions/"):
 			if err := stageProjectFile(plan.tempProjectDir, entry.name, "sessions/", entry.content); err != nil {
@@ -447,35 +457,29 @@ func stageArchiveEntries(
 			plan.fileHistoryFiles = append(plan.fileHistoryFiles, staged)
 		case entry.name == "config.json":
 			configBlock = entry.content
-		case strings.HasPrefix(entry.name, "todos/"):
-			staged, err := stageTodoFile(claudeHome, entry.name, entry.content)
-			if err != nil {
-				return nil, nil, err
-			}
-			plan.todoFiles = append(plan.todoFiles, staged)
-		case strings.HasPrefix(entry.name, "usage-data/"):
-			staged, err := stageUsageDataFile(claudeHome, entry.name, entry.content)
-			if err != nil {
-				return nil, nil, err
-			}
-			plan.usageDataFiles = append(plan.usageDataFiles, staged)
-		case strings.HasPrefix(entry.name, "plugins-data/"):
-			staged, err := stagePluginsDataFile(claudeHome, entry.name, entry.content)
-			if err != nil {
-				return nil, nil, err
-			}
-			plan.pluginsDataFiles = append(plan.pluginsDataFiles, staged)
-		case strings.HasPrefix(entry.name, "tasks/"):
-			staged, err := stageTaskFile(claudeHome, entry.name, entry.content)
-			if err != nil {
-				return nil, nil, err
-			}
-			plan.taskFiles = append(plan.taskFiles, staged)
 		default:
 			return nil, nil, fmt.Errorf("unknown archive entry: %q", entry.name)
 		}
 	}
 	return historyAppends, configBlock, nil
+}
+
+// dispatchSessionKeyed returns (true, nil) if the entry matched a session-keyed
+// ZipPrefix and was staged successfully; (true, err) if it matched but failed
+// to stage; (false, nil) if no prefix matched. First prefix match wins.
+func dispatchSessionKeyed(claudeHome *claude.Home, plan *importPlan, entry archiveEntry) (bool, error) {
+	for _, target := range transport.SessionKeyedTargets {
+		if !strings.HasPrefix(entry.name, target.ZipPrefix) {
+			continue
+		}
+		staged, err := stageSessionKeyedFile(claudeHome, target, entry.name, entry.content)
+		if err != nil {
+			return true, err
+		}
+		plan.sessionKeyedStagedFiles = append(plan.sessionKeyedStagedFiles, staged)
+		return true, nil
+	}
+	return false, nil
 }
 
 // buildImportPlan routes each archive entry to its staged temp destination
@@ -539,12 +543,15 @@ func stageFileHistory(fileHistoryBaseDir, zipName string, content []byte) (stage
 	return stagedFile{finalPath: finalPath, tempPath: tempPath}, nil
 }
 
-// stageTodoFile stages a todos/<basename>.json archive entry to a sibling temp
-// of its destination under claudeHome.TodosDir(). The returned stagedFile is
-// registered with the SafeRenamePromoter at promote time.
-func stageTodoFile(claudeHome *claude.Home, zipName string, content []byte) (stagedFile, error) {
-	relative := strings.TrimPrefix(zipName, "todos/")
-	finalPath := filepath.Join(claudeHome.TodosDir(), relative)
+// stageSessionKeyedFile stages one session-keyed archive entry to a sibling
+// temp path under the target group's home base directory. The returned
+// stagedFile is tagged with the target's Group name so downstream diagnostics
+// can attribute the entry to its originating registry row.
+func stageSessionKeyedFile(
+	claudeHome *claude.Home, target transport.SessionKeyedTarget, zipName string, content []byte,
+) (stagedFile, error) {
+	relative := strings.TrimPrefix(zipName, target.ZipPrefix)
+	finalPath := filepath.Join(target.HomeBaseDir(claudeHome), relative)
 	tempPath, err := stagingTempPath(finalPath)
 	if err != nil {
 		return stagedFile{}, err
@@ -552,46 +559,7 @@ func stageTodoFile(claudeHome *claude.Home, zipName string, content []byte) (sta
 	if err := writeStagedFile(tempPath, content); err != nil {
 		return stagedFile{}, err
 	}
-	return stagedFile{finalPath: finalPath, tempPath: tempPath}, nil
-}
-
-func stageUsageDataFile(claudeHome *claude.Home, zipName string, content []byte) (stagedFile, error) {
-	relative := strings.TrimPrefix(zipName, "usage-data/")
-	finalPath := filepath.Join(claudeHome.UsageDataDir(), relative)
-	tempPath, err := stagingTempPath(finalPath)
-	if err != nil {
-		return stagedFile{}, err
-	}
-	if err := writeStagedFile(tempPath, content); err != nil {
-		return stagedFile{}, err
-	}
-	return stagedFile{finalPath: finalPath, tempPath: tempPath}, nil
-}
-
-func stagePluginsDataFile(claudeHome *claude.Home, zipName string, content []byte) (stagedFile, error) {
-	relative := strings.TrimPrefix(zipName, "plugins-data/")
-	finalPath := filepath.Join(claudeHome.PluginsDataDir(), relative)
-	tempPath, err := stagingTempPath(finalPath)
-	if err != nil {
-		return stagedFile{}, err
-	}
-	if err := writeStagedFile(tempPath, content); err != nil {
-		return stagedFile{}, err
-	}
-	return stagedFile{finalPath: finalPath, tempPath: tempPath}, nil
-}
-
-func stageTaskFile(claudeHome *claude.Home, zipName string, content []byte) (stagedFile, error) {
-	relative := strings.TrimPrefix(zipName, "tasks/")
-	finalPath := filepath.Join(claudeHome.TasksDir(), relative)
-	tempPath, err := stagingTempPath(finalPath)
-	if err != nil {
-		return stagedFile{}, err
-	}
-	if err := writeStagedFile(tempPath, content); err != nil {
-		return stagedFile{}, err
-	}
-	return stagedFile{finalPath: finalPath, tempPath: tempPath}, nil
+	return stagedFile{group: target.Group, finalPath: finalPath, tempPath: tempPath}, nil
 }
 
 // stageHistoryIfNeeded writes a merged history file to plan.tempHistoryFile
@@ -650,20 +618,11 @@ func promotePlan(plan *importPlan, renameHook func(oldpath, newpath string) erro
 	if plan.configStaged {
 		promoter.StageFile(plan.tempConfigFile, plan.configFile)
 	}
-	for _, fh := range plan.fileHistoryFiles {
-		promoter.StageFile(fh.tempPath, fh.finalPath)
+	for _, entry := range plan.fileHistoryFiles {
+		promoter.StageFile(entry.tempPath, entry.finalPath)
 	}
-	for _, fh := range plan.todoFiles {
-		promoter.StageFile(fh.tempPath, fh.finalPath)
-	}
-	for _, fh := range plan.usageDataFiles {
-		promoter.StageFile(fh.tempPath, fh.finalPath)
-	}
-	for _, fh := range plan.pluginsDataFiles {
-		promoter.StageFile(fh.tempPath, fh.finalPath)
-	}
-	for _, fh := range plan.taskFiles {
-		promoter.StageFile(fh.tempPath, fh.finalPath)
+	for _, entry := range plan.sessionKeyedStagedFiles {
+		promoter.StageFile(entry.tempPath, entry.finalPath)
 	}
 	return promoter.Promote()
 }

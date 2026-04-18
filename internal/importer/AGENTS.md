@@ -13,6 +13,10 @@ Apply a cc-port archive: validate, stage, promote, roll back. See `README.md` fo
 - Unknown manifest category names, missing manifest category names, and
   unknown ZIP entry prefixes all hard-fail; there is no tolerant fallback
   (README §Strict archive contract).
+- Session-keyed dispatch reads `transport.SessionKeyedTargets` — the first
+  matching `ZipPrefix` wins, and every staged entry lands in the unified
+  `importPlan.sessionKeyedStagedFiles` slice. Do not add a per-group
+  staging helper or a parallel slice (README §Session-keyed prefix arms).
 
 ## Navigation
 

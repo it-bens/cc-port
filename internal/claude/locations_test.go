@@ -92,22 +92,26 @@ func TestLocateProject_CollectsPluginsData(t *testing.T) {
 	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
 	require.NoError(t, err)
 
-	assert.Len(t, projectLocations.PluginsDataDirs, 1)
+	assert.Len(t, projectLocations.PluginsDataFiles, 1)
 	assert.True(t,
-		containsBaseName(projectLocations.PluginsDataDirs, "a1b2c3d4-0000-0000-0000-000000000001"),
-		"plugin-namespace session subdir for primary UUID must be located")
+		containsBaseName(projectLocations.PluginsDataFiles, "tracker-main.json"),
+		"plugin-namespace session file for primary UUID must be located")
 }
 
-func TestLocateProject_CollectsTaskDirs(t *testing.T) {
+func TestLocateProject_CollectsTaskFiles(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
 	require.NoError(t, err)
 
-	assert.Len(t, projectLocations.TaskDirs, 1)
-	assert.True(t,
-		containsBaseName(projectLocations.TaskDirs, "a1b2c3d4-0000-0000-0000-000000000001"),
-		"task subdir for primary session UUID must be located")
+	assert.Len(t, projectLocations.TaskFiles, 3,
+		"task subtree file enumeration includes .lock and .highwatermark sidecars")
+	assert.True(t, containsBaseName(projectLocations.TaskFiles, "1.json"),
+		"task JSON file for primary session UUID must be located")
+	assert.True(t, containsBaseName(projectLocations.TaskFiles, ".lock"),
+		".lock sidecar must be included at this layer (filter lives in registry)")
+	assert.True(t, containsBaseName(projectLocations.TaskFiles, ".highwatermark"),
+		".highwatermark sidecar must be included at this layer (filter lives in registry)")
 }
 
 func TestLocateProject_CollectsTodos(t *testing.T) {

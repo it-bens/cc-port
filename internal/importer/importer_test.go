@@ -734,8 +734,8 @@ func TestImport_RoundTrip_NewCategories(t *testing.T) {
 	assert.NotEmpty(t, imported.TodoFiles)
 	assert.NotEmpty(t, imported.UsageDataSessionMeta)
 	assert.NotEmpty(t, imported.UsageDataFacets)
-	assert.NotEmpty(t, imported.PluginsDataDirs)
-	assert.NotEmpty(t, imported.TaskDirs)
+	assert.NotEmpty(t, imported.PluginsDataFiles)
+	assert.NotEmpty(t, imported.TaskFiles)
 }
 
 func TestImport_HardFailsOnUnknownManifestCategory(t *testing.T) {

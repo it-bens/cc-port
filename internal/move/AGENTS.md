@@ -10,7 +10,9 @@ Relocate one project (dry-run + apply). See `README.md` for the full contracts.
 - Path substring replacement must go through `internal/rewrite.ReplacePathInBytes` — no hand-rolled `strings.ReplaceAll` on user paths (see `internal/rewrite/README.md`).
 - Session-keyed user-wide files (todos, usage-data, plugins-data, tasks) flow
   through the same `globalFileTracker` rollback as history/sessions/settings/
-  config — do not introduce a separate tracker (README §Apply contract).
+  config — do not introduce a separate tracker (README §Apply contract). The
+  shared `rewriteTracked` helper performs the save → replace → write
+  sandwich; reuse it rather than duplicating the sequence per group.
 
 ## Navigation
 

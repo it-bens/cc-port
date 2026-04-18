@@ -48,6 +48,6 @@ AGENTS.local.md
 .claude/
 
 # Go build artifacts
-cc-port
+/cc-port
 dist/
 coverage.txt
