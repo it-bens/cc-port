@@ -8,6 +8,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/ui"
 )
@@ -43,15 +44,15 @@ var exportCmd = &cobra.Command{
 			return err
 		}
 
-		var categories export.CategorySet
-		var placeholders []export.Placeholder
+		var categories manifest.CategorySet
+		var placeholders []manifest.Placeholder
 
 		if exportFromManifest != "" {
-			metadata, err := export.ReadManifest(exportFromManifest)
+			metadata, err := manifest.ReadManifest(exportFromManifest)
 			if err != nil {
 				return fmt.Errorf("read manifest: %w", err)
 			}
-			categories, err = categorizFromMetadata(metadata)
+			categories, err = manifest.ApplyCategoryEntries(metadata.Export.Categories)
 			if err != nil {
 				return fmt.Errorf("categories from manifest: %w", err)
 			}
@@ -137,7 +138,7 @@ var exportManifestCmd = &cobra.Command{
 			outputPath = "manifest.xml"
 		}
 
-		if err := export.WriteManifest(outputPath, metadata); err != nil {
+		if err := manifest.WriteManifest(outputPath, metadata); err != nil {
 			return fmt.Errorf("write manifest: %w", err)
 		}
 
@@ -183,9 +184,9 @@ func init() {
 	rootCmd.AddCommand(exportCmd)
 }
 
-func resolveExportCategories() (export.CategorySet, error) {
+func resolveExportCategories() (manifest.CategorySet, error) {
 	if exportAll {
-		return export.CategorySet{
+		return manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, FileHistory: true, Config: true,
 			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
 		}, nil
@@ -194,7 +195,7 @@ func resolveExportCategories() (export.CategorySet, error) {
 	anyExplicit := exportSessions || exportMemory || exportHistory || exportFileHistory || exportConfig ||
 		exportTodos || exportUsageData || exportPluginsData || exportTasks
 	if anyExplicit {
-		return export.CategorySet{
+		return manifest.CategorySet{
 			Sessions:    exportSessions,
 			Memory:      exportMemory,
 			History:     exportHistory,
@@ -210,7 +211,7 @@ func resolveExportCategories() (export.CategorySet, error) {
 	return ui.SelectCategories()
 }
 
-func discoverAndPromptPlaceholders(claudeHome *claude.Home, projectPath string) ([]export.Placeholder, error) {
+func discoverAndPromptPlaceholders(claudeHome *claude.Home, projectPath string) ([]manifest.Placeholder, error) {
 	locations, err := claude.LocateProject(claudeHome, projectPath)
 	if err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
@@ -285,12 +286,12 @@ func gatherSessionKeyedContent(locations *claude.ProjectLocations) ([]byte, erro
 	return buf, nil
 }
 
-func resolveSuggestions(suggestions []export.PlaceholderSuggestion) ([]export.Placeholder, error) {
-	var placeholders []export.Placeholder
+func resolveSuggestions(suggestions []export.PlaceholderSuggestion) ([]manifest.Placeholder, error) {
+	var placeholders []manifest.Placeholder
 	for _, suggestion := range suggestions {
 		if suggestion.Auto {
 			resolvable := true
-			placeholders = append(placeholders, export.Placeholder{
+			placeholders = append(placeholders, manifest.Placeholder{
 				Key:        suggestion.Key,
 				Original:   suggestion.Original,
 				Resolvable: &resolvable,
@@ -304,7 +305,7 @@ func resolveSuggestions(suggestions []export.PlaceholderSuggestion) ([]export.Pl
 		}
 
 		resolvable := resolved != ""
-		placeholders = append(placeholders, export.Placeholder{
+		placeholders = append(placeholders, manifest.Placeholder{
 			Key:        suggestion.Key,
 			Original:   suggestion.Original,
 			Resolvable: &resolvable,
@@ -330,40 +331,11 @@ func printExportRulesWarnings(claudeHome *claude.Home, projectPath string) {
 	}
 }
 
-func categorizFromMetadata(metadata *export.Metadata) (export.CategorySet, error) {
-	var categories export.CategorySet
-	for _, category := range metadata.Export.Categories {
-		switch category.Name {
-		case "sessions":
-			categories.Sessions = category.Included
-		case "memory":
-			categories.Memory = category.Included
-		case "history":
-			categories.History = category.Included
-		case "file-history":
-			categories.FileHistory = category.Included
-		case "config":
-			categories.Config = category.Included
-		case "todos":
-			categories.Todos = category.Included
-		case "usage-data":
-			categories.UsageData = category.Included
-		case "plugins-data":
-			categories.PluginsData = category.Included
-		case "tasks":
-			categories.Tasks = category.Included
-		default:
-			return export.CategorySet{}, fmt.Errorf("unknown category %q in manifest", category.Name)
-		}
-	}
-	return categories, nil
-}
-
-func buildExportMetadata(exportOptions export.Options) *export.Metadata {
+func buildExportMetadata(exportOptions export.Options) *manifest.Metadata {
 	resolvableTrue := true
-	var placeholders []export.Placeholder
+	var placeholders []manifest.Placeholder
 	for _, placeholder := range exportOptions.Placeholders {
-		placeholders = append(placeholders, export.Placeholder{
+		placeholders = append(placeholders, manifest.Placeholder{
 			Key:        placeholder.Key,
 			Original:   placeholder.Original,
 			Resolvable: &resolvableTrue,
@@ -371,19 +343,9 @@ func buildExportMetadata(exportOptions export.Options) *export.Metadata {
 		})
 	}
 
-	return &export.Metadata{
-		Export: export.Info{
-			Categories: []export.Category{
-				{Name: "sessions", Included: exportOptions.Categories.Sessions},
-				{Name: "memory", Included: exportOptions.Categories.Memory},
-				{Name: "history", Included: exportOptions.Categories.History},
-				{Name: "file-history", Included: exportOptions.Categories.FileHistory},
-				{Name: "config", Included: exportOptions.Categories.Config},
-				{Name: "todos", Included: exportOptions.Categories.Todos},
-				{Name: "usage-data", Included: exportOptions.Categories.UsageData},
-				{Name: "plugins-data", Included: exportOptions.Categories.PluginsData},
-				{Name: "tasks", Included: exportOptions.Categories.Tasks},
-			},
+	return &manifest.Metadata{
+		Export: manifest.Info{
+			Categories: manifest.BuildCategoryEntries(&exportOptions.Categories),
 		},
 		Placeholders: placeholders,
 	}

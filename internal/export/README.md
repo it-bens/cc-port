@@ -4,7 +4,7 @@
 
 Produce a cc-port archive from one project: discover path prefixes appearing in bodies, auto-detect placeholder suggestions, write a ZIP containing the chosen categories plus a `metadata.xml` manifest. Also produces a standalone manifest (`export manifest`) that the operator fills in before running `import`.
 
-Not a file-level exporter — this module's unit is one project. Not a path-anonymisation library — the anonymisation heuristics are internal and tied to the manifest schema.
+Not a file-level exporter — this module's unit is one project. Not a path-anonymisation library — the anonymisation heuristics are internal and tied to the manifest schema. The wire format and the category enum table live in [`internal/manifest`](../manifest/README.md); this package is a consumer.
 
 ## Public API
 
@@ -14,25 +14,19 @@ Not a file-level exporter — this module's unit is one project. Not a path-anon
   - `DiscoverPaths(content []byte) []string` — find path-like tokens inside a body.
   - `GroupPathPrefixes(paths []string) []string` — collapse overlapping prefixes.
   - `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion` — propose placeholder mappings for prefixes that are not the project path itself.
-- **Manifest I/O**
-  - `WriteManifest(path string, metadata *Metadata) error`
-  - `ReadManifest(path string) (*Metadata, error)`
-  - `ReadManifestFromZip(archivePath string) (*Metadata, error)`
 - **Types**
-  - `Options`, `Result`, `CategorySet`, `PlaceholderSuggestion` — export configuration and outputs.
-  - `Metadata`, `Info`, `Category`, `Placeholder` — manifest XML types.
+  - `Options`, `Result`, `PlaceholderSuggestion` — export configuration and outputs. `Options.Categories` is a `manifest.CategorySet`.
 
 ## Contracts
 
-### Import contract
+### Category manifest
 
-Every `cc-port export` archive declares all 9 category names in `metadata.xml`
-(even when a category was not included in the archive). The importer treats
-the category list as a closed manifest and hard-fails on any missing or unknown
-name. The 9 required category names are:
-
-`sessions`, `memory`, `history`, `file-history`, `config`, `todos`,
-`usage-data`, `plugins-data`, `tasks`.
+Every `cc-port export` archive declares all nine category names in
+`metadata.xml`, produced by `manifest.BuildCategoryEntries(&opts.Categories)`.
+The importer validates the list with `manifest.ApplyCategoryEntries`, which
+hard-fails on any missing or unknown name. The enum table, the write helper,
+and the validator all live in [`internal/manifest`](../manifest/README.md)
+§Category manifest.
 
 ### Anonymisation
 
@@ -78,4 +72,4 @@ Not covered — cases cc-port deliberately does not address:
 
 ## Tests
 
-Unit tests in `export_test.go`, `discover_test.go`, `manifest_test.go`. Coverage: all-categories export, path anonymisation (including order-independence and boundary collisions), selective category export, history-inclusion rules, path discovery on various body shapes, prefix grouping, auto-placeholder detection, manifest marshal/unmarshal round-trip, manifest XML format stability.
+Unit tests in `export_test.go` and `discover_test.go`. Coverage: all-categories export, path anonymisation (including order-independence and boundary collisions), selective category export, history-inclusion rules, path discovery on various body shapes, prefix grouping, auto-placeholder detection. Manifest marshal/unmarshal round-trip and XML format stability live in [`internal/manifest`](../manifest/README.md) §Tests.

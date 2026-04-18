@@ -9,7 +9,7 @@ Not a general UI layer — the only prompts this package exposes are the three l
 ## Public API
 
 - **Prompt entry points**
-  - `SelectCategories() (export.CategorySet, error)` — interactive category picker for `export` / `export manifest`.
+  - `SelectCategories() (manifest.CategorySet, error)` — interactive category picker for `export` / `export manifest`.
   - `ResolvePlaceholder(key, original, autoValue string) (string, error)` — resolves a single manifest placeholder at `export` manifest time or at `import` time.
   - `ConfirmApply(description string) (bool, error)` — yes/no confirmation scaffold; no caller wires it today, retained for future apply-time gates.
 

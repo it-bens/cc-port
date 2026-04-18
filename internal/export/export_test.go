@@ -12,13 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
 
 const fixtureProjectPath = "/Users/test/Projects/myproject"
 
-func defaultPlaceholders() []export.Placeholder {
-	return []export.Placeholder{
+func defaultPlaceholders() []manifest.Placeholder {
+	return []manifest.Placeholder{
 		{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
 		{Key: "{{HOME}}", Original: "/Users/test"},
 	}
@@ -51,7 +52,7 @@ func TestExport_AllCategories(t *testing.T) {
 	options := export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Sessions:    true,
 			Memory:      true,
 			History:     true,
@@ -103,7 +104,7 @@ func TestExport_PathAnonymization(t *testing.T) {
 	options := export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Sessions:    true,
 			Memory:      true,
 			History:     true,
@@ -154,7 +155,7 @@ func TestExport_SelectiveCategories(t *testing.T) {
 	options := export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Sessions:    false,
 			Memory:      true,
 			History:     false,
@@ -210,21 +211,21 @@ func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
 	_, err := export.Run(claudeHome1, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   out1,
-		Categories:   export.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
+		Categories:   manifest.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
 		Placeholders: defaultPlaceholders(),
 	})
 	require.NoError(t, err)
 
 	claudeHome2 := testutil.SetupFixture(t)
 	out2 := filepath.Join(t.TempDir(), "export-shorter-first.zip")
-	reversed := []export.Placeholder{
+	reversed := []manifest.Placeholder{
 		{Key: "{{HOME}}", Original: "/Users/test"},
 		{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
 	}
 	_, err = export.Run(claudeHome2, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   out2,
-		Categories:   export.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
+		Categories:   manifest.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
 		Placeholders: reversed,
 	})
 	require.NoError(t, err)
@@ -282,7 +283,7 @@ func TestExport_HistoryInclusionRules(t *testing.T) {
 	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
-		Categories:  export.CategorySet{History: true},
+		Categories:  manifest.CategorySet{History: true},
 		// No placeholders — exported history keeps the literal paths so
 		// marker strings and bounded references remain easy to assert on.
 	})
@@ -319,7 +320,7 @@ func TestExport_IncludesTodos(t *testing.T) {
 	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
-		Categories:  export.CategorySet{Todos: true},
+		Categories:  manifest.CategorySet{Todos: true},
 	})
 	require.NoError(t, err)
 
@@ -344,7 +345,7 @@ func TestExport_IncludesUsageData(t *testing.T) {
 	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
-		Categories:  export.CategorySet{UsageData: true},
+		Categories:  manifest.CategorySet{UsageData: true},
 	})
 	require.NoError(t, err)
 
@@ -373,7 +374,7 @@ func TestExport_IncludesPluginsData(t *testing.T) {
 	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
-		Categories:  export.CategorySet{PluginsData: true},
+		Categories:  manifest.CategorySet{PluginsData: true},
 	})
 	require.NoError(t, err)
 
@@ -400,7 +401,7 @@ func TestExport_IncludesTasks_SkipsSidecars(t *testing.T) {
 	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
-		Categories:  export.CategorySet{Tasks: true},
+		Categories:  manifest.CategorySet{Tasks: true},
 	})
 	require.NoError(t, err)
 
@@ -434,11 +435,11 @@ func TestExport_ManifestDeclaresAllNineCategories(t *testing.T) {
 	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
-		Categories:  export.CategorySet{Sessions: true},
+		Categories:  manifest.CategorySet{Sessions: true},
 	})
 	require.NoError(t, err)
 
-	metadata, err := export.ReadManifestFromZip(archivePath)
+	metadata, err := manifest.ReadManifestFromZip(archivePath)
 	require.NoError(t, err)
 
 	expected := []string{"sessions", "memory", "history", "file-history", "config",
@@ -464,7 +465,7 @@ func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {
 	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Memory: true, Sessions: true, History: true, Config: true,
 		},
 		Placeholders: defaultPlaceholders(),

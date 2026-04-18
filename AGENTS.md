@@ -17,6 +17,12 @@ See README.md for the project overview and contract index.
   `transport.SessionKeyedTargets`. Adding a sixth group means editing
   both slices plus `move.planCategories` — the alignment test in
   `internal/transport` catches drift.
+- The nine export categories live in one place: `manifest.AllCategories`.
+  `manifest.BuildCategoryEntries` writes the `metadata.xml` list and
+  `manifest.ApplyCategoryEntries` is the only path that validates a read
+  manifest (every missing or unknown name hard-fails via
+  `errors.Join`). See
+  [internal/manifest/README.md §Category manifest](internal/manifest/README.md).
 - All path-substring rewrites route through
   `internal/rewrite.ReplacePathInBytes` — never hand-roll
   `strings.ReplaceAll` on user paths (see `internal/rewrite/README.md`).

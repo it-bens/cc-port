@@ -10,8 +10,8 @@ Apply a cc-port archive: validate, stage, promote, roll back. See `README.md` fo
 - `SafeRenamePromoter.Rollback` drives all-or-nothing promotion — do not bypass it on partial failure; every earlier rename must be reversed (README §Atomic staging and `internal/rewrite/README.md`).
 - File-history snapshots are opaque bytes; `ResolvePlaceholders` runs over them only for pre-refactor archive compatibility (README §File-history handling (import) and docs/architecture.md §File-history policy (cross-cutting)).
 - `importer.Run` must acquire `~/.claude/.cc-port.lock` + run the live-session check before reading the archive (see `internal/lock/README.md`).
-- Unknown manifest category names, missing manifest category names, and
-  unknown ZIP entry prefixes all hard-fail; there is no tolerant fallback
+- Manifest category validation routes through `manifest.ApplyCategoryEntries`; never re-implement the check here (see `internal/manifest/README.md` §Category manifest).
+- Unknown ZIP entry prefixes hard-fail; there is no tolerant fallback
   (README §Strict archive contract).
 - Session-keyed dispatch reads `transport.SessionKeyedTargets` — the first
   matching `ZipPrefix` wins, and every staged entry lands in the unified

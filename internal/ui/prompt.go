@@ -8,7 +8,7 @@ import (
 	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/term"
 
-	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/manifest"
 )
 
 // requireTTY fails fast when stdin is not a terminal, with a message naming
@@ -23,13 +23,13 @@ func requireTTY(remediation string) error {
 }
 
 // SelectCategories presents an interactive multi-select for export categories.
-func SelectCategories() (export.CategorySet, error) {
+func SelectCategories() (manifest.CategorySet, error) {
 	if err := requireTTY(
 		"rerun with --all or explicit category flags " +
 			"(--sessions, --memory, --history, --file-history, --config, " +
 			"--todos, --usage-data, --plugins-data, --tasks)",
 	); err != nil {
-		return export.CategorySet{}, err
+		return manifest.CategorySet{}, err
 	}
 	var selectedCategories []string
 
@@ -53,10 +53,10 @@ func SelectCategories() (export.CategorySet, error) {
 	)
 
 	if err := form.Run(); err != nil {
-		return export.CategorySet{}, fmt.Errorf("category selection cancelled: %w", err)
+		return manifest.CategorySet{}, fmt.Errorf("category selection cancelled: %w", err)
 	}
 
-	var categories export.CategorySet
+	var categories manifest.CategorySet
 	for _, selection := range selectedCategories {
 		switch selection {
 		case "sessions":

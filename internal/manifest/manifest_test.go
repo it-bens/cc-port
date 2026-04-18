@@ -1,4 +1,4 @@
-package export_test
+package manifest_test
 
 import (
 	"archive/zip"
@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/manifest"
 )
 
 func boolPtr(value bool) *bool { return &value }
@@ -20,15 +20,15 @@ func boolPtr(value bool) *bool { return &value }
 func TestMetadata_MarshalUnmarshal(t *testing.T) {
 	created := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 
-	original := &export.Metadata{
-		Export: export.Info{
+	original := &manifest.Metadata{
+		Export: manifest.Info{
 			Created: created,
-			Categories: []export.Category{
+			Categories: []manifest.Category{
 				{Name: "sessions", Included: true},
 				{Name: "settings", Included: false},
 			},
 		},
-		Placeholders: []export.Placeholder{
+		Placeholders: []manifest.Placeholder{
 			{Key: "HOME", Original: "/home/user"},
 			{Key: "PROJECT", Original: "/home/user/project", Resolvable: boolPtr(true)},
 		},
@@ -37,17 +37,17 @@ func TestMetadata_MarshalUnmarshal(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	path := filepath.Join(temporaryDirectory, "metadata.xml")
 
-	if err := export.WriteManifest(path, original); err != nil {
+	if err := manifest.WriteManifest(path, original); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
-	roundTripped, err := export.ReadManifest(path)
+	roundTripped, err := manifest.ReadManifest(path)
 	if err != nil {
 		t.Fatalf("ReadManifest: %v", err)
 	}
 
 	opts := cmp.Options{
-		cmpopts.IgnoreFields(export.Metadata{}, "XMLName"),
+		cmpopts.IgnoreFields(manifest.Metadata{}, "XMLName"),
 		cmpopts.EquateApproxTime(time.Second),
 	}
 
@@ -59,14 +59,14 @@ func TestMetadata_MarshalUnmarshal(t *testing.T) {
 func TestMetadata_XMLFormat(t *testing.T) {
 	created := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	metadata := &export.Metadata{
-		Export: export.Info{
+	metadata := &manifest.Metadata{
+		Export: manifest.Info{
 			Created: created,
-			Categories: []export.Category{
+			Categories: []manifest.Category{
 				{Name: "sessions", Included: true},
 			},
 		},
-		Placeholders: []export.Placeholder{
+		Placeholders: []manifest.Placeholder{
 			{Key: "HOME", Original: "/home/user"},
 		},
 	}
@@ -74,7 +74,7 @@ func TestMetadata_XMLFormat(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	path := filepath.Join(temporaryDirectory, "metadata.xml")
 
-	if err := export.WriteManifest(path, metadata); err != nil {
+	if err := manifest.WriteManifest(path, metadata); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -111,12 +111,12 @@ func TestMetadata_XMLFormat(t *testing.T) {
 func TestManifest_WithResolve(t *testing.T) {
 	created := time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC)
 
-	original := &export.Metadata{
-		Export: export.Info{
+	original := &manifest.Metadata{
+		Export: manifest.Info{
 			Created:    created,
-			Categories: []export.Category{},
+			Categories: []manifest.Category{},
 		},
-		Placeholders: []export.Placeholder{
+		Placeholders: []manifest.Placeholder{
 			{
 				Key:        "HOME",
 				Original:   "/home/olduser",
@@ -138,17 +138,17 @@ func TestManifest_WithResolve(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	path := filepath.Join(temporaryDirectory, "metadata.xml")
 
-	if err := export.WriteManifest(path, original); err != nil {
+	if err := manifest.WriteManifest(path, original); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
-	roundTripped, err := export.ReadManifest(path)
+	roundTripped, err := manifest.ReadManifest(path)
 	if err != nil {
 		t.Fatalf("ReadManifest: %v", err)
 	}
 
 	opts := cmp.Options{
-		cmpopts.IgnoreFields(export.Metadata{}, "XMLName"),
+		cmpopts.IgnoreFields(manifest.Metadata{}, "XMLName"),
 		cmpopts.EquateApproxTime(time.Second),
 		cmpopts.EquateEmpty(),
 	}
@@ -163,7 +163,7 @@ func TestManifest_WithResolve(t *testing.T) {
 
 // assertPlaceholderFields verifies the Resolvable and Resolve fields on each
 // placeholder in the round-tripped metadata.
-func assertPlaceholderFields(t *testing.T, roundTripped *export.Metadata) {
+func assertPlaceholderFields(t *testing.T, roundTripped *manifest.Metadata) {
 	t.Helper()
 
 	// Verify Resolvable and Resolve are present for the first placeholder.
@@ -195,7 +195,7 @@ func assertPlaceholderFields(t *testing.T, roundTripped *export.Metadata) {
 }
 
 // assertZIPRoundTrip verifies the metadata survives a ZIP round-trip.
-func assertZIPRoundTrip(t *testing.T, original *export.Metadata, temporaryDirectory, path string, opts cmp.Options) {
+func assertZIPRoundTrip(t *testing.T, original *manifest.Metadata, temporaryDirectory, path string, opts cmp.Options) {
 	t.Helper()
 
 	zipPath := filepath.Join(temporaryDirectory, "export.zip")
@@ -203,7 +203,7 @@ func assertZIPRoundTrip(t *testing.T, original *export.Metadata, temporaryDirect
 		t.Fatalf("createTestZip: %v", err)
 	}
 
-	fromZip, err := export.ReadManifestFromZip(zipPath)
+	fromZip, err := manifest.ReadManifestFromZip(zipPath)
 	if err != nil {
 		t.Fatalf("ReadManifestFromZip: %v", err)
 	}

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
@@ -77,10 +77,10 @@ func ValidateResolutions(resolutions map[string]string) error {
 //     body but are not listed in declared at all.
 func ClassifyPlaceholders(
 	bodies [][]byte,
-	declared []export.Placeholder,
+	declared []manifest.Placeholder,
 	resolutions map[string]string,
 ) (missing, undeclared []string) {
-	declaredByKey := make(map[string]export.Placeholder, len(declared))
+	declaredByKey := make(map[string]manifest.Placeholder, len(declared))
 	for _, placeholder := range declared {
 		declaredByKey[placeholder.Key] = placeholder
 	}

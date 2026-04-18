@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
-	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/ui"
 )
@@ -35,7 +35,7 @@ var importCmd = &cobra.Command{
 		var resolutions map[string]string
 
 		if importFromManifest != "" {
-			metadata, err := export.ReadManifest(importFromManifest)
+			metadata, err := manifest.ReadManifest(importFromManifest)
 			if err != nil {
 				return fmt.Errorf("read manifest: %w", err)
 			}
@@ -73,7 +73,7 @@ var importManifestCmd = &cobra.Command{
 	RunE: func(_ *cobra.Command, args []string) error {
 		archivePath := args[0]
 
-		metadata, err := export.ReadManifestFromZip(archivePath)
+		metadata, err := manifest.ReadManifestFromZip(archivePath)
 		if err != nil {
 			return fmt.Errorf("read manifest from zip: %w", err)
 		}
@@ -84,7 +84,7 @@ var importManifestCmd = &cobra.Command{
 		}
 
 		outputPath := "manifest.xml"
-		if err := export.WriteManifest(outputPath, metadata); err != nil {
+		if err := manifest.WriteManifest(outputPath, metadata); err != nil {
 			return fmt.Errorf("write manifest: %w", err)
 		}
 
@@ -104,7 +104,7 @@ func init() {
 }
 
 func promptImportResolutions(archivePath, targetPath string) (map[string]string, error) {
-	metadata, err := export.ReadManifestFromZip(archivePath)
+	metadata, err := manifest.ReadManifestFromZip(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest from zip: %w", err)
 	}
@@ -135,7 +135,7 @@ func promptImportResolutions(archivePath, targetPath string) (map[string]string,
 	return resolutions, nil
 }
 
-func resolutionsFromManifest(metadata *export.Metadata, targetPath string) map[string]string {
+func resolutionsFromManifest(metadata *manifest.Metadata, targetPath string) map[string]string {
 	resolutions := make(map[string]string)
 	for _, placeholder := range metadata.Placeholders {
 		if placeholder.Key == "{{PROJECT_PATH}}" {

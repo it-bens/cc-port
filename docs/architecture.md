@@ -11,6 +11,7 @@ cc-port/
 │   ├── fsutil/             Shared filesystem helper (directory copy)
 │   ├── importer/           Import orchestration: placeholder validation, atomic staging
 │   ├── lock/               Advisory lock + live-session refusal
+│   ├── manifest/           metadata.xml wire DTOs + nine-category enum table
 │   ├── move/               Move plan, dry-run, apply with copy-verify-delete
 │   ├── rewrite/            Byte-level rewrite primitives + SafeRenamePromoter
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
@@ -34,6 +35,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | `~/.claude/rules/*.md` never rewritten in place         | [`internal/scan/README.md`](../internal/scan/README.md)                          |
 | Malformed `history.jsonl` lines preserved, not repaired | [`internal/move/README.md`](../internal/move/README.md)                          |
 | Archives are a closed placeholder contract              | [`internal/importer/README.md`](../internal/importer/README.md) §Import contract |
+| Every export declares all 9 categories; unknown refused | [`internal/manifest/README.md`](../internal/manifest/README.md) §Category manifest |
 | Import writes are atomic with rollback                  | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
 | Mutating commands lock + refuse during live sessions    | [`internal/lock/README.md`](../internal/lock/README.md)                          |
 | Session-keyed user-wide directories follow the project  | [`internal/claude/README.md`](../internal/claude/README.md) §Project enumeration |

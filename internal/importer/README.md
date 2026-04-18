@@ -241,14 +241,13 @@ import path has already failed.
 ### Strict archive contract
 
 `cc-port import` validates the manifest's category list before reading any
-ZIP entry:
+ZIP entry. The validator is `manifest.ApplyCategoryEntries` (see
+[`internal/manifest/README.md`](../manifest/README.md) §Category manifest);
+the importer only drives it and surfaces its aggregated error.
 
-- **Unknown manifest category names hard-fail.** Any category name in
-  `metadata.xml` that is not in the 9 expected names is rejected before any
-  write.
-- **Missing manifest category names hard-fail.** Any of the 9 expected names
-  absent from `metadata.xml` is rejected before any write. All 9 must be
-  declared even when `Included: false`.
+- **Manifest category validation is delegated.** Unknown and missing names
+  are both reported in one `errors.Join` error by
+  `manifest.ApplyCategoryEntries` before any ZIP entry is read.
 - **Unknown ZIP entry prefixes hard-fail.** Any ZIP entry whose path does not
   match a known prefix (`sessions/`, `memory/`, `history/`, `file-history/`,
   `config.json`, `todos/`, `usage-data/`, `plugins-data/`, `tasks/`) is

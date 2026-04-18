@@ -14,29 +14,17 @@ import (
 	"time"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/transport"
 )
-
-// CategorySet specifies which data categories to include in the export.
-type CategorySet struct {
-	Sessions    bool
-	Memory      bool
-	History     bool
-	FileHistory bool
-	Config      bool
-	Todos       bool
-	UsageData   bool
-	PluginsData bool
-	Tasks       bool
-}
 
 // Options holds all parameters for an export operation.
 type Options struct {
 	ProjectPath  string
 	OutputPath   string
-	Categories   CategorySet
-	Placeholders []Placeholder
+	Categories   manifest.CategorySet
+	Placeholders []manifest.Placeholder
 }
 
 // Result summarises observable side effects of a successful export that the
@@ -115,7 +103,7 @@ func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions Options) error 
 // budget.
 func exportCoreCategories(
 	archiveWriter *zip.Writer, claudeHome *claude.Home,
-	locations *claude.ProjectLocations, exportOptions Options, placeholders []Placeholder,
+	locations *claude.ProjectLocations, exportOptions Options, placeholders []manifest.Placeholder,
 ) error {
 	if exportOptions.Categories.Sessions {
 		if err := exportSessions(archiveWriter, locations, placeholders); err != nil {
@@ -141,7 +129,7 @@ func exportCoreCategories(
 }
 
 func exportSessions(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
+	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
 ) error {
 	for _, transcriptPath := range locations.SessionTranscripts {
 		data, err := os.ReadFile(transcriptPath) //nolint:gosec // G304: path from trusted ClaudeHome
@@ -166,7 +154,7 @@ func exportSessions(
 }
 
 func exportMemory(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []Placeholder,
+	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
 ) error {
 	for _, memoryFilePath := range locations.MemoryFiles {
 		data, err := os.ReadFile(memoryFilePath) //nolint:gosec // G304: path from trusted ClaudeHome
@@ -187,7 +175,7 @@ func exportMemory(
 // skipping groups whose category flag is off.
 func exportSessionKeyed(
 	archiveWriter *zip.Writer, claudeHome *claude.Home,
-	locations *claude.ProjectLocations, categories CategorySet, placeholders []Placeholder,
+	locations *claude.ProjectLocations, categories manifest.CategorySet, placeholders []manifest.Placeholder,
 ) error {
 	included := map[string]bool{
 		"todos":                   categories.Todos,
@@ -226,7 +214,7 @@ func exportSessionKeyed(
 }
 
 func exportHistory(
-	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []Placeholder,
+	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
 ) error {
 	historyData, err := extractProjectHistory(claudeHome.HistoryFile(), exportOptions.ProjectPath)
 	if err != nil {
@@ -256,7 +244,7 @@ func exportFileHistory(archiveWriter *zip.Writer, locations *claude.ProjectLocat
 }
 
 func exportConfig(
-	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []Placeholder,
+	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
 ) error {
 	configData, err := extractProjectConfig(claudeHome.ConfigFile, exportOptions.ProjectPath)
 	if err != nil {
@@ -282,8 +270,8 @@ func exportConfig(
 // `/Users/x` → `{{HOME}}` before `/Users/x/project` → `{{PROJECT_PATH}}`
 // would leave `{{HOME}}/project` where `{{PROJECT_PATH}}` was intended.
 // Sorting longest-first resolves this.
-func applyPlaceholders(data []byte, placeholders []Placeholder) []byte {
-	sorted := make([]Placeholder, len(placeholders))
+func applyPlaceholders(data []byte, placeholders []manifest.Placeholder) []byte {
+	sorted := make([]manifest.Placeholder, len(placeholders))
 	copy(sorted, placeholders)
 	sort.Slice(sorted, func(i, j int) bool {
 		return len(sorted[i].Original) > len(sorted[j].Original)
@@ -309,7 +297,7 @@ func writeToZip(archiveWriter *zip.Writer, name string, data []byte) error {
 // the archive and anonymising path occurrences inside each file's bytes. The
 // only caller is exportSessions' session-subdir walk, whose content is always
 // textual (JSONL transcripts, subagent files, session-memory entries).
-func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeholders []Placeholder) error {
+func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeholders []manifest.Placeholder) error {
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {
 		return fmt.Errorf("read directory %s: %w", sourceDir, err)
@@ -482,29 +470,17 @@ func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
 
 // buildMetadata constructs the Metadata value for metadata.xml from the given
 // export options and the current time.
-func buildMetadata(exportOptions Options) *Metadata {
-	categories := []Category{
-		{Name: "sessions", Included: exportOptions.Categories.Sessions},
-		{Name: "memory", Included: exportOptions.Categories.Memory},
-		{Name: "history", Included: exportOptions.Categories.History},
-		{Name: "file-history", Included: exportOptions.Categories.FileHistory},
-		{Name: "config", Included: exportOptions.Categories.Config},
-		{Name: "todos", Included: exportOptions.Categories.Todos},
-		{Name: "usage-data", Included: exportOptions.Categories.UsageData},
-		{Name: "plugins-data", Included: exportOptions.Categories.PluginsData},
-		{Name: "tasks", Included: exportOptions.Categories.Tasks},
-	}
-
-	return &Metadata{
-		Export: Info{
+func buildMetadata(exportOptions Options) *manifest.Metadata {
+	return &manifest.Metadata{
+		Export: manifest.Info{
 			Created:    time.Now(),
-			Categories: categories,
+			Categories: manifest.BuildCategoryEntries(&exportOptions.Categories),
 		},
 		Placeholders: exportOptions.Placeholders,
 	}
 }
 
-func buildMetadataXML(metadata *Metadata) ([]byte, error) {
+func buildMetadataXML(metadata *manifest.Metadata) ([]byte, error) {
 	xmlBody, err := xml.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal metadata XML: %w", err)

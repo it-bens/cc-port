@@ -17,6 +17,7 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
@@ -100,14 +101,14 @@ func runExportRoundTrip(t *testing.T, sourceHome *claude.Home, archivePath strin
 	exportOptions := export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  archivePath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Sessions:    true,
 			Memory:      true,
 			History:     true,
 			FileHistory: true,
 			Config:      true,
 		},
-		Placeholders: []export.Placeholder{
+		Placeholders: []manifest.Placeholder{
 			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath, Resolvable: &trueVal},
 			{Key: "{{HOME}}", Original: fixtureHomeDir, Resolvable: &trueVal},
 		},
@@ -225,10 +226,10 @@ func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
 	exportOptions := export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  archivePath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, FileHistory: true, Config: true,
 		},
-		Placeholders: []export.Placeholder{
+		Placeholders: []manifest.Placeholder{
 			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath, Resolvable: &trueVal},
 			{Key: "{{HOME}}", Original: fixtureHomeDir, Resolvable: &trueVal},
 			// Declare a placeholder whose literal occurrence we will inject
@@ -363,7 +364,7 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	_, err := export.Run(sourceHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  archivePath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Sessions:    true,
 			Memory:      true,
 			History:     true,
@@ -374,7 +375,7 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 			PluginsData: true,
 			Tasks:       true,
 		},
-		Placeholders: []export.Placeholder{
+		Placeholders: []manifest.Placeholder{
 			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath, Resolvable: &trueVal},
 			{Key: "{{HOME}}", Original: fixtureHomeDir, Resolvable: &trueVal},
 		},
@@ -458,13 +459,13 @@ func TestIntegration_ImportConflict(t *testing.T) {
 	exportOptions := export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  archivePath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Sessions: true,
 			Memory:   true,
 			History:  true,
 			Config:   true,
 		},
-		Placeholders: []export.Placeholder{
+		Placeholders: []manifest.Placeholder{
 			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath, Resolvable: &trueVal},
 			{Key: "{{HOME}}", Original: fixtureHomeDir, Resolvable: &trueVal},
 		},

@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/manifest"
 )
 
 func TestResolvePlaceholders(t *testing.T) {
@@ -102,7 +102,7 @@ func classifyUpperSnakeCases() []classifyCase {
 		{
 			name:   "all present keys resolved",
 			bodies: [][]byte{[]byte(`cwd={{PROJECT_PATH}}, home={{HOME}}`)},
-			declared: []export.Placeholder{
+			declared: []manifest.Placeholder{
 				{Key: "{{PROJECT_PATH}}", Resolvable: &trueVal},
 				{Key: "{{HOME}}", Resolvable: &trueVal},
 			},
@@ -114,30 +114,30 @@ func classifyUpperSnakeCases() []classifyCase {
 		{
 			name:     "declared Resolvable=false + present + not resolved is clean",
 			bodies:   [][]byte{[]byte(`legacy={{UNRESOLVABLE}}`)},
-			declared: []export.Placeholder{{Key: "{{UNRESOLVABLE}}", Resolvable: &falseVal}},
+			declared: []manifest.Placeholder{{Key: "{{UNRESOLVABLE}}", Resolvable: &falseVal}},
 		},
 		{
 			name:        "declared nil + not resolved is missing",
 			bodies:      [][]byte{[]byte(`extra={{EXTRA}}`)},
-			declared:    []export.Placeholder{{Key: "{{EXTRA}}", Resolvable: nil}},
+			declared:    []manifest.Placeholder{{Key: "{{EXTRA}}", Resolvable: nil}},
 			wantMissing: []string{"{{EXTRA}}"},
 		},
 		{
 			name:        "declared true + not resolved is missing",
 			bodies:      [][]byte{[]byte(`extra={{EXTRA}}`)},
-			declared:    []export.Placeholder{{Key: "{{EXTRA}}", Resolvable: &trueVal}},
+			declared:    []manifest.Placeholder{{Key: "{{EXTRA}}", Resolvable: &trueVal}},
 			wantMissing: []string{"{{EXTRA}}"},
 		},
 		{
 			name:           "present but not declared is undeclared",
 			bodies:         [][]byte{[]byte(`leaked={{SECRET}}`)},
-			declared:       []export.Placeholder{{Key: "{{PROJECT_PATH}}", Resolvable: &trueVal}},
+			declared:       []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolvable: &trueVal}},
 			wantUndeclared: []string{"{{SECRET}}"},
 		},
 		{
 			name:   "both missing and undeclared populated and sorted",
 			bodies: [][]byte{[]byte(`{{ZETA}} {{ALPHA}} {{UNDECLARED_B}} {{UNDECLARED_A}}`)},
-			declared: []export.Placeholder{
+			declared: []manifest.Placeholder{
 				{Key: "{{ZETA}}", Resolvable: &trueVal},
 				{Key: "{{ALPHA}}", Resolvable: &trueVal},
 			},
@@ -147,13 +147,13 @@ func classifyUpperSnakeCases() []classifyCase {
 		{
 			name:     "declared but absent from bodies is clean",
 			bodies:   [][]byte{[]byte("no placeholder tokens here")},
-			declared: []export.Placeholder{{Key: "{{UNUSED}}", Resolvable: &trueVal}},
+			declared: []manifest.Placeholder{{Key: "{{UNUSED}}", Resolvable: &trueVal}},
 		},
 		{
 			// importer.Run pre-fills PROJECT_PATH unconditionally.
 			name:     "PROJECT_PATH resolved implicitly even without explicit resolution",
 			bodies:   [][]byte{[]byte(`cwd={{PROJECT_PATH}}`)},
-			declared: []export.Placeholder{{Key: "{{PROJECT_PATH}}", Resolvable: &trueVal}},
+			declared: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolvable: &trueVal}},
 		},
 	}
 }
@@ -169,13 +169,13 @@ func classifyExoticShapeCases() []classifyCase {
 		{
 			name:        "exotic-shape declared key missing a resolution is flagged",
 			bodies:      [][]byte{[]byte(`path={{my-weird.key}}`)},
-			declared:    []export.Placeholder{{Key: "{{my-weird.key}}", Resolvable: &trueVal}},
+			declared:    []manifest.Placeholder{{Key: "{{my-weird.key}}", Resolvable: &trueVal}},
 			wantMissing: []string{"{{my-weird.key}}"},
 		},
 		{
 			name:   "exotic-shape declared key with a resolution is clean",
 			bodies: [][]byte{[]byte(`path={{my-weird.key}}`)},
-			declared: []export.Placeholder{
+			declared: []manifest.Placeholder{
 				{Key: "{{my-weird.key}}", Resolvable: &trueVal},
 			},
 			resolutions: map[string]string{"{{my-weird.key}}": "/dest/weird"},
@@ -183,7 +183,7 @@ func classifyExoticShapeCases() []classifyCase {
 		{
 			name:     "exotic-shape declared key marked Resolvable=false is clean",
 			bodies:   [][]byte{[]byte(`legacy={{my-weird.key}}`)},
-			declared: []export.Placeholder{{Key: "{{my-weird.key}}", Resolvable: &falseVal}},
+			declared: []manifest.Placeholder{{Key: "{{my-weird.key}}", Resolvable: &falseVal}},
 		},
 	}
 }
@@ -193,7 +193,7 @@ func classifyExoticShapeCases() []classifyCase {
 type classifyCase struct {
 	name           string
 	bodies         [][]byte
-	declared       []export.Placeholder
+	declared       []manifest.Placeholder
 	resolutions    map[string]string
 	wantMissing    []string
 	wantUndeclared []string

@@ -16,6 +16,7 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
@@ -118,10 +119,10 @@ func writeMetadataEntry(
 	t.Helper()
 
 	trueVal := true
-	metadata := &export.Metadata{
-		Export: export.Info{
+	metadata := &manifest.Metadata{
+		Export: manifest.Info{
 			Created: time.Now(),
-			Categories: []export.Category{
+			Categories: []manifest.Category{
 				{Name: "sessions", Included: true},
 				{Name: "memory", Included: true},
 				{Name: "history", Included: true},
@@ -133,13 +134,13 @@ func writeMetadataEntry(
 				{Name: "tasks", Included: false},
 			},
 		},
-		Placeholders: []export.Placeholder{
+		Placeholders: []manifest.Placeholder{
 			{Key: "{{PROJECT_PATH}}", Original: sourceProjectPath, Resolvable: &trueVal},
 			{Key: "{{HOME}}", Original: sourceHomeDir, Resolvable: &trueVal},
 		},
 	}
 	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
-	require.NoError(t, export.WriteManifest(metadataPath, metadata), "write temp metadata")
+	require.NoError(t, manifest.WriteManifest(metadataPath, metadata), "write temp metadata")
 	metadataData, err := os.ReadFile(metadataPath) //nolint:gosec // G304: test helper reading temp file
 	require.NoError(t, err, "read temp metadata")
 	xmlEntry, err := zipWriter.Create("metadata.xml")
@@ -641,22 +642,22 @@ func writeMetadataEntryWithOverrides(t *testing.T, zipWriter *zip.Writer, overri
 	t.Helper()
 
 	trueVal := true
-	placeholders := []export.Placeholder{
+	placeholders := []manifest.Placeholder{
 		{Key: "{{PROJECT_PATH}}", Original: fixtureSourceProjectPath, Resolvable: &trueVal},
 		{Key: "{{HOME}}", Original: fixtureSourceHomeDir, Resolvable: &trueVal},
 	}
 	if overrides.extraDeclaredKey != "" {
-		placeholders = append(placeholders, export.Placeholder{
+		placeholders = append(placeholders, manifest.Placeholder{
 			Key:        overrides.extraDeclaredKey,
 			Original:   overrides.extraDeclaredKey,
 			Resolvable: overrides.extraResolvable,
 		})
 	}
 
-	metadata := &export.Metadata{
-		Export: export.Info{
+	metadata := &manifest.Metadata{
+		Export: manifest.Info{
 			Created: time.Now(),
-			Categories: []export.Category{
+			Categories: []manifest.Category{
 				{Name: "sessions", Included: true},
 				{Name: "memory", Included: true},
 				{Name: "history", Included: true},
@@ -671,7 +672,7 @@ func writeMetadataEntryWithOverrides(t *testing.T, zipWriter *zip.Writer, overri
 		Placeholders: placeholders,
 	}
 	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
-	require.NoError(t, export.WriteManifest(metadataPath, metadata))
+	require.NoError(t, manifest.WriteManifest(metadataPath, metadata))
 	metadataData, err := os.ReadFile(metadataPath) //nolint:gosec // G304: test helper reading temp file
 	require.NoError(t, err)
 	xmlEntry, err := zipWriter.Create("metadata.xml")
@@ -708,7 +709,7 @@ func TestImport_RoundTrip_NewCategories(t *testing.T) {
 	_, err := export.Run(claudeHome, export.Options{
 		ProjectPath: fixtureSourceProjectPath,
 		OutputPath:  archivePath,
-		Categories: export.CategorySet{
+		Categories: manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, Config: true,
 			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
 		},

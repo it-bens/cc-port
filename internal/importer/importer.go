@@ -14,8 +14,8 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/it-bens/cc-port/internal/claude"
-	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/lock"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/transport"
 )
@@ -178,8 +178,8 @@ func Run(claudeHome *claude.Home, importOptions Options) error {
 		return err
 	}
 
-	if err := validateManifestCategories(metadata); err != nil {
-		return err
+	if _, err := manifest.ApplyCategoryEntries(metadata.Export.Categories); err != nil {
+		return fmt.Errorf("manifest categories: %w", err)
 	}
 
 	resolutions := withProjectPath(importOptions.Resolutions, importOptions.TargetPath)
@@ -204,14 +204,14 @@ func Run(claudeHome *claude.Home, importOptions Options) error {
 	return promotePlan(plan, importOptions.renameHook)
 }
 
-func loadArchive(archivePath string) ([]archiveEntry, *export.Metadata, error) {
+func loadArchive(archivePath string) ([]archiveEntry, *manifest.Metadata, error) {
 	zipReader, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open archive: %w", err)
 	}
 	defer func() { _ = zipReader.Close() }()
 
-	metadata, err := export.ReadManifestFromZip(archivePath)
+	metadata, err := manifest.ReadManifestFromZip(archivePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read metadata from archive: %w", err)
 	}
@@ -249,7 +249,7 @@ func withProjectPath(resolutions map[string]string, targetPath string) map[strin
 // archive bodies is either declared-but-unresolved or present-but-undeclared.
 // No write has occurred at this point — aborting here leaves the destination
 // untouched.
-func runPreflight(entries []archiveEntry, metadata *export.Metadata, resolutions map[string]string) error {
+func runPreflight(entries []archiveEntry, metadata *manifest.Metadata, resolutions map[string]string) error {
 	bodies := make([][]byte, len(entries))
 	for index, entry := range entries {
 		bodies[index] = entry.content
@@ -281,53 +281,6 @@ func resolveEntryContents(entries []archiveEntry, resolutions map[string]string)
 	for index := range entries {
 		entries[index].content = ResolvePlaceholders(entries[index].content, resolutions)
 	}
-}
-
-// expectedCategoryNames lists the 9 category names every cc-port manifest must
-// declare. Producer (export) and consumer (import) share this constant so the
-// manifest is a closed contract on both sides.
-var expectedCategoryNames = []string{
-	"sessions", "memory", "history", "file-history", "config",
-	"todos", "usage-data", "plugins-data", "tasks",
-}
-
-// validateManifestCategories returns an aggregate error if metadata declares
-// any name not in expectedCategoryNames or omits any expected name. It runs
-// before any temp file is written so violations abort the import cleanly.
-func validateManifestCategories(metadata *export.Metadata) error {
-	expected := make(map[string]bool, len(expectedCategoryNames))
-	for _, name := range expectedCategoryNames {
-		expected[name] = true
-	}
-
-	seen := make(map[string]bool, len(metadata.Export.Categories))
-	var unknown []string
-	for _, c := range metadata.Export.Categories {
-		if !expected[c.Name] {
-			unknown = append(unknown, c.Name)
-			continue
-		}
-		seen[c.Name] = true
-	}
-
-	var missing []string
-	for _, name := range expectedCategoryNames {
-		if !seen[name] {
-			missing = append(missing, name)
-		}
-	}
-
-	if len(unknown) == 0 && len(missing) == 0 {
-		return nil
-	}
-	var parts []string
-	if len(unknown) > 0 {
-		parts = append(parts, fmt.Sprintf("unknown manifest category names: %s", strings.Join(unknown, ", ")))
-	}
-	if len(missing) > 0 {
-		parts = append(parts, fmt.Sprintf("missing manifest category names: %s", strings.Join(missing, ", ")))
-	}
-	return fmt.Errorf("manifest validation: %s", strings.Join(parts, "; "))
 }
 
 // importPlan records every staged artifact and the final destination it

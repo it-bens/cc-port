@@ -1,4 +1,6 @@
-package export
+// Package manifest defines the wire DTOs and I/O for the cc-port archive
+// metadata.xml file.
+package manifest
 
 import (
 	"archive/zip"
