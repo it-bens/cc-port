@@ -102,4 +102,4 @@ Not covered — cases this approach does not address:
 
 ## Tests
 
-Unit tests in `move_test.go`. Coverage: dry-run (with and without transcripts, refs-only, project-not-found), apply (basic, refs-only, with transcripts), encoded-dir collision refusal, live-session refusal (see `internal/lock/README.md` §Concurrency guard), malformed-history reporting and warning emission, file-history snapshot preservation.
+Unit tests live in `move_test.go` (end-to-end `DryRun`/`Apply` coverage) and `rewrite_global_test.go` (`rewriteTracked` happy path + failure modes). End-to-end coverage: dry-run (with and without transcripts, refs-only, project-not-found), apply (basic, refs-only, with transcripts), encoded-dir collision refusal, live-session refusal (see `internal/lock/README.md` §Concurrency guard), malformed-history reporting and warning emission, file-history snapshot preservation.

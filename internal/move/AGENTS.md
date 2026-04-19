@@ -16,9 +16,11 @@ Relocate one project (dry-run + apply). See `README.md` for the full contracts.
 
 ## Navigation
 
-- Plan: `move.go:DryRun`.
-- Apply: `move.go:Apply`.
-- Types: `move.go:Options`, `move.go:Plan`.
-- Tests: `move_test.go`.
+- Entry points + public types: `move.go` (`DryRun`, `Apply`, `Options`, `Plan`, `PlanCategories`).
+- Dry-run counting helpers: `plan_counts.go`.
+- Copy-verify-delete orchestration, rollback tracker, fs helpers: `execute.go`.
+- Rewriters inside the copied project dir: `rewrite_in_project.go`.
+- Rewriters for global files + `rewriteTracked` helper: `rewrite_global.go`.
+- Tests: `move_test.go` (end-to-end), `rewrite_global_test.go` (`rewriteTracked`).
 
 Read `README.md` before changing anything under `## Contracts`.
