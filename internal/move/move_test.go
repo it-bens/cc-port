@@ -574,6 +574,88 @@ func TestApply_RewritesTodos(t *testing.T) {
 	assert.NotContains(t, string(body), oldProjectPath)
 }
 
+// TestApply_Rollback_RestoresGlobalsOnSecondDeleteFailure exercises the
+// asymmetric-rollback fix in deleteOriginals: when the encoded project dir
+// removal succeeds but the on-disk OldPath removal fails, the tracker must
+// still restore every rewritten global file so nothing points at a path that
+// no longer exists. The failure is injected by placing OldPath under a
+// read-only parent directory — on macOS and Linux, unlinking an entry needs
+// write+execute on the parent, so os.RemoveAll fails cleanly without mocking
+// the stdlib.
+func TestApply_Rollback_RestoresGlobalsOnSecondDeleteFailure(t *testing.T) {
+	tempRoot := t.TempDir()
+	claudeDir := filepath.Join(tempRoot, "dotclaude")
+	configFilePath := filepath.Join(tempRoot, "dotclaude.json")
+
+	readOnlyParent := filepath.Join(tempRoot, "readonly-parent")
+	oldOnDiskPath := filepath.Join(readOnlyParent, "myproject")
+	newOnDiskPath := filepath.Join(tempRoot, "new-parent", "myproject")
+
+	// Synthesize the minimum ~/.claude fixture: the encoded project dir (so
+	// LocateProject resolves), history.jsonl + settings.json containing the
+	// old path (so rewriteGlobalFiles actually mutates tracked bytes), and an
+	// empty projects/ sibling tree.
+	claudeHome := &claude.Home{Dir: claudeDir, ConfigFile: configFilePath}
+	require.NoError(t, os.MkdirAll(claudeHome.ProjectDir(oldOnDiskPath), 0o750))
+
+	historyOriginal := []byte(`{"display":"x","pastedContents":{},"timestamp":1,"project":"` +
+		oldOnDiskPath + `"}` + "\n")
+	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), historyOriginal, 0o600))
+
+	settingsOriginal := []byte(`{"env":{"PROJECT_ROOT":"` + oldOnDiskPath + `"}}`)
+	require.NoError(t, os.WriteFile(claudeHome.SettingsFile(), settingsOriginal, 0o600))
+
+	configOriginal := []byte(`{"projects":{"` + oldOnDiskPath + `":{}}}`)
+	require.NoError(t, os.WriteFile(configFilePath, configOriginal, 0o600))
+
+	// On-disk OldPath must exist so the copy phase succeeds. A single file
+	// inside is enough to exercise CopyDir; deletion is what we want to fail.
+	require.NoError(t, os.MkdirAll(oldOnDiskPath, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(oldOnDiskPath, "sentinel.txt"), []byte("payload"), 0o600))
+
+	// Lock the parent so os.RemoveAll(oldOnDiskPath) fails at the unlink step.
+	// Restore before t.TempDir() teardown so its own cleanup can remove entries.
+	require.NoError(t, os.Chmod(readOnlyParent, 0o500)) //nolint:gosec // G302: read+exec only is the whole point
+	t.Cleanup(func() {
+		_ = os.Chmod(readOnlyParent, 0o700) //nolint:gosec // G302: restore for t.TempDir cleanup
+	})
+
+	err := move.Apply(claudeHome, move.Options{
+		OldPath:  oldOnDiskPath,
+		NewPath:  newOnDiskPath,
+		RefsOnly: false,
+	})
+	require.Error(t, err, "Apply must surface the on-disk removal failure")
+	assert.Contains(t, err.Error(), "remove old project dir on disk",
+		"error should come from the second-delete branch of deleteOriginals")
+
+	// Global files must be restored to their pre-move contents — the contract
+	// promised by Apply's godoc. Without the tracker.restore() added to the
+	// second-delete branch, these bytes would still reference newOnDiskPath.
+	historyAfter, err := os.ReadFile(claudeHome.HistoryFile())
+	require.NoError(t, err)
+	assert.Equal(t, historyOriginal, historyAfter,
+		"history.jsonl must be restored when the on-disk delete fails")
+
+	settingsAfter, err := os.ReadFile(claudeHome.SettingsFile())
+	require.NoError(t, err)
+	assert.Equal(t, settingsOriginal, settingsAfter,
+		"settings.json must be restored when the on-disk delete fails")
+
+	configAfter, err := os.ReadFile(configFilePath) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Equal(t, configOriginal, configAfter,
+		"user config must be restored when the on-disk delete fails")
+
+	// The executeMove defer removes both newly created paths in reverse order.
+	_, statNewEncodedErr := os.Stat(claudeHome.ProjectDir(newOnDiskPath))
+	assert.True(t, os.IsNotExist(statNewEncodedErr),
+		"new encoded project dir must be torn down by executeMove's defer")
+	_, statNewOnDiskErr := os.Stat(newOnDiskPath)
+	assert.True(t, os.IsNotExist(statNewOnDiskErr),
+		"new on-disk project dir must be torn down by executeMove's defer")
+}
+
 // assertSessionSubdirFilesRewritten walks the session subdirectories under
 // newProjectDir and asserts that every file has had the old project path
 // rewritten to the new project path. Covers <uuid>/subagents/*.jsonl and

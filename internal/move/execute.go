@@ -151,6 +151,10 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 	}
 	if !moveOptions.RefsOnly {
 		if err := os.RemoveAll(moveOptions.OldPath); err != nil {
+			// Encoded dir is already gone; we cannot resurrect it, but restoring
+			// globals keeps them consistent with the old path so the user can
+			// investigate or rerun instead of pointing at a deleted location.
+			tracker.restore()
 			return fmt.Errorf("remove old project dir on disk: %w", err)
 		}
 	}
