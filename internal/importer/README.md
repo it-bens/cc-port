@@ -15,7 +15,7 @@ Not an exporter — the reverse direction lives in `internal/export`. Not a gene
   - `ResolvePlaceholders(content []byte, resolutions map[string]string) []byte` — substitutes every declared `{{KEY}}` in a body.
   - `ValidateResolutions(resolutions map[string]string) error` — syntactic validation of caller-supplied resolutions.
 - **Conflict check**
-  - `CheckConflict(encodedProjectDir string) error` — refuses the import if the encoded target directory already exists.
+  - `CheckConflict(encodedProjectDir string) error` — refuses the import if the encoded target directory already exists, or if its existence cannot be determined (e.g. a permission error on an intermediate component). Only a clean "does not exist" returns `nil`.
 - **Types**
   - `Options` — import configuration: `ArchivePath`, `TargetPath`, `Resolutions`. The struct also carries an unexported `renameHook` used by tests.
 

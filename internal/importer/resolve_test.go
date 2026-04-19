@@ -1,7 +1,10 @@
 package importer_test
 
 import (
+	"io/fs"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -216,5 +219,34 @@ func TestCheckConflict(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
+	})
+
+	t.Run("wraps stat error when existence cannot be determined", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("POSIX search-permission semantics do not apply on Windows")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses POSIX search-permission checks")
+		}
+
+		tempDir := t.TempDir()
+		lockedParent := filepath.Join(tempDir, "locked")
+		require.NoError(t, os.Mkdir(lockedParent, 0o700))
+		// Drop search permission so Stat on a child cannot traverse the parent.
+		require.NoError(t, os.Chmod(lockedParent, 0o000))
+		// Restore the execute bit before t.TempDir cleanup runs (LIFO order).
+		t.Cleanup(func() {
+			_ = os.Chmod(lockedParent, 0o700) //nolint:gosec // G302: restore dir traversal
+		})
+
+		target := filepath.Join(lockedParent, "target")
+
+		err := importer.CheckConflict(target)
+
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "already exists",
+			"must not silently treat a stat error as 'no conflict'")
+		assert.Contains(t, err.Error(), "stat project directory")
+		assert.ErrorIs(t, err, fs.ErrPermission)
 	})
 }

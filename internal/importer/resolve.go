@@ -2,6 +2,7 @@ package importer
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -144,12 +145,19 @@ func scanUpperSnakeTokens(bodies [][]byte) map[string]struct{} {
 	return present
 }
 
-// CheckConflict verifies that a project does not already exist at the target path.
-// Returns an error if the encoded project directory exists.
+// CheckConflict verifies that a project does not already exist at the target
+// path. Returns an error if the encoded project directory exists, or if its
+// existence cannot be determined — e.g. a permission error on an intermediate
+// component. Returning nil requires a clean "does not exist" answer so the
+// "refuse before any write" contract cannot be silently bypassed by a stat
+// error that happens to mask a real collision.
 func CheckConflict(encodedProjectDir string) error {
 	_, err := os.Stat(encodedProjectDir)
 	if err == nil {
 		return fmt.Errorf("project directory %q already exists", encodedProjectDir)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat project directory %q: %w", encodedProjectDir, err)
 	}
 	return nil
 }
