@@ -34,6 +34,6 @@ Not covered — programmer-error inputs that panic:
 
 ## Tests
 
-`CopyDir` is exercised transitively by `internal/move/move_test.go` and `internal/testutil/fixture_test.go`; no dedicated test file.
+`CopyDir` has a dedicated test file `copy_test.go` covering source-directory mode preservation (including the bug case where a `0700` source was previously flattened to `0750`), nested mixed modes, and file mode preservation; it is also exercised transitively by `internal/move/move_test.go` and `internal/testutil/fixture_test.go`.
 
 `ResolveExistingAncestor` has a dedicated test file `paths_test.go` covering: symlink resolution on an existing path, single and multiple missing trailing components preserved, `/` pass-through, broken symlink error, non-ENOENT stat error, and both panic cases (relative input, empty input).
