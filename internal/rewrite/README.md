@@ -20,7 +20,7 @@ Not a file-type aware rewriter — callers pass bytes and get bytes back. JSON /
   - `FindPlaceholderTokens(data []byte) []string` — tamper-defense scan for undeclared `{{UPPER_SNAKE}}` tokens; see `internal/importer/README.md` §Placeholder resolution for the full role.
 - **Atomic rename**
   - `NewSafeRenamePromoter() *SafeRenamePromoter` — constructor for the staged-write promoter used by `import`.
-  - `SafeRenamePromoter` — type; `Promote` and `Rollback` methods drive the atomic-import flow described in `internal/importer/README.md` §Atomic staging.
+  - `SafeRenamePromoter` — type; `StageFile`, `StageDir` register destinations, `Promote` runs the rename chain, `Rollback` reverses completed renames, `SetRenameFunc` injects a test hook. Drives the atomic-import flow described in `internal/importer/README.md` §Atomic staging.
   - `SafeWriteFile(path string, data []byte, permissions os.FileMode) error` — write-then-rename helper for single-file atomic writes.
 
 ## Contracts

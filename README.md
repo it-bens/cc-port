@@ -28,16 +28,16 @@ Full flag reference: `cc-port <subcommand> --help`.
   cc-port move /Users/me/old-project /Users/me/new-project --apply
   ```
 
-- `cc-port export <project-path> <archive.zip>` — produce a portable archive of one project. Use `--all`, `--sessions`, `--memory`, `--history`, `--file-history`, `--config` to select categories; omit all flags for an interactive picker.
+- `cc-port export <project-path> --output <archive.zip>` — produce a portable archive of one project. Use `--all` or individual category flags (`--sessions`, `--memory`, `--history`, `--file-history`, `--config`, `--todos`, `--usage-data`, `--plugins-data`, `--tasks`); omit all flags for an interactive picker.
 
   ```
-  cc-port export /Users/me/project /tmp/project.zip --all
+  cc-port export /Users/me/project --output /tmp/project.zip --all
   ```
 
-- `cc-port export manifest <project-path> <manifest.xml>` — emit only the manifest for review / editing, then feed it back via `--from-manifest` on a subsequent `export` or `import`.
+- `cc-port export manifest <project-path> [--output <manifest.xml>]` — emit only the manifest for review / editing, then feed it back via `--from-manifest` on a subsequent `export` or `import`.
 
   ```
-  cc-port export manifest /Users/me/project /tmp/project.xml
+  cc-port export manifest /Users/me/project --output /tmp/project.xml
   ```
 
 - `cc-port import <archive.zip> <project-path>` — apply an archive to `<project-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`.

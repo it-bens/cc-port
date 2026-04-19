@@ -11,7 +11,7 @@ Not an exporter — the reverse direction lives in `internal/export`. Not a gene
 - **Entry point**
   - `Run(claudeHome *claude.Home, importOptions Options) error` — import an archive end-to-end: wrap in `lock.WithLock`, classify placeholders, pre-resolve staging, stage, promote, roll back on failure.
 - **Placeholder classification**
-  - `ClassifyPlaceholders(...)` — diff the archive's declared placeholders against the caller's resolutions and the bodies' embedded tokens; returns resolved / missing / undeclared sets.
+  - `ClassifyPlaceholders(...)` — diff the archive's declared placeholders against the caller's resolutions and the bodies' embedded tokens; returns `(missing, undeclared []string)` — missing declared keys subject to resolution, and upper-snake tokens in bodies that the manifest never declares.
   - `ResolvePlaceholders(content []byte, resolutions map[string]string) []byte` — substitutes every declared `{{KEY}}` in a body.
   - `ValidateResolutions(resolutions map[string]string) error` — syntactic validation of caller-supplied resolutions.
 - **Conflict check**
@@ -253,9 +253,10 @@ the importer only drives it and surfaces its aggregated error.
   are both reported in one `errors.Join` error by
   `manifest.ApplyCategoryEntries` before any ZIP entry is read.
 - **Unknown ZIP entry prefixes hard-fail.** Any ZIP entry whose path does not
-  match a known prefix (`sessions/`, `memory/`, `history/`, `file-history/`,
-  `config.json`, `todos/`, `usage-data/`, `plugins-data/`, `tasks/`) is
-  rejected before any write.
+  match a known prefix (`sessions/`, `memory/`, `history/history.jsonl`,
+  `file-history/`, `config.json`, `todos/`, `usage-data/session-meta/`,
+  `usage-data/facets/`, `plugins-data/`, `tasks/`) is rejected before any
+  write.
 - **There is no tolerant fallback.** `stageUnknownEntry` was removed. Archives
   from older or modified cc-port versions that carry unrecognised entries are
   refused in full; partial staging does not occur.

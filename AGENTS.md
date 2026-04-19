@@ -9,7 +9,7 @@ See README.md for the project overview and contract index.
   rewrites them (docs/architecture.md §File-history policy (cross-cutting)).
 - Five `~/.claude/` directories beyond the project's encoded dir carry
   per-session state for the project (todos, usage-data/session-meta,
-  usage-data/facets, plugins/data, tasks). All flow through `LocateProject`
+  usage-data/facets, plugins-data, tasks). All flow through `LocateProject`
   and the existing move/export/import paths. See
   [docs/architecture.md §Session-UUID-keyed user-wide data](docs/architecture.md).
 - The five session-keyed directories are enumerated by
@@ -28,6 +28,12 @@ See README.md for the project overview and contract index.
 - All path-substring rewrites route through
   `internal/rewrite.ReplacePathInBytes` — never hand-roll
   `strings.ReplaceAll` on user paths (see `internal/rewrite/README.md`).
+  **Exception (discouraged):** placeholder-token substitution in
+  `internal/importer.ResolvePlaceholders`, where the `{{KEY}}` shape is
+  self-delimiting and boundary-awareness would be actively wrong. Before
+  adding another exception, re-read that godoc and confirm the token
+  shape provides an equivalent self-delimiting guarantee; otherwise, add
+  the rewrite to `internal/rewrite` instead.
 - Mutating commands (`move --apply`, `import`) wrap their work in
   `lock.WithLock` before any write (see `internal/lock/README.md`).
 - Contract docs live in module `README.md` §Contracts. Module

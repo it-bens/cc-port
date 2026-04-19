@@ -95,7 +95,7 @@ func acquire(claudeHome *claude.Home) (*lock, error) {
 	return &lock{file: file}, nil
 }
 
-// WithLock acquires ~/.claude/.cc-port.lock, runs the live-session check,
+// WithLock runs the live-session check, acquires ~/.claude/.cc-port.lock,
 // calls fn with the lock held, and releases the lock regardless of fn's
 // outcome.
 //

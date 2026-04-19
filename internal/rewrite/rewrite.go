@@ -72,8 +72,8 @@ func isExtensionDotAt(data []byte, dotIndex int) bool {
 }
 
 // ReplacePathInBytes replaces occurrences of oldPath with newPath in data,
-// but only when the match is bounded on both sides by a non-path-continuation
-// byte (or by the start/end of the buffer).
+// but only when the match is bounded on the right by a non-path-continuation
+// byte (or by the end of the buffer).
 //
 // This avoids the prefix-collision corruption that plain substring replacement
 // causes: replacing "/a/myproject" inside "/a/myproject-extras" would otherwise

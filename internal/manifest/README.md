@@ -13,7 +13,7 @@ command modules agree on the wire contract through a neutral third party.
   - `Metadata` — root XML element (`<cc-port>`) wrapping `Info` and placeholders.
   - `Info` — export timestamp plus the per-category include list.
   - `Category` — one `<category name="…" included="…"/>` entry.
-  - `Placeholder` — one `<placeholder key="…" original="…" resolvable="…" resolve="…"/>` entry.
+  - `Placeholder` — one `<placeholder key="…" original="…" [resolvable="…"] [resolve="…"]/>` entry. `resolvable` and `resolve` are omitted from the XML when unset (`*bool` nil / empty string).
 - **Category enum table**
   - `CategorySet` — in-memory bool struct (one field per category) used by callers and by `Options.Categories` in `internal/export`.
   - `CategorySpec` — one entry in the enum table: wire name plus `Get`/`Set` accessors onto the matching `CategorySet` field.

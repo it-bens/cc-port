@@ -39,7 +39,8 @@ remediation message:
 - `SelectCategories` (interactive category picker for `export` /
   `export manifest`): refused with a pointer to `--all` or the
   per-category flags (`--sessions`, `--memory`, `--history`,
-  `--file-history`, `--config`).
+  `--file-history`, `--config`, `--todos`, `--usage-data`,
+  `--plugins-data`, `--tasks`).
 - `ResolvePlaceholder` (used by `export` for non-auto-detected path
   suggestions and by `import` for manifest keys with no pre-filled
   `<resolve>`): refused with a pointer to the two-step manifest flow

@@ -37,8 +37,8 @@ Surfaced by cc-port — both paths report malformed lines with their
   malformed line(s) at […]` block in the plan output when any entries
   fail to parse.
 - `cc-port move --apply` prints the same warning to stderr (or to the
-  `move.Options.WarningWriter` supplied by callers) after the rewrite
-  completes. The rewrite still succeeds — malformed lines are preserved
+  `move.Options.WarningWriter` supplied by callers) after `history.jsonl`
+  is rewritten. The rewrite still succeeds — malformed lines are preserved
   verbatim, well-formed lines are rewritten normally.
 
 Not covered — cases cc-port deliberately does not address:

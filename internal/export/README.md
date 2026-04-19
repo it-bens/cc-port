@@ -13,7 +13,7 @@ Not a file-level exporter — this module's unit is one project. Not a path-anon
 - **Path discovery**
   - `DiscoverPaths(content []byte) []string` — find path-like tokens inside a body.
   - `GroupPathPrefixes(paths []string) []string` — collapse overlapping prefixes.
-  - `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion` — propose placeholder mappings for prefixes that are not the project path itself.
+  - `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion` — propose placeholder mappings for all discovered path prefixes: `{{PROJECT_PATH}}` for the project path, `{{HOME}}` for the home path, and `{{UNRESOLVED_N}}` for the rest.
 - **Types**
   - `Options`, `Result`, `PlaceholderSuggestion` — export configuration and outputs. `Options.Categories` is a `manifest.CategorySet`.
 
@@ -32,10 +32,11 @@ and the validator all live in [`internal/manifest`](../manifest/README.md)
 
 Every body written into the archive passes through `applyPlaceholders`, which
 substitutes known path prefixes with `{{KEY}}` tokens before the bytes land in
-the ZIP. This applies to all 9 categories that carry JSON or JSONL content.
-The 4 new session-keyed categories (todos, usage-data, plugins-data, tasks)
-receive the same `applyPlaceholders` pass — the privacy guarantee is
-preserved across all body types.
+the ZIP. This applies to all 8 non-file-history categories.
+The 5 session-keyed zip groups (`todos`, `usage-data/session-meta`,
+`usage-data/facets`, `plugins-data`, `tasks`) receive the same
+`applyPlaceholders` pass — the privacy guarantee is preserved across all body
+types.
 
 The one exception is file-history snapshots: they are archived verbatim with
 no anonymisation pass. See §File-history handling (export) for the opt-out

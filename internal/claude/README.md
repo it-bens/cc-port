@@ -74,13 +74,15 @@ The consumers of this encoding that enforce the "refused on collision" behaviour
 `LocateProject` returns a `ProjectLocations` struct whose fields cover every
 file and directory tied to the project. The fields enumerate:
 
-- `HistoryEntries` — `~/.claude/history.jsonl` lines whose `cwd` matches the
-  project path.
-- `SessionFiles` — `~/.claude/projects/<encoded>/sessions/*.json`.
+- `HistoryEntryCount int` — count of `~/.claude/history.jsonl` lines whose
+  `project` field equals the project path.
+- `SessionFiles` — `~/.claude/sessions/*.json` entries whose JSON `cwd`
+  matches the project path (the sessions directory is user-wide, not
+  per-project).
 - `MemoryFiles` — `~/.claude/projects/<encoded>/memory/` subtree.
-- `TranscriptFiles` — `~/.claude/projects/<encoded>/*.jsonl` transcripts.
-- `SettingsFile` — `~/.claude/settings.json` (global settings; included
-  because it may contain project-keyed blocks).
+- `SessionTranscripts` — `~/.claude/projects/<encoded>/*.jsonl` transcripts.
+- `HasConfigBlock bool` — true when `~/.claude.json` contains a `projects`
+  entry keyed by this project path.
 - `TodoFiles` — `~/.claude/todos/<sid1>-agent-<sid2>.json` where **either**
   UUID is in the project's session set. The filename allows for sub-agent
   spawns; both parent and child session UUIDs receive independent visibility.
@@ -90,8 +92,10 @@ file and directory tied to the project. The fields enumerate:
   session set.
 - `PluginsDataFiles` — `~/.claude/plugins/data/<ns>/<sid>/` subtrees; `<sid>`
   in session set. Plugin namespace `<ns>` is opaque and preserved verbatim.
-- `TaskFiles` — `~/.claude/tasks/<sid>/`; `<sid>` in session set. `.lock` and
-  `.highwatermark` sidecars are runtime-only and excluded at enumerate time.
+- `TaskFiles` — `~/.claude/tasks/<sid>/`; `<sid>` in session set. `.lock`
+  and `.highwatermark` sidecars are present in `TaskFiles` but skipped
+  when iterating via `AllFlatFiles()`; the `SidecarFilter` centralises
+  the policy so only the registry knows which names are runtime-only.
 
 Each session-keyed collector returns empty when its parent directory is absent
 (the directory may not exist if the feature has never been used). This matches
@@ -120,9 +124,10 @@ not open-code the group names:
   exactly once (move replacement counting, export zip layout, import
   dispatch loop) iterate `AllFlatFiles()` instead of special-casing
   each group.
-- `isTaskSidecar` — the only `SidecarFilter` currently populated;
-  matches `.lock` and `.highwatermark` under `tasks/` as the runtime-
-  only files the `tasks` group excludes at enumerate time.
+- Unexported helper `isTaskSidecar` — the only `SidecarFilter` currently
+  populated; matches `.lock` and `.highwatermark` under `tasks/` as the
+  runtime-only files `AllFlatFiles()` skips when iterating the `tasks`
+  group.
 
 Adding a sixth session-keyed group means appending one entry to
 `SessionKeyedGroups` in this package, one index-aligned entry to
