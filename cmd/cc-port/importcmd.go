@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,7 +14,12 @@ import (
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
-var importFromManifest string
+const projectPathKey = "{{PROJECT_PATH}}"
+
+var (
+	importFromManifest string
+	importResolutionKV []string
+)
 
 var importCmd = &cobra.Command{
 	Use:   "import <archive.zip> <target-path>",
@@ -32,16 +38,23 @@ var importCmd = &cobra.Command{
 			return err
 		}
 
-		var resolutions map[string]string
+		flagResolutions, err := parseResolutionFlags(importResolutionKV)
+		if err != nil {
+			return err
+		}
 
+		var resolutions map[string]string
 		if importFromManifest != "" {
 			metadata, err := manifest.ReadManifest(importFromManifest)
 			if err != nil {
 				return fmt.Errorf("read manifest: %w", err)
 			}
 			resolutions = resolutionsFromManifest(metadata, targetPath)
+			for key, value := range flagResolutions {
+				resolutions[key] = value
+			}
 		} else {
-			resolutions, err = promptImportResolutions(archivePath, targetPath)
+			resolutions, err = promptImportResolutions(archivePath, targetPath, flagResolutions)
 			if err != nil {
 				return err
 			}
@@ -99,32 +112,43 @@ func init() {
 		&importFromManifest, "from-manifest", "",
 		"path to a manifest XML file with pre-filled resolutions",
 	)
+	importCmd.Flags().StringArrayVar(
+		&importResolutionKV, "resolution", nil,
+		"resolve a placeholder non-interactively (repeatable; KEY=VALUE, "+
+			"e.g. --resolution '{{HOME}}=/Users/me'). When combined with "+
+			"--from-manifest, flag values win per key.",
+	)
 	importCmd.AddCommand(importManifestCmd)
 	rootCmd.AddCommand(importCmd)
 }
 
-func promptImportResolutions(archivePath, targetPath string) (map[string]string, error) {
+func promptImportResolutions(
+	archivePath, targetPath string,
+	preResolved map[string]string,
+) (map[string]string, error) {
 	metadata, err := manifest.ReadManifestFromZip(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest from zip: %w", err)
 	}
 
-	resolutions := make(map[string]string)
+	resolutions := make(map[string]string, len(metadata.Placeholders))
 
 	for _, placeholder := range metadata.Placeholders {
-		// Pre-fill PROJECT_PATH with targetPath.
-		if placeholder.Key == "{{PROJECT_PATH}}" {
+		if placeholder.Key == projectPathKey {
 			resolutions[placeholder.Key] = targetPath
 			continue
 		}
 
-		// Use the pre-existing resolve value if present.
+		if value, ok := preResolved[placeholder.Key]; ok {
+			resolutions[placeholder.Key] = value
+			continue
+		}
+
 		if placeholder.Resolve != "" {
 			resolutions[placeholder.Key] = placeholder.Resolve
 			continue
 		}
 
-		// Prompt for the remaining ones.
 		resolved, err := ui.ResolvePlaceholder(placeholder.Key, placeholder.Original, "")
 		if err != nil {
 			return nil, err
@@ -138,13 +162,47 @@ func promptImportResolutions(archivePath, targetPath string) (map[string]string,
 func resolutionsFromManifest(metadata *manifest.Metadata, targetPath string) map[string]string {
 	resolutions := make(map[string]string)
 	for _, placeholder := range metadata.Placeholders {
-		if placeholder.Key == "{{PROJECT_PATH}}" {
+		if placeholder.Key == projectPathKey {
 			resolutions[placeholder.Key] = targetPath
 			continue
 		}
 		resolutions[placeholder.Key] = placeholder.Resolve
 	}
 	return resolutions
+}
+
+// parseResolutionFlags turns a list of "KEY=VALUE" CLI flag values into a
+// resolutions map. Split is on the first '='; later '=' characters stay in
+// the value. Empty keys and duplicate keys are rejected. {{PROJECT_PATH}} is
+// refused because importer.Run injects it unconditionally from the target
+// argument — letting a flag override would desync the two.
+func parseResolutionFlags(raw []string) (map[string]string, error) {
+	parsed := make(map[string]string, len(raw))
+	for _, entry := range raw {
+		equalsIndex := strings.IndexByte(entry, '=')
+		if equalsIndex < 0 {
+			return nil, fmt.Errorf(
+				"--resolution %q: expected KEY=VALUE (no '=' found)", entry,
+			)
+		}
+		key := entry[:equalsIndex]
+		value := entry[equalsIndex+1:]
+		if key == "" {
+			return nil, fmt.Errorf("--resolution %q: empty key", entry)
+		}
+		if key == projectPathKey {
+			return nil, fmt.Errorf(
+				"--resolution %s is not allowed: "+
+					"the import target argument supplies this key",
+				projectPathKey,
+			)
+		}
+		if _, duplicate := parsed[key]; duplicate {
+			return nil, fmt.Errorf("--resolution %q: duplicate key", key)
+		}
+		parsed[key] = value
+	}
+	return parsed, nil
 }
 
 func printImportRulesWarnings(claudeHome *claude.Home, targetPath string) {
