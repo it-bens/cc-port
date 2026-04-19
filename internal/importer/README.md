@@ -147,11 +147,13 @@ promote step would fail mid-import with `EXDEV`.
 directory of each final destination through any symlinks before
 forming the temp path, so temp and final are siblings of the
 *resolved* parent and therefore always share a filesystem. The walk
-handles missing trailing components the same way
-`internal/claude/paths.go:ResolveProjectPath` handles nonexistent
-project paths: the longest existing prefix is symlink-resolved, and
-any missing tail is re-attached unchanged so `MkdirAll` creates it on
-the resolved filesystem at stage time.
+is `fsutil.ResolveExistingAncestor` (see
+[`internal/fsutil/README.md`](../fsutil/README.md) §Absolute-path
+contract for `ResolveExistingAncestor`), which
+`claude.ResolveProjectPath` also delegates to: the
+longest existing prefix is symlink-resolved, and any missing tail is
+re-attached unchanged so `MkdirAll` creates it on the resolved
+filesystem at stage time.
 
 `internal/importer/importer.go:checkStagingFilesystems` runs this
 resolution once up front for every destination the importer will

@@ -8,7 +8,7 @@ cc-port/
 ├── internal/
 │   ├── claude/             Claude Code data layout: path encoding, locations, schemas
 │   ├── export/             Export orchestration: ZIP, manifest, path anonymisation
-│   ├── fsutil/             Shared filesystem helper (directory copy)
+│   ├── fsutil/             Shared filesystem helpers: directory copy, path-ancestor resolution
 │   ├── importer/           Import orchestration: placeholder validation, atomic staging
 │   ├── lock/               Advisory lock + live-session refusal
 │   ├── manifest/           metadata.xml wire DTOs + nine-category enum table

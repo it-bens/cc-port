@@ -10,7 +10,7 @@ Not a file-rewriting package — this module produces locations and types; `inte
 
 - **Path encoding**
   - `EncodePath(absPath string) string` — mirror of Claude Code's lossy encoding (`/`, `.`, space → `-`, with leading `-`).
-  - `ResolveProjectPath(path string) (string, error)` — resolves user-supplied paths through symlinks, preserving any non-existent tail.
+  - `ResolveProjectPath(path string) (string, error)` — resolves user-supplied paths through symlinks, preserving any non-existent tail. Delegates to `fsutil.ResolveExistingAncestor` (see [`internal/fsutil/README.md`](../fsutil/README.md)) after calling `filepath.Abs`.
 - **Home**
   - `NewHome(override string) (*Home, error)` — constructs a `~/.claude` root, honouring `--claude-dir`.
   - `Home` — struct; `Dir` and `ConfigFile` fields plus path-deriving methods `ProjectsDir`, `ProjectDir`, `HistoryFile`, `SessionsDir`, `SettingsFile`, `RulesDir`, `FileHistoryDir`.

@@ -14,6 +14,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -42,51 +43,11 @@ const stagingSuffix = ".cc-port-import.tmp"
 // place the sibling temp on one side of the boundary and the rename
 // target on the other, and the promote step would fail with EXDEV.
 func stagingTempPath(finalPath string) (string, error) {
-	resolvedParent, err := resolveExistingAncestor(filepath.Dir(finalPath))
+	resolvedParent, err := fsutil.ResolveExistingAncestor(filepath.Dir(finalPath))
 	if err != nil {
 		return "", fmt.Errorf("resolve staging parent for %q: %w", finalPath, err)
 	}
 	return filepath.Join(resolvedParent, filepath.Base(finalPath)+stagingSuffix), nil
-}
-
-// resolveExistingAncestor walks dir upward to the longest prefix that
-// exists on disk, evaluates symlinks on that prefix, and re-attaches any
-// missing trailing components unchanged. This mirrors the behaviour of
-// claude.ResolveProjectPath but operates on arbitrary directory paths —
-// notably the parents of destinations like ~/.claude/history.jsonl whose
-// final leaf does not yet exist at preflight time.
-func resolveExistingAncestor(dir string) (string, error) {
-	existingPrefix := dir
-	var missingSuffix string
-	for {
-		if _, err := os.Lstat(existingPrefix); err == nil {
-			break
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("stat %q: %w", existingPrefix, err)
-		}
-		if existingPrefix == "/" || existingPrefix == "." {
-			break
-		}
-		parent, child := filepath.Split(existingPrefix)
-		existingPrefix = strings.TrimSuffix(parent, "/")
-		if existingPrefix == "" {
-			existingPrefix = "/"
-		}
-		if missingSuffix == "" {
-			missingSuffix = child
-		} else {
-			missingSuffix = filepath.Join(child, missingSuffix)
-		}
-	}
-
-	resolvedPrefix, err := filepath.EvalSymlinks(existingPrefix)
-	if err != nil {
-		return "", fmt.Errorf("evaluate symlinks for %q: %w", existingPrefix, err)
-	}
-	if missingSuffix == "" {
-		return resolvedPrefix, nil
-	}
-	return filepath.Join(resolvedPrefix, missingSuffix), nil
 }
 
 // checkStagingFilesystems resolves the parent directory of every final

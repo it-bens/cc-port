@@ -6,7 +6,7 @@ Claude Code data layout: path encoding, project locations, schemas. See `README.
 
 - `EncodePath` mirrors Claude Code's lossy encoding exactly — do not normalise unicode or casefold; the encoded name must byte-for-byte match what Claude Code writes (README §Path encoding).
 - Never try to decode an encoded directory name back to a real path; the mapping is many-to-one. Read `cwd` from a session JSON or a `~/.claude.json` project key instead (README §Path encoding §Not covered).
-- `ResolveProjectPath` preserves any non-existent trailing components — don't call `filepath.EvalSymlinks` directly; use the in-package helper so `MkdirAll` creates the tail on the resolved filesystem (README §Path encoding).
+- `ResolveProjectPath` preserves any non-existent trailing components by delegating to `fsutil.ResolveExistingAncestor`; don't call `filepath.EvalSymlinks` directly on user paths (README §Path encoding; see `internal/fsutil/README.md` §Absolute-path contract for `ResolveExistingAncestor`).
 - New session-keyed location collectors (`collectTodos`, `collectUsageData`,
   `collectPluginsData`, `collectTaskFiles`) return empty when their parent
   directory is absent — matches `collectMemoryFiles` (README §Project

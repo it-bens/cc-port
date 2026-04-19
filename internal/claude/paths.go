@@ -1,11 +1,12 @@
 package claude
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/it-bens/cc-port/internal/fsutil"
 )
 
 // EncodePath converts an absolute, symlink-resolved filesystem path into the
@@ -30,42 +31,7 @@ func ResolveProjectPath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("absolute path for %q: %w", path, err)
 	}
-
-	// Walk up from the full path to the longest prefix that exists on disk,
-	// so nonexistent trailing components (e.g. a move destination that has
-	// not been created yet) do not prevent symlink resolution of the parent.
-	existingPrefix := absPath
-	var missingSuffix string
-	for {
-		if _, err := os.Lstat(existingPrefix); err == nil {
-			break
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("stat %q: %w", existingPrefix, err)
-		}
-		if existingPrefix == "/" {
-			break
-		}
-		parent, child := filepath.Split(existingPrefix)
-		existingPrefix = strings.TrimSuffix(parent, "/")
-		if existingPrefix == "" {
-			existingPrefix = "/"
-		}
-		if missingSuffix == "" {
-			missingSuffix = child
-		} else {
-			missingSuffix = filepath.Join(child, missingSuffix)
-		}
-	}
-
-	resolvedPrefix, err := filepath.EvalSymlinks(existingPrefix)
-	if err != nil {
-		return "", fmt.Errorf("resolve symlinks for %q: %w", existingPrefix, err)
-	}
-
-	if missingSuffix == "" {
-		return resolvedPrefix, nil
-	}
-	return filepath.Join(resolvedPrefix, missingSuffix), nil
+	return fsutil.ResolveExistingAncestor(absPath)
 }
 
 // Home represents the root of Claude Code's data storage.
@@ -74,15 +40,25 @@ type Home struct {
 	ConfigFile string // Path to the ~/.claude.json file.
 }
 
-// NewHome creates a Home. If override is empty, it uses the
-// default locations derived from the user's home directory.
-// If override is provided, it is used as the Dir and ConfigFile is derived
-// as Dir + ".json".
+// NewHome creates a Home. If override is empty, it uses the default
+// locations derived from the user's home directory. If override is
+// provided, it is normalised to an absolute path via filepath.Abs and
+// used as the Dir; ConfigFile is derived as Dir + ".json".
+//
+// Normalisation is required because downstream staging preflight
+// (internal/importer/importer.go:stagingTempPath) feeds
+// filepath.Dir(<derived path>) into fsutil.ResolveExistingAncestor,
+// which panics on relative input. Converting operational input here
+// keeps the panic path reserved for real programmer errors.
 func NewHome(override string) (*Home, error) {
 	if override != "" {
+		absOverride, err := filepath.Abs(override)
+		if err != nil {
+			return nil, fmt.Errorf("absolute path for claude home override %q: %w", override, err)
+		}
 		return &Home{
-			Dir:        override,
-			ConfigFile: override + ".json",
+			Dir:        absOverride,
+			ConfigFile: absOverride + ".json",
 		}, nil
 	}
 

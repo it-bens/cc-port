@@ -77,6 +77,18 @@ func TestNewHome_Override(t *testing.T) {
 	assert.Equal(t, "/tmp/test-claude.json", home.ConfigFile)
 }
 
+func TestNewHome_OverrideNormalisesRelative(t *testing.T) {
+	workingDir, err := os.Getwd()
+	require.NoError(t, err)
+
+	home, err := claude.NewHome("relative/subdir")
+	require.NoError(t, err)
+
+	assert.True(t, filepath.IsAbs(home.Dir), "Dir must be absolute, got %q", home.Dir)
+	assert.Equal(t, filepath.Join(workingDir, "relative/subdir"), home.Dir)
+	assert.Equal(t, filepath.Join(workingDir, "relative/subdir")+".json", home.ConfigFile)
+}
+
 func TestHome_ProjectDir(t *testing.T) {
 	home := claude.Home{
 		Dir:        "/home/user/.claude",
@@ -107,18 +119,6 @@ func TestResolveProjectPath(t *testing.T) {
 		assert.Equal(t, realProjectDir, resolved)
 	})
 
-	t.Run("resolves symlink in parent when leaf does not exist", func(t *testing.T) {
-		resolved, err := claude.ResolveProjectPath(filepath.Join(linkDir, "new-project"))
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(realTempDir, "real", "new-project"), resolved)
-	})
-
-	t.Run("preserves multiple missing trailing components", func(t *testing.T) {
-		resolved, err := claude.ResolveProjectPath(filepath.Join(linkDir, "a", "b", "c"))
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(realTempDir, "real", "a", "b", "c"), resolved)
-	})
-
 	t.Run("returns absolute form of relative path", func(t *testing.T) {
 		workingDir, err := os.Getwd()
 		require.NoError(t, err)
@@ -128,12 +128,6 @@ func TestResolveProjectPath(t *testing.T) {
 		resolved, err := claude.ResolveProjectPath("nonexistent-rel-path")
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(realWorkingDir, "nonexistent-rel-path"), resolved)
-	})
-
-	t.Run("fully existing path without symlinks is unchanged", func(t *testing.T) {
-		resolved, err := claude.ResolveProjectPath(realProjectDir)
-		require.NoError(t, err)
-		assert.Equal(t, realProjectDir, resolved)
 	})
 }
 
