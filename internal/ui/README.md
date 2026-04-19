@@ -10,7 +10,7 @@ Not a general UI layer — the only prompts this package exposes are the three l
 
 - **Prompt entry points**
   - `SelectCategories() (manifest.CategorySet, error)` — interactive category picker for `export` / `export manifest`.
-  - `ResolvePlaceholder(key, original, autoValue string) (string, error)` — resolves a single manifest placeholder at `export` manifest time or at `import` time.
+  - `ResolvePlaceholder(key, original, autoValue string) (string, error)` — prompts for one manifest placeholder and returns the user's input verbatim. The prompt does not validate; callers interpret the empty string (`import` rejects it via `importer.ValidateResolutions`; `export` marks the placeholder `Resolvable: false`).
   - `ConfirmApply(description string) (bool, error)` — yes/no confirmation scaffold; no caller wires it today, retained for future apply-time gates.
 
 ## Contracts

@@ -82,7 +82,12 @@ func SelectCategories() (manifest.CategorySet, error) {
 	return categories, nil
 }
 
-// ResolvePlaceholder prompts the user to resolve a single placeholder.
+// ResolvePlaceholder prompts the user to resolve a single manifest
+// placeholder. The returned value is the user's input verbatim — the prompt
+// itself does not validate. Callers interpret the empty string:
+// `import` rejects it downstream via `importer.ValidateResolutions`;
+// `export` stores it with `Resolvable: false` so the placeholder stays
+// symbolic on disk.
 func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 	if err := requireTTY(
 		fmt.Sprintf(
@@ -105,7 +110,7 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 			huh.NewInput().
 				Title(title).
 				Description(description).
-				Placeholder("Enter path or press Enter to skip").
+				Placeholder("Enter absolute path").
 				Value(&resolvedValue),
 		),
 	)
