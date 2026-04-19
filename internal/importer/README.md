@@ -9,7 +9,7 @@ Not an exporter — the reverse direction lives in `internal/export`. Not a gene
 ## Public API
 
 - **Entry point**
-  - `Run(claudeHome *claude.Home, importOptions Options) error` — import an archive end-to-end: acquire lock, classify placeholders, pre-resolve staging, stage, promote, roll back on failure.
+  - `Run(claudeHome *claude.Home, importOptions Options) error` — import an archive end-to-end: wrap in `lock.WithLock`, classify placeholders, pre-resolve staging, stage, promote, roll back on failure.
 - **Placeholder classification**
   - `ClassifyPlaceholders(...)` — diff the archive's declared placeholders against the caller's resolutions and the bodies' embedded tokens; returns resolved / missing / undeclared sets.
   - `ResolvePlaceholders(content []byte, resolutions map[string]string) []byte` — substitutes every declared `{{KEY}}` in a body.

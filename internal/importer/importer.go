@@ -142,7 +142,8 @@ type archiveEntry struct {
 
 // Run imports a cc-port ZIP archive into claudeHome. The pipeline is:
 //
-//  1. Acquire the claudeHome lock and perform conflict/TTY preflight.
+//  1. Acquire the claudeHome lock (via lock.WithLock) and perform
+//     conflict/TTY preflight.
 //  2. Read every non-metadata ZIP entry into memory.
 //  3. Resolve the manifest's placeholder classification against the caller's
 //     resolutions; refuse before any write if the archive would leave
@@ -154,54 +155,51 @@ type archiveEntry struct {
 //     promote failure, the promoter rolls back every already-promoted entry
 //     to its pre-import state.
 func Run(claudeHome *claude.Home, importOptions Options) error {
-	lockHandle, err := lock.Acquire(claudeHome)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lockHandle.Release() }()
-
-	if err := ValidateResolutions(importOptions.Resolutions); err != nil {
-		return fmt.Errorf("validate resolutions: %w", err)
-	}
-
-	encodedProjectDir := claudeHome.ProjectDir(importOptions.TargetPath)
-	if err := CheckConflict(encodedProjectDir); err != nil {
-		return fmt.Errorf("conflict check: %w", err)
-	}
-
-	if err := checkStagingFilesystems(claudeHome, encodedProjectDir); err != nil {
-		return err
-	}
-
-	entries, metadata, err := loadArchive(importOptions.ArchivePath)
-	if err != nil {
-		return err
-	}
-
-	if _, err := manifest.ApplyCategoryEntries(metadata.Export.Categories); err != nil {
-		return fmt.Errorf("manifest categories: %w", err)
-	}
-
-	resolutions := withProjectPath(importOptions.Resolutions, importOptions.TargetPath)
-
-	if err := runPreflight(entries, metadata, resolutions); err != nil {
-		return err
-	}
-
-	resolveEntryContents(entries, resolutions)
-
-	plan, err := buildImportPlan(claudeHome, importOptions.TargetPath, encodedProjectDir, entries)
-	if err != nil {
-		// Clean up whatever temp paths the plan managed to create before the
-		// error. buildImportPlan always returns a non-nil plan (including on
-		// early failures), but guard explicitly so static analysis is happy.
-		if plan != nil {
-			_ = plan.cleanupTemps()
+	return lock.WithLock(claudeHome, func() error {
+		if err := ValidateResolutions(importOptions.Resolutions); err != nil {
+			return fmt.Errorf("validate resolutions: %w", err)
 		}
-		return err
-	}
 
-	return promotePlan(plan, importOptions.renameHook)
+		encodedProjectDir := claudeHome.ProjectDir(importOptions.TargetPath)
+		if err := CheckConflict(encodedProjectDir); err != nil {
+			return fmt.Errorf("conflict check: %w", err)
+		}
+
+		if err := checkStagingFilesystems(claudeHome, encodedProjectDir); err != nil {
+			return err
+		}
+
+		entries, metadata, err := loadArchive(importOptions.ArchivePath)
+		if err != nil {
+			return err
+		}
+
+		if _, err := manifest.ApplyCategoryEntries(metadata.Export.Categories); err != nil {
+			return fmt.Errorf("manifest categories: %w", err)
+		}
+
+		resolutions := withProjectPath(importOptions.Resolutions, importOptions.TargetPath)
+
+		if err := runPreflight(entries, metadata, resolutions); err != nil {
+			return err
+		}
+
+		resolveEntryContents(entries, resolutions)
+
+		plan, err := buildImportPlan(claudeHome, importOptions.TargetPath, encodedProjectDir, entries)
+		if err != nil {
+			// Clean up whatever temp paths the plan managed to create before
+			// the error. buildImportPlan always returns a non-nil plan
+			// (including on early failures), but guard explicitly so static
+			// analysis is happy.
+			if plan != nil {
+				_ = plan.cleanupTemps()
+			}
+			return err
+		}
+
+		return promotePlan(plan, importOptions.renameHook)
+	})
 }
 
 func loadArchive(archivePath string) ([]archiveEntry, *manifest.Metadata, error) {

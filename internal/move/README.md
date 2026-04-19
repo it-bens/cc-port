@@ -4,7 +4,7 @@
 
 Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`), applies it with copy-verify-delete (`Apply`), emits warnings for rules files and malformed history entries, and preserves file-history snapshots verbatim.
 
-Not a cross-project operation — one invocation targets exactly one `(oldPath → newPath)` pair. Batch moves are expressed as repeated `move --apply` calls with a lock acquired per call.
+Not a cross-project operation — one invocation targets exactly one `(oldPath → newPath)` pair. Batch moves are expressed as repeated `move --apply` calls, each wrapped in `lock.WithLock`.
 
 ## Public API
 

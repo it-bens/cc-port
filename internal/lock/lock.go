@@ -1,8 +1,10 @@
 // Package lock guards ~/.claude against concurrent cc-port runs and live
 // Claude Code sessions.
 //
-// Release MUST be called on every exit path: the kernel drops the flock at
-// process exit, but callers should Close explicitly for deterministic cleanup.
+// The only public entry point is WithLock. The underlying acquire/release
+// helpers are deliberately unexported so the lock-first contract for
+// mutating commands is structural (a new caller cannot forget to wrap their
+// body) rather than conventional.
 package lock
 
 import (
@@ -21,34 +23,44 @@ import (
 // the Claude Code home directory.
 const LockFileName = ".cc-port.lock"
 
-// Lock is an acquired exclusive advisory lock over a Claude Code home
-// directory. The zero value is not usable; obtain one via Acquire.
-type Lock struct {
+// closeLockFile is the function release uses to close the lock file. Tests
+// swap it to simulate a release-time failure; production always uses
+// (*os.File).Close.
+var closeLockFile = (*os.File).Close
+
+// lock is an acquired exclusive advisory lock over a Claude Code home
+// directory. The zero value is not usable; obtain one via acquire. The type
+// is deliberately unexported so callers cannot take the handle outside the
+// lifecycle WithLock owns.
+type lock struct {
 	file *os.File
 }
 
-// Release closes the backing file descriptor, which releases the flock.
+// release closes the backing file descriptor, which releases the flock.
 // Subsequent calls are no-ops.
-func (lockHandle *Lock) Release() error {
+func (lockHandle *lock) release() error {
 	if lockHandle == nil || lockHandle.file == nil {
 		return nil
 	}
-	err := lockHandle.file.Close()
+	err := closeLockFile(lockHandle.file)
 	lockHandle.file = nil
 	return err
 }
 
-// Acquire verifies that no concurrent cc-port invocation or live Claude Code
-// session is writing to claudeHome, then takes an exclusive advisory lock
-// over it.
+// acquire verifies that no concurrent cc-port invocation or live Claude
+// Code session is writing to claudeHome, then takes an exclusive advisory
+// lock over it.
 //
 // Any ~/.claude/sessions/*.json entry whose PID is alive on the host causes
-// Acquire to fail without taking the lock. A second cc-port holding the
-// advisory lock likewise causes Acquire to fail. The kernel releases the
+// acquire to fail without taking the lock. A second cc-port holding the
+// advisory lock likewise causes acquire to fail. The kernel releases the
 // lock when the owning process exits.
 //
-// Callers MUST Release the returned Lock on every exit path.
-func Acquire(claudeHome *claude.Home) (*Lock, error) {
+// acquire is unexported on purpose: callers go through WithLock, which
+// guarantees release runs on every exit path. Exporting acquire would let a
+// future mutating command skip the release and leak the lock until process
+// exit, reintroducing the class of bug WithLock exists to prevent.
+func acquire(claudeHome *claude.Home) (*lock, error) {
 	activeSessions, err := findActiveSessions(claudeHome)
 	if err != nil {
 		return nil, fmt.Errorf("scan active sessions: %w", err)
@@ -80,12 +92,38 @@ func Acquire(claudeHome *claude.Home) (*Lock, error) {
 		return nil, fmt.Errorf("acquire cc-port lock: %w", err)
 	}
 
-	return &Lock{file: file}, nil
+	return &lock{file: file}, nil
+}
+
+// WithLock acquires ~/.claude/.cc-port.lock, runs the live-session check,
+// calls fn with the lock held, and releases the lock regardless of fn's
+// outcome.
+//
+// Error precedence:
+//   - If acquire fails (contention or live-session abort), the error is
+//     returned verbatim and fn is not invoked.
+//   - If fn returns a non-nil error, that error is returned; release still
+//     runs, but its error is dropped on this path because the caller's
+//     operational error takes precedence over lock-cleanup noise.
+//   - If fn returns nil, release's error (if any) surfaces. Earlier
+//     defer-based callers silently swallowed this error; it is now
+//     observable on the success path.
+func WithLock(claudeHome *claude.Home, fn func() error) error {
+	lockHandle, err := acquire(claudeHome)
+	if err != nil {
+		return err
+	}
+	fnErr := fn()
+	releaseErr := lockHandle.release()
+	if fnErr != nil {
+		return fnErr
+	}
+	return releaseErr
 }
 
 // findActiveSessions returns one descriptor per ~/.claude/sessions/*.json
-// file whose recorded PID is alive on the host. Each descriptor has the form
-// "pid <pid> cwd <cwd>" so the abort message is actionable.
+// file whose recorded PID is alive on the host. Each descriptor has the
+// form "pid <pid> cwd <cwd>" so the abort message is actionable.
 func findActiveSessions(claudeHome *claude.Home) ([]string, error) {
 	sessionsDir := claudeHome.SessionsDir()
 	entries, err := os.ReadDir(sessionsDir)
@@ -123,9 +161,9 @@ func findActiveSessions(claudeHome *claude.Home) ([]string, error) {
 }
 
 // processAlive reports whether a process with the given PID is currently
-// running on the host. Both "exists and signalable" and "exists but owned by
-// another user" count as alive; only "no such process" counts as dead. The
-// caller supplies a positive PID.
+// running on the host. Both "exists and signalable" and "exists but owned
+// by another user" count as alive; only "no such process" counts as dead.
+// The caller supplies a positive PID.
 func processAlive(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {

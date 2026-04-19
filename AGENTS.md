@@ -26,9 +26,8 @@ See README.md for the project overview and contract index.
 - All path-substring rewrites route through
   `internal/rewrite.ReplacePathInBytes` — never hand-roll
   `strings.ReplaceAll` on user paths (see `internal/rewrite/README.md`).
-- Mutating commands (`move --apply`, `import`) acquire
-  `~/.claude/.cc-port.lock` + run the live-session check before any
-  write (see `internal/lock/README.md`).
+- Mutating commands (`move --apply`, `import`) wrap their work in
+  `lock.WithLock` before any write (see `internal/lock/README.md`).
 - Contract docs live in module `README.md` §Contracts. Module
   `AGENTS.md` files are pointer-only — if you catch yourself explaining
   *why* in an AGENTS.md, move it to the README.

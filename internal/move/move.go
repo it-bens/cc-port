@@ -252,34 +252,30 @@ func countSessionKeyedReplacements(plan *Plan, locations *claude.ProjectLocation
 	return nil
 }
 
-// Apply performs the project move. It uses a copy-verify-delete strategy so that
-// originals are only removed after all new data is successfully created.
+// Apply performs the project move. It uses a copy-verify-delete strategy so
+// that originals are only removed after all new data is successfully created.
 //
-// On any failure, all newly created paths are removed and the originals remain
-// untouched.
+// On any failure, all newly created paths are removed and the originals
+// remain untouched.
 //
-// Before any work, Apply acquires an exclusive advisory lock over claudeHome
-// and aborts if a Claude Code session is currently live or if another
-// cc-port invocation is already operating on the same directory.
+// Apply wraps its body in lock.WithLock, which acquires the advisory lock
+// over claudeHome and aborts if a Claude Code session is currently live or
+// if another cc-port invocation is already operating on the same directory.
 func Apply(claudeHome *claude.Home, moveOptions Options) error {
-	lockHandle, err := lock.Acquire(claudeHome)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lockHandle.Release() }()
+	return lock.WithLock(claudeHome, func() error {
+		if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
+			return err
+		}
 
-	if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
-		return err
-	}
+		locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
+		if err != nil {
+			return fmt.Errorf("locate project: %w", err)
+		}
 
-	locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
-	if err != nil {
-		return fmt.Errorf("locate project: %w", err)
-	}
-
-	oldProjectDir := claudeHome.ProjectDir(moveOptions.OldPath)
-	newProjectDir := claudeHome.ProjectDir(moveOptions.NewPath)
-	return executeMove(claudeHome, locations, oldProjectDir, newProjectDir, moveOptions)
+		oldProjectDir := claudeHome.ProjectDir(moveOptions.OldPath)
+		newProjectDir := claudeHome.ProjectDir(moveOptions.NewPath)
+		return executeMove(claudeHome, locations, oldProjectDir, newProjectDir, moveOptions)
+	})
 }
 
 // executeMove performs the copy-verify-delete sequence on disk after the

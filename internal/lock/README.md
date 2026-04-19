@@ -8,20 +8,20 @@ Not a general mutex — the lock scope is the whole `~/.claude` tree, and the li
 
 ## Public API
 
-- `Acquire(claudeHome *claude.Home) (*Lock, error)` — acquires the lock and runs the live-session check; returns a handle whose `Release` must be deferred by the caller.
-- `Lock` — type; exposes `Release() error`.
+- `WithLock(claudeHome *claude.Home, fn func() error) error` — the sole lock-guarded entry point. Acquires `~/.claude/.cc-port.lock`, runs the live-session check, calls `fn` with the lock held, and releases the lock regardless of `fn`'s outcome. Returns `fn`'s error when non-nil; otherwise returns any error from releasing the lock. Acquire errors (live-session abort, contention) are returned verbatim without invoking `fn`.
 - `LockFileName` — constant; the name (`.cc-port.lock`) of the advisory-lock file cc-port creates inside the Claude Code home directory.
 
 ## Contracts
 
 ### Concurrency guard
 
-Before mutating shared files under `~/.claude/`, cc-port acquires an
-exclusive advisory lock on `~/.claude/.cc-port.lock` and scans
-`~/.claude/sessions/*.json` for entries whose recorded `pid` is alive on
-the host. If either check finds something, the invocation aborts before
-any files are touched. The kernel releases the lock when cc-port exits,
-so a crash does not leave a stale block on the next invocation.
+Before mutating shared files under `~/.claude/`, mutating commands wrap
+their work in `lock.WithLock`, which acquires an exclusive advisory lock
+on `~/.claude/.cc-port.lock` and scans `~/.claude/sessions/*.json` for
+entries whose recorded `pid` is alive on the host. If either check finds
+something, the invocation aborts before any files are touched. The
+kernel releases the lock when cc-port exits, so a crash does not leave a
+stale block on the next invocation.
 
 Guarded commands — these take the lock and run the live-session check:
 
@@ -43,9 +43,9 @@ without locking or session detection:
 
 Called by:
 
-- `internal/move/README.md` §Malformed history entries preserved — both `Apply` paths acquire the lock before any write.
-- `internal/importer/README.md` §Import contract — `importer.Run` acquires the lock before reading the archive.
+- `internal/move/README.md` §Apply contract — `move.Apply` wraps its body in `lock.WithLock`.
+- `internal/importer/README.md` §Import contract — `importer.Run` wraps its body in `lock.WithLock`.
 
 ## Tests
 
-Unit tests in `lock_test.go`. Coverage: acquire with no live sessions, acquire when a session PID is dead, abort when a session PID is alive, abort when another cc-port process holds the lock, acquire after a previous release, release idempotency.
+Unit tests in `lock_test.go` (`package lock` — same-package access to the unexported `acquire`/`release`/`lock`). Coverage: acquire with no live sessions, acquire when a session PID is dead, abort when a session PID is alive, abort when another cc-port process holds the lock, acquire after a previous release, release idempotency, WithLock calls fn with the lock held, WithLock releases on fn success, WithLock releases on fn error, WithLock propagates acquire errors, WithLock returns fn's error in preference to release's error.
