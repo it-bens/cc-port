@@ -13,7 +13,7 @@ Not a file-rewriting package — this module produces locations and types; `inte
   - `ResolveProjectPath(path string) (string, error)` — resolves user-supplied paths through symlinks, preserving any non-existent tail. Delegates to `fsutil.ResolveExistingAncestor` (see [`internal/fsutil/README.md`](../fsutil/README.md)) after calling `filepath.Abs`.
 - **Home**
   - `NewHome(override string) (*Home, error)` — constructs a `~/.claude` root, honouring `--claude-dir`.
-  - `Home` — struct; `Dir` and `ConfigFile` fields plus path-deriving methods `ProjectsDir`, `ProjectDir`, `HistoryFile`, `SessionsDir`, `SettingsFile`, `RulesDir`, `FileHistoryDir`.
+  - `Home` — struct; `Dir` and `ConfigFile` fields plus path-deriving methods `ProjectsDir`, `ProjectDir`, `HistoryFile`, `SessionsDir`, `SettingsFile`, `RulesDir`, `FileHistoryDir`, `TodosDir`, `UsageDataDir`, `PluginsDataDir`, `TasksDir`.
 - **Project enumeration**
   - `LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, error)` — returns every file tied to a project.
   - `ProjectLocations` — struct holding the set.

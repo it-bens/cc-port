@@ -16,6 +16,7 @@ cc-port/
 │   ├── rewrite/            Byte-level rewrite primitives + SafeRenamePromoter
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
 │   ├── testutil/           Test fixture helper
+│   ├── transport/          ZIP layout registry for session-keyed groups
 │   └── ui/                 Interactive prompts (charm.land/huh v2)
 ├── integration_test.go     End-to-end CLI tests
 └── testdata/dotclaude/     Minimal ~/.claude fixture for tests

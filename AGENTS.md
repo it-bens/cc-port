@@ -14,9 +14,11 @@ See README.md for the project overview and contract index.
   [docs/architecture.md §Session-UUID-keyed user-wide data](docs/architecture.md).
 - The five session-keyed directories are enumerated by
   `claude.SessionKeyedGroups`; archive layout lives in
-  `transport.SessionKeyedTargets`. Adding a sixth group means editing
-  both slices plus `move.planCategories` — the alignment test in
-  `internal/transport` catches drift.
+  `transport.SessionKeyedTargets`. Adding a sixth group means appending
+  one entry to each slice — `move.planCategories` is derived from
+  `claude.SessionKeyedGroups` at package init, so it picks the new
+  entry up for free. The alignment test in `internal/transport`
+  catches drift between the two slices.
 - The nine export categories live in one place: `manifest.AllCategories`.
   `manifest.BuildCategoryEntries` writes the `metadata.xml` list and
   `manifest.ApplyCategoryEntries` is the only path that validates a read

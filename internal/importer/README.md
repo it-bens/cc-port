@@ -157,16 +157,18 @@ filesystem at stage time.
 
 `internal/importer/importer.go:checkStagingFilesystems` runs this
 resolution once up front for every destination the importer will
-touch (the encoded project directory, `history.jsonl`,
-`.claude.json`, and the file-history base) and aggregates any
-failures into a single error before the archive is read or any temp
-is written. This turns an obscure mid-promote rename failure into a
-clear "resolve staging parent for X" message that fires before the
-import has touched anything.
+touch — the encoded project directory, `history.jsonl`,
+`.claude.json`, the file-history base, and the five session-keyed
+bases (`todos/`, `usage-data/session-meta/`, `usage-data/facets/`,
+`plugins/data/`, `tasks/`) — and aggregates any failures into a
+single error before the archive is read or any temp is written. This
+turns an obscure mid-promote rename failure into a clear "resolve
+staging parent for X" message that fires before the import has
+touched anything.
 
 Handled — layouts where promotion stays atomic:
 
-- All four destinations on the same filesystem (the common macOS and
+- All destinations on the same filesystem (the common macOS and
   Linux layout with everything under the home directory).
 - Any subset of destinations whose *parent directory* is a symlink
   crossing a filesystem boundary (e.g. `~/.claude/file-history`
