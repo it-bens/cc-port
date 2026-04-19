@@ -45,7 +45,8 @@ CLAUDE.local.md
 AGENTS.local.md
 
 # Claude Code local config
-.claude/
+.claude/*
+!.claude/skills/
 
 # Go build artifacts
 /cc-port
