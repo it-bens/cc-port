@@ -6,7 +6,7 @@ Small shared filesystem helpers used across cc-port: recursive directory copy, a
 
 ## Public API
 
-- `CopyDir(source, destination string) error` — recursively copy a directory tree, preserving file permissions. Returns an error if any entry cannot be copied.
+- `CopyDir(source, destination string) error` — recursively copy a directory tree, preserving file and directory permissions. Returns an error if any entry cannot be copied.
 - `ResolveExistingAncestor(absDir string) (string, error)` — walk `absDir` upward to the longest prefix that exists on disk, run `filepath.EvalSymlinks` on that prefix, and re-attach any missing trailing components unchanged. Requires an absolute path; see §Contracts.
 
 ## Contracts
