@@ -54,7 +54,7 @@ the relevant module:
 - [`internal/move/README.md`](../internal/move/README.md) §Apply contract — copy
   + rewrite + tracker rollback, with `tasks/.lock` and `tasks/.highwatermark`
   excluded.
-- [`internal/export/README.md`](../internal/export/README.md) §Import contract
+- [`internal/export/README.md`](../internal/export/README.md) §Session-keyed zip layout
   — opt-in via `--todos`, `--usage-data`, `--plugins-data`, `--tasks`, included
   in `--all`; bodies pass through `applyPlaceholders`.
 - [`internal/importer/README.md`](../internal/importer/README.md) §Atomic

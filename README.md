@@ -40,7 +40,7 @@ Full flag reference: `cc-port <subcommand> --help`.
   cc-port export manifest /Users/me/project --output /tmp/project.xml
   ```
 
-- `cc-port import <archive.zip> <project-path>` — apply an archive to `<project-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`.
+- `cc-port import <archive.zip> <target-path>` — apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`.
 
   ```
   cc-port import /tmp/project.zip /Users/teammate/project

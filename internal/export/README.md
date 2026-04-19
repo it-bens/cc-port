@@ -32,11 +32,10 @@ and the validator all live in [`internal/manifest`](../manifest/README.md)
 
 Every body written into the archive passes through `applyPlaceholders`, which
 substitutes known path prefixes with `{{KEY}}` tokens before the bytes land in
-the ZIP. This applies to all 8 non-file-history categories.
-The 5 session-keyed zip groups (`todos`, `usage-data/session-meta`,
-`usage-data/facets`, `plugins-data`, `tasks`) receive the same
-`applyPlaceholders` pass — the privacy guarantee is preserved across all body
-types.
+the ZIP. Every non-file-history category receives the pass, including each of
+the session-keyed zip groups (`todos`, `usage-data/session-meta`,
+`usage-data/facets`, `plugins-data`, `tasks`) — the privacy guarantee is
+preserved across all body types.
 
 The one exception is file-history snapshots: they are archived verbatim with
 no anonymisation pass. See §File-history handling (export) for the opt-out

@@ -22,13 +22,17 @@ the project (e.g. `CLAUDE.md` at the project root), not in the global
 rules directory. An in-place rewrite under `~/.claude/rules/` would
 silently edit content the user likely wants reviewed by hand.
 
-Scanned but not rewritten — `move` surfaces these so the user can edit
-them manually:
+Handled — `move` surfaces matches so the user can edit them manually:
 
 - `cc-port move` (apply or dry-run) runs `internal/scan/rules.go:Rules`
   over every `.md` file in `~/.claude/rules/` and reports each line that
   contains the old project path as a `Warning` alongside the rest of the
-  plan output. The files on disk are not modified.
+  plan output. The files on disk are not modified; one `Warning` is
+  emitted per matched line, not per matched path.
+
+Refused — nothing: this package is read-only by contract, so no inputs
+are rejected. A missing rules directory returns `(nil, nil)`; a non-`.md`
+or subdirectory entry is skipped silently.
 
 Not covered — cases cc-port does not address:
 

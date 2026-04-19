@@ -74,6 +74,8 @@ The consumers of this encoding that enforce the "refused on collision" behaviour
 `LocateProject` returns a `ProjectLocations` struct whose fields cover every
 file and directory tied to the project. The fields enumerate:
 
+- `ProjectDir` — the encoded `~/.claude/projects/<encoded>/` path this
+  `ProjectLocations` was built for.
 - `HistoryEntryCount int` — count of `~/.claude/history.jsonl` lines whose
   `project` field equals the project path.
 - `SessionFiles` — `~/.claude/sessions/*.json` entries whose JSON `cwd`
@@ -81,6 +83,10 @@ file and directory tied to the project. The fields enumerate:
   per-project).
 - `MemoryFiles` — `~/.claude/projects/<encoded>/memory/` subtree.
 - `SessionTranscripts` — `~/.claude/projects/<encoded>/*.jsonl` transcripts.
+- `SessionSubdirs` — `~/.claude/projects/<encoded>/<session-uuid>/`
+  per-session subdirectories discovered under the project dir.
+- `FileHistoryDirs` — `~/.claude/file-history/<session-uuid>/` directories
+  whose UUID is in the project's session set.
 - `HasConfigBlock bool` — true when `~/.claude.json` contains a `projects`
   entry keyed by this project path.
 - `TodoFiles` — `~/.claude/todos/<sid1>-agent-<sid2>.json` where **either**

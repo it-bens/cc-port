@@ -8,11 +8,11 @@ The CLI entry point. `main.go` wires the root command and the `--claude-dir` ove
 
 The package exposes nothing; it is a `main` package. Its surface is the CLI:
 
-- `cc-port move <old-path> <new-path> [--apply]`
-- `cc-port export <project-path> <archive>` and `cc-port export manifest <project-path> <manifest>`
-- `cc-port import <archive> <project-path>`
+- `cc-port move <old-path> <new-path> [--apply] [--refs-only] [--rewrite-transcripts]`
+- `cc-port export <project-path> --output <archive.zip>` and `cc-port export manifest <project-path> [--output <manifest.xml>]`
+- `cc-port import <archive.zip> <target-path>` and `cc-port import manifest <archive.zip>`
 
-See the root `README.md` §Commands for one-line syntax + a worked example per subcommand.
+See the root `README.md` §Commands for one-line syntax + a worked example per subcommand, and `cc-port <subcommand> --help` for the full flag reference.
 
 ## Tests
 

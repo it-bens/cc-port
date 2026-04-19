@@ -44,11 +44,12 @@ remediation message:
 - `ResolvePlaceholder` (used by `export` for non-auto-detected path
   suggestions and by `import` for manifest keys with no pre-filled
   `<resolve>`): refused with a pointer to the two-step manifest flow
-  (`export manifest` / `import --from-manifest`), which is the only
-  path that supplies resolutions without prompting.
+  (`export manifest` / `import --from-manifest`) or, on `import`,
+  `--resolution KEY=VALUE`.
 - `ConfirmApply`: refused with "no non-interactive confirmation path is
-  available". No caller wires this form in today; the guard is in place
-  so a future caller cannot silently reintroduce the hang.
+  available" — this is the one prompt without an alternative, kept in
+  place so a future caller cannot silently reintroduce the hang. No
+  caller wires this form in today.
 
 Handled — invocations that never trip the preflight:
 
@@ -59,20 +60,14 @@ Handled — invocations that never trip the preflight:
   already carries every category and every placeholder resolution, so
   neither form runs.
 - `import` of an archive whose every declared placeholder is either
-  `{{PROJECT_PATH}}` (resolved implicitly from the target path) or
-  already carries a non-empty `<resolve>` in the manifest — no
-  placeholder prompt is needed.
+  `{{PROJECT_PATH}}` (resolved implicitly from the target path), pre-supplied
+  via `--resolution KEY=VALUE`, or already carries a non-empty `<resolve>`
+  in the manifest — no placeholder prompt is needed.
 - Any invocation with stdin attached to a real terminal — `requireTTY`
   returns nil and the form runs unchanged.
 
 Not covered — cases this guard deliberately does not address:
 
-- **No single-command non-interactive resolution.** There is no
-  `--placeholder KEY=VALUE` or `--resolve KEY=VALUE` flag surface. A
-  caller who wants to resolve placeholders without producing a manifest
-  first is still refused — the preflight converts a hang into a clear
-  error, not into success. The manifest flow is the intended automation
-  path.
 - **Stdin-only detection.** The check looks at `os.Stdin.Fd()` only. An
   invocation whose stdin is a TTY but whose stdout or stderr is
   redirected (`cc-port export … | tee log`) is classified as

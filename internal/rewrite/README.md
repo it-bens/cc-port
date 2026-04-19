@@ -61,15 +61,29 @@ Not rewritten — the boundary check deliberately suppresses these:
   (`/a/foo.v2`, `/a/foo.txt`, `/a/foo.git`, `/a/foo.2`, `/a/foo._hidden`,
   `/a/foo.-weird`).
 
-Residual risk — cases this heuristic does not perfectly cover:
+## Quirks
 
-- **Directories whose final component ends in a literal trailing `.` or
-  `..`** (e.g. a real path `/a/foo.`) are rewritten when followed by a
-  word-boundary byte, even though a distinct unrelated project named
-  `/a/foo.` would have been preserved by one-byte boundary checking.
-  These names are pathological on Unix and forbidden on Windows; cc-port
-  accepts this trade-off in favour of correctly rewriting sentence-ending
-  prose references.
+### Trailing-dot path components
+
+Directories whose final component ends in a literal trailing `.` or
+`..` (e.g. a real path `/a/foo.`) are rewritten when followed by a
+word-boundary byte, even though a distinct unrelated project named
+`/a/foo.` would have been preserved by one-byte boundary checking.
+These names are pathological on Unix and forbidden on Windows; cc-port
+accepts this trade-off in favour of correctly rewriting sentence-ending
+prose references.
+
+### Placeholder-token grammar is narrow by design
+
+`FindPlaceholderTokens` is the tamper-defense scan used by the importer
+to refuse archives whose bodies carry `{{UPPER_SNAKE}}` tokens the
+manifest never declared. The grammar is intentionally narrow — it only
+matches upper-snake keys. Widening it to lowercase, punctuated, or
+whitespace-bearing tokens would produce false positives on legitimate
+`{{…}}` content embedded in transcripts (Handlebars, Mustache, Jinja).
+Tool-produced archives are not affected because cc-port's export path
+declares every key it embeds; hand-crafted archives that want the full
+contract must list every embedded key in the manifest.
 
 ## Tests
 

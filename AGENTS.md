@@ -52,9 +52,11 @@ See README.md for the project overview and contract index.
 ## Tests
 
 - Unit tests live next to code (`*_test.go`).
-- `integration_test.go` at repo root runs the full CLI end-to-end.
+- `integration_test.go` at repo root runs the full CLI end-to-end; gated
+  behind `//go:build integration` and excluded from a plain `go test ./...`.
 - Fixtures via `internal/testutil`.
-- Run: `go test ./...`.
+- Run unit: `go test ./...`. Run unit + integration:
+  `go test -tags integration ./...`.
 
 ## Commits
 

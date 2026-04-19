@@ -11,6 +11,6 @@ Small shared filesystem helpers: recursive copy, path resolution. See `README.md
 
 - Copy: `copy.go:CopyDir`.
 - Path resolution: `paths.go:ResolveExistingAncestor`.
-- Tests: `paths_test.go`.
+- Tests: `copy_test.go`, `paths_test.go`.
 
 Read `README.md` before changing anything under `## Contracts`.
