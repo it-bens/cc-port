@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -40,68 +41,59 @@ func writeSessionFile(t *testing.T, claudeHome *claude.Home, name string, pid in
 	require.NoError(t, os.WriteFile(filepath.Join(sessionsDir, name+".json"), data, 0600))
 }
 
-func TestAcquire_SucceedsWithNoSessions(t *testing.T) {
+func TestWithLock_SucceedsWithNoSessions(t *testing.T) {
 	claudeHome := newTestHome(t)
 
-	lockHandle, err := acquire(claudeHome)
+	err := WithLock(claudeHome, func() error { return nil })
 	require.NoError(t, err)
-	defer func() { _ = lockHandle.release() }()
 
 	assert.FileExists(t, filepath.Join(claudeHome.Dir, LockFileName))
 }
 
-func TestAcquire_SucceedsWhenSessionPIDIsDead(t *testing.T) {
+func TestWithLock_SucceedsWhenSessionPIDIsDead(t *testing.T) {
 	claudeHome := newTestHome(t)
 	// A PID above every modern OS's pid_max is guaranteed dead.
 	writeSessionFile(t, claudeHome, "stale", 2_000_000_001)
 
-	lockHandle, err := acquire(claudeHome)
+	err := WithLock(claudeHome, func() error { return nil })
 	require.NoError(t, err)
-	_ = lockHandle.release()
 }
 
-func TestAcquire_AbortsWhenSessionPIDIsAlive(t *testing.T) {
+func TestWithLock_AbortsWhenSessionPIDIsAlive(t *testing.T) {
 	claudeHome := newTestHome(t)
 	// os.Getpid() is this test process — guaranteed alive.
 	writeSessionFile(t, claudeHome, "live", os.Getpid())
 
-	_, err := acquire(claudeHome)
+	err := WithLock(claudeHome, func() error { return nil })
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "live Claude Code session")
 }
 
-func TestAcquire_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
+func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
 	claudeHome := newTestHome(t)
 
-	firstLock, err := acquire(claudeHome)
+	// Hold the lock from a sibling flock.Flock. In a real scenario this
+	// is a second cc-port process; in-test we reuse the same path. Linux
+	// and Darwin both use syscall.Flock under the hood, which is per-fd
+	// (not per-process like fcntl F_SETLK), so two in-process flock.Flock
+	// instances on the same path contend as expected.
+	require.NoError(t, os.MkdirAll(claudeHome.Dir, 0o750))
+	sibling := flock.New(filepath.Join(claudeHome.Dir, LockFileName))
+	ok, err := sibling.TryLock()
 	require.NoError(t, err)
-	defer func() { _ = firstLock.release() }()
+	require.True(t, ok)
+	defer func() { _ = sibling.Unlock() }()
 
-	_, err = acquire(claudeHome)
+	err = WithLock(claudeHome, func() error { return nil })
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "another cc-port invocation")
 }
 
-func TestAcquire_SucceedsAfterPreviousReleased(t *testing.T) {
+func TestWithLock_SucceedsAfterPreviousReleased(t *testing.T) {
 	claudeHome := newTestHome(t)
 
-	firstLock, err := acquire(claudeHome)
-	require.NoError(t, err)
-	require.NoError(t, firstLock.release())
-
-	secondLock, err := acquire(claudeHome)
-	require.NoError(t, err)
-	_ = secondLock.release()
-}
-
-func TestLock_ReleaseIsIdempotent(t *testing.T) {
-	claudeHome := newTestHome(t)
-
-	lockHandle, err := acquire(claudeHome)
-	require.NoError(t, err)
-
-	require.NoError(t, lockHandle.release())
-	require.NoError(t, lockHandle.release())
+	require.NoError(t, WithLock(claudeHome, func() error { return nil }))
+	require.NoError(t, WithLock(claudeHome, func() error { return nil }))
 }
 
 func TestWithLock_CallsFn(t *testing.T) {
@@ -110,15 +102,12 @@ func TestWithLock_CallsFn(t *testing.T) {
 	var fnCalled bool
 	err := WithLock(claudeHome, func() error {
 		fnCalled = true
-		// While the outer lock is held, a nested WithLock on the same home
-		// must hit EWOULDBLOCK inside acquire and surface the "another
-		// cc-port invocation" abort message.
-		nestedErr := WithLock(claudeHome, func() error {
-			t.Fatal("nested fn must not run while the outer lock is held")
-			return nil
-		})
-		require.Error(t, nestedErr)
-		assert.Contains(t, nestedErr.Error(), "another cc-port invocation")
+		// While the outer lock is held, a sibling flock.Flock on the same
+		// path must fail to acquire (per-fd flock semantics on Linux/Darwin).
+		sibling := flock.New(filepath.Join(claudeHome.Dir, LockFileName))
+		ok, lockErr := sibling.TryLock()
+		require.NoError(t, lockErr)
+		assert.False(t, ok, "sibling flock must report not-locked while WithLock holds the lock")
 		return nil
 	})
 	require.NoError(t, err)
@@ -157,20 +146,53 @@ func TestWithLock_PropagatesAcquireError(t *testing.T) {
 	assert.False(t, fnCalled, "fn must not be invoked when acquire fails")
 }
 
-func TestWithLock_ReturnsFnErrorOverReleaseError(t *testing.T) {
+func TestWithLock_ReleasesAfterRecoveredPanic(t *testing.T) {
 	claudeHome := newTestHome(t)
 
-	// Swap the close hook so release still releases the flock but reports a
-	// synthetic error. This is the test-injected release-failure seam the
-	// design spec authorizes — see internal/lock/README.md §Contracts.
-	originalCloser := closeLockFile
-	closeLockFile = func(file *os.File) error {
-		_ = originalCloser(file) // actually release the kernel flock
-		return errors.New("simulated release failure")
-	}
-	defer func() { closeLockFile = originalCloser }()
+	func() {
+		defer func() {
+			_ = recover() // swallow the synthetic panic so the test can proceed
+		}()
 
-	fnErr := errors.New("fn failed")
+		_ = WithLock(claudeHome, func() error {
+			panic("synthetic panic inside fn")
+		})
+	}()
+
+	// If the defer-based Unlock worked, the lock is now free and a
+	// second WithLock call must succeed.
+	err := WithLock(claudeHome, func() error { return nil })
+	require.NoError(t, err, "second WithLock must succeed — the first call's lock should be released")
+}
+
+func TestWithLock_ReleaseErrorSurfacesOnFnSuccess(t *testing.T) {
+	claudeHome := newTestHome(t)
+
+	// Swap the unlock function to one that always fails.
+	originalUnlock := unlockFn
+	t.Cleanup(func() { unlockFn = originalUnlock })
+	unlockFn = func(*flock.Flock) error {
+		return errors.New("synthetic unlock failure")
+	}
+
+	err := WithLock(claudeHome, func() error { return nil })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "release cc-port lock")
+	assert.Contains(t, err.Error(), "synthetic unlock failure")
+}
+
+func TestWithLock_ReleaseErrorSuppressedOnFnError(t *testing.T) {
+	claudeHome := newTestHome(t)
+
+	originalUnlock := unlockFn
+	t.Cleanup(func() { unlockFn = originalUnlock })
+	unlockFn = func(*flock.Flock) error {
+		return errors.New("synthetic unlock failure")
+	}
+
+	fnErr := errors.New("fn returned this")
 	err := WithLock(claudeHome, func() error { return fnErr })
-	require.ErrorIs(t, err, fnErr, "fn error must win over release error on the fn-error path")
+	require.Error(t, err)
+	require.ErrorIs(t, err, fnErr)
+	assert.NotContains(t, err.Error(), "release cc-port lock")
 }
