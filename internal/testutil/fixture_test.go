@@ -1,6 +1,7 @@
 package testutil_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,8 +19,11 @@ func TestSetupFixture(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
 
-	_, err = os.Stat(home.ConfigFile)
+	configBytes, err := os.ReadFile(home.ConfigFile)
 	require.NoError(t, err)
+	var parsedConfig map[string]any
+	require.NoError(t, json.Unmarshal(configBytes, &parsedConfig),
+		"fixture .claude.json must be valid JSON")
 
 	projectDir := filepath.Join(home.Dir, "projects", "-Users-test-Projects-myproject")
 	_, err = os.Stat(projectDir)
