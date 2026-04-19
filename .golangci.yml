@@ -1,5 +1,9 @@
 version: "2"
 
+run:
+  build-tags:
+    - integration
+
 linters:
   enable:
     - bodyclose
@@ -45,6 +49,7 @@ linters-settings:
       - diagnostic
       - performance
       - style
+      - opinionated
 
 formatters:
   enable:
