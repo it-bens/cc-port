@@ -121,27 +121,3 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 
 	return resolvedValue, nil
 }
-
-// ConfirmApply asks the user to confirm the move operation.
-func ConfirmApply(description string) (bool, error) {
-	if err := requireTTY("no non-interactive confirmation path is available"); err != nil {
-		return false, err
-	}
-
-	var confirmed bool
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title("Apply changes?").
-				Description(description).
-				Value(&confirmed),
-		),
-	)
-
-	if err := form.Run(); err != nil {
-		return false, err
-	}
-
-	return confirmed, nil
-}

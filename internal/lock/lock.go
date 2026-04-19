@@ -22,9 +22,9 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 )
 
-// LockFileName is the name of the advisory-lock file cc-port creates inside
+// FileName is the name of the advisory-lock file cc-port creates inside
 // the Claude Code home directory.
-const LockFileName = ".cc-port.lock"
+const FileName = ".cc-port.lock"
 
 // unlockFn is the function used to release the advisory lock. Tests swap
 // it to simulate a release-time failure; production always uses
@@ -65,7 +65,7 @@ func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
 		return fmt.Errorf("ensure claude home exists: %w", err)
 	}
 
-	lockPath := filepath.Join(claudeHome.Dir, LockFileName)
+	lockPath := filepath.Join(claudeHome.Dir, FileName)
 	fileLock := flock.New(lockPath)
 
 	ok, err := fileLock.TryLock()

@@ -47,7 +47,7 @@ func TestWithLock_SucceedsWithNoSessions(t *testing.T) {
 	err := WithLock(claudeHome, func() error { return nil })
 	require.NoError(t, err)
 
-	assert.FileExists(t, filepath.Join(claudeHome.Dir, LockFileName))
+	assert.FileExists(t, filepath.Join(claudeHome.Dir, FileName))
 }
 
 func TestWithLock_SucceedsWhenSessionPIDIsDead(t *testing.T) {
@@ -78,7 +78,7 @@ func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
 	// (not per-process like fcntl F_SETLK), so two in-process flock.Flock
 	// instances on the same path contend as expected.
 	require.NoError(t, os.MkdirAll(claudeHome.Dir, 0o750))
-	sibling := flock.New(filepath.Join(claudeHome.Dir, LockFileName))
+	sibling := flock.New(filepath.Join(claudeHome.Dir, FileName))
 	ok, err := sibling.TryLock()
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -104,7 +104,7 @@ func TestWithLock_CallsFn(t *testing.T) {
 		fnCalled = true
 		// While the outer lock is held, a sibling flock.Flock on the same
 		// path must fail to acquire (per-fd flock semantics on Linux/Darwin).
-		sibling := flock.New(filepath.Join(claudeHome.Dir, LockFileName))
+		sibling := flock.New(filepath.Join(claudeHome.Dir, FileName))
 		ok, lockErr := sibling.TryLock()
 		require.NoError(t, lockErr)
 		assert.False(t, ok, "sibling flock must report not-locked while WithLock holds the lock")

@@ -18,8 +18,6 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
-func boolPtr(value bool) *bool { return &value }
-
 func TestMetadata_MarshalUnmarshal(t *testing.T) {
 	created := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 
@@ -33,7 +31,7 @@ func TestMetadata_MarshalUnmarshal(t *testing.T) {
 		},
 		Placeholders: []manifest.Placeholder{
 			{Key: "HOME", Original: "/home/user"},
-			{Key: "PROJECT", Original: "/home/user/project", Resolvable: boolPtr(true)},
+			{Key: "PROJECT", Original: "/home/user/project", Resolvable: new(true)},
 		},
 	}
 
@@ -123,13 +121,13 @@ func TestManifest_WithResolve(t *testing.T) {
 			{
 				Key:        "HOME",
 				Original:   "/home/olduser",
-				Resolvable: boolPtr(true),
+				Resolvable: new(true),
 				Resolve:    "/home/newuser",
 			},
 			{
 				Key:        "UNRESOLVABLE",
 				Original:   "/some/path",
-				Resolvable: boolPtr(false),
+				Resolvable: new(false),
 			},
 			{
 				Key:      "PLAIN",

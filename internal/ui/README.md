@@ -4,28 +4,26 @@
 
 Interactive terminal prompts used by the CLI's `export`, `export manifest`, and `import` surfaces. Backed by `charm.land/huh/v2` forms.
 
-Not a general UI layer — the only prompts this package exposes are the three listed below, and callers with a non-interactive alternative should skip this package entirely.
+Not a general UI layer — the only prompts this package exposes are the two listed below, and callers with a non-interactive alternative should skip this package entirely.
 
 ## Public API
 
 - **Prompt entry points**
   - `SelectCategories() (manifest.CategorySet, error)` — interactive category picker for `export` / `export manifest`.
   - `ResolvePlaceholder(key, original, autoValue string) (string, error)` — prompts for one manifest placeholder and returns the user's input verbatim. The prompt does not validate; callers interpret the empty string (`import` rejects it via `importer.ValidateResolutions`; `export` marks the placeholder `Resolvable: false`).
-  - `ConfirmApply(description string) (bool, error)` — yes/no confirmation scaffold; no caller wires it today, retained for future apply-time gates.
 
 ## Contracts
 
 ### Interactive prompts require a TTY
 
 cc-port's prompt surface lives in `internal/ui/prompt.go` and uses
-`charm.land/huh/v2` forms for category selection (`SelectCategories`),
-placeholder resolution (`ResolvePlaceholder`), and apply confirmation
-(`ConfirmApply`). Each form takes over the terminal when `Run()` is
-called, so an invocation without a controlling TTY — piping into another
-process, a CI job, a shell script without a `tty` allocation — would
-either block on input it will never receive or surface huh's opaque
-`open /dev/tty: device not configured` failure after the form has already
-grabbed the screen.
+`charm.land/huh/v2` forms for category selection (`SelectCategories`)
+and placeholder resolution (`ResolvePlaceholder`). Each form takes over
+the terminal when `Run()` is called, so an invocation without a
+controlling TTY — piping into another process, a CI job, a shell script
+without a `tty` allocation — would either block on input it will never
+receive or surface huh's opaque `open /dev/tty: device not configured`
+failure after the form has already grabbed the screen.
 
 `internal/ui/prompt.go:requireTTY` runs at the top of every prompt entry
 point and checks `term.IsTerminal(os.Stdin.Fd())` before any form is
@@ -46,10 +44,6 @@ remediation message:
   `<resolve>`): refused with a pointer to the two-step manifest flow
   (`export manifest` / `import --from-manifest`) or, on `import`,
   `--resolution KEY=VALUE`.
-- `ConfirmApply`: refused with "no non-interactive confirmation path is
-  available" — this is the one prompt without an alternative, kept in
-  place so a future caller cannot silently reintroduce the hang. No
-  caller wires this form in today.
 
 Handled — invocations that never trip the preflight:
 

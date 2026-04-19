@@ -9,7 +9,7 @@ Not a general mutex — the lock scope is the whole `~/.claude` tree, and the li
 ## Public API
 
 - `WithLock(claudeHome *claude.Home, fn func() error) error` — the sole lock-guarded entry point. Runs the live-session check, takes `~/.claude/.cc-port.lock` via `gofrs/flock`, calls `fn` with the lock held, and releases the lock via `defer` on every exit path — including a panic inside `fn` that a caller recovers. Returns `fn`'s error when non-nil; on the success path, any release error surfaces wrapped as `release cc-port lock: %w`. Acquire errors (live-session abort, contention) are returned without invoking `fn`.
-- `LockFileName` — constant; the name (`.cc-port.lock`) of the advisory-lock file cc-port creates inside the Claude Code home directory.
+- `FileName` — constant; the name (`.cc-port.lock`) of the advisory-lock file cc-port creates inside the Claude Code home directory.
 
 ## Contracts
 

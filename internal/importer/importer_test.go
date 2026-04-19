@@ -188,7 +188,7 @@ func addConfigEntry(
 	require.NoError(t, json.Unmarshal(configData, &userConfig), "unmarshal config")
 	projectBlock, ok := userConfig.Projects[sourceProjectPath]
 	require.True(t, ok, "project %q not found in config", sourceProjectPath)
-	entryAdder("config.json", []byte(projectBlock))
+	entryAdder("config.json", projectBlock)
 }
 
 // replacePaths mirrors the production export anonymizer: it rewrites
