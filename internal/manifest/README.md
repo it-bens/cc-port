@@ -52,6 +52,7 @@ Refused by cc-port — these shapes abort at validation:
 - Rewriting the XML wire schema for `Metadata` / `Info` / `Category` /
   `Placeholder`. Field names and XML tags must stay byte-identical on the wire —
   archives already in the wild would otherwise fail to parse.
+- Manifest documents whose size exceeds `maxManifestBytes` (4 MiB). Both `ReadManifest` (file-path variant) and `ReadManifestFromZip` (archive-entry variant) enforce the cap and return an error naming the source.
 
 Not covered — invariants owned elsewhere:
 
@@ -69,4 +70,10 @@ Unit tests in `categories_test.go` and `manifest_test.go`. Coverage:
 `BuildCategoryEntries`/`ApplyCategoryEntries` round-trip for every category,
 aggregated error reporting for missing and unknown names, `WriteManifest` /
 `ReadManifest` / `ReadManifestFromZip` round-trip including XML format
-stability.
+stability. `ReadManifest` and `ReadManifestFromZip` each have a dedicated
+oversize-rejection test asserting the 4 MiB cap is enforced.
+
+## References
+
+- `io.LimitReader` — local authoritative: `go doc io.LimitReader` · online supplement: https://pkg.go.dev/io#LimitReader
+- `encoding/xml` — local authoritative: `go doc encoding/xml` · online supplement: https://pkg.go.dev/encoding/xml (XXE-safe by design; the godoc confirms no external entity resolution)

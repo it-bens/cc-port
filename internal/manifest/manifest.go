@@ -6,6 +6,7 @@ import (
 	"archive/zip"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -39,6 +40,11 @@ type Placeholder struct {
 	Resolve    string `xml:"resolve,attr,omitempty"`
 }
 
+// maxManifestBytes caps the size of metadata.xml when read from a path or
+// a ZIP entry. Real manifests are a few KiB; 4 MiB is generous headroom
+// for future placeholder growth and stops decompression-bomb payloads cold.
+const maxManifestBytes = 4 << 20
+
 // WriteManifest marshals metadata to indented XML and writes it to path,
 // prepending the standard XML declaration header.
 func WriteManifest(path string, metadata *Metadata) error {
@@ -57,7 +63,16 @@ func WriteManifest(path string, metadata *Metadata) error {
 }
 
 // ReadManifest reads path and unmarshals the XML content into a Metadata value.
+// Rejects files whose size exceeds maxManifestBytes before allocating.
 func ReadManifest(path string) (*Metadata, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat manifest file: %w", err)
+	}
+	if info.Size() > int64(maxManifestBytes) {
+		return nil, fmt.Errorf("manifest file %q exceeds %d-byte limit", path, maxManifestBytes)
+	}
+
 	data, err := os.ReadFile(path) //nolint:gosec // G304: caller-supplied manifest path
 	if err != nil {
 		return nil, fmt.Errorf("read manifest file: %w", err)
@@ -73,6 +88,7 @@ func ReadManifest(path string) (*Metadata, error) {
 
 // ReadManifestFromZip opens the ZIP archive at archivePath, locates
 // metadata.xml inside it, and unmarshals the content into a Metadata value.
+// Rejects entries whose decoded size exceeds maxManifestBytes.
 func ReadManifestFromZip(archivePath string) (*Metadata, error) {
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
@@ -91,8 +107,19 @@ func ReadManifestFromZip(archivePath string) (*Metadata, error) {
 		}
 		defer func() { _ = rc.Close() }()
 
+		// Read at most maxManifestBytes+1 so we can distinguish an
+		// exactly-at-limit legitimate manifest from an over-limit one.
+		limited := io.LimitReader(rc, int64(maxManifestBytes)+1)
+		data, err := io.ReadAll(limited)
+		if err != nil {
+			return nil, fmt.Errorf("read metadata.xml from zip: %w", err)
+		}
+		if int64(len(data)) > int64(maxManifestBytes) {
+			return nil, fmt.Errorf("manifest entry %q exceeds %d-byte limit", file.Name, maxManifestBytes)
+		}
+
 		var metadata Metadata
-		if err := xml.NewDecoder(rc).Decode(&metadata); err != nil {
+		if err := xml.Unmarshal(data, &metadata); err != nil {
 			return nil, fmt.Errorf("unmarshal manifest from zip: %w", err)
 		}
 

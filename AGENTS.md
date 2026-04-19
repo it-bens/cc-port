@@ -39,6 +39,12 @@ See README.md for the project overview and contract index.
 - Contract docs live in module `README.md` §Contracts. Module
   `AGENTS.md` files are pointer-only — if you catch yourself explaining
   *why* in an AGENTS.md, move it to the README.
+- Untrusted paths and archive entries route through `os.Root`;
+  decompressed / scanned reads are bounded by `io.LimitReader` or
+  `bufio.Scanner.Buffer`. New code that accepts adversarial input MUST
+  use one of these primitives — run `go doc <symbol>` (authoritative
+  at the compiled Go version) before adding a use site, and see the
+  affected package's README §References for supplementary online docs.
 
 ## Navigation
 

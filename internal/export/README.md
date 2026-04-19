@@ -73,3 +73,9 @@ Not covered — cases cc-port deliberately does not address:
 ## Tests
 
 Unit tests in `export_test.go` and `discover_test.go`. Coverage: all-categories export, path anonymisation (including order-independence and boundary collisions), selective category export, history-inclusion rules, path discovery on various body shapes, prefix grouping, auto-placeholder detection. Manifest marshal/unmarshal round-trip and XML format stability live in [`internal/manifest`](../manifest/README.md) §Tests.
+
+`extractProjectHistory` has dedicated tests in `extract_history_test.go` for the 16 MiB line cap: one line below the cap extracts successfully, one line above the cap returns `bufio.ErrTooLong` via the scanner's error path.
+
+## References
+
+- `bufio.Scanner.Buffer` — local authoritative: `go doc bufio.Scanner.Buffer` · online supplement: https://pkg.go.dev/bufio#Scanner.Buffer

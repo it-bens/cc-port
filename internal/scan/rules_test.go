@@ -1,6 +1,8 @@
 package scan_test
 
 import (
+	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -94,4 +96,31 @@ func TestRules_IgnoresNonMdFiles(t *testing.T) {
 	warnings, err := scan.Rules(dir, "/Users/test/Projects/myproject")
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
+}
+
+func TestRules_AcceptsLineUpTo16MiB(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping long-line test in short mode")
+	}
+	rulesDir := t.TempDir()
+	longLine := bytes.Repeat([]byte("a"), 1<<20)
+	longLine = append(longLine, []byte("/target/path")...)
+	require.NoError(t, os.WriteFile(filepath.Join(rulesDir, "big.md"), longLine, 0600))
+
+	warnings, err := scan.Rules(rulesDir, "/target/path")
+	require.NoError(t, err)
+	assert.Len(t, warnings, 1)
+}
+
+func TestRules_RejectsLineOverLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping over-limit-line test in short mode")
+	}
+	rulesDir := t.TempDir()
+	huge := bytes.Repeat([]byte("a"), 17<<20)
+	require.NoError(t, os.WriteFile(filepath.Join(rulesDir, "huge.md"), huge, 0600))
+
+	_, err := scan.Rules(rulesDir, "/target/path")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, bufio.ErrTooLong)
 }

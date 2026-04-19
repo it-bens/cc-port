@@ -3,6 +3,7 @@ package importer_test
 import (
 	"archive/zip"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"os"
 	"path/filepath"
@@ -876,4 +877,115 @@ func assertNoPendingPlaceholders(t *testing.T, dirPath string) {
 			t.Errorf("file %q still contains placeholder tokens:\n%s", fullPath, string(data))
 		}
 	}
+}
+
+// buildMinimalSessionsArchive builds an archive with a sessions-only category
+// set and the caller-supplied zip entries after metadata.xml. Each entry is
+// stored uncompressed with the given name and content.
+func buildMinimalSessionsArchive(t *testing.T, archivePath string, entries map[string][]byte) {
+	t.Helper()
+
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	defer func() { _ = archiveFile.Close() }()
+
+	zipWriter := zip.NewWriter(archiveFile)
+	defer func() { _ = zipWriter.Close() }()
+
+	md := manifest.Metadata{
+		Export: manifest.Info{
+			Created:    time.Now().UTC(),
+			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{Sessions: true}),
+		},
+	}
+	data, err := xml.MarshalIndent(&md, "", "  ")
+	require.NoError(t, err)
+	mdEntry, err := zipWriter.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = mdEntry.Write(append([]byte(xml.Header), data...))
+	require.NoError(t, err)
+
+	for name, body := range entries {
+		entry, err := zipWriter.Create(name)
+		require.NoError(t, err)
+		_, err = entry.Write(body)
+		require.NoError(t, err)
+	}
+}
+
+func TestRun_RejectsZipSlipEntry(t *testing.T) {
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	archivePath := filepath.Join(t.TempDir(), "slip.zip")
+	buildMinimalSessionsArchive(t, archivePath, map[string][]byte{
+		"sessions/../escape.txt": []byte("pwned"),
+	})
+
+	err := importer.Run(destClaudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  filepath.Join(t.TempDir(), "project"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, strings.ToLower(err.Error()), "stage")
+
+	escapeSibling := filepath.Join(destClaudeHome.Dir, "projects", "escape.txt")
+	_, statErr := os.Stat(escapeSibling)
+	assert.True(t, os.IsNotExist(statErr), "escape.txt must not land outside the staging base")
+}
+
+func TestRun_RejectsAbsoluteZipEntry(t *testing.T) {
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	archivePath := filepath.Join(t.TempDir(), "abs.zip")
+	buildMinimalSessionsArchive(t, archivePath, map[string][]byte{
+		"sessions//etc/bogus": []byte("x"),
+	})
+
+	err := importer.Run(destClaudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  filepath.Join(t.TempDir(), "project"),
+	})
+	require.Error(t, err)
+}
+
+func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping 600 MiB bomb test in short mode")
+	}
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	archivePath := filepath.Join(t.TempDir(), "bomb.zip")
+
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	zipWriter := zip.NewWriter(archiveFile)
+
+	md := manifest.Metadata{
+		Export: manifest.Info{
+			Created:    time.Now().UTC(),
+			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{Sessions: true}),
+		},
+	}
+	data, err := xml.MarshalIndent(&md, "", "  ")
+	require.NoError(t, err)
+	mdEntry, err := zipWriter.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = mdEntry.Write(append([]byte(xml.Header), data...))
+	require.NoError(t, err)
+
+	// 600 MiB of zeros — well above 512 MiB cap, compresses to ~600 KiB.
+	bombEntry, err := zipWriter.Create("sessions/bomb.json")
+	require.NoError(t, err)
+	zeros := make([]byte, 1<<20)
+	for range 600 {
+		_, err = bombEntry.Write(zeros)
+		require.NoError(t, err)
+	}
+	require.NoError(t, zipWriter.Close())
+	require.NoError(t, archiveFile.Close())
+
+	err = importer.Run(destClaudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  filepath.Join(t.TempDir(), "project"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
 }

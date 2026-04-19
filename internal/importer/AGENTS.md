@@ -11,12 +11,9 @@ Apply a cc-port archive: validate, stage, promote, roll back. See `README.md` fo
 - File-history snapshots are opaque bytes; `ResolvePlaceholders` runs over them only for pre-refactor archive compatibility (README §File-history handling (import) and docs/architecture.md §File-history policy (cross-cutting)).
 - `importer.Run` wraps its body in `lock.WithLock` before reading the archive (see `internal/lock/README.md` §Concurrency guard).
 - Manifest category validation routes through `manifest.ApplyCategoryEntries`; never re-implement the check here (see `internal/manifest/README.md` §Category manifest).
-- Unknown ZIP entry prefixes hard-fail; there is no tolerant fallback
-  (README §Strict archive contract).
-- Session-keyed dispatch reads `transport.SessionKeyedTargets` — the first
-  matching `ZipPrefix` wins, and every staged entry lands in the unified
-  `importPlan.sessionKeyedStagedFiles` slice. Do not add a per-group
-  staging helper or a parallel slice (README §Session-keyed prefix arms).
+- Unknown ZIP entry prefixes hard-fail; there is no tolerant fallback (README §Strict archive contract).
+- Session-keyed dispatch reads `transport.SessionKeyedTargets` — the first matching `ZipPrefix` wins, and every staged entry lands in the unified `importPlan.sessionKeyedStagedFiles` slice. Do not add a per-group staging helper or a parallel slice (README §Session-keyed prefix arms).
+- Every archive-entry write routes through `os.Root` — `stageIntoRoot` for project/memory writes, `assertWithinRoot` for the file-history and session-keyed sibling-temp writers. Never call `filepath.Join(base, zipName)` directly when staging (README §Atomic staging).
 
 ## Navigation
 

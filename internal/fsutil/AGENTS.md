@@ -6,6 +6,7 @@ Small shared filesystem helpers: recursive copy, path resolution. See `README.md
 
 - `ResolveExistingAncestor` panics on a relative path on purpose — programmer-error fail-hard, not a missing feature; never soften to a returned error or a silent `filepath.Abs` call inside the helper (README §Absolute-path contract for `ResolveExistingAncestor`).
 - `ResolveExistingAncestor` preserves non-existent trailing components so `os.MkdirAll` can create them on the resolved filesystem — do not `EvalSymlinks` the full input path as a one-liner (README §Absolute-path contract for `ResolveExistingAncestor`).
+- `CopyDir` never follows symlinks for content — it replicates them via `os.Readlink` + `Root.Symlink`. Do not reintroduce `os.ReadFile` on a walked path (README §Symlink replication for `CopyDir`).
 
 ## Navigation
 

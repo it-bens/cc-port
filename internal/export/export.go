@@ -27,6 +27,12 @@ type Options struct {
 	Placeholders []manifest.Placeholder
 }
 
+// maxScannerLine caps a single line that bufio.Scanner will read from
+// history.jsonl. Claude Code can embed pastedContents inline on a
+// single line; 16 MiB covers all plausible legitimate cases while
+// rejecting deliberately pathological inputs.
+const maxScannerLine = 16 << 20
+
 // Result summarises observable side effects of a successful export that the
 // CLI layer may want to surface to the user. Today it carries the number of
 // file-history snapshots archived verbatim; callers render a warning when
@@ -402,6 +408,7 @@ func extractProjectHistory(historyPath, projectPath string) ([]byte, error) {
 
 	var outputBuffer bytes.Buffer
 	scanner := bufio.NewScanner(historyFile)
+	scanner.Buffer(make([]byte, 64<<10), maxScannerLine)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())

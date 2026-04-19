@@ -53,6 +53,15 @@ Refused by cc-port — these paths abort before any write:
   key in alphabetical order.
 - Archive body contains a `{{KEY}}` that the manifest does not declare
   at all. The error lists every undeclared key in alphabetical order.
+- Archive entries whose names escape the staging base — entries
+  containing `..` components or an absolute-path prefix. The staging
+  helpers open each write base as an `os.Root` handle, which rejects
+  any path that would land outside the base. No temp file is created
+  on rejection.
+- Archive entries whose decompressed size exceeds `maxZipEntryBytes`
+  (512 MiB). `readZipFile` checks both the declared
+  `UncompressedSize64` and the actual post-decode byte count, so a
+  misdeclared size does not slip through.
 
 Allowed-to-remain-symbolic — a placeholder marked `Resolvable: false` in
 the manifest stays verbatim on disk even if no resolution was supplied.
@@ -142,6 +151,13 @@ wrong side of the boundary whenever a destination's parent is a
 symlink to another volume (a common layout for
 `~/.claude/file-history` pointed at an external disk), so the
 promote step would fail mid-import with `EXDEV`.
+
+Project, memory, file-history, and session-keyed writes route through
+an `os.Root` handle opened on the staging base. A path-escaping entry
+is rejected before any write — `stageIntoRoot` writes through the
+root, and `assertWithinRoot` is the containment gate for the
+sibling-temp writers (`stageFileHistory`, `stageSessionKeyedFile`)
+that must keep the layout `SafeRenamePromoter` requires.
 
 `internal/importer/importer.go:stagingTempPath` resolves the parent
 directory of each final destination through any symlinks before
@@ -269,4 +285,9 @@ Handled — `cc-port import` writes snapshots back to disk as the opaque bytes t
 
 ## Tests
 
-Unit tests in `importer_test.go` and `resolve_test.go`. Coverage: basic round-trip, no staging temps left behind, refusal on unresolved / undeclared keys, acceptance of `Resolvable: false`, atomic rollback on failure, conflict refusal on pre-existing encoded directories.
+Unit tests in `importer_test.go` and `resolve_test.go`. Coverage: basic round-trip, no staging temps left behind, refusal on unresolved / undeclared keys, acceptance of `Resolvable: false`, atomic rollback on failure, conflict refusal on pre-existing encoded directories, zip-slip rejection (`..`-escaping entry), absolute-entry rejection, and oversized-entry rejection (`readZipFile` 512 MiB cap — builds a 600 MiB archive, so the test skips under `go test -short`).
+
+## References
+
+- `os.Root` — local authoritative: `go doc os.Root` · online supplement: https://pkg.go.dev/os#Root
+- `io.LimitReader` — local authoritative: `go doc io.LimitReader` · online supplement: https://pkg.go.dev/io#LimitReader

@@ -18,6 +18,11 @@ type Warning struct {
 	Path string // Which search path matched
 }
 
+// maxScannerLine caps a single line that bufio.Scanner will read from a
+// rules file. Above this, the scanner returns bufio.ErrTooLong rather
+// than silently truncating.
+const maxScannerLine = 16 << 20
+
 // Rules scans all .md files in rulesDir for occurrences of any of the given paths.
 // Returns nil, nil if the directory does not exist.
 func Rules(rulesDir string, paths ...string) ([]Warning, error) {
@@ -68,6 +73,7 @@ func scanFile(filePath string, fileName string, paths []string) ([]Warning, erro
 	var warnings []Warning
 	lineNumber := 0
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64<<10), maxScannerLine)
 
 	for scanner.Scan() {
 		lineNumber++

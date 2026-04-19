@@ -2,6 +2,7 @@ package manifest_test
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/xml"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/manifest"
 )
@@ -211,6 +214,47 @@ func assertZIPRoundTrip(t *testing.T, original *manifest.Metadata, temporaryDire
 	if diff := cmp.Diff(original, fromZip, opts); diff != "" {
 		t.Errorf("ZIP round-trip mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func TestReadManifest_RejectsOversizedFile(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "oversize.xml")
+
+	oversize := bytes.Repeat([]byte("x"), 5<<20)
+	require.NoError(t, os.WriteFile(path, oversize, 0o600))
+
+	_, err := manifest.ReadManifest(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "oversize.zip")
+
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	zipWriter := zip.NewWriter(archiveFile)
+
+	entry, err := zipWriter.Create("metadata.xml")
+	require.NoError(t, err)
+	// 5 MiB of XML-safe padding inside a <placeholders> block. Above the
+	// 4 MiB manifest cap, so ReadManifestFromZip must reject it.
+	headerTxt := xml.Header +
+		`<cc-port><export>` +
+		`<created>2026-01-01T00:00:00Z</created>` +
+		`<categories></categories></export><placeholders>`
+	header := []byte(headerTxt)
+	padding := bytes.Repeat([]byte("<placeholder key=\"K\" original=\"V\"/>"), 5<<20/40)
+	footer := []byte(`</placeholders></cc-port>`)
+	_, err = entry.Write(append(append(header, padding...), footer...))
+	require.NoError(t, err)
+	require.NoError(t, zipWriter.Close())
+	require.NoError(t, archiveFile.Close())
+
+	_, err = manifest.ReadManifestFromZip(archivePath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
 }
 
 // createTestZip creates a ZIP archive at zipPath containing the file at

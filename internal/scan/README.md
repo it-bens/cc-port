@@ -29,6 +29,10 @@ Handled — `move` surfaces matches so the user can edit them manually:
   contains the old project path as a `Warning` alongside the rest of the
   plan output. The files on disk are not modified; one `Warning` is
   emitted per matched line, not per matched path.
+- Rules lines up to `maxScannerLine` (16 MiB) are scanned intact. Lines
+  above that return `bufio.ErrTooLong` rather than being silently
+  truncated — the scan surface fails-hard so the user can inspect the
+  oversized file by hand.
 
 Refused — nothing: this package is read-only by contract, so no inputs
 are rejected. A missing rules directory returns `(nil, nil)`; a non-`.md`
@@ -49,3 +53,9 @@ Called by `internal/move` (both `DryRun` and `Apply`) — see `internal/move/REA
 ## Tests
 
 Unit tests in `rules_test.go`. Coverage: single-file match, multiple paths across multiple files, one warning per line even when multiple paths match, no-match case, empty directory, missing directory, non-`.md` files ignored.
+
+Additional tests cover the 16 MiB line cap: one line below the cap scans successfully, one line above the cap returns `bufio.ErrTooLong`.
+
+## References
+
+- `bufio.Scanner.Buffer` — local authoritative: `go doc bufio.Scanner.Buffer` · online supplement: https://pkg.go.dev/bufio#Scanner.Buffer

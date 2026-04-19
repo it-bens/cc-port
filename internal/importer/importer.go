@@ -35,6 +35,12 @@ const filePerm = os.FileMode(0644)
 // filesystem inspection if a crash ever leaves one behind.
 const stagingSuffix = ".cc-port-import.tmp"
 
+// maxZipEntryBytes caps the decompressed size of one archive entry.
+// Claude session transcripts can legitimately be large; 512 MiB is two
+// orders of magnitude above any real transcript and still rejects every
+// known zip bomb payload.
+const maxZipEntryBytes = 512 << 20
+
 // stagingTempPath returns the temp path used to stage finalPath before
 // atomic promotion. The temp is formed inside the symlink-resolved parent
 // of finalPath so that temp and final always live on the same filesystem,
@@ -427,23 +433,75 @@ func buildImportPlan(
 	return plan, nil
 }
 
+// stageIntoRoot writes content to relativePath under baseDir through an
+// os.Root handle. The handle rejects every path that escapes baseDir via
+// ".." or via a symlink, so a malicious zip entry name cannot land outside
+// the staging tree. Parent directories are created inside the root.
+func stageIntoRoot(baseDir, relativePath string, content []byte) error {
+	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
+		return fmt.Errorf("create staging base %q: %w", baseDir, err)
+	}
+
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return fmt.Errorf("open staging root %q: %w", baseDir, err)
+	}
+	defer func() { _ = root.Close() }()
+
+	relativePath = filepath.Clean(relativePath)
+	if dir := filepath.Dir(relativePath); dir != "." {
+		if err := root.MkdirAll(dir, dirPerm); err != nil {
+			return fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+		}
+	}
+	if err := root.WriteFile(relativePath, content, filePerm); err != nil {
+		return fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+	}
+	return nil
+}
+
+// assertWithinRoot verifies that relativePath would be addressable via an
+// os.Root opened on baseDir. It performs no write — it exists for staging
+// helpers that must keep the sibling-temp layout (file-history,
+// session-keyed) but still need the containment guarantee.
+func assertWithinRoot(baseDir, relativePath string) error {
+	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
+		return fmt.Errorf("create staging base %q: %w", baseDir, err)
+	}
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return fmt.Errorf("open staging root %q: %w", baseDir, err)
+	}
+	defer func() { _ = root.Close() }()
+
+	relativePath = filepath.Clean(relativePath)
+	if dir := filepath.Dir(relativePath); dir != "." {
+		if err := root.MkdirAll(dir, dirPerm); err != nil {
+			return fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+		}
+	}
+	return nil
+}
+
 func stageProjectFile(tempProjectDir, zipName, zipPrefix string, content []byte) error {
 	relativePath := strings.TrimPrefix(zipName, zipPrefix)
-	destinationPath := filepath.Join(tempProjectDir, relativePath)
-	return writeStagedFile(destinationPath, content)
+	return stageIntoRoot(tempProjectDir, relativePath, content)
 }
 
 func stageMemoryFile(tempProjectDir, zipName string, content []byte) error {
 	relativePath := strings.TrimPrefix(zipName, "memory/")
-	destinationPath := filepath.Join(tempProjectDir, "memory", relativePath)
-	return writeStagedFile(destinationPath, content)
+	return stageIntoRoot(tempProjectDir, filepath.Join("memory", relativePath), content)
 }
 
 // stageFileHistory writes a file-history/<uuid>/<hash>@vN entry to a sibling
-// temp path of its final destination. It returns the staged paths so the
-// promoter can register the rename.
+// temp path of its final destination. The os.Root gate on the file-history
+// base rejects escapes before any write; the actual write uses the
+// sibling-temp layout required by SafeRenamePromoter.
 func stageFileHistory(fileHistoryBaseDir, zipName string, content []byte) (stagedFile, error) {
 	relativePath := strings.TrimPrefix(zipName, "file-history/")
+	if err := assertWithinRoot(fileHistoryBaseDir, relativePath); err != nil {
+		return stagedFile{}, err
+	}
 	finalPath := filepath.Join(fileHistoryBaseDir, relativePath)
 	tempPath, err := stagingTempPath(finalPath)
 	if err != nil {
@@ -463,7 +521,11 @@ func stageSessionKeyedFile(
 	claudeHome *claude.Home, target transport.SessionKeyedTarget, zipName string, content []byte,
 ) (stagedFile, error) {
 	relative := strings.TrimPrefix(zipName, target.ZipPrefix)
-	finalPath := filepath.Join(target.HomeBaseDir(claudeHome), relative)
+	baseDir := target.HomeBaseDir(claudeHome)
+	if err := assertWithinRoot(baseDir, relative); err != nil {
+		return stagedFile{}, err
+	}
+	finalPath := filepath.Join(baseDir, relative)
 	tempPath, err := stagingTempPath(finalPath)
 	if err != nil {
 		return stagedFile{}, err
@@ -571,15 +633,31 @@ func writeStagedFile(path string, content []byte) error {
 }
 
 func readZipFile(zipFile *zip.File) ([]byte, error) {
+	// Pre-declared size check. Malicious archives can misdeclare
+	// UncompressedSize64, so the post-decode check below is still required.
+	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) {
+		return nil, fmt.Errorf(
+			"archive entry %q exceeds %d-byte limit (declared %d)",
+			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
+		)
+	}
+
 	readCloser, err := zipFile.Open()
 	if err != nil {
 		return nil, fmt.Errorf("open zip file entry: %w", err)
 	}
 	defer func() { _ = readCloser.Close() }()
 
-	data, err := io.ReadAll(readCloser)
+	limited := io.LimitReader(readCloser, int64(maxZipEntryBytes)+1)
+	data, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("read zip file entry: %w", err)
+	}
+	if int64(len(data)) > int64(maxZipEntryBytes) {
+		return nil, fmt.Errorf(
+			"archive entry %q exceeds %d-byte limit (post-decode)",
+			zipFile.Name, maxZipEntryBytes,
+		)
 	}
 
 	return data, nil
