@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,28 +44,42 @@ type Result struct {
 	FileHistorySnapshotsArchived int
 }
 
+// openArchiveFile is the factory Run uses to create the output zip file.
+// It is a package-level var so internal tests can substitute a wrapper that
+// returns a synthetic error on Close — exercising the deferred close-error
+// propagation without requiring a flaky real-world disk-full condition.
+var openArchiveFile = func(path string) (io.WriteCloser, error) {
+	return os.Create(path) //nolint:gosec // G304: output path supplied by the CLI caller
+}
+
 // Run executes the export: locates project data, creates a ZIP archive at
 // Options.OutputPath, and writes the requested categories with path
 // anonymization. File-history snapshots are archived verbatim — their
 // contents are treated as opaque user-file bytes and are not scanned or
 // rewritten. The returned Result carries the number of snapshots included so
 // the caller can surface a warning.
-func Run(claudeHome *claude.Home, exportOptions Options) (Result, error) {
-	var result Result
-
+func Run(claudeHome *claude.Home, exportOptions Options) (result Result, err error) {
 	locations, err := claude.LocateProject(claudeHome, exportOptions.ProjectPath)
 	if err != nil {
 		return result, fmt.Errorf("locate project: %w", err)
 	}
 
-	zipFile, err := os.Create(exportOptions.OutputPath)
+	zipFile, err := openArchiveFile(exportOptions.OutputPath)
 	if err != nil {
 		return result, fmt.Errorf("create output file: %w", err)
 	}
-	defer func() { _ = zipFile.Close() }()
+	defer func() {
+		if cerr := zipFile.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("close archive file: %w", cerr))
+		}
+	}()
 
 	archiveWriter := zip.NewWriter(zipFile)
-	defer func() { _ = archiveWriter.Close() }()
+	defer func() {
+		if cerr := archiveWriter.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("finalise archive: %w", cerr))
+		}
+	}()
 
 	if err := writeMetadataToZip(archiveWriter, exportOptions); err != nil {
 		return result, err
