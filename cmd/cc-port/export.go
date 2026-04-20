@@ -163,6 +163,7 @@ func init() {
 	exportCmd.Flags().BoolVar(&exportUsageData, "usage-data", false, "export usage-data (session-meta + facets)")
 	exportCmd.Flags().BoolVar(&exportPluginsData, "plugins-data", false, "export plugins/data")
 	exportCmd.Flags().BoolVar(&exportTasks, "tasks", false, "export tasks")
+	// MarkFlagRequired errors only when the flag name doesn't exist; "output" was registered above.
 	_ = exportCmd.MarkFlagRequired("output")
 
 	exportManifestCmd.Flags().StringVarP(
@@ -287,7 +288,7 @@ func gatherSessionKeyedContent(locations *claude.ProjectLocations) ([]byte, erro
 }
 
 func resolveSuggestions(suggestions []export.PlaceholderSuggestion) ([]manifest.Placeholder, error) {
-	var placeholders []manifest.Placeholder
+	placeholders := make([]manifest.Placeholder, 0, len(suggestions))
 	for _, suggestion := range suggestions {
 		if suggestion.Auto {
 			resolvable := true
@@ -333,7 +334,7 @@ func printExportRulesWarnings(claudeHome *claude.Home, projectPath string) {
 
 func buildExportMetadata(exportOptions export.Options) *manifest.Metadata {
 	resolvableTrue := true
-	var placeholders []manifest.Placeholder
+	placeholders := make([]manifest.Placeholder, 0, len(exportOptions.Placeholders))
 	for _, placeholder := range exportOptions.Placeholders {
 		placeholders = append(placeholders, manifest.Placeholder{
 			Key:        placeholder.Key,

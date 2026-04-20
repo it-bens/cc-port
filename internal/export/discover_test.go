@@ -126,5 +126,5 @@ func TestAutoDetectPlaceholders_MultipleUnresolved(t *testing.T) {
 
 func TestAutoDetectPlaceholders_Empty(t *testing.T) {
 	suggestions := export.AutoDetectPlaceholders(nil, "/Users/test/project", "/Users/test")
-	assert.Nil(t, suggestions)
+	assert.Empty(t, suggestions)
 }

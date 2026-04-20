@@ -162,7 +162,7 @@ func findWinningPrefixes(parentCoverage map[string]int) []string {
 // projectPath maps to {{PROJECT_PATH}}, homePath maps to {{HOME}}, and all
 // remaining prefixes receive {{UNRESOLVED_N}} names starting from 1.
 func AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion {
-	var suggestions []PlaceholderSuggestion
+	suggestions := make([]PlaceholderSuggestion, 0, len(prefixes))
 	unresolvedCounter := 1
 
 	for _, prefix := range prefixes {
