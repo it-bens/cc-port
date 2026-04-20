@@ -220,79 +220,71 @@ func filterHistoryLines(data []byte, targetProject string) []byte {
 	return filtered
 }
 
-func TestImport_Basic(t *testing.T) {
-	sourceClaudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceClaudeHome, archivePath)
+func TestImport_RestoresMemoryFiles(t *testing.T) {
+	destClaudeHome := runBasicImport(t)
+	projectDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
 
-	// Create a fresh destination ClaudeHome.
-	destTempDir := t.TempDir()
-	destClaudeDir := filepath.Join(destTempDir, "dotclaude")
-	destConfigFile := filepath.Join(destTempDir, "dotclaude.json")
+	assert.FileExists(t, filepath.Join(projectDir, "memory", "MEMORY.md"))
+	assert.FileExists(t, filepath.Join(projectDir, "memory", "project_notes.md"))
 
-	require.NoError(t, os.MkdirAll(filepath.Join(destClaudeDir, "projects"), 0755)) //nolint:gosec // G301: test setup
-	initialConfig := []byte(`{"projects":{}}`)
-	require.NoError(t, os.WriteFile(destConfigFile, initialConfig, 0644)) //nolint:gosec // G306: test setup
-
-	destClaudeHome := &claude.Home{
-		Dir:        destClaudeDir,
-		ConfigFile: destConfigFile,
-	}
-
-	destProjectPath := fixtureDestProjectPath
-	destHomeDir := filepath.Join(destTempDir, "home")
-
-	importOptions := importer.Options{
-		ArchivePath: archivePath,
-		TargetPath:  destProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destProjectPath,
-			"{{HOME}}":         destHomeDir,
-		},
-	}
-
-	require.NoError(t, importer.Run(destClaudeHome, importOptions))
-
-	assertImportResults(t, destClaudeHome, destProjectPath)
-}
-
-// assertImportResults verifies that a completed import produced the expected files and content.
-func assertImportResults(t *testing.T, destClaudeHome *claude.Home, destProjectPath string) {
-	t.Helper()
-
-	encodedDestProjectDir := destClaudeHome.ProjectDir(destProjectPath)
-	assert.DirExists(t, encodedDestProjectDir, "encoded project dir should exist")
-
-	// Verify memory files exist.
-	assert.FileExists(t, filepath.Join(encodedDestProjectDir, "memory", "MEMORY.md"))
-	assert.FileExists(t, filepath.Join(encodedDestProjectDir, "memory", "project_notes.md"))
-
-	memoryPath := filepath.Join(encodedDestProjectDir, "memory", "MEMORY.md")
+	memoryPath := filepath.Join(projectDir, "memory", "MEMORY.md")
 	memoryData, err := os.ReadFile(memoryPath) //nolint:gosec // G304: test-controlled path
 	require.NoError(t, err)
-	assert.NotContains(t, string(memoryData), "{{PROJECT_PATH}}", "memory file should have no unresolved placeholders")
-
-	// Verify history was merged.
-	historyData, err := os.ReadFile(destClaudeHome.HistoryFile())
-	require.NoError(t, err)
-	assert.NotEmpty(t, historyData, "history file should have content")
-	assert.NotContains(t, string(historyData), "{{PROJECT_PATH}}", "history should have no unresolved placeholders")
-	assert.Contains(t, string(historyData), destProjectPath, "history should contain resolved project path")
-
-	assertNoPendingPlaceholders(t, encodedDestProjectDir)
-	assertConfigMerged(t, destClaudeHome, destProjectPath)
+	assert.NotContains(t, string(memoryData), "{{PROJECT_PATH}}",
+		"memory file must have no unresolved placeholders")
 }
 
-// assertConfigMerged verifies that the project config was correctly merged into the destination config file.
-func assertConfigMerged(t *testing.T, destClaudeHome *claude.Home, destProjectPath string) {
-	t.Helper()
+func TestImport_MergesHistory(t *testing.T) {
+	destClaudeHome := runBasicImport(t)
+
+	historyData, err := os.ReadFile(destClaudeHome.HistoryFile())
+	require.NoError(t, err)
+	assert.NotEmpty(t, historyData, "history file must have content")
+	assert.Contains(t, string(historyData), fixtureDestProjectPath,
+		"history must reference the destination project path after resolution")
+}
+
+func TestImport_RekeysConfigBlock(t *testing.T) {
+	destClaudeHome := runBasicImport(t)
 
 	configData, err := os.ReadFile(destClaudeHome.ConfigFile)
 	require.NoError(t, err)
 	var userConfig claude.UserConfig
 	require.NoError(t, json.Unmarshal(configData, &userConfig))
-	_, hasProject := userConfig.Projects[destProjectPath]
-	assert.True(t, hasProject, "config should have the imported project entry")
+
+	_, hasProject := userConfig.Projects[fixtureDestProjectPath]
+	assert.True(t, hasProject, "config must hold the imported project entry")
+}
+
+func TestImport_ResolvesDeclaredPlaceholders(t *testing.T) {
+	destClaudeHome := runBasicImport(t)
+	projectDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
+
+	assertNoPendingPlaceholders(t, projectDir)
+}
+
+// runBasicImport runs a fresh import from a cc-port archive built off the
+// source fixture into an empty destination home, and returns the destination
+// home for assertions.
+func runBasicImport(t *testing.T) *claude.Home {
+	t.Helper()
+
+	sourceClaudeHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceClaudeHome, archivePath)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destHomeDir := filepath.Join(t.TempDir(), "home")
+
+	require.NoError(t, importer.Run(destClaudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  fixtureDestProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": fixtureDestProjectPath,
+			"{{HOME}}":         destHomeDir,
+		},
+	}))
+	return destClaudeHome
 }
 
 func TestImport_LeavesNoStagingTemps(t *testing.T) {

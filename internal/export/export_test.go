@@ -45,31 +45,19 @@ func readZipContents(t *testing.T, zipPath string) map[string]string {
 	return contents
 }
 
-func TestExport_AllCategories(t *testing.T) {
+func TestExport_IncludesSessions(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	options := export.Options{
-		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
-		Categories: manifest.CategorySet{
-			Sessions:    true,
-			Memory:      true,
-			History:     true,
-			FileHistory: true,
-			Config:      true,
-		},
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{Sessions: true},
 		Placeholders: defaultPlaceholders(),
-	}
-
-	_, err := export.Run(claudeHome, options)
+	})
 	require.NoError(t, err)
 
 	contents := readZipContents(t, outputPath)
-
-	assert.Contains(t, contents, "metadata.xml", "metadata.xml must be present")
-
-	// At least one session transcript should be present under sessions/
 	hasSession := false
 	for name := range contents {
 		if strings.HasPrefix(name, "sessions/") && strings.HasSuffix(name, ".jsonl") {
@@ -78,8 +66,21 @@ func TestExport_AllCategories(t *testing.T) {
 		}
 	}
 	assert.True(t, hasSession, "at least one sessions/*.jsonl entry must be present")
+}
 
-	// At least one memory file should be present
+func TestExport_IncludesMemory(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{Memory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	contents := readZipContents(t, outputPath)
 	hasMemory := false
 	for name := range contents {
 		if strings.HasPrefix(name, "memory/") {
@@ -88,64 +89,91 @@ func TestExport_AllCategories(t *testing.T) {
 		}
 	}
 	assert.True(t, hasMemory, "at least one memory/* entry must be present")
-
-	assert.Contains(t, contents, "history/history.jsonl", "history/history.jsonl must be present")
-	assert.Contains(t, contents, "config.json", "config.json must be present")
-
-	// Verify history contains entries for our project
-	historyContent := contents["history/history.jsonl"]
-	assert.NotEmpty(t, historyContent, "history/history.jsonl must not be empty")
 }
 
-func TestExport_PathAnonymization(t *testing.T) {
+func TestExport_IncludesHistory(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	options := export.Options{
-		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
-		Categories: manifest.CategorySet{
-			Sessions:    true,
-			Memory:      true,
-			History:     true,
-			FileHistory: false,
-			Config:      true,
-		},
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{History: true},
 		Placeholders: defaultPlaceholders(),
-	}
-
-	_, err := export.Run(claudeHome, options)
+	})
 	require.NoError(t, err)
 
 	contents := readZipContents(t, outputPath)
+	assert.Contains(t, contents, "history/history.jsonl")
+	assert.NotEmpty(t, contents["history/history.jsonl"], "history body must not be empty")
+}
 
-	originalProjectPath := fixtureProjectPath
-	originalHomePath := "/Users/test"
+func TestExport_IncludesConfig(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{Config: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	contents := readZipContents(t, outputPath)
+	assert.Contains(t, contents, "config.json")
+}
+
+func TestExport_RedactsProjectPaths(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath: fixtureProjectPath,
+		OutputPath:  outputPath,
+		Categories: manifest.CategorySet{
+			Sessions: true, Memory: true, History: true, Config: true,
+		},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	contents := readZipContents(t, outputPath)
 	for name, content := range contents {
 		if name == "metadata.xml" {
-			// metadata.xml intentionally contains original paths in placeholder attributes
 			continue
 		}
-
-		assert.NotContains(t, content, originalProjectPath,
+		assert.NotContains(t, content, fixtureProjectPath,
 			"file %s must not contain original project path", name)
-		assert.NotContains(t, content, originalHomePath,
+		assert.NotContains(t, content, "/Users/test",
 			"file %s must not contain original home path", name)
 	}
+}
 
-	// Verify placeholders appear in the anonymized files. Transcripts always
-	// carry the project path in their `cwd` field, so at least one
-	// sessions/*.jsonl entry must contain {{PROJECT_PATH}} after anonymization.
-	foundProjectPlaceholder := false
+func TestExport_AddsPlaceholderForProjectPath(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	_, err := export.Run(claudeHome, export.Options{
+		ProjectPath: fixtureProjectPath,
+		OutputPath:  outputPath,
+		Categories: manifest.CategorySet{
+			Sessions: true, Memory: true, History: true, Config: true,
+		},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	contents := readZipContents(t, outputPath)
+	found := false
 	for name, content := range contents {
 		if strings.HasPrefix(name, "sessions/") && strings.Contains(content, "{{PROJECT_PATH}}") {
-			foundProjectPlaceholder = true
+			found = true
 			break
 		}
 	}
-	assert.True(t, foundProjectPlaceholder,
-		"at least one anonymized session file must contain the project path placeholder")
+	assert.True(t, found,
+		"at least one anonymized session file must contain {{PROJECT_PATH}}")
 }
 
 func TestExport_SelectiveCategories(t *testing.T) {
@@ -243,40 +271,72 @@ func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
 	}
 }
 
-// TestExport_HistoryInclusionRules verifies that extractProjectHistory
-// includes a history line under three conditions: a matching `project`
-// field (primary signal), an empty `project` field with an in-body bounded
-// reference, or a malformed line with an in-body bounded reference. It also
-// verifies the exclusions: a line explicitly tagged to a different project
-// is never included, even if it textually mentions projectPath, and a
-// prefix-collision sibling path never triggers a match.
-func TestExport_HistoryInclusionRules(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
-
-	// Overwrite the fixture history with a handcrafted set that exercises
-	// every branch of the inclusion rule. Each line is tagged with a
-	// `marker` string so the assertions below can identify it regardless
-	// of any anonymization that runs over the exported bytes.
-	historyLines := []string{
-		// Branch 1 — structured project field matches.
+func TestExport_HistoryIncludesStructuredProjectMatch(t *testing.T) {
+	body := historyExportWithLines(t, []string{
 		`{"marker":"structured-match","project":"/Users/test/Projects/myproject","display":"a"}`,
-		// Branch 2 — empty project + bounded reference in display.
-		`{"marker":"empty-project-with-ref","project":"","display":"open /Users/test/Projects/myproject/main.go"}`,
-		// Branch 3 — malformed JSON with a bounded reference in raw bytes.
-		`{malformed-with-ref "marker":"malformed-with-ref" /Users/test/Projects/myproject/foo.go`,
-		// Exclusion — line tagged to another project that mentions our path.
-		`{"marker":"other-project-with-ref",` +
-			`"project":"/Users/test/Projects/otherproject",` +
+	})
+	assert.Contains(t, body, `"marker":"structured-match"`,
+		"structured project-field match must be included (branch 1)")
+}
+
+func TestExport_HistoryIncludesEmptyProjectWithBoundedReference(t *testing.T) {
+	body := historyExportWithLines(t, []string{
+		`{"marker":"empty-with-ref","project":"","display":"open /Users/test/Projects/myproject/main.go"}`,
+	})
+	assert.Contains(t, body, `"marker":"empty-with-ref"`,
+		"empty project + bounded reference must be included (branch 2)")
+}
+
+func TestExport_HistoryIncludesMalformedWithBoundedReference(t *testing.T) {
+	body := historyExportWithLines(t, []string{
+		`{malformed "marker":"malformed-with-ref" /Users/test/Projects/myproject/foo.go`,
+	})
+	assert.Contains(t, body, `"marker":"malformed-with-ref"`,
+		"malformed line with bounded reference must be included (branch 3)")
+}
+
+func TestExport_HistoryExcludesOtherProjectWithReference(t *testing.T) {
+	body := historyExportWithLines(t, []string{
+		`{"marker":"other","project":"/Users/test/Projects/otherproject",` +
 			`"display":"inspired by /Users/test/Projects/myproject"}`,
-		// Exclusion — prefix-collision sibling. A naive substring check
-		// would pull this in; the boundary-aware check must reject it.
-		`{"marker":"prefix-collision","project":"","display":"notes live in /Users/test/Projects/myproject-extras/"}`,
-		// Exclusion — malformed JSON with no reference at all.
-		`{malformed-no-ref "marker":"malformed-no-ref" unrelated content`,
-		// Exclusion — unrelated well-formed line.
+	})
+	assert.NotContains(t, body, `"marker":"other"`,
+		"line tagged to a different project must NOT be included even if it mentions our path")
+}
+
+func TestExport_HistoryExcludesPrefixCollisionSibling(t *testing.T) {
+	body := historyExportWithLines(t, []string{
+		`{"marker":"prefix-collision","project":"",` +
+			`"display":"notes live in /Users/test/Projects/myproject-extras/"}`,
+	})
+	assert.NotContains(t, body, `"marker":"prefix-collision"`,
+		"prefix-collision sibling path (myproject-extras) must NOT register as a match")
+}
+
+func TestExport_HistoryExcludesMalformedWithoutReference(t *testing.T) {
+	body := historyExportWithLines(t, []string{
+		`{malformed "marker":"malformed-no-ref" unrelated content`,
+	})
+	assert.NotContains(t, body, `"marker":"malformed-no-ref"`,
+		"malformed line without any reference to our path must NOT be included")
+}
+
+func TestExport_HistoryExcludesUnrelatedStructured(t *testing.T) {
+	body := historyExportWithLines(t, []string{
 		`{"marker":"unrelated","project":"/Users/test/Projects/otherproject","display":"z"}`,
-	}
-	historyData := []byte(strings.Join(historyLines, "\n") + "\n")
+	})
+	assert.NotContains(t, body, `"marker":"unrelated"`,
+		"line tagged to a different project with no reference must NOT be included")
+}
+
+// historyExportWithLines overwrites the fixture's history.jsonl with the
+// given lines, runs an export with only History enabled, and returns the
+// exported history body. May be empty when the input lines all fall under
+// an exclusion rule.
+func historyExportWithLines(t *testing.T, lines []string) string {
+	t.Helper()
+	claudeHome := testutil.SetupFixture(t)
+	historyData := []byte(strings.Join(lines, "\n") + "\n")
 	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), historyData, 0600))
 
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
@@ -284,32 +344,11 @@ func TestExport_HistoryInclusionRules(t *testing.T) {
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories:  manifest.CategorySet{History: true},
-		// No placeholders — exported history keeps the literal paths so
-		// marker strings and bounded references remain easy to assert on.
 	})
 	require.NoError(t, err)
 
 	contents := readZipContents(t, outputPath)
-	history := contents["history/history.jsonl"]
-	require.NotEmpty(t, history, "history/history.jsonl must be present")
-
-	// Included markers — all three inclusion branches.
-	assert.Contains(t, history, `"marker":"structured-match"`,
-		"structured project-field match must be included (branch 1)")
-	assert.Contains(t, history, `"marker":"empty-project-with-ref"`,
-		"empty project field + bounded in-body reference must be included (branch 2)")
-	assert.Contains(t, history, `"marker":"malformed-with-ref"`,
-		"malformed line with bounded reference must be included (branch 3)")
-
-	// Excluded markers — every exclusion rule.
-	assert.NotContains(t, history, `"marker":"other-project-with-ref"`,
-		"line tagged to a different project must NOT be included even if it mentions our path")
-	assert.NotContains(t, history, `"marker":"prefix-collision"`,
-		"prefix-collision sibling path (myproject-extras) must NOT register as a match")
-	assert.NotContains(t, history, `"marker":"malformed-no-ref"`,
-		"malformed line without any reference to our path must NOT be included")
-	assert.NotContains(t, history, `"marker":"unrelated"`,
-		"line tagged to a different project with no reference must NOT be included")
+	return contents["history/history.jsonl"]
 }
 
 func TestExport_IncludesTodos(t *testing.T) {

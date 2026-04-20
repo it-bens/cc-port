@@ -13,6 +13,8 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `ResolvePlaceholders(content []byte, resolutions map[string]string) []byte`: substitute every declared `{{KEY}}` in a body.
 - `ValidateResolutions(resolutions map[string]string) error`: syntactic validation of caller-supplied resolutions (non-empty, absolute paths only).
 - `CheckConflict(encodedProjectDir string) error`: refuse the import if the encoded target directory already exists. Also refuse when existence cannot be determined (e.g. a permission error on an intermediate component). Only a clean "does not exist" returns `nil`.
+- `BuildHistoryBytes(existing []byte, appends [][]byte) []byte`: pure byte concatenation used by staging to compute the merged history bytes before atomic promote. No I/O, no lock.
+- `MergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error)`: splice a project block into an existing `.claude.json` body. Preserves key order, indent, and trailing newlines via `sjson`. `configPath` is used only in error messages.
 - `Options`: import configuration: `ArchivePath`, `TargetPath`, `Resolutions`. Carries an unexported `renameHook` used by tests.
 
 ## Contracts

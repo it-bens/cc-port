@@ -319,13 +319,46 @@ func TestApply_WarnsOnMalformedHistoryLines(t *testing.T) {
 		"warning should name the 1-based line number from the fixture")
 }
 
-func TestApply_PreservesFileHistorySnapshots(t *testing.T) {
+func TestSnapshotPaths_EnumeratesFileHistoryDirs(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	// Plant a binary-looking snapshot next to the fixture's text snapshot.
-	// Both must round-trip byte-identically through the move: file-history
-	// snapshots are opaque user-file bytes, and cc-port never rewrites their
-	// contents — their project-path strings (if any) are coincidental.
+	sessionDir := filepath.Join(
+		claudeHome.FileHistoryDir(), "a1b2c3d4-0000-0000-0000-000000000001",
+	)
+	extraSnapshot := filepath.Join(sessionDir, "planted0000000000@v1")
+	require.NoError(t, os.WriteFile(extraSnapshot, []byte("planted"), 0600))
+
+	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
+	require.NoError(t, err)
+
+	paths, err := move.SnapshotPaths(locations)
+	require.NoError(t, err)
+
+	assert.Contains(t, paths, extraSnapshot,
+		"planted snapshot must appear in the enumeration")
+}
+
+func TestDryRun_ReportsFileHistorySnapshotCount(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
+	require.NoError(t, err)
+	expected, err := move.SnapshotPaths(locations)
+	require.NoError(t, err)
+
+	plan, err := move.DryRun(claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, len(expected), plan.ReplacementsByCategory["file-history-snapshots"],
+		"DryRun count must equal SnapshotPaths enumeration")
+}
+
+func TestApply_PreservesSnapshotBytes(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
 	fileHistorySessionDir := filepath.Join(
 		claudeHome.FileHistoryDir(), "a1b2c3d4-0000-0000-0000-000000000001",
 	)
@@ -339,13 +372,33 @@ func TestApply_PreservesFileHistorySnapshots(t *testing.T) {
 	require.Contains(t, string(textBefore), oldProjectPath,
 		"fixture precondition: text snapshot must reference old path")
 
-	plan, err := move.DryRun(claudeHome, move.Options{
-		OldPath: oldProjectPath,
-		NewPath: newProjectPath,
+	err = move.Apply(claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
 	})
 	require.NoError(t, err)
-	assert.Positive(t, plan.ReplacementsByCategory["file-history-snapshots"],
-		"dry-run should count the snapshots that will be preserved as-is")
+
+	textAfter, err := os.ReadFile(textSnapshotPath) //nolint:gosec // test path
+	require.NoError(t, err)
+	assert.Equal(t, textBefore, textAfter,
+		"text snapshot must round-trip byte-identically")
+
+	binaryAfter, err := os.ReadFile(binarySnapshotPath) //nolint:gosec // test path
+	require.NoError(t, err)
+	assert.Equal(t, binarySnapshotContent, binaryAfter,
+		"binary snapshot must round-trip byte-identically")
+}
+
+func TestApply_EmitsFileHistoryWarning(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
+	require.NoError(t, err)
+	snapshots, err := move.SnapshotPaths(locations)
+	require.NoError(t, err)
+	require.NotEmpty(t, snapshots,
+		"fixture precondition: must have at least one snapshot to warn about")
 
 	var warnings bytes.Buffer
 	err = move.Apply(claudeHome, move.Options{
@@ -356,23 +409,11 @@ func TestApply_PreservesFileHistorySnapshots(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	textAfter, err := os.ReadFile(textSnapshotPath) //nolint:gosec // test path
-	require.NoError(t, err)
-	assert.Equal(t, textBefore, textAfter,
-		"text snapshot must round-trip byte-identically")
-	assert.Contains(t, string(textAfter), oldProjectPath,
-		"text snapshot's old-path substring must survive the move verbatim")
-
-	binaryAfter, err := os.ReadFile(binarySnapshotPath) //nolint:gosec // test path
-	require.NoError(t, err)
-	assert.Equal(t, binarySnapshotContent, binaryAfter,
-		"binary snapshot must round-trip byte-identically")
-
 	output := warnings.String()
 	assert.Contains(t, output, "file-history snapshot",
-		"warning should name the file-history category")
+		"warning must name the file-history category")
 	assert.Contains(t, output, "preserved",
-		"warning should state the preservation invariant")
+		"warning must state the preservation invariant")
 }
 
 func TestDryRun_CountsSessionKeyedReplacements(t *testing.T) {

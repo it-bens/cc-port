@@ -534,7 +534,7 @@ func stageHistoryIfNeeded(plan *importPlan, appends [][]byte) error {
 	if err != nil {
 		return fmt.Errorf("read existing history for merge: %w", err)
 	}
-	merged := buildHistoryBytes(existing, appends)
+	merged := BuildHistoryBytes(existing, appends)
 	if err := writeStagedFile(plan.tempHistoryFile, merged); err != nil {
 		return err
 	}
@@ -551,7 +551,7 @@ func stageConfigIfNeeded(plan *importPlan, targetPath string, block []byte) erro
 	if err != nil {
 		return fmt.Errorf("read existing config for merge: %w", err)
 	}
-	merged, err := mergeProjectConfigBytes(existing, plan.configFile, targetPath, block)
+	merged, err := MergeProjectConfigBytes(existing, plan.configFile, targetPath, block)
 	if err != nil {
 		return err
 	}
@@ -648,12 +648,11 @@ func readZipFile(zipFile *zip.File) ([]byte, error) {
 	return data, nil
 }
 
-// buildHistoryBytes returns the concatenation of existing and each appended
-// slice, separating them with newlines when the existing content does not
-// already end with one. Centralising this here lets the staging layer write
-// the result atomically instead of appending to the real history file in
-// the middle of a loop.
-func buildHistoryBytes(existing []byte, appends [][]byte) []byte {
+// BuildHistoryBytes returns existing concatenated with each appended slice,
+// inserting a newline between existing and appends when existing does not
+// already end with one. Pure function — no I/O, no lock. Lets the staging
+// layer compute the merged bytes up-front and promote them atomically.
+func BuildHistoryBytes(existing []byte, appends [][]byte) []byte {
 	var buffer []byte
 	buffer = append(buffer, existing...)
 	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
@@ -665,13 +664,13 @@ func buildHistoryBytes(existing []byte, appends [][]byte) []byte {
 	return buffer
 }
 
-// mergeProjectConfigBytes returns the JSON bytes of existingData with
+// MergeProjectConfigBytes returns the JSON bytes of existingData with
 // blockData spliced in as the project entry under targetPath. It uses sjson
 // to preserve every byte outside the inserted entry — original key order,
 // indent style, and trailing newlines all survive. If existingData is empty,
 // a minimal `{}` is used as the base document. configPath is used only in
 // error messages.
-func mergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error) {
+func MergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error) {
 	if len(existingData) == 0 {
 		existingData = []byte(`{}`)
 	} else if !gjson.ValidBytes(existingData) {

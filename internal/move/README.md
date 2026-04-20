@@ -9,6 +9,7 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
 - `DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error)`: compute the plan without writing any files.
 - `Apply(claudeHome *claude.Home, moveOptions Options) error`: execute the plan with copy-verify-delete, warnings to `Options.WarningWriter`.
 - `PlanCategories() []string`: returns a copy of the canonical category ordering so CLI renderers iterate `ReplacementsByCategory` in a stable order.
+- `SnapshotPaths(locations *claude.ProjectLocations) ([]string, error)`: enumerates every snapshot path under `locations.FileHistoryDirs`. Contents are never read, only path discovery. The returned length equals the dry-run `plan.ReplacementsByCategory["file-history-snapshots"]`. Used by `DryRun`'s counter and `Apply`'s preservation warning so both stay in lock-step.
 - `Options`: input parameters for a move operation.
   - `OldPath`, `NewPath`: source and destination project paths.
   - `RewriteTranscripts`: opt-in project-local transcript rewrite.

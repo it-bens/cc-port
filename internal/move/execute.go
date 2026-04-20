@@ -215,6 +215,22 @@ func ListFilesRecursive(dir string) ([]string, error) {
 	return files, nil
 }
 
+// SnapshotPaths returns every snapshot file path under locations.FileHistoryDirs.
+// Snapshot contents are not read; path discovery only matches the opaque-bytes
+// invariant. Used by DryRun for the plan count and by Apply's preservation
+// warning so both stay in lock-step with one enumeration.
+func SnapshotPaths(locations *claude.ProjectLocations) ([]string, error) {
+	var paths []string
+	for _, fileHistoryDir := range locations.FileHistoryDirs {
+		snapshots, err := ListFilesRecursive(fileHistoryDir)
+		if err != nil {
+			return nil, fmt.Errorf("walk file-history dir %s: %w", fileHistoryDir, err)
+		}
+		paths = append(paths, snapshots...)
+	}
+	return paths, nil
+}
+
 // warningWriter returns the writer to which Apply sends human-readable
 // warnings. It defaults to os.Stderr so unconfigured callers still see
 // warnings; tests inject a buffer via Options.WarningWriter.
@@ -229,24 +245,20 @@ func warningWriter(moveOptions Options) io.Writer {
 // snapshots. Snapshot contents are preserved verbatim; the warning surfaces
 // that the old project path may still appear inside them after a move.
 func warnFileHistoryPreserved(locations *claude.ProjectLocations, moveOptions Options) {
-	count := 0
-	for _, fileHistoryDir := range locations.FileHistoryDirs {
-		snapshotPaths, err := ListFilesRecursive(fileHistoryDir)
-		if err != nil {
-			// The same walk already succeeded during rewriteGlobalFiles'
-			// preceding work; an error here is unexpected. Skip the warning
-			// rather than fail the apply — the move itself is complete.
-			return
-		}
-		count += len(snapshotPaths)
+	paths, err := SnapshotPaths(locations)
+	if err != nil {
+		// SnapshotPaths re-walks dirs that rewriteGlobalFiles already walked
+		// successfully; an error here is unexpected. Skip the warning rather
+		// than fail the apply — the move itself is complete.
+		return
 	}
-	if count == 0 {
+	if len(paths) == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(
 		warningWriter(moveOptions),
 		"warning: %d file-history snapshot(s) preserved as-is — contents may still reference the old project path "+
 			"(used for in-session rewinds, not persisted data)\n",
-		count,
+		len(paths),
 	)
 }
