@@ -9,10 +9,9 @@ import (
 	"github.com/it-bens/cc-port/internal/fsutil"
 )
 
-// EncodePath converts an absolute, symlink-resolved filesystem path into the
-// directory-name form Claude Code uses under ~/.claude/projects/. The encoding
-// is lossy (/, ., space all collapse to -); pass pre-resolved paths or the
-// result will not match what Claude Code wrote.
+// EncodePath encodes an absolute, symlink-resolved path into the directory-name
+// form Claude Code uses under ~/.claude/projects/. Pass pre-resolved paths or
+// the result will not match what Claude Code wrote.
 func EncodePath(absPath string) string {
 	replacer := strings.NewReplacer(
 		"/", "-",

@@ -22,7 +22,7 @@ cc-port/
 └── testdata/dotclaude/     Minimal ~/.claude fixture for tests
 ```
 
-Each non-trivial directory has a `README.md`; directories with hard editing rules additionally carry an `AGENTS.md` (loaded by Claude Code via a one-line `CLAUDE.md`). The `README.md` is the developer narrative; the `AGENTS.md` is a pointer-only map into it.
+Each non-trivial directory has a `README.md`. Directories with hard editing rules additionally carry an `AGENTS.md` (loaded by Claude Code via a one-line `CLAUDE.md`). The `README.md` is the developer narrative. The `AGENTS.md` is a pointer-only map into it.
 
 ## Contracts
 
@@ -51,14 +51,14 @@ Five `~/.claude/` directories carry per-session state belonging to a project:
 same set computed by `collectProjectDirEntries`). Per-command handling lives in
 the relevant module:
 
-- [`internal/move/README.md`](../internal/move/README.md) §Apply contract — copy
+- [`internal/move/README.md`](../internal/move/README.md) §Apply contract: copy
   + rewrite + tracker rollback, with `tasks/.lock` and `tasks/.highwatermark`
   excluded.
-- [`internal/export/README.md`](../internal/export/README.md) §Session-keyed zip layout
-  — opt-in via `--todos`, `--usage-data`, `--plugins-data`, `--tasks`, included
-  in `--all`; bodies pass through `applyPlaceholders`.
-- [`internal/importer/README.md`](../internal/importer/README.md) §Atomic
-  staging — 4 new prefix arms staged at sibling temps, promoted last in the
+- [`internal/export/README.md`](../internal/export/README.md) §Session-keyed zip layout:
+  opt-in via `--todos`, `--usage-data`, `--plugins-data`, `--tasks`, included
+  in `--all`. Bodies pass through `applyPlaceholders`.
+- [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging:
+  4 new prefix arms staged at sibling temps, promoted last in the
   order so the most load-bearing data settles first.
 
 ### Registry source of truth
@@ -74,7 +74,7 @@ instead of open-coding the five group names. Adding a sixth session-keyed
 group means editing both slices in the same commit plus one entry in
 `internal/move`'s `planCategories`.
 
-`~/.claude/teams/<team>/**` is intentionally NOT in this set — team directories
+`~/.claude/teams/<team>/**` is intentionally NOT in this set. Team directories
 are user-wide workspaces with no inspectable per-project attribution.
 
 ## File-history policy (cross-cutting)
@@ -82,7 +82,7 @@ are user-wide workspaces with no inspectable per-project attribution.
 cc-port treats every file under `~/.claude/file-history/<session-uuid>/`
 as an opaque byte stream. The directory is indexed by session UUID (not
 by project path), and each `<hash>@vN` entry is a verbatim copy of a
-file the user edited through Claude Code — the in-session rewind feature
+file the user edited through Claude Code. The in-session rewind feature
 uses it by filename, not by content. Any project-path string that
 appears inside a snapshot body is coincidental (log line, comment,
 string literal) and not load-bearing, so cc-port never inspects or
@@ -90,6 +90,6 @@ rewrites snapshot contents.
 
 Per-command handling:
 
-- [`internal/move/README.md`](../internal/move/README.md) §File-history handling (move) — copy-verbatim, stderr warning, stale-path-strings residual risk.
-- [`internal/export/README.md`](../internal/export/README.md) §File-history handling (export) — archive-verbatim, stderr warning, privacy-of-exported-snapshots residual risk and the `--file-history=false` opt-out.
-- [`internal/importer/README.md`](../internal/importer/README.md) §File-history handling (import) — write-verbatim, `ResolvePlaceholders` no-op detail on current archives.
+- [`internal/move/README.md`](../internal/move/README.md) §File-history handling (move): copy-verbatim, stderr warning, stale-path-strings residual risk.
+- [`internal/export/README.md`](../internal/export/README.md) §File-history handling (export): archive-verbatim, stderr warning, privacy-of-exported-snapshots residual risk and the `--file-history=false` opt-out.
+- [`internal/importer/README.md`](../internal/importer/README.md) §File-history handling (import): write-verbatim, `ResolvePlaceholders` no-op detail on current archives.

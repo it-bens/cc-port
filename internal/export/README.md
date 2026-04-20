@@ -2,80 +2,92 @@
 
 ## Purpose
 
-Produce a cc-port archive from one project: discover path prefixes appearing in bodies, auto-detect placeholder suggestions, write a ZIP containing the chosen categories plus a `metadata.xml` manifest. Also produces a standalone manifest (`export manifest`) that the operator fills in before running `import`.
+Produces a cc-port archive from one project: discover path prefixes, propose placeholder mappings, write a ZIP with the chosen categories plus a `metadata.xml` manifest.
 
-Not a file-level exporter — this module's unit is one project. Not a path-anonymisation library — the anonymisation heuristics are internal and tied to the manifest schema. The wire format and the category enum table live in [`internal/manifest`](../manifest/README.md); this package is a consumer.
+This module's unit is one project, not the file system at large. The wire format and the category enum table live in [`internal/manifest`](../manifest/README.md). This package is a consumer.
 
 ## Public API
 
-- **Entry points**
-  - `Run(claudeHome *claude.Home, exportOptions Options) (Result, error)` — full export or manifest-only export, controlled by `Options`.
-- **Path discovery**
-  - `DiscoverPaths(content []byte) []string` — find path-like tokens inside a body.
-  - `GroupPathPrefixes(paths []string) []string` — collapse overlapping prefixes.
-  - `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion` — propose placeholder mappings for all discovered path prefixes: `{{PROJECT_PATH}}` for the project path, `{{HOME}}` for the home path, and `{{UNRESOLVED_N}}` for the rest.
-- **Types**
-  - `Options`, `Result`, `PlaceholderSuggestion` — export configuration and outputs. `Options.Categories` is a `manifest.CategorySet`.
+- `Run(claudeHome *claude.Home, exportOptions Options) (Result, error)`: full export, controlled by `Options`.
+- `DiscoverPaths(content []byte) []string`: find path-like tokens inside a body.
+- `GroupPathPrefixes(paths []string) []string`: collapse overlapping prefixes.
+- `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion`: propose `{{PROJECT_PATH}}`, `{{HOME}}`, and `{{UNRESOLVED_N}}` mappings for all discovered prefixes.
+- `Options`, `Result`, `PlaceholderSuggestion`: export configuration and outputs. `Options.Categories` is a `manifest.CategorySet`.
 
 ## Contracts
 
-### Category manifest
+### Category coverage
 
-Every `cc-port export` archive declares all nine category names in
-`metadata.xml`, produced by `manifest.BuildCategoryEntries(&opts.Categories)`.
-The importer validates the list with `manifest.ApplyCategoryEntries`, which
-hard-fails on any missing or unknown name. The enum table, the write helper,
-and the validator all live in [`internal/manifest`](../manifest/README.md)
-§Category manifest.
+Called by `cmd/cc-port`. Delegates to `internal/manifest` (see [`internal/manifest/README.md`](../manifest/README.md) §Category manifest) for the enum table, write helper, and validator.
+
+#### Handled
+
+Every archive declares all nine category names in `metadata.xml` via `manifest.BuildCategoryEntries(&opts.Categories)`.
+
+#### Refused
+
+Hand-rolling a parallel nine-entry literal is refused. The only correct path is `manifest.BuildCategoryEntries`.
+
+#### Not covered
+
+Validation that a read archive's category list is correct. That belongs to `internal/importer` via `manifest.ApplyCategoryEntries`.
 
 ### Anonymisation
 
-Every body written into the archive passes through `applyPlaceholders`, which
-substitutes known path prefixes with `{{KEY}}` tokens before the bytes land in
-the ZIP. Every non-file-history category receives the pass, including each of
-the session-keyed zip groups (`todos`, `usage-data/session-meta`,
-`usage-data/facets`, `plugins-data`, `tasks`) — the privacy guarantee is
-preserved across all body types.
+Called by `cmd/cc-port` for every full export. `applyPlaceholders` is also the `internal/export`-private anonymisation path for all non-file-history categories.
 
-The one exception is file-history snapshots: they are archived verbatim with
-no anonymisation pass. See §File-history handling (export) for the opt-out
-surface.
+#### Handled
+
+Every body written to the archive passes through `applyPlaceholders` before hitting the ZIP. This applies to sessions, memory, history, config, and all five session-keyed groups (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`).
+
+Placeholder replacement is order-independent across runs: a re-export of the same project produces the same placeholder set. Covered by `export_test.go:TestExport_PathAnonymization_OrderIndependent`.
+
+File-history snapshots are the one exception. See §File-history handling (export).
+
+#### Refused
+
+A partial-scrub pass on file-history bytes is refused. The category flag is the only opt-out surface.
+
+#### Not covered
+
+Privacy of snapshot content inside an exported archive. If the archive is shared, the recipient sees literal project paths embedded in any snapshot that quoted them. Excluding the `file-history` category is the only mitigation.
 
 ### Session-keyed zip layout
 
-The five session-keyed categories (`todos`, `usage-data/session-meta`,
-`usage-data/facets`, `plugins-data`, `tasks`) are written to the archive by a
-single registry-driven loop: `exportSessionKeyed` iterates
-`locations.AllFlatFiles()` once, skips groups whose `CategorySet` flag is off,
-and resolves each entry's zip prefix and relative-path base from
-`transport.SessionKeyedTargets`. There are no per-group helpers — the zip
-layout for all five groups is the transport registry, and adding a sixth
-group means appending to `claude.SessionKeyedGroups` and
-`transport.SessionKeyedTargets` rather than editing this package.
+Used internally by `exportSessionKeyed`.
+
+#### Handled
+
+The five session-keyed groups (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`) are written by one registry-driven loop. `exportSessionKeyed` iterates `locations.AllFlatFiles()` once and skips groups whose `CategorySet` flag is off. Each entry's zip prefix and relative-path base come from `transport.SessionKeyedTargets`. There are no per-group helpers.
+
+#### Refused
+
+Hard-coding a zip prefix or home base directory in this package is refused. All layout comes from `transport.SessionKeyedTargets`.
+
+#### Not covered
+
+Adding a sixth session-keyed group. That requires appending to `claude.SessionKeyedGroups` and `transport.SessionKeyedTargets`, not editing this package.
 
 ### File-history handling (export)
 
-File-history snapshots are opaque byte streams; see [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command.
+Governed by the cross-cutting policy in [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting).
 
-Handled — `cc-port export` (with the `file-history` category enabled) writes each snapshot verbatim into the archive under `file-history/<uuid>/…`. No path anonymisation runs over those bytes. The CLI prints `Warning: N file-history snapshot(s) archived as-is …` to stderr when the count is positive.
+#### Handled
 
-Not covered — cases cc-port deliberately does not address:
+When `file-history` is enabled, each snapshot is written verbatim under `file-history/<uuid>/...`. No path anonymisation runs. `Run` returns a `Result` with `FileHistorySnapshotsArchived` set. The CLI prints a warning when the count is positive.
 
-- **Privacy of exported snapshots.** An archive shared with someone else
-  carries the sender's literal project path inside any snapshot that
-  quoted it. If a recipient must not see that path, the `file-history`
-  category has to be excluded up front — `--file-history=false`, the
-  absence of `--file-history` when other `--<category>` flags are set,
-  or unchecking the category in the interactive prompt. There is no
-  scrub pass between export and archive creation; the category flag is
-  the entire opt-out surface.
+#### Refused
+
+Inspecting or rewriting snapshot bytes is refused. Snapshots are opaque user-file bytes.
+
+#### Not covered
+
+Privacy of exported snapshots. An archive shared with someone else carries literal project paths inside any snapshot that quoted them. Excluding the category up front (`--file-history=false`, or omitting it when other categories are explicitly selected) is the entire opt-out surface.
 
 ## Tests
 
-Unit tests in `export_test.go` and `discover_test.go`. Coverage: all-categories export, path anonymisation (including order-independence and boundary collisions), selective category export, history-inclusion rules, path discovery on various body shapes, prefix grouping, auto-placeholder detection. Manifest marshal/unmarshal round-trip and XML format stability live in [`internal/manifest`](../manifest/README.md) §Tests.
+Unit tests in `export_test.go` and `discover_test.go`. Coverage: all-categories export, path anonymisation (order-independence, boundary collisions), selective category export, history-inclusion rules, path discovery, prefix grouping, auto-placeholder detection.
 
-`extractProjectHistory` has dedicated tests in `extract_history_test.go` for the 16 MiB line cap: one line below the cap extracts successfully, one line above the cap returns `bufio.ErrTooLong` via the scanner's error path.
+`extractProjectHistory` has dedicated tests in `extract_history_test.go` for the 16 MiB line cap.
 
-## References
-
-- `bufio.Scanner.Buffer` — local authoritative: `go doc bufio.Scanner.Buffer` · online supplement: https://pkg.go.dev/bufio#Scanner.Buffer
+Manifest marshal/unmarshal round-trip and XML format stability live in [`internal/manifest`](../manifest/README.md) §Tests.

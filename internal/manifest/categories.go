@@ -5,9 +5,8 @@ import (
 	"fmt"
 )
 
-// CategorySet specifies which export categories the user selected. Exactly
-// one bool per category; AllCategories (in this package) is the single
-// source of truth for the set of valid categories and their wire names.
+// CategorySet specifies which export categories the user selected.
+// AllCategories is the single source of truth for valid categories and wire names.
 type CategorySet struct {
 	Sessions    bool
 	Memory      bool
@@ -21,9 +20,8 @@ type CategorySet struct {
 }
 
 // CategorySpec defines one entry in the export-category enum table: the
-// on-wire name in metadata.xml plus accessors onto the matching field of
-// CategorySet. Adding a tenth category means appending one CategorySpec
-// here and one bool field on CategorySet — nothing else changes.
+// on-wire name in metadata.xml plus Get/Set accessors onto the matching
+// CategorySet field.
 type CategorySpec struct {
 	Name string
 	Get  func(*CategorySet) bool
@@ -81,10 +79,8 @@ var AllCategories = []CategorySpec{
 	},
 }
 
-// BuildCategoryEntries produces a []Category in canonical order for writing
-// into metadata.xml. The post-condition — every AllCategories.Name appears
-// exactly once — is the write-side half of the manifest contract that the
-// importer enforces via ApplyCategoryEntries.
+// BuildCategoryEntries produces a []Category in AllCategories order for writing
+// into metadata.xml. Every AllCategories.Name appears exactly once.
 func BuildCategoryEntries(set *CategorySet) []Category {
 	entries := make([]Category, len(AllCategories))
 	for i, spec := range AllCategories {
@@ -93,12 +89,8 @@ func BuildCategoryEntries(set *CategorySet) []Category {
 	return entries
 }
 
-// ApplyCategoryEntries validates and applies a manifest's category list. It
-// hard-fails if any AllCategories.Name is missing from entries, or if
-// entries contains a name outside AllCategories. Multiple violations are
-// aggregated via errors.Join so one call surfaces every problem — this is
-// the single enforcement point for the "every export declares all 9;
-// importer hard-fails on missing or unknown names" contract.
+// ApplyCategoryEntries validates a manifest's category list and returns the
+// matching CategorySet. Missing and unknown names are aggregated via errors.Join.
 func ApplyCategoryEntries(entries []Category) (CategorySet, error) {
 	specByName := make(map[string]CategorySpec, len(AllCategories))
 	for _, spec := range AllCategories {

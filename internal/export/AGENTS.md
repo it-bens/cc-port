@@ -1,20 +1,13 @@
-# internal/export — agent notes
-
-Produce a cc-port archive + manifest for one project. See `README.md` for the full contract.
+# internal/export -- agent notes
 
 ## Before editing
 
-- File-history snapshots are archived byte-for-byte; no path anonymisation runs over those bytes — do not add a scrub pass (README §File-history handling (export) and docs/architecture.md §File-history policy (cross-cutting)).
-- The `--file-history=false` opt-out (and its implicit form — omitting the category when other categories are explicitly selected) is the only privacy surface; do not introduce a partial-scrub alternative (README §File-history handling (export) §Not covered).
-- Every key the export embeds in bodies must also be declared in `metadata.xml` as a `<placeholder>` entry — the manifest is the source of truth the importer reads (see `internal/importer/README.md` §Import contract).
-- Path anonymisation must be order-independent across runs: a re-export of the same project must produce the same placeholder set (README §Anonymisation — covered by `export_test.go:TestExport_PathAnonymization_OrderIndependent`).
-- Every export must declare all nine categories via
-  `manifest.BuildCategoryEntries`; never hand-roll a parallel 9-entry
-  literal (see `internal/manifest/README.md` §Category manifest).
-- The session-keyed zip layout (`todos/`, `usage-data/…`, `plugins-data/`,
-  `tasks/`) is owned by `transport.SessionKeyedTargets` — never hard-code
-  a zip prefix or home base directory in this package; read it from the
-  registry (README §Session-keyed zip layout).
+- Archive file-history snapshots verbatim; never add a scrub pass over those bytes. (README §File-history handling (export))
+- Never introduce a partial-scrub alternative; `--file-history=false` is the only privacy surface for snapshots. (README §File-history handling (export))
+- Route all category declarations through `manifest.BuildCategoryEntries`; never hand-roll a parallel nine-entry literal. (README §Category coverage)
+- Declare every placeholder key written into bodies as a `<placeholder>` entry in `metadata.xml`. (internal/importer/README.md §Import contract)
+- Resolve all zip prefixes and home base directories from `transport.SessionKeyedTargets`; never hard-code them here. (README §Session-keyed zip layout)
+- Preserve anonymisation order-independence: re-export of the same project must produce the same placeholder set. (README §Anonymisation)
 
 ## Navigation
 
@@ -22,5 +15,3 @@ Produce a cc-port archive + manifest for one project. See `README.md` for the fu
 - Discovery: `discover.go:DiscoverPaths`, `discover.go:GroupPathPrefixes`, `discover.go:AutoDetectPlaceholders`.
 - Wire DTOs + manifest I/O: `internal/manifest`.
 - Tests: `export_test.go`, `discover_test.go`.
-
-Read `README.md` before changing anything under `## Contracts`.

@@ -1,6 +1,6 @@
 # cc-port
 
-`cc-port` rewrites Claude Code project state after a rename, an export, or an import. When you move a project directory on disk or hand it to a teammate, the absolute paths baked into `~/.claude/projects/<encoded>/`, `~/.claude/history.jsonl`, `~/.claude.json`, and `~/.claude/file-history/<uuid>/` no longer match. cc-port rewrites the references safely — boundary-aware substring replacement, atomic writes with rollback, and a lock-plus-live-session check so no operation collides with a running Claude Code process.
+`cc-port` rewrites Claude Code project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into `~/.claude/projects/<encoded>/`, `~/.claude/history.jsonl`, and `~/.claude.json`. cc-port rewrites the references safely: boundary-aware substring replacement, atomic writes with rollback, and a lock-plus-live-session check. No operation collides with a running Claude Code process.
 
 ## Install
 
@@ -22,25 +22,25 @@ Prebuilt releases (macOS / Linux tarballs, checksums) are published under [GitHu
 
 Full flag reference: `cc-port <subcommand> --help`.
 
-- `cc-port move <old-path> <new-path> [--apply]` — rewrite every reference to `<old-path>` under `~/.claude/` to `<new-path>`. Default is dry-run; `--apply` copies, verifies, then deletes the old encoded directory.
+- `cc-port move <old-path> <new-path> [--apply]`: rewrite every reference to `<old-path>` under `~/.claude/` to `<new-path>`. Default is dry-run. `--apply` copies, verifies, then deletes the old encoded directory.
 
   ```
   cc-port move /Users/me/old-project /Users/me/new-project --apply
   ```
 
-- `cc-port export <project-path> --output <archive.zip>` — produce a portable archive of one project. Use `--all` or individual category flags (`--sessions`, `--memory`, `--history`, `--file-history`, `--config`, `--todos`, `--usage-data`, `--plugins-data`, `--tasks`); omit all flags for an interactive picker.
+- `cc-port export <project-path> --output <archive.zip>`: produce a portable archive of one project. Use `--all` or individual category flags (`--sessions`, `--memory`, `--history`, `--file-history`, `--config`, `--todos`, `--usage-data`, `--plugins-data`, `--tasks`). Omit all flags for an interactive picker.
 
   ```
   cc-port export /Users/me/project --output /tmp/project.zip --all
   ```
 
-- `cc-port export manifest <project-path> [--output <manifest.xml>]` — emit only the manifest for review / editing, then feed it back via `--from-manifest` on a subsequent `export` or `import`.
+- `cc-port export manifest <project-path> [--output <manifest.xml>]`: emit only the manifest for review or editing. Feed it back via `--from-manifest` on a subsequent `export` or `import`.
 
   ```
   cc-port export manifest /Users/me/project --output /tmp/project.xml
   ```
 
-- `cc-port import <archive.zip> <target-path>` — apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`.
+- `cc-port import <archive.zip> <target-path>`: apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`.
 
   ```
   cc-port import /tmp/project.zip /Users/teammate/project

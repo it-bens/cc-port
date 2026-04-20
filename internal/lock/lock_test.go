@@ -14,8 +14,6 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 )
 
-// newTestHome sets up a Home rooted at t.TempDir() so each test has an
-// isolated ~/.claude to operate on.
 func newTestHome(t *testing.T) *claude.Home {
 	t.Helper()
 	claudeDir := filepath.Join(t.TempDir(), "dotclaude")
@@ -26,8 +24,6 @@ func newTestHome(t *testing.T) *claude.Home {
 	}
 }
 
-// writeSessionFile writes a sessions/<name>.json file with the given PID so
-// tests can simulate a Claude Code session entry.
 func writeSessionFile(t *testing.T, claudeHome *claude.Home, name string, pid int) {
 	t.Helper()
 
@@ -168,7 +164,6 @@ func TestWithLock_ReleasesAfterRecoveredPanic(t *testing.T) {
 func TestWithLock_ReleaseErrorSurfacesOnFnSuccess(t *testing.T) {
 	claudeHome := newTestHome(t)
 
-	// Swap the unlock function to one that always fails.
 	originalUnlock := unlockFn
 	t.Cleanup(func() { unlockFn = originalUnlock })
 	unlockFn = func(*flock.Flock) error {

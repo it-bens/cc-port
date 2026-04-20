@@ -1,19 +1,19 @@
 # cmd/cc-port
 
+Wiring layer for the cc-port CLI.
+
 ## Purpose
 
-The CLI entry point. `main.go` wires the root command and the `--claude-dir` override; `move.go`, `export.go`, and `importcmd.go` are the subcommand wrappers. Every subcommand delegates to its `internal/*` package — the wiring layer owns flag parsing, stdout formatting, and exit-code mapping, not business logic.
+This package owns flag parsing, stdout formatting, and exit-code mapping. Business logic lives in `internal/*`.
 
-## Public API
+## Commands
 
-The package exposes nothing; it is a `main` package. Its surface is the CLI:
+- `move`: plans and applies a project path rename, printing a dry-run diff before any write.
+- `export`: archives a project and its session-keyed data to a ZIP file, with an optional `manifest` subcommand to write a standalone XML for hand-editing.
+- `import`: restores a project from a ZIP archive into a target path, resolving path placeholders interactively or via `--from-manifest` / `--resolution` flags.
 
-- `cc-port move <old-path> <new-path> [--apply] [--refs-only] [--rewrite-transcripts]`
-- `cc-port export <project-path> --output <archive.zip>` and `cc-port export manifest <project-path> [--output <manifest.xml>]`
-- `cc-port import <archive.zip> <target-path>` and `cc-port import manifest <archive.zip>`
-
-See the root `README.md` §Commands for one-line syntax + a worked example per subcommand, and `cc-port <subcommand> --help` for the full flag reference.
+See the root `README.md` §Commands for one-line syntax and worked examples. Run `cc-port <subcommand> --help` for the full flag reference.
 
 ## Tests
 
-`integration_test.go` at the repo root runs the full CLI end-to-end against a fixture `~/.claude`. Per-subcommand unit tests live under the owning `internal/*` package.
+`importcmd_test.go` in this package tests `parseResolutionFlags` flag parsing and validation. Per-subcommand behavioral tests live in the owning `internal/*` packages. `integration_test.go` at the repo root runs full CLI end-to-end against a fixture `~/.claude`.

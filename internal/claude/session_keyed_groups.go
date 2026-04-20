@@ -17,8 +17,7 @@ type SessionKeyedGroup struct {
 }
 
 // SessionKeyedGroups is the canonical, ordered registry of session-keyed data
-// groups. The slice order IS the display and iteration order used by every
-// downstream consumer (move, export, import, status UI).
+// groups.
 var SessionKeyedGroups = []SessionKeyedGroup{
 	{
 		Name:  "todos",

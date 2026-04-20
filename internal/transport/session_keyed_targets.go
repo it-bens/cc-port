@@ -9,20 +9,14 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 )
 
-// SessionKeyedTarget describes one session-keyed group's transport footprint:
-// which zip prefix encodes its entries and which home directory receives them
-// on import. The slice position of a target MUST match the slice position of
-// the group with the same Name in claude.SessionKeyedGroups — downstream code
-// pairs registries by index without a runtime check.
+// SessionKeyedTarget describes one session-keyed group's zip prefix and home restore directory.
 type SessionKeyedTarget struct {
 	Group       string
 	ZipPrefix   string
 	HomeBaseDir func(*claude.Home) string
 }
 
-// SessionKeyedTargets is the zip-layout registry for session-keyed groups.
-// Order is index-aligned with claude.SessionKeyedGroups; ZipPrefix values are
-// unique and slash-terminated so the importer can dispatch on prefix match.
+// SessionKeyedTargets is the ordered zip-layout registry for session-keyed groups.
 var SessionKeyedTargets = []SessionKeyedTarget{
 	{
 		Group:       "todos",

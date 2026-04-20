@@ -107,20 +107,10 @@ type archiveEntry struct {
 	content []byte
 }
 
-// Run imports a cc-port ZIP archive into claudeHome. The pipeline is:
-//
-//  1. Acquire the claudeHome lock (via lock.WithLock) and perform
-//     conflict/TTY preflight.
-//  2. Read every non-metadata ZIP entry into memory.
-//  3. Resolve the manifest's placeholder classification against the caller's
-//     resolutions; refuse before any write if the archive would leave
-//     unresolved or undeclared tokens on disk.
-//  4. Stage every final destination at a *.cc-port-import.tmp path inside
-//     the symlink-resolved parent of the destination (so temp and final
-//     always share a filesystem).
-//  5. Promote all staged temps atomically via SafeRenamePromoter; on any
-//     promote failure, the promoter rolls back every already-promoted entry
-//     to its pre-import state.
+// Run imports a cc-port ZIP archive into claudeHome. Acquires the claudeHome
+// lock, validates resolutions and staging parents up front, then reads and
+// stages the archive. SafeRenamePromoter promotes all staged temps atomically
+// and rolls back on any rename failure.
 func Run(claudeHome *claude.Home, importOptions Options) error {
 	return lock.WithLock(claudeHome, func() error {
 		if err := ValidateResolutions(importOptions.Resolutions); err != nil {
@@ -382,9 +372,8 @@ func stageArchiveEntries(
 	return historyAppends, configBlock, nil
 }
 
-// dispatchSessionKeyed returns (true, nil) if the entry matched a session-keyed
-// ZipPrefix and was staged successfully; (true, err) if it matched but failed
-// to stage; (false, nil) if no prefix matched. First prefix match wins.
+// dispatchSessionKeyed stages entry against the first matching ZipPrefix in
+// transport.SessionKeyedTargets. First prefix match wins.
 func dispatchSessionKeyed(claudeHome *claude.Home, plan *importPlan, entry archiveEntry) (bool, error) {
 	for _, target := range transport.SessionKeyedTargets {
 		if !strings.HasPrefix(entry.name, target.ZipPrefix) {
@@ -536,8 +525,6 @@ func stageSessionKeyedFile(
 	return stagedFile{group: target.Group, finalPath: finalPath, tempPath: tempPath}, nil
 }
 
-// stageHistoryIfNeeded writes a merged history file to plan.tempHistoryFile
-// when the archive supplied any history content.
 func stageHistoryIfNeeded(plan *importPlan, appends [][]byte) error {
 	if len(appends) == 0 {
 		return nil
@@ -555,8 +542,6 @@ func stageHistoryIfNeeded(plan *importPlan, appends [][]byte) error {
 	return nil
 }
 
-// stageConfigIfNeeded writes a merged config file to plan.tempConfigFile
-// when the archive supplied a config.json entry.
 func stageConfigIfNeeded(plan *importPlan, targetPath string, block []byte) error {
 	if block == nil {
 		return nil

@@ -15,7 +15,6 @@ import (
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
-// splitLines splits data on newlines and returns a slice of strings.
 func splitLines(data []byte) []string {
 	parts := bytes.Split(data, []byte("\n"))
 	result := make([]string, len(parts))

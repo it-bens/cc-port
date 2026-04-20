@@ -2,24 +2,24 @@
 
 ## Purpose
 
-Owns the `metadata.xml` wire format and the nine-category enum table. Both
-`internal/export` (producer) and `internal/importer` (consumer) depend on
-this package; it has no internal project dependencies, so the two sibling
+Owns the `metadata.xml` wire format and the nine-category enum table.
+Both `internal/export` (producer) and `internal/importer` (consumer) depend
+on this package. It has no internal project dependencies, so the two sibling
 command modules agree on the wire contract through a neutral third party.
 
 ## Public API
 
 - **Wire types**
-  - `Metadata` — root XML element (`<cc-port>`) wrapping `Info` and placeholders.
-  - `Info` — export timestamp plus the per-category include list.
-  - `Category` — one `<category name="…" included="…"/>` entry.
-  - `Placeholder` — one `<placeholder key="…" original="…" [resolvable="…"] [resolve="…"]/>` entry. `resolvable` and `resolve` are omitted from the XML when unset (`*bool` nil / empty string).
+  - `Metadata`: root XML element (`<cc-port>`) wrapping `Info` and placeholders.
+  - `Info`: export timestamp plus the per-category include list.
+  - `Category`: one `<category name="..." included="..."/>` entry.
+  - `Placeholder`: one `<placeholder key="..." original="..." [resolvable="..."] [resolve="..."]/>` entry. `resolvable` and `resolve` are omitted from the XML when unset (`*bool` nil / empty string).
 - **Category enum table**
-  - `CategorySet` — in-memory bool struct (one field per category) used by callers and by `Options.Categories` in `internal/export`.
-  - `CategorySpec` — one entry in the enum table: wire name plus `Get`/`Set` accessors onto the matching `CategorySet` field.
-  - `AllCategories []CategorySpec` — the ordered source of truth for the nine categories. Slice order is the canonical display and wire order.
-  - `BuildCategoryEntries(*CategorySet) []Category` — produces the `<categories>` list in canonical order for `metadata.xml`.
-  - `ApplyCategoryEntries([]Category) (CategorySet, error)` — validates a read manifest's category list and returns the matching `CategorySet`; aggregates every missing and every unknown name into one `errors.Join` error.
+  - `CategorySet`: in-memory bool struct (one field per category) used by callers and by `Options.Categories` in `internal/export`.
+  - `CategorySpec`: one entry in the enum table: wire name plus `Get`/`Set` accessors onto the matching `CategorySet` field.
+  - `AllCategories []CategorySpec`: the ordered source of truth for the nine categories. Slice order is the canonical display and wire order.
+  - `BuildCategoryEntries(*CategorySet) []Category`: produces the `<categories>` list in canonical order for `metadata.xml`.
+  - `ApplyCategoryEntries([]Category) (CategorySet, error)`: validates a read manifest's category list and returns the matching `CategorySet`. Aggregates every missing and every unknown name into one `errors.Join` error.
 - **Manifest I/O**
   - `WriteManifest(path string, metadata *Metadata) error`
   - `ReadManifest(path string) (*Metadata, error)`
@@ -29,51 +29,76 @@ command modules agree on the wire contract through a neutral third party.
 
 ### Category manifest
 
-Handled — invariants this package enforces for every write and every read:
+Called by `internal/export` (producer via `BuildCategoryEntries`) and
+`internal/importer` (consumer via `ApplyCategoryEntries`).
+
+#### Handled
 
 - Every export declares all nine `AllCategories` names in `metadata.xml`.
   `BuildCategoryEntries` always emits every entry, so a caller cannot accidentally
   publish a partial list.
-- `ApplyCategoryEntries` is the only validator for a parsed manifest. It returns a
-  typed `CategorySet` on success and an aggregated error on failure — every missing
-  name and every unknown name is surfaced in a single `errors.Join`, so one call
-  names every problem.
-- `BuildCategoryEntries` and `ApplyCategoryEntries` round-trip stably: for any
-  `CategorySet s`, `ApplyCategoryEntries(BuildCategoryEntries(&s))` returns `s`.
-- Canonical order is `AllCategories` slice order. Consumers iterate the table in
-  that order for display and for deterministic archive layout.
+- `ApplyCategoryEntries` is the only validator for a parsed manifest.
+  It returns a typed `CategorySet` on success and an aggregated error on
+  failure. Every missing name and every unknown name surfaces in a single
+  `errors.Join` call.
+- `BuildCategoryEntries` and `ApplyCategoryEntries` round-trip stably.
+  For any `CategorySet s`, `ApplyCategoryEntries(BuildCategoryEntries(&s))`
+  returns `s`.
+- Canonical order is `AllCategories` slice order. Consumers iterate the
+  table in that order for display and deterministic archive layout.
 
-Refused by cc-port — these shapes abort at validation:
+#### Refused
 
 - Manifests that declare a subset of the nine category names. All nine must be
   present even when `Included: false`.
-- Manifests that declare a name outside `AllCategories`. Unknown names are not
-  tolerated with a warning.
+- Manifests that declare a name outside `AllCategories`. Unknown names
+  hard-fail. No warn-and-continue path.
 - Rewriting the XML wire schema for `Metadata` / `Info` / `Category` /
-  `Placeholder`. Field names and XML tags must stay byte-identical on the wire —
-  archives already in the wild would otherwise fail to parse.
-- Manifest documents whose size exceeds `maxManifestBytes` (4 MiB). Both `ReadManifest` (file-path variant) and `ReadManifestFromZip` (archive-entry variant) enforce the cap and return an error naming the source.
+  `Placeholder`. Field names and XML tags must stay byte-identical on the
+  wire. Archives in the wild would otherwise fail to parse.
 
-Not covered — invariants owned elsewhere:
+#### Not covered
 
-- Session-keyed directory enumeration lives in `claude.SessionKeyedGroups` (see
-  [`internal/claude/README.md`](../claude/README.md) §Session-keyed registry).
+- Session-keyed directory enumeration lives in `claude.SessionKeyedGroups`
+  (see [`internal/claude/README.md`](../claude/README.md)
+  §Session-keyed registry).
 - Archive zip layout for those groups lives in `transport.SessionKeyedTargets`
   (see [`internal/transport/README.md`](../transport/README.md)).
 - File-history snapshot handling is a cross-cutting policy (see
-  [`docs/architecture.md`](../../docs/architecture.md) §File-history policy
-  (cross-cutting)).
+  [`docs/architecture.md`](../../docs/architecture.md)
+  §File-history policy (cross-cutting)).
+
+### Manifest read size cap
+
+Both `ReadManifest` and `ReadManifestFromZip` enforce the same 4 MiB cap.
+
+#### Handled
+
+- `ReadManifest` calls `os.Stat` before allocating and rejects files whose
+  size exceeds 4 MiB.
+- `ReadManifestFromZip` reads at most 4 MiB + 1 byte via `io.LimitReader`
+  so it can distinguish an exactly-at-limit file from an over-limit one.
+  Both variants return an error naming the source when the cap triggers.
+
+#### Refused
+
+- Manifest documents whose decoded size exceeds `maxManifestBytes` (4 MiB).
+
+#### Not covered
+
+- None at runtime. The cap is fully enforced by this package on every read path.
 
 ## Tests
 
-Unit tests in `categories_test.go` and `manifest_test.go`. Coverage:
-`BuildCategoryEntries`/`ApplyCategoryEntries` round-trip for every category,
-aggregated error reporting for missing and unknown names, `WriteManifest` /
-`ReadManifest` / `ReadManifestFromZip` round-trip including XML format
-stability. `ReadManifest` and `ReadManifestFromZip` each have a dedicated
-oversize-rejection test asserting the 4 MiB cap is enforced.
+Unit tests in `categories_test.go` and `manifest_test.go`:
+
+- `BuildCategoryEntries`/`ApplyCategoryEntries` round-trip for every category.
+- Aggregated error reporting for missing and unknown names.
+- `WriteManifest`/`ReadManifest`/`ReadManifestFromZip` round-trip including
+  XML format stability.
+- Oversize-rejection tests for both `ReadManifest` and `ReadManifestFromZip`
+  asserting the 4 MiB cap.
 
 ## References
 
-- `io.LimitReader` — local authoritative: `go doc io.LimitReader` · online supplement: https://pkg.go.dev/io#LimitReader
-- `encoding/xml` — local authoritative: `go doc encoding/xml` · online supplement: https://pkg.go.dev/encoding/xml (XXE-safe by design; the godoc confirms no external entity resolution)
+- `encoding/xml`: `go doc encoding/xml` (XXE-safe by design, as the godoc confirms no external entity resolution)

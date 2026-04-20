@@ -106,8 +106,8 @@ func (t *globalFileTracker) restore() error {
 }
 
 // checkEncodedDirCollision refuses moves that would overwrite existing encoded
-// storage or collapse old and new onto the same directory. See internal/claude
-// README §Path encoding for the lossy encoding the check defends against.
+// storage or collapse old and new onto the same directory.
+// see internal/claude/README.md §Path encoding for the lossy encoding the check defends against.
 func checkEncodedDirCollision(claudeHome *claude.Home, oldPath, newPath string) error {
 	oldEncodedDir := claudeHome.ProjectDir(oldPath)
 	newEncodedDir := claudeHome.ProjectDir(newPath)
@@ -165,8 +165,9 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 // under each session subdirectory (covering <uuid>/subagents/*.jsonl and
 // <uuid>/session-memory/**).
 //
-// `memory/` is handled separately by rewriteMemoryFilesInDir, so it is
-// excluded here.
+// `memory/` is excluded because rewriteMemoryFilesInDir handles it separately.
+// `sessions/` is excluded because rewriteSessionFiles in rewrite_global.go
+// already rewrites those files; listing them here would double-rewrite them.
 func listTranscriptFiles(projectDir string) ([]string, error) {
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
@@ -224,12 +225,9 @@ func warningWriter(moveOptions Options) io.Writer {
 	return os.Stderr
 }
 
-// warnFileHistoryPreserved emits a single warning line per move when the
-// project has any file-history snapshots. cc-port never rewrites snapshot
-// contents — they are verbatim copies of user-edited files whose project-
-// path strings are coincidental — and the warning surfaces that invariant
-// so the user is not surprised when a grep across ~/.claude/file-history/
-// still returns the old project path after a move.
+// warnFileHistoryPreserved emits a warning when the project has file-history
+// snapshots. Snapshot contents are preserved verbatim; the warning surfaces
+// that the old project path may still appear inside them after a move.
 func warnFileHistoryPreserved(locations *claude.ProjectLocations, moveOptions Options) {
 	count := 0
 	for _, fileHistoryDir := range locations.FileHistoryDirs {

@@ -61,9 +61,7 @@ func PlanCategories() []string {
 	return out
 }
 
-// DryRun analyses what a move would change without writing any files.
-// It locates all project data, counts replacements for each file type,
-// and scans rules files for warnings.
+// DryRun computes the move plan without writing any files; lock-free contrast to Apply.
 func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 	if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
 		return nil, err
@@ -127,15 +125,7 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 	return plan, nil
 }
 
-// Apply performs the project move. It uses a copy-verify-delete strategy so
-// that originals are only removed after all new data is successfully created.
-//
-// On any failure, all newly created paths are removed and the originals
-// remain untouched.
-//
-// Apply wraps its body in lock.WithLock, which acquires the advisory lock
-// over claudeHome and aborts if a Claude Code session is currently live or
-// if another cc-port invocation is already operating on the same directory.
+// Apply performs the project move via copy-verify-delete inside lock.WithLock.
 func Apply(claudeHome *claude.Home, moveOptions Options) error {
 	return lock.WithLock(claudeHome, func() error {
 		if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {

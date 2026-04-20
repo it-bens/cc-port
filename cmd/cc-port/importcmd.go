@@ -91,7 +91,6 @@ var importManifestCmd = &cobra.Command{
 			return fmt.Errorf("read manifest from zip: %w", err)
 		}
 
-		// Clear all resolve fields so the user fills them in manually.
 		for i := range metadata.Placeholders {
 			metadata.Placeholders[i].Resolve = ""
 		}
@@ -171,11 +170,9 @@ func resolutionsFromManifest(metadata *manifest.Metadata, targetPath string) map
 	return resolutions
 }
 
-// parseResolutionFlags turns a list of "KEY=VALUE" CLI flag values into a
-// resolutions map. Split is on the first '='; later '=' characters stay in
-// the value. Empty keys and duplicate keys are rejected. {{PROJECT_PATH}} is
+// parseResolutionFlags parses --resolution flag values into a map. {{PROJECT_PATH}} is
 // refused because importer.Run injects it unconditionally from the target
-// argument — letting a flag override would desync the two.
+// argument; a flag override would desync the two.
 func parseResolutionFlags(raw []string) (map[string]string, error) {
 	parsed := make(map[string]string, len(raw))
 	for _, entry := range raw {

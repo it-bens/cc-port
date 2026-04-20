@@ -12,15 +12,10 @@ import (
 	"github.com/it-bens/cc-port/internal/fsutil"
 )
 
-// deadSessionPID is the sentinel PID written into copied fixture session files.
-// It is larger than the default PID space on macOS (99998) and Linux (4194304),
-// and is comfortably below int32 max so Kill(pid, 0) reports ESRCH rather than
-// an out-of-range error. Using a sentinel keeps the concurrency guard in
-// internal/lock happy without needing a per-test override.
+// deadSessionPID exceeds the Linux/macOS PID ceiling but stays below int32 max, so Kill(pid, 0) returns ESRCH.
 const deadSessionPID = 2_000_000_001
 
-// SetupFixture copies the testdata/dotclaude fixture into a temporary directory
-// and returns a Home pointing to it.
+// SetupFixture stages testdata/dotclaude under t.TempDir(), sanitises session PIDs, and returns a Home pointing to it.
 func SetupFixture(t *testing.T) *claude.Home {
 	t.Helper()
 
@@ -55,11 +50,8 @@ func SetupFixture(t *testing.T) *claude.Home {
 	}
 }
 
-// replaceSessionPIDs rewrites every sessions/*.json file's "pid" field to
-// deadPID so the concurrency guard in internal/lock does not mistake a
-// fixture PID for a live Claude Code session on the test host. The fixture's
-// realistic-looking PIDs (12345, 99999, …) are fine on disk but could
-// coincidentally match a live process on any given test runner.
+// replaceSessionPIDs rewrites "pid" in every sessions/*.json to deadPID.
+// Fixture PIDs (12345, 99999, …) can coincidentally match a live process and trip the lock guard.
 func replaceSessionPIDs(sessionsDir string, deadPID int) error {
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
@@ -109,6 +101,7 @@ func findFixtureDir(t *testing.T) string {
 		}
 		parentDir := filepath.Dir(currentDir)
 		if parentDir == currentDir {
+			// No testdata/ means the test ran outside the repository tree; this is a programmer error.
 			t.Fatal("could not find testdata/ directory")
 		}
 		currentDir = parentDir

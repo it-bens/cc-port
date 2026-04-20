@@ -1,4 +1,3 @@
-// Package export handles exporting Claude Code project data to portable ZIP archives.
 package export
 
 import (
@@ -16,13 +15,11 @@ type PlaceholderSuggestion struct {
 	Auto     bool   // true if auto-detected
 }
 
-// pathPattern matches absolute paths: must start with '/' and contain at least one
-// segment character, ending on a non-dot-slash character.
+// pathPattern rejects trailing dots and slashes so cleaned paths always end at
+// a real segment character.
 var pathPattern = regexp.MustCompile(`/[a-zA-Z0-9_\-./]+[a-zA-Z0-9_\-]`)
 
 // DiscoverPaths extracts unique absolute paths from content.
-// It uses a regex to find path-like strings, cleans trailing dots and slashes,
-// then deduplicates the results.
 func DiscoverPaths(content []byte) []string {
 	matches := pathPattern.FindAll(content, -1)
 
@@ -44,11 +41,9 @@ func DiscoverPaths(content []byte) []string {
 	return paths
 }
 
-// GroupPathPrefixes finds meaningful common path prefixes from a list of paths.
-// It returns prefixes sorted longest first. A path is excluded if it is a
-// sub-path of another prefix already in the result. Parent directories that
-// cover 2 or more input paths are also included as prefixes, preferring the
-// most specific (longest) common ancestor.
+// GroupPathPrefixes finds meaningful common path prefixes from a list of paths,
+// sorted longest first. A path is excluded if it is a sub-path of another
+// prefix in the result.
 func GroupPathPrefixes(paths []string) []string {
 	if len(paths) == 0 {
 		return nil
@@ -122,8 +117,8 @@ func countParentCoverage(paths []string) map[string]int {
 	return parentCoverage
 }
 
-// findWinningPrefixes finds parent directories with coverage >= 2 that have no
-// more-specific child also with coverage >= 2 and the same count.
+// findWinningPrefixes returns the most specific qualifying parents: those with
+// coverage >= 2 and no equally covering child.
 func findWinningPrefixes(parentCoverage map[string]int) []string {
 	var qualifyingParents []string
 	for parent, count := range parentCoverage {

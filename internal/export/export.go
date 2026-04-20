@@ -1,3 +1,4 @@
+// Package export produces cc-port ZIP archives for one Claude Code project.
 package export
 
 import (
@@ -44,10 +45,9 @@ type Result struct {
 	FileHistorySnapshotsArchived int
 }
 
-// openArchiveFile is the factory Run uses to create the output zip file.
-// It is a package-level var so internal tests can substitute a wrapper that
-// returns a synthetic error on Close — exercising the deferred close-error
-// propagation without requiring a flaky real-world disk-full condition.
+// openArchiveFile is a package-level var so internal tests can substitute a
+// wrapper that returns a synthetic error on Close, exercising deferred
+// close-error propagation without a flaky real-world disk-full condition.
 var openArchiveFile = func(path string) (io.WriteCloser, error) {
 	return os.Create(path) //nolint:gosec // G304: output path supplied by the CLI caller
 }
@@ -120,9 +120,8 @@ func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions Options) error 
 	return nil
 }
 
-// exportCoreCategories runs Sessions, Memory, the four session-keyed groups,
-// and History. Extracted from Run to stay within the linter's line-count
-// budget.
+// exportCoreCategories is extracted from Run to stay within the linter's
+// line-count budget.
 func exportCoreCategories(
 	archiveWriter *zip.Writer, claudeHome *claude.Home,
 	locations *claude.ProjectLocations, exportOptions Options, placeholders []manifest.Placeholder,
@@ -315,10 +314,9 @@ func writeToZip(archiveWriter *zip.Writer, name string, data []byte) error {
 	return nil
 }
 
-// addDirToZip recursively walks sourceDir, adding each file under zipPrefix in
-// the archive and anonymising path occurrences inside each file's bytes. The
-// only caller is exportSessions' session-subdir walk, whose content is always
-// textual (JSONL transcripts, subagent files, session-memory entries).
+// addDirToZip is only called by exportSessions' session-subdir walk, whose
+// content is always textual (JSONL transcripts, subagent files, session-memory
+// entries).
 func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeholders []manifest.Placeholder) error {
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {
@@ -351,10 +349,9 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeho
 	return nil
 }
 
-// addDirVerbatimToZip recursively walks sourceDir, adding each file under
-// zipPrefix in the archive with its bytes unchanged. Used for file-history
-// snapshots, whose contents are opaque user-file bytes that cc-port must not
-// transform. Returns the number of files written.
+// addDirVerbatimToZip is used for file-history snapshots, whose contents are
+// opaque user-file bytes that cc-port must not transform. Returns the number
+// of files written.
 func addDirVerbatimToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string) (int, error) {
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {
@@ -467,8 +464,6 @@ func historyLineBelongsToProject(line []byte, projectPath string) bool {
 	return false
 }
 
-// extractProjectConfig reads the config file at configPath and returns the raw
-// JSON value of the projects[projectPath] block.
 func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
 	configData, err := os.ReadFile(configPath) //nolint:gosec // G304: path from trusted ClaudeHome
 	if err != nil {
@@ -491,8 +486,6 @@ func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
 	return projectBlock, nil
 }
 
-// buildMetadata constructs the Metadata value for metadata.xml from the given
-// export options and the current time.
 func buildMetadata(exportOptions Options) *manifest.Metadata {
 	return &manifest.Metadata{
 		Export: manifest.Info{

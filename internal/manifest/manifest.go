@@ -45,8 +45,7 @@ type Placeholder struct {
 // for future placeholder growth and stops decompression-bomb payloads cold.
 const maxManifestBytes = 4 << 20
 
-// WriteManifest marshals metadata to indented XML and writes it to path,
-// prepending the standard XML declaration header.
+// WriteManifest marshals metadata to indented XML and writes it to path.
 func WriteManifest(path string, metadata *Metadata) error {
 	data, err := xml.MarshalIndent(metadata, "", "  ")
 	if err != nil {
@@ -63,7 +62,7 @@ func WriteManifest(path string, metadata *Metadata) error {
 }
 
 // ReadManifest reads path and unmarshals the XML content into a Metadata value.
-// Rejects files whose size exceeds maxManifestBytes before allocating.
+// Rejects files exceeding maxManifestBytes before allocating.
 func ReadManifest(path string) (*Metadata, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -86,8 +85,8 @@ func ReadManifest(path string) (*Metadata, error) {
 	return &metadata, nil
 }
 
-// ReadManifestFromZip opens a ZIP archive, locates the single top-level
-// metadata.xml inside it, and unmarshals the content into a Metadata value.
+// ReadManifestFromZip opens a ZIP archive, locates the top-level metadata.xml,
+// and unmarshals the content into a Metadata value.
 // Rejects entries whose decoded size exceeds maxManifestBytes.
 func ReadManifestFromZip(archivePath string) (*Metadata, error) {
 	reader, err := zip.OpenReader(archivePath)
@@ -106,9 +105,8 @@ func ReadManifestFromZip(archivePath string) (*Metadata, error) {
 }
 
 // readManifestEntry reads metadata.xml from a single zip entry, enforces the
-// size cap, and unmarshals into Metadata. Scoped to its own function so the
-// deferred rc.Close() fires once per entry read, not once per call to
-// ReadManifestFromZip.
+// size cap, and unmarshals into Metadata. Scoped to its own function so
+// deferred rc.Close() fires once per entry, not once per ReadManifestFromZip call.
 func readManifestEntry(file *zip.File) (*Metadata, error) {
 	rc, err := file.Open()
 	if err != nil {

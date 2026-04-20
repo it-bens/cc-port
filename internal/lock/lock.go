@@ -2,10 +2,6 @@
 
 // Package lock guards ~/.claude against concurrent cc-port runs and live
 // Claude Code sessions.
-//
-// The only public entry point is WithLock. The advisory lock itself is
-// taken via github.com/gofrs/flock; the live-session check reads
-// ~/.claude/sessions/*.json and signals PID 0 to probe liveness.
 package lock
 
 import (
@@ -31,23 +27,8 @@ const FileName = ".cc-port.lock"
 // (*flock.Flock).Unlock.
 var unlockFn = (*flock.Flock).Unlock
 
-// WithLock runs the live-session check, acquires ~/.claude/.cc-port.lock
-// via flock, calls fn with the lock held, and releases the lock on every
-// exit path — including a panic inside fn that a caller recovers.
-//
-// Error precedence:
-//   - If the live-session check finds a running Claude Code process, the
-//     function returns a descriptive error without taking the lock and
-//     without invoking fn.
-//   - If another cc-port invocation holds the lock, the function returns
-//     a "another cc-port invocation is operating" error verbatim from
-//     the previous implementation.
-//   - If fn returns a non-nil error, that error is returned; the
-//     deferred release still runs, and its error (if any) is dropped on
-//     this path because the caller's operational error takes
-//     precedence over lock-cleanup noise.
-//   - If fn returns nil, any deferred release error surfaces wrapped
-//     as "release cc-port lock: %w".
+// WithLock runs the live-session check before taking the lock, ensuring
+// no Claude Code session is active before fn is called.
 func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
 	activeSessions, err := findActiveSessions(claudeHome)
 	if err != nil {
@@ -127,7 +108,6 @@ func findActiveSessions(claudeHome *claude.Home) ([]string, error) {
 // processAlive reports whether a process with the given PID is currently
 // running on the host. Both "exists and signalable" and "exists but owned
 // by another user" count as alive; only "no such process" counts as dead.
-// The caller supplies a positive PID.
 func processAlive(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {

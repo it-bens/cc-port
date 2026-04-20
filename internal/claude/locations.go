@@ -99,9 +99,6 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 	return locations, nil
 }
 
-// collectProjectDirEntries reads the project directory, populating
-// SessionTranscripts and SessionSubdirs. It returns the set of session UUIDs
-// discovered from transcript filenames and subdirectory names.
 func collectProjectDirEntries(locations *ProjectLocations, projectDir string) ([]string, error) {
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
@@ -413,8 +410,8 @@ func checkConfigBlock(locations *ProjectLocations, claudeHome *Home, projectPath
 	return nil
 }
 
-// appendFilesRecursive walks dir and appends every non-directory entry's
-// absolute path to *dst. Filtering (e.g. sidecars) is the caller's responsibility.
+// appendFilesRecursive appends every non-directory entry under dir to *dst.
+// Filtering (e.g. sidecars) is the caller's responsibility.
 func appendFilesRecursive(dst *[]string, dir string) error {
 	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

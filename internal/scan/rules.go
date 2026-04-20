@@ -1,4 +1,4 @@
-// Package scan provides utilities for scanning Claude Code rules files.
+// Package scan reports warnings found in ~/.claude/rules/*.md files.
 package scan
 
 import (
@@ -10,12 +10,12 @@ import (
 	"strings"
 )
 
-// Warning represents a single line in a rules file that contains a search path.
+// Warning is a single line in a rules file that contains a search path.
 type Warning struct {
-	File string // Filename (not full path)
-	Line int    // 1-based line number
-	Text string // The full line text
-	Path string // Which search path matched
+	File string // File is the base filename, not a full path.
+	Line int
+	Text string
+	Path string
 }
 
 // maxScannerLine caps a single line that bufio.Scanner will read from a
@@ -23,8 +23,7 @@ type Warning struct {
 // than silently truncating.
 const maxScannerLine = 16 << 20
 
-// Rules scans all .md files in rulesDir for occurrences of any of the given paths.
-// Returns nil, nil if the directory does not exist.
+// Rules scans .md files directly in rulesDir (non-recursive); emits one Warning per matched line, not per matched path.
 func Rules(rulesDir string, paths ...string) ([]Warning, error) {
 	_, err := os.Stat(rulesDir)
 	if err != nil {

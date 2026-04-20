@@ -16,28 +16,23 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 )
 
-// EscapeSJSONKey escapes the characters sjson treats as path meta-characters
-// (`\` and `.`) so an arbitrary string can be used as a single key segment in
-// an sjson path expression. Project paths routinely contain `.` (e.g.
-// "/Users/x/proj.v2"), which would otherwise be parsed as nested keys.
+// EscapeSJSONKey escapes `\` and `.` so an arbitrary string can be used as a
+// single key segment in an sjson path expression. Project paths contain `.`
+// (e.g. "/Users/x/proj.v2"), which sjson would otherwise parse as nested keys.
 //
-// This is exported because both the move rewrite path and the import config
-// merge path need to build sjson expressions from user-supplied project paths;
-// keeping a single source of truth avoids drift between the two call sites.
+// Exported because both the move rewrite path and the import config merge path
+// build sjson expressions from user-supplied project paths; one source of truth
+// avoids drift between the two call sites.
 func EscapeSJSONKey(key string) string {
 	key = strings.ReplaceAll(key, `\`, `\\`)
 	key = strings.ReplaceAll(key, `.`, `\.`)
 	return key
 }
 
-// isPathContinuationByte reports whether b can extend a path component name —
-// i.e. whether seeing b immediately after a candidate match means the match is
-// actually a longer, different path (e.g. "myproject" vs "myproject-extras").
-//
-// Path component characters in practice: letters, digits, '_', '-'. The `.`
-// byte is deliberately excluded here: it is handled by a two-byte lookahead
-// in ReplacePathInBytes so sentence-terminating dots (prose) can be
-// distinguished from extension-separator dots (`.v2`, `.txt`).
+// isPathContinuationByte reports whether b can extend a path component.
+// The `.` byte is excluded here: ReplacePathInBytes uses a two-byte lookahead
+// so sentence-terminating dots (prose) can be distinguished from
+// extension-separator dots (`.v2`, `.txt`).
 func isPathContinuationByte(b byte) bool {
 	switch {
 	case b >= 'A' && b <= 'Z':
@@ -52,14 +47,12 @@ func isPathContinuationByte(b byte) bool {
 	return false
 }
 
-// isExtensionDotAt reports whether the '.' byte at data[dotIndex] introduces
-// a filename extension rather than sentence-terminating punctuation.
-//
-// A run of consecutive dots is walked past first, so `foo.` at EOF and
-// `foo...` before whitespace are both classified as prose (no extension).
-// A dot is an extension separator only when the first non-dot byte that
-// follows is a filename character (letter, digit, '_', '-'). Anything else
-// — whitespace, quotes, other punctuation, EOF — is prose.
+// isExtensionDotAt reports whether the '.' at data[dotIndex] introduces a
+// filename extension rather than sentence-terminating punctuation.
+// A run of consecutive dots is walked first, so `foo.` at EOF and `foo...`
+// before whitespace are both prose. A dot is an extension separator only
+// when the first non-dot byte is a path-component character (letter, digit,
+// `_`, `-`). Whitespace, quotes, other punctuation, and EOF are prose.
 func isExtensionDotAt(data []byte, dotIndex int) bool {
 	cursor := dotIndex
 	for cursor < len(data) && data[cursor] == '.' {
@@ -195,13 +188,14 @@ func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, []in
 // SessionFile rewrites every occurrence of oldProject to newProject inside
 // the session JSON using path-boundary-aware substitution. The top-level
 // `cwd` field is covered, as is any occurrence embedded elsewhere in the
-// file — including nested values that JSON-decode into the preserved Extra
-// map (free-form payload state that Claude Code sometimes writes alongside
-// the core fields).
+// file, including nested values that JSON-decode into the preserved Extra map.
+//
+// Uses json.Unmarshal against the typed claude.SessionFile shape to validate
+// the input: the typed validator rejects structurally invalid files before any
+// bytes are rewritten. (UserConfig uses gjson.ValidBytes instead because sjson
+// does the mutation and only byte-level JSON validity matters there.)
 //
 // The bool return indicates whether at least one occurrence was rewritten.
-// Malformed JSON is rejected so callers can rely on the input being a
-// well-formed session file before any bytes are returned.
 func SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error) {
 	var sessionFile claude.SessionFile
 	if err := json.Unmarshal(data, &sessionFile); err != nil {
@@ -256,9 +250,8 @@ func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error
 // that contains many `{{` sequences without a close.
 const maxPlaceholderKeyLength = 64
 
-// isPlaceholderKeyByte reports whether b is valid inside a placeholder key.
-// Placeholder keys are `[A-Z0-9_]+` — the upper-snake shape every
-// auto-detected and prompted key emitted by cc-port follows.
+// isPlaceholderKeyByte reports whether b is valid inside a placeholder key:
+// `[A-Z0-9_]+`, the upper-snake shape every key emitted by cc-port follows.
 func isPlaceholderKeyByte(b byte) bool {
 	switch {
 	case b >= 'A' && b <= 'Z':
@@ -355,7 +348,7 @@ type renameEntry struct {
 // The promoter is designed for the import stage-and-swap: every destination
 // touched by a successful import is visible all-or-nothing, and any failure
 // mid-sequence leaves the filesystem in its pre-import state except in
-// catastrophic multi-fault cases (documented in the README).
+// catastrophic multi-fault cases.
 //
 // Rename atomicity is an `os.Rename` property and only holds when temp and
 // final share a filesystem. Callers are responsible for choosing temp paths
@@ -445,7 +438,6 @@ func (p *SafeRenamePromoter) promoteEntry(entry *renameEntry) error {
 	return nil
 }
 
-// doRename invokes the promoter's rename hook (os.Rename by default).
 func (p *SafeRenamePromoter) doRename(oldpath, newpath string) error {
 	if p.renameFunc != nil {
 		return p.renameFunc(oldpath, newpath)
@@ -456,8 +448,8 @@ func (p *SafeRenamePromoter) doRename(oldpath, newpath string) error {
 // Rollback walks promoted entries in reverse order and restores the
 // pre-promote state on disk: backups are renamed or rewritten into their
 // finals, and content that did not previously exist is removed. Best
-// effort — a failure to restore one entry is logged by leaving the state
-// as-is and continuing with the remaining entries.
+// effort: errors from a single entry's restore are swallowed and the
+// remaining entries are still attempted.
 func (p *SafeRenamePromoter) Rollback() {
 	for index := len(p.entries) - 1; index >= 0; index-- {
 		entry := p.entries[index]

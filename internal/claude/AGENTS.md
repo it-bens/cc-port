@@ -1,23 +1,23 @@
-# internal/claude — agent notes
-
-Claude Code data layout: path encoding, project locations, schemas. See `README.md` for the full contract.
-
 ## Before editing
 
-- `EncodePath` mirrors Claude Code's lossy encoding exactly — do not normalise unicode or casefold; the encoded name must byte-for-byte match what Claude Code writes (README §Path encoding).
-- Never try to decode an encoded directory name back to a real path; the mapping is many-to-one. Read `cwd` from a session JSON or a `~/.claude.json` project key instead (README §Path encoding §Not covered).
-- `ResolveProjectPath` preserves any non-existent trailing components by delegating to `fsutil.ResolveExistingAncestor`; don't call `filepath.EvalSymlinks` directly on user paths (README §Path encoding; see `internal/fsutil/README.md` §Absolute-path contract for `ResolveExistingAncestor`).
-- New session-keyed location collectors (`collectTodos`, `collectUsageData`,
-  `collectPluginsData`, `collectTaskFiles`) return empty when their parent
-  directory is absent — matches `collectMemoryFiles` (README §Project
-  enumeration).
+- Do not normalise unicode or casefold in `EncodePath` (README §Path encoding).
+- Never decode an encoded directory name back to a real path; read `cwd`
+  from a session JSON or a `~/.claude.json` project key instead (README
+  §Path encoding).
+- Do not call `filepath.EvalSymlinks` directly on user paths; use
+  `ResolveProjectPath` (README §Path encoding;
+  `internal/fsutil/README.md §Absolute-path contract for ResolveExistingAncestor`).
+- Return empty (not an error) from new session-keyed location collectors
+  when the parent directory is absent (README §Project enumeration).
+- When adding a sixth session-keyed group, append one entry to
+  `SessionKeyedGroups` and one index-aligned entry to
+  `transport.SessionKeyedTargets` (README §Session-keyed registry).
 
 ## Navigation
 
 - Encoding: `paths.go:EncodePath`, `paths.go:ResolveProjectPath`.
-- Home + derived paths: `paths.go:NewHome`, `paths.go:Home`.
+- Home and derived paths: `paths.go:NewHome`, `paths.go:Home`.
 - Project enumeration: `locations.go:LocateProject`.
+- Session-keyed registry: `session_keyed_groups.go`.
 - Schemas: `schema.go`.
 - Tests: `paths_test.go`, `locations_test.go`, `schema_test.go`.
-
-Read `README.md` before changing anything under `## Contracts`.

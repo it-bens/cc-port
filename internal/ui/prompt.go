@@ -82,12 +82,7 @@ func SelectCategories() (manifest.CategorySet, error) {
 	return categories, nil
 }
 
-// ResolvePlaceholder prompts the user to resolve a single manifest
-// placeholder. The returned value is the user's input verbatim — the prompt
-// itself does not validate. Callers interpret the empty string:
-// `import` rejects it downstream via `importer.ValidateResolutions`;
-// `export` stores it with `Resolvable: false` so the placeholder stays
-// symbolic on disk.
+// ResolvePlaceholder prompts for one manifest placeholder; returned value is verbatim with no validation.
 func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 	if err := requireTTY(
 		fmt.Sprintf(

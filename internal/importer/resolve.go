@@ -118,8 +118,7 @@ func ClassifyPlaceholders(
 }
 
 // anyBodyContains reports whether token appears as a literal substring in any
-// of bodies. Bodies are searched in order; the search short-circuits on the
-// first hit.
+// of bodies.
 func anyBodyContains(bodies [][]byte, token string) bool {
 	needle := []byte(token)
 	for _, body := range bodies {

@@ -70,9 +70,8 @@ func CopyDir(source, destination string) error {
 	})
 }
 
-// copySymlink replicates a source symlink at relativePath under destRoot.
-// The target string is read via os.Readlink and written verbatim — the
-// symlink is never followed for content.
+// copySymlink replicates a source symlink at relativePath under destRoot,
+// writing the target string verbatim without following it for content.
 func copySymlink(sourcePath string, destRoot *os.Root, relativePath string) error {
 	target, err := os.Readlink(sourcePath)
 	if err != nil {
@@ -108,9 +107,8 @@ func copyDirectory(dirEntry fs.DirEntry, destRoot *os.Root, relativePath string)
 }
 
 // openStreamDest is the factory CopyDir uses to create each destination file.
-// It is a package-level var so internal tests can substitute a wrapper that
-// returns a synthetic error on Close — exercising the deferred close-error
-// propagation without requiring a flaky real-world disk-full condition.
+// Package-level var so tests can inject a wrapper that returns a synthetic
+// Close error, exercising deferred close-error propagation.
 var openStreamDest = func(root *os.Root, path string, mode os.FileMode) (io.WriteCloser, error) {
 	return root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 }
