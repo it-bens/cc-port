@@ -88,3 +88,5 @@ contract must list every embedded key in the manifest.
 ## Tests
 
 Unit tests in `rewrite_test.go`. Coverage spans `HistoryJSONL`, `ReplacePathInBytes` (including the dot-boundary lookahead), `SessionFile`, `UserConfig`, `FindPlaceholderTokens`, `SafeRenamePromoter` (files + dirs, rollback path), `EscapeSJSONKey`, `ContainsBoundedPath`, and `SafeWriteFile`. Table-driven where multiple cases share the same assertion.
+
+Fuzz targets in `rewrite_fuzz_test.go`. `FuzzReplacePathInBytes` asserts empty-`oldPath` no-op, identity-rewrite byte equality, and the length-accounting invariant `len(out) == len(in) + count*(len(newPath)-len(oldPath))`. `FuzzFindPlaceholderTokens` asserts distinct tokens, conformance to the documented `{{[A-Z0-9_]{1,64}}}` grammar (checked via an independent helper so a scanner bug cannot slip past), and substring presence in the input. Seed inputs run as deterministic subtests under `go test ./...`; the unbounded mutation loop is local-only (see `DEVELOPMENT.md` §Tests and lint for the invocation).

@@ -13,6 +13,6 @@ Byte-level path rewrite primitives and the atomic-rename promoter. See `README.m
 - Entry: `rewrite.go:ReplacePathInBytes`.
 - Promoter: `rewrite.go:SafeRenamePromoter`, `rewrite.go:NewSafeRenamePromoter`.
 - Scanners: `rewrite.go:FindPlaceholderTokens`.
-- Tests: `rewrite_test.go`.
+- Tests: `rewrite_test.go`, `rewrite_fuzz_test.go`.
 
 Read `README.md` before changing anything under `## Contracts`.

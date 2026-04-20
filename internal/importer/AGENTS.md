@@ -21,6 +21,6 @@ Apply a cc-port archive: validate, stage, promote, roll back. See `README.md` fo
 - Classification: `resolve.go:ClassifyPlaceholders`, `resolve.go:ValidateResolutions`.
 - Staging preflight: `importer.go:stagingTempPath`, `importer.go:checkStagingFilesystems`.
 - Conflict check: `resolve.go:CheckConflict`.
-- Tests: `importer_test.go`, `resolve_test.go`.
+- Tests: `importer_test.go`, `resolve_test.go`, `resolve_fuzz_test.go`.
 
 Read `README.md` before changing anything under `## Contracts`.

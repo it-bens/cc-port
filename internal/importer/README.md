@@ -287,6 +287,8 @@ Handled — `cc-port import` writes snapshots back to disk as the opaque bytes t
 
 Unit tests in `importer_test.go` and `resolve_test.go`. Coverage: basic round-trip, no staging temps left behind, refusal on unresolved / undeclared keys, acceptance of `Resolvable: false`, atomic rollback on failure, conflict refusal on pre-existing encoded directories, zip-slip rejection (`..`-escaping entry), absolute-entry rejection, and oversized-entry rejection (`readZipFile` 512 MiB cap — builds a 600 MiB archive, so the test skips under `go test -short`).
 
+Fuzz target in `resolve_fuzz_test.go`. `FuzzResolvePlaceholders` asserts no-panic, empty-map identity, absent-key identity, and the length-accounting invariant `len(out) == len(in) + count*(len(value)-len(key))`. The stronger "key bytes never survive" claim is not asserted: under adversarial inputs `bytes.ReplaceAll` can reconstruct a key at a substitution boundary, and that cannot happen under the production `{{UPPER_SNAKE}}` grammar where values are absolute filesystem paths. Seed inputs run as deterministic subtests under `go test ./...`; the unbounded mutation loop is local-only.
+
 ## References
 
 - `os.Root` — local authoritative: `go doc os.Root` · online supplement: https://pkg.go.dev/os#Root
