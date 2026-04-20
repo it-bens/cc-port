@@ -45,11 +45,29 @@ type Result struct {
 	FileHistorySnapshotsArchived int
 }
 
-// openArchiveFile is a package-level var so internal tests can substitute a
-// wrapper that returns a synthetic error on Close, exercising deferred
-// close-error propagation without a flaky real-world disk-full condition.
-var openArchiveFile = func(path string) (io.WriteCloser, error) {
-	return os.Create(path) //nolint:gosec // G304: output path supplied by the CLI caller
+// RunOption configures one call to Run.
+type RunOption func(*runConfig)
+
+type runConfig struct {
+	archiveOpener func(string) (io.WriteCloser, error)
+}
+
+// defaultRunConfig returns a runConfig seeded with the production opener
+// (os.Create). Callers override via WithArchiveOpener.
+func defaultRunConfig() runConfig {
+	return runConfig{
+		archiveOpener: func(path string) (io.WriteCloser, error) {
+			return os.Create(path) //nolint:gosec // G304: output path supplied by the CLI caller
+		},
+	}
+}
+
+// WithArchiveOpener substitutes the function Run uses to create the output
+// archive file. Intended for tests that inject close-time or mid-write
+// failures; production callers omit this option and receive the default
+// os.Create-based opener.
+func WithArchiveOpener(opener func(string) (io.WriteCloser, error)) RunOption {
+	return func(config *runConfig) { config.archiveOpener = opener }
 }
 
 // Run executes the export: locates project data, creates a ZIP archive at
@@ -58,13 +76,20 @@ var openArchiveFile = func(path string) (io.WriteCloser, error) {
 // contents are treated as opaque user-file bytes and are not scanned or
 // rewritten. The returned Result carries the number of snapshots included so
 // the caller can surface a warning.
-func Run(claudeHome *claude.Home, exportOptions Options) (result Result, err error) {
+func Run(
+	claudeHome *claude.Home, exportOptions Options, runOptions ...RunOption,
+) (result Result, err error) {
+	config := defaultRunConfig()
+	for _, option := range runOptions {
+		option(&config)
+	}
+
 	locations, err := claude.LocateProject(claudeHome, exportOptions.ProjectPath)
 	if err != nil {
 		return result, fmt.Errorf("locate project: %w", err)
 	}
 
-	zipFile, err := openArchiveFile(exportOptions.OutputPath)
+	zipFile, err := config.archiveOpener(exportOptions.OutputPath)
 	if err != nil {
 		return result, fmt.Errorf("create output file: %w", err)
 	}

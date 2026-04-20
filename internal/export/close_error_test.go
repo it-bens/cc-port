@@ -1,4 +1,4 @@
-package export
+package export_test
 
 import (
 	"errors"
@@ -9,11 +9,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
-
-const fixtureProjectPath = "/Users/test/Projects/myproject"
 
 // closeErroringCloser wraps a real *os.File: writes pass through unchanged,
 // Close closes the real handle to release the fd and returns a synthetic
@@ -62,8 +61,10 @@ func (w *writeLimitCloser) Close() error {
 	return w.inner.Close()
 }
 
-func defaultOptions(outputPath string) Options {
-	return Options{
+// closeErrorOptions builds export.Options for the close-error tests.
+// fixtureProjectPath is declared in export_test.go (same package).
+func closeErrorOptions(outputPath string) export.Options {
+	return export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories: manifest.CategorySet{
@@ -78,11 +79,8 @@ func defaultOptions(outputPath string) Options {
 }
 
 func TestRun_ArchiveFileCloseError(t *testing.T) {
-	originalFactory := openArchiveFile
-	t.Cleanup(func() { openArchiveFile = originalFactory })
-
 	sentinel := errors.New("synthetic archive-file close failure")
-	openArchiveFile = func(path string) (io.WriteCloser, error) {
+	opener := func(path string) (io.WriteCloser, error) {
 		realFile, err := os.Create(path) //nolint:gosec // G304: test-controlled tempdir path
 		if err != nil {
 			return nil, err
@@ -93,18 +91,16 @@ func TestRun_ArchiveFileCloseError(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := Run(claudeHome, defaultOptions(outputPath))
+	_, err := export.Run(claudeHome, closeErrorOptions(outputPath), export.WithArchiveOpener(opener))
+
 	require.Error(t, err, "Run must surface the deferred archive-file close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
 	require.ErrorContains(t, err, "close archive file")
 }
 
 func TestRun_ArchiveWriterCloseError(t *testing.T) {
-	originalFactory := openArchiveFile
-	t.Cleanup(func() { openArchiveFile = originalFactory })
-
 	sentinel := errors.New("synthetic archive-writer close failure")
-	openArchiveFile = func(path string) (io.WriteCloser, error) {
+	opener := func(path string) (io.WriteCloser, error) {
 		realFile, err := os.Create(path) //nolint:gosec // G304: test-controlled tempdir path
 		if err != nil {
 			return nil, err
@@ -120,7 +116,8 @@ func TestRun_ArchiveWriterCloseError(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := Run(claudeHome, defaultOptions(outputPath))
+	_, err := export.Run(claudeHome, closeErrorOptions(outputPath), export.WithArchiveOpener(opener))
+
 	require.Error(t, err, "Run must surface the deferred archive-writer close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
 	require.ErrorContains(t, err, "finalise archive")
