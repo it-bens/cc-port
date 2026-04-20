@@ -1,9 +1,13 @@
 package fsutil
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // dirModeAfterUmask creates a reference directory at the requested mode under
@@ -157,4 +161,42 @@ func TestCopyDirPreservesFileMode(t *testing.T) {
 	if got := readOnlyInfo.Mode().Perm(); got != expectedReadOnly {
 		t.Fatalf("ro mode = %o, want %o", got, expectedReadOnly)
 	}
+}
+
+// closeErroringCloser wraps a real *os.File: writes pass through unchanged,
+// but Close() closes the real handle (to avoid leaks) and returns a synthetic
+// error. Tests use this to prove deferred Close errors propagate out of the
+// caller.
+type closeErroringCloser struct {
+	io.Writer
+	realFile io.Closer
+	closeErr error
+}
+
+func (c *closeErroringCloser) Close() error {
+	_ = c.realFile.Close()
+	return c.closeErr
+}
+
+func TestCopyDir_CloseErrorPropagates(t *testing.T) {
+	originalFactory := openStreamDest
+	t.Cleanup(func() { openStreamDest = originalFactory })
+
+	sentinel := errors.New("synthetic close failure")
+	openStreamDest = func(root *os.Root, path string, mode os.FileMode) (io.WriteCloser, error) {
+		realFile, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+		if err != nil {
+			return nil, err
+		}
+		return &closeErroringCloser{Writer: realFile, realFile: realFile, closeErr: sentinel}, nil
+	}
+
+	src := t.TempDir()
+	dst := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(src, "f.txt"), []byte("payload"), 0o600))
+
+	err := CopyDir(src, dst)
+	require.Error(t, err, "CopyDir must surface the deferred close error")
+	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
+	require.ErrorContains(t, err, "close destination")
 }

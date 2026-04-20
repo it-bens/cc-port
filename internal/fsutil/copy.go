@@ -2,6 +2,7 @@
 package fsutil
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -19,8 +20,7 @@ import (
 // Writes go through an os.Root opened on destination, so even a
 // malformed relative path cannot land outside destination.
 func CopyDir(source, destination string) error {
-	// G301: destination directories match the cc-port-wide 0o755 convention.
-	if err := os.MkdirAll(destination, 0o755); err != nil { //nolint:gosec
+	if err := os.MkdirAll(destination, 0o755); err != nil { //nolint:gosec // G301: cc-port-wide 0o755 convention
 		return fmt.Errorf("create destination %q: %w", destination, err)
 	}
 
@@ -107,21 +107,33 @@ func copyDirectory(dirEntry fs.DirEntry, destRoot *os.Root, relativePath string)
 	return nil
 }
 
+// openStreamDest is the factory CopyDir uses to create each destination file.
+// It is a package-level var so internal tests can substitute a wrapper that
+// returns a synthetic error on Close — exercising the deferred close-error
+// propagation without requiring a flaky real-world disk-full condition.
+var openStreamDest = func(root *os.Root, path string, mode os.FileMode) (io.WriteCloser, error) {
+	return root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+}
+
 // streamRegularFile copies src's contents to relativePath under destRoot
 // and applies mode afterward. Uses io.Copy so large files do not land
 // whole in memory.
-func streamRegularFile(src string, destRoot *os.Root, relativePath string, mode os.FileMode) error {
+func streamRegularFile(src string, destRoot *os.Root, relativePath string, mode os.FileMode) (err error) {
 	in, err := os.Open(src) //nolint:gosec // G304: walked entry under caller-supplied source
 	if err != nil {
 		return fmt.Errorf("open source %q: %w", src, err)
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := destRoot.OpenFile(relativePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	out, err := openStreamDest(destRoot, relativePath, mode)
 	if err != nil {
 		return fmt.Errorf("create destination %q: %w", relativePath, err)
 	}
-	defer func() { _ = out.Close() }()
+	defer func() {
+		if cerr := out.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("close destination %q: %w", relativePath, cerr))
+		}
+	}()
 
 	if _, err := io.Copy(out, in); err != nil {
 		return fmt.Errorf("copy %q to %q: %w", src, relativePath, err)
