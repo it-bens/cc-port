@@ -86,7 +86,7 @@ func ReadManifest(path string) (*Metadata, error) {
 	return &metadata, nil
 }
 
-// ReadManifestFromZip opens the ZIP archive at archivePath, locates
+// ReadManifestFromZip opens a ZIP archive, locates the single top-level
 // metadata.xml inside it, and unmarshals the content into a Metadata value.
 // Rejects entries whose decoded size exceeds maxManifestBytes.
 func ReadManifestFromZip(archivePath string) (*Metadata, error) {
@@ -100,31 +100,36 @@ func ReadManifestFromZip(archivePath string) (*Metadata, error) {
 		if file.Name != "metadata.xml" {
 			continue
 		}
+		return readManifestEntry(file)
+	}
+	return nil, fmt.Errorf("metadata.xml not found in zip archive")
+}
 
-		rc, err := file.Open()
-		if err != nil {
-			return nil, fmt.Errorf("open metadata.xml in zip: %w", err)
-		}
-		defer func() { _ = rc.Close() }()
+// readManifestEntry reads metadata.xml from a single zip entry, enforces the
+// size cap, and unmarshals into Metadata. Scoped to its own function so the
+// deferred rc.Close() fires once per entry read, not once per call to
+// ReadManifestFromZip.
+func readManifestEntry(file *zip.File) (*Metadata, error) {
+	rc, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open metadata.xml in zip: %w", err)
+	}
+	defer func() { _ = rc.Close() }()
 
-		// Read at most maxManifestBytes+1 so we can distinguish an
-		// exactly-at-limit legitimate manifest from an over-limit one.
-		limited := io.LimitReader(rc, int64(maxManifestBytes)+1)
-		data, err := io.ReadAll(limited)
-		if err != nil {
-			return nil, fmt.Errorf("read metadata.xml from zip: %w", err)
-		}
-		if int64(len(data)) > int64(maxManifestBytes) {
-			return nil, fmt.Errorf("manifest entry %q exceeds %d-byte limit", file.Name, maxManifestBytes)
-		}
-
-		var metadata Metadata
-		if err := xml.Unmarshal(data, &metadata); err != nil {
-			return nil, fmt.Errorf("unmarshal manifest from zip: %w", err)
-		}
-
-		return &metadata, nil
+	// Read at most maxManifestBytes+1 so we can distinguish an
+	// exactly-at-limit legitimate manifest from an over-limit one.
+	limited := io.LimitReader(rc, int64(maxManifestBytes)+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("read metadata.xml from zip: %w", err)
+	}
+	if int64(len(data)) > int64(maxManifestBytes) {
+		return nil, fmt.Errorf("manifest entry %q exceeds %d-byte limit", file.Name, maxManifestBytes)
 	}
 
-	return nil, fmt.Errorf("metadata.xml not found in zip archive")
+	var metadata Metadata
+	if err := xml.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("unmarshal manifest from zip: %w", err)
+	}
+	return &metadata, nil
 }
