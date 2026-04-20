@@ -61,19 +61,12 @@ func TestGroupPathPrefixes(t *testing.T) {
 	}
 	prefixes := export.GroupPathPrefixes(paths)
 
-	// /Users/test should emerge as a common prefix covering 3 input paths
+	// /Users/test should emerge as a common prefix covering 3 input paths;
+	// sub-paths must be absorbed into it, not kept as separate top-level prefixes.
 	assert.Contains(t, prefixes, "/Users/test")
-
-	// Sub-paths of /Users/test should not be kept as separate top-level prefixes
-	for _, prefix := range prefixes {
-		if prefix != "/Users/test" {
-			assert.False(t,
-				len(prefix) > len("/Users/test") && len(prefix) >= len("/Users/test/") &&
-					prefix[:len("/Users/test/")] == "/Users/test/",
-				"expected no sub-path of /Users/test in result, got %q", prefix,
-			)
-		}
-	}
+	assert.NotContains(t, prefixes, "/Users/test/Projects/myproject")
+	assert.NotContains(t, prefixes, "/Users/test/Projects/otherproject")
+	assert.NotContains(t, prefixes, "/Users/test/Documents/notes")
 }
 
 func TestGroupPathPrefixes_Empty(t *testing.T) {
@@ -118,10 +111,9 @@ func TestAutoDetectPlaceholders_MultipleUnresolved(t *testing.T) {
 	assert.Equal(t, "{{UNRESOLVED_1}}", suggestions[0].Key)
 	assert.Equal(t, "{{UNRESOLVED_2}}", suggestions[1].Key)
 	assert.Equal(t, "{{UNRESOLVED_3}}", suggestions[2].Key)
-
-	for _, suggestion := range suggestions {
-		assert.False(t, suggestion.Auto)
-	}
+	assert.False(t, suggestions[0].Auto)
+	assert.False(t, suggestions[1].Auto)
+	assert.False(t, suggestions[2].Auto)
 }
 
 func TestAutoDetectPlaceholders_Empty(t *testing.T) {

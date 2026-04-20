@@ -131,25 +131,31 @@ func TestResolveProjectPath(t *testing.T) {
 	})
 }
 
-func TestHome_Paths(t *testing.T) {
+func TestHome_DerivesPaths(t *testing.T) {
 	home := claude.Home{
 		Dir:        "/home/user/.claude",
 		ConfigFile: "/home/user/.claude.json",
 	}
 
-	assert.Equal(t, "/home/user/.claude/projects", home.ProjectsDir())
-	assert.Equal(t, "/home/user/.claude/history.jsonl", home.HistoryFile())
-	assert.Equal(t, "/home/user/.claude/sessions", home.SessionsDir())
-	assert.Equal(t, "/home/user/.claude/settings.json", home.SettingsFile())
-	assert.Equal(t, "/home/user/.claude/rules", home.RulesDir())
-	assert.Equal(t, "/home/user/.claude/file-history", home.FileHistoryDir())
-}
-
-func TestHome_NewAccessors(t *testing.T) {
-	home := &claude.Home{Dir: "/tmp/claude", ConfigFile: "/tmp/claude.json"}
-
-	assert.Equal(t, "/tmp/claude/todos", home.TodosDir())
-	assert.Equal(t, "/tmp/claude/usage-data", home.UsageDataDir())
-	assert.Equal(t, "/tmp/claude/plugins/data", home.PluginsDataDir())
-	assert.Equal(t, "/tmp/claude/tasks", home.TasksDir())
+	cases := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"ProjectsDir", home.ProjectsDir(), "/home/user/.claude/projects"},
+		{"HistoryFile", home.HistoryFile(), "/home/user/.claude/history.jsonl"},
+		{"SessionsDir", home.SessionsDir(), "/home/user/.claude/sessions"},
+		{"SettingsFile", home.SettingsFile(), "/home/user/.claude/settings.json"},
+		{"RulesDir", home.RulesDir(), "/home/user/.claude/rules"},
+		{"FileHistoryDir", home.FileHistoryDir(), "/home/user/.claude/file-history"},
+		{"TodosDir", home.TodosDir(), "/home/user/.claude/todos"},
+		{"UsageDataDir", home.UsageDataDir(), "/home/user/.claude/usage-data"},
+		{"PluginsDataDir", home.PluginsDataDir(), "/home/user/.claude/plugins/data"},
+		{"TasksDir", home.TasksDir(), "/home/user/.claude/tasks"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, testCase.got)
+		})
+	}
 }

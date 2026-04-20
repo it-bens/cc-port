@@ -176,36 +176,8 @@ func TestApply_WithTranscripts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Transcript in new project dir should have new paths, not old.
 	newProjectDir := claudeHome.ProjectDir(newProjectPath)
-	entries, err := os.ReadDir(newProjectDir)
-	require.NoError(t, err)
-
-	foundTranscript := false
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		foundTranscript = true
-		transcriptPath := filepath.Join(newProjectDir, entry.Name())
-		transcriptData, err := os.ReadFile(transcriptPath) //nolint:gosec // test file path
-		require.NoError(t, err)
-		content := string(transcriptData)
-		// Path-boundary semantics: a raw substring of oldProjectPath may still
-		// remain if it is followed by a path-component byte (e.g. a sentence
-		// "look at /Users/test/Projects/myproject." — the trailing '.' could
-		// also be the start of an extension like ".v2", so we cannot rewrite
-		// it safely without context. Verify the path-as-path occurrences are
-		// gone instead.
-		assert.NotContains(t, content, oldProjectPath+"/",
-			"transcript should not contain old project path followed by /")
-		assert.NotContains(t, content, `"`+oldProjectPath+`"`,
-			"transcript should not contain old project path as a quoted JSON value")
-		assert.Contains(t, content, newProjectPath,
-			"transcript should contain new project path after rewrite")
-	}
-	assert.True(t, foundTranscript, "expected at least one transcript file in new project dir")
-
+	assertTranscriptRewritten(t, newProjectDir, oldProjectPath, newProjectPath)
 	assertSessionSubdirFilesRewritten(t, newProjectDir)
 }
 
@@ -702,4 +674,35 @@ func assertSessionSubdirFilesRewritten(t *testing.T, newProjectDir string) {
 		assert.Contains(t, content, newProjectPath,
 			"subdir file %s should contain new project path after rewrite", filePath)
 	}
+}
+
+// Path-boundary semantics: a raw substring of oldPath may still remain if it
+// is followed by a path-component byte (e.g. a sentence "look at
+// /Users/test/Projects/myproject." — the trailing '.' could also be the start
+// of an extension like ".v2", so we cannot rewrite it safely without context).
+// Verify the path-as-path occurrences are gone instead.
+func assertTranscriptRewritten(t *testing.T, projectDir, oldPath, newPath string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(projectDir)
+	require.NoError(t, err)
+
+	foundTranscript := false
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		foundTranscript = true
+		transcriptPath := filepath.Join(projectDir, entry.Name())
+		transcriptData, err := os.ReadFile(transcriptPath) //nolint:gosec // test file path
+		require.NoError(t, err)
+		content := string(transcriptData)
+		assert.NotContains(t, content, oldPath+"/",
+			"transcript should not contain old project path followed by /")
+		assert.NotContains(t, content, `"`+oldPath+`"`,
+			"transcript should not contain old project path as a quoted JSON value")
+		assert.Contains(t, content, newPath,
+			"transcript should contain new project path after rewrite")
+	}
+	assert.True(t, foundTranscript, "expected at least one transcript file in new project dir")
 }

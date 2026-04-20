@@ -420,10 +420,7 @@ func TestImport_AtomicRollbackOnFailure(t *testing.T) {
 	// Snapshot pre-import bytes so we can assert nothing was mutated after rollback.
 	preConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
 	require.NoError(t, err)
-	preHistoryExists := false
-	if _, err := os.Stat(destClaudeHome.HistoryFile()); err == nil {
-		preHistoryExists = true
-	}
+	require.NoFileExists(t, destClaudeHome.HistoryFile())
 
 	// Fail the second rename — the first (project dir) has already promoted,
 	// so rollback must un-promote it.
@@ -457,11 +454,6 @@ func TestImport_AtomicRollbackOnFailure(t *testing.T) {
 	assert.Equal(t, preConfigBytes, postConfigBytes,
 		"rollback must restore config file bytes")
 
-	// History file must be in its pre-import state: absent if it was
-	// absent before, or identical bytes if it existed.
-	if preHistoryExists {
-		t.Fatalf("test precondition: destination history file unexpectedly existed before import")
-	}
 	assert.NoFileExists(t, destClaudeHome.HistoryFile(),
 		"rollback must leave history absent when it was absent pre-import")
 

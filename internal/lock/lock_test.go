@@ -110,13 +110,6 @@ func TestWithLock_CallsFn(t *testing.T) {
 	assert.True(t, fnCalled, "fn must be invoked on the success path")
 }
 
-func TestWithLock_ReleasesOnFnSuccess(t *testing.T) {
-	claudeHome := newTestHome(t)
-
-	require.NoError(t, WithLock(claudeHome, func() error { return nil }))
-	require.NoError(t, WithLock(claudeHome, func() error { return nil }))
-}
-
 func TestWithLock_ReleasesOnFnError(t *testing.T) {
 	claudeHome := newTestHome(t)
 

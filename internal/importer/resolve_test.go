@@ -70,9 +70,9 @@ func TestValidateResolutions(t *testing.T) {
 			err := importer.ValidateResolutions(testCase.resolutions)
 			if testCase.wantErr {
 				require.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+				return
 			}
+			require.NoError(t, err)
 		})
 	}
 }

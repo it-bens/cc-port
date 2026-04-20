@@ -14,10 +14,8 @@ import (
 )
 
 func TestRules_FindsMatches(t *testing.T) {
-	dir := t.TempDir()
-	rule := filepath.Join(dir, "test-rule.md")
 	content := "# Rule\n\nApplies to /Users/test/Projects/myproject only.\n\nDo not touch /other/path.\n"
-	require.NoError(t, os.WriteFile(rule, []byte(content), 0600))
+	dir := writeRulesDir(t, ruleFile{"test-rule.md", []byte(content)})
 
 	warnings, err := scan.Rules(dir, "/Users/test/Projects/myproject")
 	require.NoError(t, err)
@@ -29,13 +27,12 @@ func TestRules_FindsMatches(t *testing.T) {
 }
 
 func TestRules_MultiplePathsMultipleFiles(t *testing.T) {
-	dir := t.TempDir()
-
 	contentA := "# Rule A\n\nThis applies to /Users/alice/project.\nAlso references /Users/bob/project here.\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte(contentA), 0600))
-
 	contentB := "# Rule B\n\nNothing interesting here.\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.md"), []byte(contentB), 0600))
+	dir := writeRulesDir(t,
+		ruleFile{"a.md", []byte(contentA)},
+		ruleFile{"b.md", []byte(contentB)},
+	)
 
 	warnings, err := scan.Rules(dir, "/Users/alice/project", "/Users/bob/project")
 	require.NoError(t, err)
@@ -51,9 +48,8 @@ func TestRules_MultiplePathsMultipleFiles(t *testing.T) {
 }
 
 func TestRules_OneWarningPerLineEvenIfMultiplePathsMatch(t *testing.T) {
-	dir := t.TempDir()
 	content := "# Rule\n\nThis line has /Users/alice/project and /Users/bob/project both.\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rule.md"), []byte(content), 0600))
+	dir := writeRulesDir(t, ruleFile{"rule.md", []byte(content)})
 
 	warnings, err := scan.Rules(dir, "/Users/alice/project", "/Users/bob/project")
 	require.NoError(t, err)
@@ -62,9 +58,8 @@ func TestRules_OneWarningPerLineEvenIfMultiplePathsMatch(t *testing.T) {
 }
 
 func TestRules_NoMatches(t *testing.T) {
-	dir := t.TempDir()
 	content := "# Rule\n\nThis rule does not mention any project path.\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rule.md"), []byte(content), 0600))
+	dir := writeRulesDir(t, ruleFile{"rule.md", []byte(content)})
 
 	warnings, err := scan.Rules(dir, "/Users/test/Projects/myproject")
 	require.NoError(t, err)
@@ -88,10 +83,11 @@ func TestRules_DirNotExist(t *testing.T) {
 }
 
 func TestRules_IgnoresNonMdFiles(t *testing.T) {
-	dir := t.TempDir()
-	content := "This file has /Users/test/Projects/myproject in it.\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rule.txt"), []byte(content), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rule.json"), []byte(content), 0600))
+	content := []byte("This file has /Users/test/Projects/myproject in it.\n")
+	dir := writeRulesDir(t,
+		ruleFile{"rule.txt", content},
+		ruleFile{"rule.json", content},
+	)
 
 	warnings, err := scan.Rules(dir, "/Users/test/Projects/myproject")
 	require.NoError(t, err)
@@ -102,10 +98,9 @@ func TestRules_AcceptsLineUpTo16MiB(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping long-line test in short mode")
 	}
-	rulesDir := t.TempDir()
 	longLine := bytes.Repeat([]byte("a"), 1<<20)
 	longLine = append(longLine, []byte("/target/path")...)
-	require.NoError(t, os.WriteFile(filepath.Join(rulesDir, "big.md"), longLine, 0600))
+	rulesDir := writeRulesDir(t, ruleFile{"big.md", longLine})
 
 	warnings, err := scan.Rules(rulesDir, "/target/path")
 	require.NoError(t, err)
@@ -116,11 +111,24 @@ func TestRules_RejectsLineOverLimit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping over-limit-line test in short mode")
 	}
-	rulesDir := t.TempDir()
 	huge := bytes.Repeat([]byte("a"), 17<<20)
-	require.NoError(t, os.WriteFile(filepath.Join(rulesDir, "huge.md"), huge, 0600))
+	rulesDir := writeRulesDir(t, ruleFile{"huge.md", huge})
 
 	_, err := scan.Rules(rulesDir, "/target/path")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, bufio.ErrTooLong)
+}
+
+type ruleFile struct {
+	name    string
+	content []byte
+}
+
+func writeRulesDir(t *testing.T, files ...ruleFile) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, file := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, file.name), file.content, 0o600))
+	}
+	return dir
 }

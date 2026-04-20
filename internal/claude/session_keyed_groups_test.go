@@ -22,24 +22,6 @@ func TestSessionKeyedGroups_CanonicalOrder(t *testing.T) {
 	}
 }
 
-func TestIsTaskSidecar(t *testing.T) {
-	cases := []struct {
-		name string
-		want bool
-	}{
-		{".lock", true},
-		{".highwatermark", true},
-		{"0.json", false},
-		{"anything.json", false},
-		{"", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, isTaskSidecar(tc.name))
-		})
-	}
-}
-
 func TestAllFlatFiles_FiltersTaskSidecars(t *testing.T) {
 	base := "/home/u/.claude"
 	locations := &ProjectLocations{

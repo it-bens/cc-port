@@ -6,7 +6,6 @@ import (
 	"encoding/xml"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -72,44 +71,63 @@ func TestMetadata_XMLFormat(t *testing.T) {
 		},
 	}
 
-	temporaryDirectory := t.TempDir()
-	path := filepath.Join(temporaryDirectory, "metadata.xml")
+	path := filepath.Join(t.TempDir(), "metadata.xml")
 
-	if err := manifest.WriteManifest(path, metadata); err != nil {
-		t.Fatalf("WriteManifest: %v", err)
-	}
+	require.NoError(t, manifest.WriteManifest(path, metadata))
 
 	data, err := os.ReadFile(path) //nolint:gosec // G304: test-controlled temp path
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-
+	require.NoError(t, err)
 	content := string(data)
 
-	checks := []struct {
-		description string
-		substring   string
-	}{
-		{"XML declaration", xml.Header[:5]},
-		{"root element cc-port", "<cc-port"},
-		{"export element", "<export>"},
-		{"categories wrapper", "<categories>"},
-		{"category element with name attribute", `name="sessions"`},
-		{"included attribute true", `included="true"`},
-		{"placeholders wrapper", "<placeholders>"},
-		{"placeholder element", "<placeholder"},
-		{"key attribute", `key="HOME"`},
-		{"original attribute", `original="/home/user"`},
-	}
-
-	for _, check := range checks {
-		if !strings.Contains(content, check.substring) {
-			t.Errorf("%s: expected %q in output:\n%s", check.description, check.substring, content)
-		}
-	}
+	assert.Contains(t, content, xml.Header[:5])
+	assert.Contains(t, content, "<cc-port")
+	assert.Contains(t, content, "<export>")
+	assert.Contains(t, content, "<categories>")
+	assert.Contains(t, content, `name="sessions"`)
+	assert.Contains(t, content, `included="true"`)
+	assert.Contains(t, content, "<placeholders>")
+	assert.Contains(t, content, "<placeholder")
+	assert.Contains(t, content, `key="HOME"`)
+	assert.Contains(t, content, `original="/home/user"`)
 }
 
-func TestManifest_WithResolve(t *testing.T) {
+func TestManifest_PlaceholderFieldsSurviveXMLRoundTrip(t *testing.T) {
+	created := time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	original := &manifest.Metadata{
+		Export: manifest.Info{
+			Created:    created,
+			Categories: []manifest.Category{},
+		},
+		Placeholders: []manifest.Placeholder{
+			{
+				Key:        "HOME",
+				Original:   "/home/olduser",
+				Resolvable: new(true),
+				Resolve:    "/home/newuser",
+			},
+			{
+				Key:        "UNRESOLVABLE",
+				Original:   "/some/path",
+				Resolvable: new(false),
+			},
+			{
+				Key:      "PLAIN",
+				Original: "/plain/path",
+			},
+		},
+	}
+
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+
+	require.NoError(t, manifest.WriteManifest(path, original))
+	roundTripped, err := manifest.ReadManifest(path)
+	require.NoError(t, err)
+
+	assertPlaceholderFields(t, roundTripped)
+}
+
+func TestManifest_MetadataSurvivesZIPRoundTrip(t *testing.T) {
 	created := time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC)
 
 	original := &manifest.Metadata{
@@ -139,14 +157,7 @@ func TestManifest_WithResolve(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	path := filepath.Join(temporaryDirectory, "metadata.xml")
 
-	if err := manifest.WriteManifest(path, original); err != nil {
-		t.Fatalf("WriteManifest: %v", err)
-	}
-
-	roundTripped, err := manifest.ReadManifest(path)
-	if err != nil {
-		t.Fatalf("ReadManifest: %v", err)
-	}
+	require.NoError(t, manifest.WriteManifest(path, original))
 
 	opts := cmp.Options{
 		cmpopts.IgnoreFields(manifest.Metadata{}, "XMLName"),
@@ -154,11 +165,6 @@ func TestManifest_WithResolve(t *testing.T) {
 		cmpopts.EquateEmpty(),
 	}
 
-	if diff := cmp.Diff(original, roundTripped, opts); diff != "" {
-		t.Errorf("Resolve round-trip mismatch (-want +got):\n%s", diff)
-	}
-
-	assertPlaceholderFields(t, roundTripped)
 	assertZIPRoundTrip(t, original, temporaryDirectory, path, opts)
 }
 
