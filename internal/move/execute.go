@@ -46,21 +46,18 @@ func executeMove(
 	}
 
 	if err := rewriteGlobalFiles(claudeHome, locations, moveOptions, tracker); err != nil {
-		tracker.restore()
-		return err
+		return errors.Join(err, tracker.restore())
 	}
 
 	if !moveOptions.RefsOnly {
 		createdPaths = append(createdPaths, moveOptions.NewPath)
 		if err := fsutil.CopyDir(moveOptions.OldPath, moveOptions.NewPath); err != nil {
-			tracker.restore()
-			return fmt.Errorf("copy project on disk: %w", err)
+			return errors.Join(fmt.Errorf("copy project on disk: %w", err), tracker.restore())
 		}
 	}
 
 	if err := verifyNewDirs(newProjectDir, moveOptions); err != nil {
-		tracker.restore()
-		return err
+		return errors.Join(err, tracker.restore())
 	}
 
 	if err := deleteOriginals(oldProjectDir, moveOptions, tracker); err != nil {
@@ -98,10 +95,14 @@ func (t *globalFileTracker) save(path string) ([]byte, os.FileMode, error) {
 	return data, info.Mode(), nil
 }
 
-func (t *globalFileTracker) restore() {
+func (t *globalFileTracker) restore() error {
+	var errs []error
 	for _, s := range t.saved {
-		_ = rewrite.SafeWriteFile(s.path, s.data, s.mode)
+		if err := rewrite.SafeWriteFile(s.path, s.data, s.mode); err != nil {
+			errs = append(errs, fmt.Errorf("restore %s: %w", s.path, err))
+		}
 	}
+	return errors.Join(errs...)
 }
 
 // checkEncodedDirCollision refuses moves that would overwrite existing encoded
@@ -146,16 +147,14 @@ func verifyNewDirs(newProjectDir string, moveOptions Options) error {
 
 func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalFileTracker) error {
 	if err := os.RemoveAll(oldProjectDir); err != nil {
-		tracker.restore()
-		return fmt.Errorf("remove old project data dir: %w", err)
+		return errors.Join(fmt.Errorf("remove old project data dir: %w", err), tracker.restore())
 	}
 	if !moveOptions.RefsOnly {
 		if err := os.RemoveAll(moveOptions.OldPath); err != nil {
 			// Encoded dir is already gone; we cannot resurrect it, but restoring
 			// globals keeps them consistent with the old path so the user can
 			// investigate or rerun instead of pointing at a deleted location.
-			tracker.restore()
-			return fmt.Errorf("remove old project dir on disk: %w", err)
+			return errors.Join(fmt.Errorf("remove old project dir on disk: %w", err), tracker.restore())
 		}
 	}
 	return nil

@@ -72,6 +72,10 @@ All five shapes flow through the same `globalFileTracker` rollback as the
 existing history/sessions/settings/config files. No separate tracker is
 introduced for the session-keyed categories.
 
+If rollback itself cannot restore every saved file, per-file restoration
+errors are aggregated via `errors.Join` and returned alongside the primary
+failure so the user can inspect which paths remain inconsistent.
+
 ### File-history handling (move)
 
 File-history snapshots under `~/.claude/file-history/<session-uuid>/` are opaque byte streams; cc-port never inspects or rewrites their content. See [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command. This section covers the move-specific handling.
