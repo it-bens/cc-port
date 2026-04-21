@@ -3,6 +3,13 @@ package claude
 
 import "encoding/json"
 
+// MaxHistoryLine bounds a single history.jsonl line read through
+// bufio.Scanner. Claude Code can embed pastedContents inline on one
+// line; 16 MiB covers plausible legitimate cases while rejecting
+// pathological inputs with bufio.ErrTooLong instead of silent
+// truncation.
+const MaxHistoryLine = 16 << 20
+
 // HistoryEntry is one line of history.jsonl.
 type HistoryEntry struct {
 	Project string                     `json:"project"`

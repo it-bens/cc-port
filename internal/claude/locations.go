@@ -368,6 +368,7 @@ func countHistoryEntries(locations *ProjectLocations, claudeHome *Home, projectP
 	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64<<10), MaxHistoryLine)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {

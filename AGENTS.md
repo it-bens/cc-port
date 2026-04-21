@@ -11,6 +11,7 @@ Go CLI that rewrites Claude Code project state. See `README.md` for the project 
 - Wrap every mutating command body (`move --apply`, `import`) in `lock.WithLock` before any write. (internal/lock/README.md §Concurrency guard)
 - Contain adversarial archive paths with `os.Root` and bound decompressed reads with `io.LimitReader`. (internal/importer/README.md §Import contract)
 - Set an explicit `bufio.Scanner.Buffer` cap on any new line-scanned read over untrusted input. (internal/scan/README.md §Rules files preserved)
+- Cap any `bufio.Scanner` reader of `history.jsonl` with `claude.MaxHistoryLine`. (internal/claude/README.md §History line cap)
 
 ## Navigation
 

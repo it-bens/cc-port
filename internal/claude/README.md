@@ -47,6 +47,9 @@ Not a rewriting package. The module produces locations and types.
     cc-port reads and writes. `HistoryEntry`, `SessionFile`, and
     `UserConfig` implement `json.Marshaler` and `json.Unmarshaler`,
     preserving unknown fields in an `Extra` map.
+  - `MaxHistoryLine`: 16 MiB ceiling for a single `history.jsonl` line
+    read through `bufio.Scanner`. Shared by every scanner in the
+    codebase that reads `history.jsonl`.
 
 ## Contracts
 
@@ -204,6 +207,37 @@ writes. Each type with an `Extra` field uses a custom `UnmarshalJSON` and
 
 - Schema validation beyond field presence. Callers that need value
   constraints must enforce them after unmarshaling.
+
+### History line cap
+
+The exported constant `MaxHistoryLine` (16 MiB) caps one `history.jsonl`
+line read through `bufio.Scanner`. Enforced by `countHistoryEntries` in
+this package and by `internal/export.extractProjectHistory`. New readers
+that scan `history.jsonl` line-by-line must use it so the observable cap
+stays consistent across commands.
+
+#### Handled
+
+- Lines up to 16 MiB scan intact. Both scanner callers set
+  `scanner.Buffer(make([]byte, 64<<10), MaxHistoryLine)`, so the initial
+  allocation stays at 64 KiB and grows only when a line demands it.
+- Oversized lines cause `bufio.Scanner.Err()` to return
+  `bufio.ErrTooLong`. Both callers wrap with `fmt.Errorf("scan history
+  file: %w", err)` so the sentinel is reachable via `errors.Is`.
+
+#### Refused
+
+- Silent truncation of an oversized line. The scanner fails and the
+  commands that reach `LocateProject` or `export.Run` surface the error.
+
+#### Not covered
+
+- Total file size. Callers that read `history.jsonl` whole (for example
+  `internal/move.scanHistoryFile` via `os.ReadFile`) are bounded only by
+  available memory, not by `MaxHistoryLine`.
+- The `internal/scan` package's own 16 MiB cap on rules files. Same
+  number, different content domain. The two caps are coincident and
+  independent.
 
 ## Tests
 

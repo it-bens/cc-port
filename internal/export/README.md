@@ -88,6 +88,6 @@ Privacy of exported snapshots. An archive shared with someone else carries liter
 
 Unit tests in `export_test.go` and `discover_test.go`. Coverage: all-categories export, path anonymisation (order-independence, boundary collisions), selective category export, history-inclusion rules, path discovery, prefix grouping, auto-placeholder detection.
 
-`extractProjectHistory` has dedicated tests in `extract_history_test.go` for the 16 MiB line cap.
+`history_line_cap_test.go` drives the `MaxHistoryLine` cap through `Run`. The invariant is owned by [`internal/claude/README.md`](../claude/README.md) §History line cap.
 
 Manifest marshal/unmarshal round-trip and XML format stability live in [`internal/manifest`](../manifest/README.md) §Tests.

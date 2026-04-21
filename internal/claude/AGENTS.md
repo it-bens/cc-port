@@ -12,6 +12,8 @@
 - When adding a sixth session-keyed group, append one entry to
   `SessionKeyedGroups` and one index-aligned entry to
   `transport.SessionKeyedTargets` (README §Session-keyed registry).
+- Any new `bufio.Scanner` reader of `history.jsonl` must cap the buffer
+  with `MaxHistoryLine` (README §History line cap).
 
 ## Navigation
 
@@ -19,5 +21,5 @@
 - Home and derived paths: `paths.go:NewHome`, `paths.go:Home`.
 - Project enumeration: `locations.go:LocateProject`.
 - Session-keyed registry: `session_keyed_groups.go`.
-- Schemas: `schema.go`.
+- Schemas and constants: `schema.go` (`HistoryEntry`, `MaxHistoryLine`).
 - Tests: `paths_test.go`, `locations_test.go`, `schema_test.go`.
