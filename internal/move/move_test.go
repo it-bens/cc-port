@@ -141,6 +141,30 @@ func TestApply(t *testing.T) {
 	assert.True(t, hasNewKey, "config should have new project key")
 }
 
+// TestApply_PropagatesStatErrorOnSettingsSymlinkLoop pins the Task 1 contract:
+// when os.Stat on a global file returns a non-ENOENT error, the rewrite path
+// must propagate it instead of silently skipping the file. A symlink loop
+// produces ELOOP, which os.Stat reports as a non-ENOENT error on macOS and
+// Linux without needing chmod tricks on a parent directory.
+func TestApply_PropagatesStatErrorOnSettingsSymlinkLoop(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	settingsPath := claudeHome.SettingsFile()
+	loopTarget := settingsPath + ".loop-target"
+	require.NoError(t, os.Remove(settingsPath))
+	require.NoError(t, os.Symlink(loopTarget, settingsPath))
+	require.NoError(t, os.Symlink(settingsPath, loopTarget))
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "settings.json",
+		"error must identify the settings.json file whose stat failed")
+}
+
 func TestApply_RefsOnly(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
@@ -433,6 +457,35 @@ func TestDryRun_CountsSessionKeyedReplacements(t *testing.T) {
 	assert.Positive(t, plan.ReplacementsByCategory["tasks"], "task description mentions oldPath")
 }
 
+// TestDryRun_SessionKeyedCountsReflectPerOccurrenceReplacements pins the Task
+// 3 contract: session-keyed counts report the total number of path
+// occurrences, not the number of files with at least one occurrence. The CLI
+// renders this count as "N replacements"; per-occurrence matches the label.
+func TestDryRun_SessionKeyedCountsReflectPerOccurrenceReplacements(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
+	require.NoError(t, err)
+	expected := 0
+	for _, path := range locations.TodoFiles {
+		data, err := os.ReadFile(path) //nolint:gosec // test-controlled path from LocateProject
+		require.NoError(t, err)
+		expected += bytes.Count(data, []byte(oldProjectPath))
+	}
+
+	require.Greater(t, expected, len(locations.TodoFiles),
+		"precondition: fixture must have a file with multiple occurrences so per-occurrence differs from per-file")
+	assert.Equal(t, expected, plan.ReplacementsByCategory["todos"],
+		"dry-run must report per-occurrence count, not per-file")
+}
+
 func TestApply_Rollback_RestoresAllShapesOnFailure(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
@@ -640,7 +693,7 @@ func TestApply_Rollback_RestoresGlobalsOnSecondDeleteFailure(t *testing.T) {
 		RefsOnly: false,
 	})
 	require.Error(t, err, "Apply must surface the on-disk removal failure")
-	assert.Contains(t, err.Error(), "remove old project dir on disk",
+	assert.Contains(t, err.Error(), "on-disk dir still present",
 		"error should come from the second-delete branch of deleteOriginals")
 
 	// Global files must be restored to their pre-move contents — the contract
@@ -668,6 +721,58 @@ func TestApply_Rollback_RestoresGlobalsOnSecondDeleteFailure(t *testing.T) {
 	_, statNewOnDiskErr := os.Stat(newOnDiskPath)
 	assert.True(t, os.IsNotExist(statNewOnDiskErr),
 		"new on-disk project dir must be torn down by executeMove's defer")
+}
+
+// TestApply_SecondDeleteFailureSurfacesResidualStateMessage pins the Task 2
+// contract: when the on-disk OldPath removal fails, the returned error must
+// name the residual on-disk state and the recovery command the user should
+// run. Uses the same read-only-parent scaffolding as the rollback test so the
+// second-delete branch of deleteOriginals is the failure point.
+func TestApply_SecondDeleteFailureSurfacesResidualStateMessage(t *testing.T) {
+	tempRoot := t.TempDir()
+	claudeDir := filepath.Join(tempRoot, "dotclaude")
+	configFilePath := filepath.Join(tempRoot, "dotclaude.json")
+
+	readOnlyParent := filepath.Join(tempRoot, "readonly-parent")
+	oldOnDiskPath := filepath.Join(readOnlyParent, "myproject")
+	newOnDiskPath := filepath.Join(tempRoot, "new-parent", "myproject")
+
+	claudeHome := &claude.Home{Dir: claudeDir, ConfigFile: configFilePath}
+	require.NoError(t, os.MkdirAll(claudeHome.ProjectDir(oldOnDiskPath), 0o750))
+	require.NoError(t, os.WriteFile(
+		claudeHome.HistoryFile(),
+		[]byte(`{"display":"x","pastedContents":{},"timestamp":1,"project":"`+oldOnDiskPath+`"}`+"\n"),
+		0o600,
+	))
+	require.NoError(t, os.WriteFile(
+		claudeHome.SettingsFile(),
+		[]byte(`{"env":{"PROJECT_ROOT":"`+oldOnDiskPath+`"}}`),
+		0o600,
+	))
+	require.NoError(t, os.WriteFile(configFilePath, []byte(`{"projects":{"`+oldOnDiskPath+`":{}}}`), 0o600))
+	require.NoError(t, os.MkdirAll(oldOnDiskPath, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(oldOnDiskPath, "sentinel.txt"), []byte("payload"), 0o600))
+	require.NoError(t, os.Chmod(readOnlyParent, 0o500)) //nolint:gosec // G302: read+exec only is the whole point
+	t.Cleanup(func() {
+		_ = os.Chmod(readOnlyParent, 0o700) //nolint:gosec // G302: restore for t.TempDir cleanup
+	})
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldOnDiskPath,
+		NewPath:  newOnDiskPath,
+		RefsOnly: false,
+	})
+
+	require.Error(t, err)
+	message := err.Error()
+	assert.Contains(t, message, "encoded project data",
+		"error must state that the encoded storage is gone")
+	assert.Contains(t, message, "on-disk dir still present",
+		"error must state that the on-disk directory remains")
+	assert.Contains(t, message, "cannot retry",
+		"error must tell the user cc-port move cannot retry this failure")
+	assert.Contains(t, message, "`mv "+oldOnDiskPath+" "+newOnDiskPath+"`",
+		"error must suggest the manual mv completion path")
 }
 
 func TestApply_CancelsBeforeExecuteWhenContextCancelled(t *testing.T) {

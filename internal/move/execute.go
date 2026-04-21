@@ -232,10 +232,24 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 	}
 	if !moveOptions.RefsOnly {
 		if err := os.RemoveAll(moveOptions.OldPath); err != nil {
-			// Encoded dir is already gone; we cannot resurrect it, but restoring
-			// globals keeps them consistent with the old path so the user can
-			// investigate or rerun instead of pointing at a deleted location.
-			return errors.Join(fmt.Errorf("remove old project dir on disk: %w", err), tracker.restore())
+			// Encoded dir is already gone; we cannot resurrect it. Globals
+			// restore to the old path so the user can continue working there.
+			// cc-port move cannot retry because LocateProject hard-requires
+			// the encoded dir — recovery is manual from here.
+			residual := fmt.Errorf(
+				"remove old project dir %s: %w\n"+
+					"state: encoded project data (session history, memory, todos) is gone and cannot be recovered; "+
+					"on-disk dir still present at %s with source files intact; "+
+					"global references restored to the old path\n"+
+					"recover: cc-port move cannot retry — the encoded source is gone. "+
+					"Leave the project at %s (Claude Code will recreate encoded state on next session), "+
+					"or complete the filesystem move with `mv %s %s`",
+				moveOptions.OldPath, err,
+				moveOptions.OldPath,
+				moveOptions.OldPath,
+				moveOptions.OldPath, moveOptions.NewPath,
+			)
+			return errors.Join(residual, tracker.restore())
 		}
 	}
 	return nil

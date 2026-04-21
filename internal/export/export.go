@@ -744,7 +744,7 @@ func historyLineBelongsToProject(line []byte, projectPath string) bool {
 func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
 	configData, err := os.ReadFile(configPath) //nolint:gosec // G304: path from trusted ClaudeHome
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("config file not found: %s", configPath)
 		}
 		return nil, fmt.Errorf("read config file: %w", err)

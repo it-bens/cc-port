@@ -265,6 +265,54 @@ func TestImport_ResolvesDeclaredPlaceholders(t *testing.T) {
 	assertNoPendingPlaceholders(t, projectDir)
 }
 
+func TestImport_LandsHistoryAndConfigAt0600(t *testing.T) {
+	destClaudeHome := runBasicImport(t)
+
+	historyInfo, err := os.Stat(destClaudeHome.HistoryFile())
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), historyInfo.Mode().Perm(),
+		"imported history.jsonl must be owner-only")
+
+	configInfo, err := os.Stat(destClaudeHome.ConfigFile)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), configInfo.Mode().Perm(),
+		"imported config file must be owner-only")
+}
+
+func TestImport_LandsSessionTranscriptAt0600(t *testing.T) {
+	destClaudeHome := runBasicImport(t)
+	projectDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
+
+	entries, err := os.ReadDir(projectDir)
+	require.NoError(t, err)
+	var transcripts []os.DirEntry
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		transcripts = append(transcripts, entry)
+	}
+	require.NotEmpty(t, transcripts, "fixture must produce at least one session transcript")
+
+	for _, transcript := range transcripts {
+		info, statErr := os.Stat(filepath.Join(projectDir, transcript.Name()))
+		require.NoError(t, statErr)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+			"session transcript %s must be owner-only", transcript.Name())
+	}
+}
+
+func TestImport_LandsMemoryFileAt0644(t *testing.T) {
+	destClaudeHome := runBasicImport(t)
+	projectDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
+
+	memoryPath := filepath.Join(projectDir, "memory", "MEMORY.md")
+	info, err := os.Stat(memoryPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(),
+		"memory files are not sensitive and stay at the default mode")
+}
+
 // runBasicImport runs a fresh import from a cc-port archive built off the
 // source fixture into an empty destination home, and returns the destination
 // home for assertions.
@@ -724,6 +772,43 @@ func TestImport_RoundTrip_NewCategories(t *testing.T) {
 	assert.NotEmpty(t, imported.UsageDataFacets)
 	assert.NotEmpty(t, imported.PluginsDataFiles)
 	assert.NotEmpty(t, imported.TaskFiles)
+}
+
+func TestImport_LandsSessionKeyedFileAt0644(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "out.zip")
+
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
+		ProjectPath: fixtureSourceProjectPath,
+		OutputPath:  archivePath,
+		Categories: manifest.CategorySet{
+			Sessions: true, Memory: true, History: true, Config: true,
+			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
+		},
+	})
+	require.NoError(t, err)
+
+	freshHome := testutil.SetupFixture(t)
+	require.NoError(t, os.RemoveAll(freshHome.TodosDir()))
+	require.NoError(t, os.RemoveAll(freshHome.UsageDataDir()))
+	require.NoError(t, os.RemoveAll(freshHome.PluginsDataDir()))
+	require.NoError(t, os.RemoveAll(freshHome.TasksDir()))
+	require.NoError(t, os.RemoveAll(freshHome.ProjectDir(fixtureSourceProjectPath)))
+
+	require.NoError(t, importer.Run(t.Context(), freshHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  fixtureSourceProjectPath,
+	}))
+
+	imported, err := claude.LocateProject(freshHome, fixtureSourceProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, imported.TodoFiles,
+		"round-trip must stage at least one todo file")
+
+	info, err := os.Stat(imported.TodoFiles[0])
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(),
+		"session-keyed todo entry is metadata, not a secret, and stays at the default mode")
 }
 
 func TestImport_HardFailsOnUnknownManifestCategory(t *testing.T) {

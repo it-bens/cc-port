@@ -3,7 +3,9 @@ package move
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/it-bens/cc-port/internal/claude"
@@ -57,7 +59,10 @@ func rewriteHistoryFile(
 	historyFile := claudeHome.HistoryFile()
 	info, err := os.Stat(historyFile)
 	if err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat %s: %w", historyFile, err)
 	}
 
 	var malformed []int
@@ -192,7 +197,10 @@ func rewriteSettingsFile(
 	}
 	settingsFile := claudeHome.SettingsFile()
 	if _, err := os.Stat(settingsFile); err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat %s: %w", settingsFile, err)
 	}
 	if err := rewriteTracked(settingsFile, moveOptions.OldPath, moveOptions.NewPath, tracker); err != nil {
 		return fmt.Errorf("rewrite settings.json: %w", err)
@@ -211,7 +219,10 @@ func rewriteConfigFile(
 	}
 	configFile := claudeHome.ConfigFile
 	if _, err := os.Stat(configFile); err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat %s: %w", configFile, err)
 	}
 
 	original, mode, err := tracker.save(configFile)

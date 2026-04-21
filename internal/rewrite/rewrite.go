@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -502,7 +503,7 @@ func (p *SafeRenamePromoter) promoteEntry(entry *renameEntry) error {
 			}
 			entry.backupBytes = data
 		}
-	case os.IsNotExist(err):
+	case errors.Is(err, fs.ErrNotExist):
 		entry.existed = false
 	default:
 		return fmt.Errorf("stat final: %w", err)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,6 +32,12 @@ const dirPerm = os.FileMode(0755)
 // rw-r--r-- — owner read/write, group and others read-only, matching the
 // permissions Claude Code itself writes for project data files.
 const filePerm = os.FileMode(0644)
+
+// secretFilePerm is the mode used for files that may carry user secrets
+// (history.jsonl, .claude.json, session transcripts). Locked to owner so a
+// multi-user or shared-home layout does not leak pasted tokens or MCP env
+// values to group or others.
+const secretFilePerm = os.FileMode(0o600)
 
 // stagingSuffix is appended to every final destination to form its temp path.
 // Import writes to temp paths first, then atomically promotes them via
@@ -612,7 +619,7 @@ func stageProjectFileFromZip(
 	tempProjectDir string, zipFile *zip.File, zipPrefix string, resolutions map[string]string,
 ) (int64, error) {
 	relativePath := strings.TrimPrefix(zipFile.Name, zipPrefix)
-	return streamResolveIntoRoot(tempProjectDir, relativePath, zipFile, resolutions)
+	return streamResolveIntoRoot(tempProjectDir, relativePath, zipFile, resolutions, secretFilePerm)
 }
 
 // stageMemoryFileFromZip streams one memory/ entry directly into the
@@ -622,7 +629,7 @@ func stageMemoryFileFromZip(
 ) (int64, error) {
 	relativePath := strings.TrimPrefix(zipFile.Name, "memory/")
 	return streamResolveIntoRoot(
-		tempProjectDir, filepath.Join("memory", relativePath), zipFile, resolutions,
+		tempProjectDir, filepath.Join("memory", relativePath), zipFile, resolutions, filePerm,
 	)
 }
 
@@ -642,7 +649,7 @@ func stageFileHistoryFromZip(
 	if err != nil {
 		return stagedFile{}, 0, err
 	}
-	bytesRead, err := streamVerbatimToTemp(tempPath, zipFile)
+	bytesRead, err := streamVerbatimToTemp(tempPath, zipFile, filePerm)
 	if err != nil {
 		return stagedFile{}, bytesRead, err
 	}
@@ -666,7 +673,7 @@ func stageSessionKeyedFileFromZip(
 	if err != nil {
 		return stagedFile{}, 0, err
 	}
-	bytesRead, err := streamResolveToTemp(tempPath, zipFile, resolutions)
+	bytesRead, err := streamResolveToTemp(tempPath, zipFile, resolutions, filePerm)
 	if err != nil {
 		return stagedFile{}, bytesRead, err
 	}
@@ -679,7 +686,7 @@ func stageSessionKeyedFileFromZip(
 // absolute-path prefixes before any write, so a malicious zip entry name
 // cannot land outside baseDir.
 func streamResolveIntoRoot(
-	baseDir, relativePath string, zipFile *zip.File, resolutions map[string]string,
+	baseDir, relativePath string, zipFile *zip.File, resolutions map[string]string, perm os.FileMode,
 ) (int64, error) {
 	relativePath = filepath.Clean(relativePath)
 	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
@@ -697,7 +704,7 @@ func streamResolveIntoRoot(
 		}
 	}
 
-	writer, err := root.OpenFile(relativePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
+	writer, err := root.OpenFile(relativePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return 0, fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
 	}
@@ -717,13 +724,13 @@ func streamResolveIntoRoot(
 // into the given sibling temp path (used by file-history and session-keyed
 // staging).
 func streamResolveToTemp(
-	tempPath string, zipFile *zip.File, resolutions map[string]string,
+	tempPath string, zipFile *zip.File, resolutions map[string]string, perm os.FileMode,
 ) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(tempPath), dirPerm); err != nil {
 		return 0, fmt.Errorf("create directories for %q: %w", tempPath, err)
 	}
 	//nolint:gosec // G304: tempPath constructed from resolved, containment-checked staging base
-	writer, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
+	writer, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return 0, fmt.Errorf("create staging temp %q: %w", tempPath, err)
 	}
@@ -742,12 +749,12 @@ func streamResolveToTemp(
 // streamVerbatimToTemp copies a zip entry byte-for-byte to the given
 // sibling temp path without any placeholder resolution. Used for
 // file-history snapshots, whose contents are opaque by policy.
-func streamVerbatimToTemp(tempPath string, zipFile *zip.File) (int64, error) {
+func streamVerbatimToTemp(tempPath string, zipFile *zip.File, perm os.FileMode) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(tempPath), dirPerm); err != nil {
 		return 0, fmt.Errorf("create directories for %q: %w", tempPath, err)
 	}
 	//nolint:gosec // G304: tempPath constructed from resolved, containment-checked staging base
-	writer, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
+	writer, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return 0, fmt.Errorf("create staging temp %q: %w", tempPath, err)
 	}
@@ -880,7 +887,7 @@ func stageHistoryIfNeeded(plan *importPlan, appends [][]byte) error {
 		return fmt.Errorf("read existing history for merge: %w", err)
 	}
 	merged := BuildHistoryBytes(existing, appends)
-	if err := writeStagedFile(plan.tempHistoryFile, merged); err != nil {
+	if err := writeStagedFile(plan.tempHistoryFile, merged, secretFilePerm); err != nil {
 		return err
 	}
 	plan.historyStaged = true
@@ -900,7 +907,7 @@ func stageConfigIfNeeded(plan *importPlan, targetPath string, block []byte) erro
 	if err != nil {
 		return err
 	}
-	if err := writeStagedFile(plan.tempConfigFile, merged); err != nil {
+	if err := writeStagedFile(plan.tempConfigFile, merged, secretFilePerm); err != nil {
 		return err
 	}
 	plan.configStaged = true
@@ -944,7 +951,7 @@ func ensureEmptyDir(path string) error {
 func readExistingOrEmpty(path string) ([]byte, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: trusted ClaudeHome path
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
@@ -952,11 +959,11 @@ func readExistingOrEmpty(path string) ([]byte, error) {
 	return data, nil
 }
 
-func writeStagedFile(path string, content []byte) error {
+func writeStagedFile(path string, content []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
 		return fmt.Errorf("create directories for %q: %w", path, err)
 	}
-	if err := os.WriteFile(path, content, filePerm); err != nil {
+	if err := os.WriteFile(path, content, perm); err != nil {
 		return fmt.Errorf("write staged file %q: %w", path, err)
 	}
 	return nil

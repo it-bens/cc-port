@@ -158,8 +158,8 @@ func countFileHistorySnapshots(ctx context.Context, locations *claude.ProjectLoc
 
 // countSessionKeyedReplacements writes per-group replacement counts into
 // plan.ReplacementsByCategory by walking locations.AllFlatFiles() exactly
-// once. A file with any non-zero replacement count counts once toward its
-// group total.
+// once. Each file contributes its per-occurrence replacement count so the
+// totals match the CLI's "N replacements" label.
 func countSessionKeyedReplacements(
 	ctx context.Context,
 	plan *Plan,
@@ -175,9 +175,7 @@ func countSessionKeyedReplacements(
 			return fmt.Errorf("read %s file %s: %w", group.Name, path, err)
 		}
 		_, n := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
-		if n > 0 {
-			plan.ReplacementsByCategory[group.Name]++
-		}
+		plan.ReplacementsByCategory[group.Name] += n
 	}
 	return nil
 }
