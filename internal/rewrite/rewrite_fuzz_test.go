@@ -21,6 +21,9 @@ func FuzzReplacePathInBytes(f *testing.F) {
 	f.Add([]byte(""), "", "")
 	f.Add([]byte("no match in this string"), "/never", "/here")
 	f.Add([]byte("overlapping abc abcabc"), "abc", "xy")
+	f.Add([]byte(`{"a":"\/Users\/me\/foo\/bar","b":"\/Users\/me\/foobar"}`), "/Users/me/foo", "/Users/me/bar")
+	f.Add([]byte(`"\/Users\/me\/foo"`), "/Users/me/foo", "/Users/me/bar")
+	f.Add([]byte(`[{"p":"/Users/me/foo","q":"\/Users\/me\/foo"}]`), "/Users/me/foo", "/Users/me/bar")
 
 	f.Fuzz(func(t *testing.T, data []byte, oldPath, newPath string) {
 		output, count := rewrite.ReplacePathInBytes(data, oldPath, newPath)

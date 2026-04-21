@@ -1,6 +1,8 @@
 package claude_test
 
 import (
+	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -125,4 +127,56 @@ func TestLocateProject_CollectsTodos(t *testing.T) {
 		containsBaseName(projectLocations.TodoFiles,
 			"a1b2c3d4-0000-0000-0000-000000000001-agent-a1b2c3d4-0000-0000-0000-000000000001.json"),
 		"the matching todo file must be located")
+}
+
+func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
+	// Fixture collision: "/Users/test/Projects/my project" (real cwd in
+	// sessions/12345.json) and "/Users/test/Projects/my-project" (the lookup
+	// path) both encode to -Users-test-Projects-my-project. The witnessing
+	// session's sessionId e5f6a7b8-0000-0000-0000-000000000005 appears in
+	// the encoded dir as a transcript, so the identity check sees the
+	// mismatched cwd and must refuse.
+	claudeHome := testutil.SetupFixture(t)
+
+	_, err := claude.LocateProject(claudeHome, "/Users/test/Projects/my-project")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "different project")
+	assert.Contains(t, err.Error(), `"/Users/test/Projects/my project"`,
+		"error must name the witness cwd so the operator can identify the colliding project")
+}
+
+func TestLocateProject_PassesOnMatchingSessionCwd(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	locations, err := claude.LocateProject(claudeHome, testProjectPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, testProjectPath, locations.ProjectPath)
+}
+
+func TestLocateProject_EmitsWarningOnNoSessionFiles(t *testing.T) {
+	// Arrange: wipe every session JSON so no witness exists for the encoded dir.
+	claudeHome := testutil.SetupFixture(t)
+	entries, err := os.ReadDir(claudeHome.SessionsDir())
+	require.NoError(t, err)
+	for _, entry := range entries {
+		require.NoError(t, os.Remove(filepath.Join(claudeHome.SessionsDir(), entry.Name())))
+	}
+
+	originalStderr := os.Stderr
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = writer
+	t.Cleanup(func() { os.Stderr = originalStderr })
+
+	// Act
+	_, err = claude.LocateProject(claudeHome, testProjectPath)
+	_ = writer.Close()
+
+	// Assert
+	require.NoError(t, err)
+	var buffer bytes.Buffer
+	_, _ = buffer.ReadFrom(reader)
+	assert.Contains(t, buffer.String(), "identity check skipped")
 }

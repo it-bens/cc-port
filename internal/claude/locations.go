@@ -61,6 +61,10 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 		return nil, err
 	}
 
+	if err := verifyProjectIdentity(claudeHome, projectPath, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
 	if err := collectMemoryFiles(locations, projectDir); err != nil {
 		return nil, err
 	}
@@ -323,6 +327,107 @@ func collectTaskFiles(locations *ProjectLocations, claudeHome *Home, sessionUUID
 		}
 	}
 	return nil
+}
+
+// verifyProjectIdentity cross-checks any ~/.claude/sessions/*.json whose
+// sessionId appears inside the encoded project directory against projectPath.
+// A matching cwd confirms identity. A non-matching cwd among witnesses
+// rejects: two distinct real paths can encode to the same directory name,
+// so without this guard a rewrite run would splice one project's data into
+// another's. No witness (no sessions attributed, or none readable) logs a
+// one-line warning to os.Stderr and returns nil so fresh projects still
+// work.
+func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []string) error {
+	if len(sessionUUIDs) == 0 {
+		warnIdentityCheckSkipped(projectPath)
+		return nil
+	}
+
+	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
+	for _, uuid := range sessionUUIDs {
+		uuidSet[uuid] = struct{}{}
+	}
+
+	matched, seenCwds, err := walkSessionWitnesses(claudeHome.SessionsDir(), uuidSet, projectPath)
+	if err != nil {
+		return err
+	}
+	if matched {
+		return nil
+	}
+	if len(seenCwds) > 0 {
+		return fmt.Errorf(
+			"encoded directory %s belongs to a different project (requested %q, session cwd values seen: %s)",
+			claudeHome.ProjectDir(projectPath), projectPath, formatCwdList(seenCwds),
+		)
+	}
+
+	warnIdentityCheckSkipped(projectPath)
+	return nil
+}
+
+// walkSessionWitnesses inspects every sessions/*.json and returns whether a
+// witness confirmed projectPath (matched), along with the distinct cwd values
+// reported by witnesses that contradicted it. An empty seenCwds slice with
+// matched=false means no session's UUID was found in the encoded dir's set,
+// the "no witness" case. A missing sessions directory collapses to the same.
+func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}, projectPath string) (bool, []string, error) {
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil, nil
+		}
+		return false, nil, fmt.Errorf("read sessions directory: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	var seenCwds []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		sessionFilePath := filepath.Join(sessionsDir, entry.Name())
+		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // G304: path constructed from trusted sessions directory
+		if err != nil {
+			return false, nil, fmt.Errorf("read session file %s: %w", entry.Name(), err)
+		}
+		var probe struct {
+			SessionID string `json:"sessionId"`
+			Cwd       string `json:"cwd"`
+		}
+		if err := json.Unmarshal(data, &probe); err != nil {
+			continue
+		}
+		if _, ok := uuidSet[probe.SessionID]; !ok {
+			continue
+		}
+		if probe.Cwd == projectPath {
+			return true, nil, nil
+		}
+		if _, duplicate := seen[probe.Cwd]; !duplicate {
+			seen[probe.Cwd] = struct{}{}
+			seenCwds = append(seenCwds, probe.Cwd)
+		}
+	}
+	return false, seenCwds, nil
+}
+
+// formatCwdList renders cwd witnesses as a comma-separated list of Go-quoted
+// strings so the error message survives copy-paste even when a cwd contains
+// spaces, quotes, or control bytes.
+func formatCwdList(cwds []string) string {
+	quoted := make([]string, len(cwds))
+	for index, cwd := range cwds {
+		quoted[index] = fmt.Sprintf("%q", cwd)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func warnIdentityCheckSkipped(projectPath string) {
+	fmt.Fprintf(os.Stderr,
+		"warning: project %s has no session files; encoded-directory identity check skipped\n",
+		projectPath,
+	)
 }
 
 func collectSessionFiles(locations *ProjectLocations, claudeHome *Home, projectPath string) error {

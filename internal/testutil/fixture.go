@@ -95,15 +95,19 @@ func findFixtureDir(t *testing.T) string {
 		t.Fatalf("get working directory: %v", err)
 	}
 
+	// Walk upward looking for a testdata/ that contains our dotclaude/ fixture.
+	// A bare testdata/ check would match a package-local fuzz corpus (e.g.
+	// internal/claude/testdata/fuzz/) and stop before the repo-root testdata/,
+	// leading to a confusing "no such file or directory" on dotclaude.
 	for {
 		candidate := filepath.Join(currentDir, "testdata")
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		if info, err := os.Stat(filepath.Join(candidate, "dotclaude")); err == nil && info.IsDir() {
 			return candidate
 		}
 		parentDir := filepath.Dir(currentDir)
 		if parentDir == currentDir {
-			// No testdata/ means the test ran outside the repository tree; this is a programmer error.
-			t.Fatal("could not find testdata/ directory")
+			// No testdata/dotclaude means the test ran outside the repository tree; this is a programmer error.
+			t.Fatal("could not find testdata/dotclaude/ directory")
 		}
 		currentDir = parentDir
 	}

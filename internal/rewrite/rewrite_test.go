@@ -200,6 +200,48 @@ func TestReplacePathInBytes(t *testing.T) {
 	})
 }
 
+func TestStreamHistoryJSONL_RewritesEscapedSlashForm(t *testing.T) {
+	input := `{"project":"\/Users\/me\/foo","display":"x"}`
+	var dst bytes.Buffer
+	replaced, _, err := rewrite.StreamHistoryJSONL(
+		t.Context(), strings.NewReader(input), &dst, "/Users/me/foo", "/Users/me/bar",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, replaced)
+	assert.Contains(t, dst.String(), `"project":"\/Users\/me\/bar"`)
+}
+
+func TestSessionFile_RewritesEscapedSlashForm(t *testing.T) {
+	input := []byte(`{"cwd":"\/Users\/me\/foo","v":1}`)
+	got, changed, err := rewrite.SessionFile(input, "/Users/me/foo", "/Users/me/bar")
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Contains(t, string(got), `"cwd":"\/Users\/me\/bar"`)
+}
+
+func TestReplacePathInBytesWithJSONEscape_RewritesBothForms(t *testing.T) {
+	input := []byte(`{"a":"/Users/me/foo","b":"\/Users\/me\/foo\/bar"}`)
+	got, count := rewrite.ReplacePathInBytesWithJSONEscape(input, "/Users/me/foo", "/Users/me/bar")
+	assert.Equal(t, 2, count)
+	assert.Contains(t, string(got), `"a":"/Users/me/bar"`)
+	assert.Contains(t, string(got), `"b":"\/Users\/me\/bar\/bar"`)
+}
+
+func TestReplacePathInBytesWithJSONEscape_NoFalseMatchOnBoundary(t *testing.T) {
+	input := []byte(`["\/Users\/me\/foo","\/Users\/me\/foobar"]`)
+	got, count := rewrite.ReplacePathInBytesWithJSONEscape(input, "/Users/me/foo", "/Users/me/bar")
+	assert.Equal(t, 1, count)
+	assert.Contains(t, string(got), `"\/Users\/me\/bar"`)
+	assert.Contains(t, string(got), `"\/Users\/me\/foobar"`)
+}
+
+func TestReplacePathInBytesWithJSONEscape_NoEscapeIsByteIdentical(t *testing.T) {
+	input := []byte(`["/Users/me/foo","not-a-path"]`)
+	got, count := rewrite.ReplacePathInBytesWithJSONEscape(input, "/Users/me/foo", "/Users/me/bar")
+	assert.Equal(t, 1, count)
+	assert.Equal(t, `["/Users/me/bar","not-a-path"]`, string(got))
+}
+
 // TestReplacePathInBytesDotBoundary covers the two-byte lookahead that
 // distinguishes a sentence-terminating '.' (prose) from an extension
 // separator '.' (e.g. ".v2", ".txt"). Prose dots must not block the

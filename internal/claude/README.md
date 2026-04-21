@@ -99,9 +99,12 @@ The consumers that enforce the "refused on collision" behaviour:
 
 #### Not covered
 
-- **Pre-existing collisions.** If two distinct paths were already stored in
-  the same encoded directory before cc-port ran, the data is interleaved.
-  Operations targeting either path will read and write the shared storage.
+- **Pre-existing collisions with no session witness.** If two distinct
+  paths were already stored in the same encoded directory and neither
+  has a session JSON that would witness the true owner, the data is
+  interleaved and `verifyProjectIdentity` cannot detect it. See
+  `§Project enumeration` for how the guard behaves when at least one
+  witness exists.
 - **Decoding a directory name back to a path.** One encoded name maps to
   any of several real paths. cc-port never decodes. Every operation takes
   the original path as input and encodes forward. To find the owner of a
@@ -144,16 +147,30 @@ every file and directory tied to the project:
 - Each session-keyed collector returns empty when its parent directory is
   absent, matching the behaviour of `collectMemoryFiles`. The directory may
   not exist if the feature has never been used.
+- After the project directory is confirmed to exist, `verifyProjectIdentity`
+  walks `~/.claude/sessions/*.json` and checks whether any session whose
+  `sessionId` matches a UUID inside the encoded project directory has a
+  `cwd` equal to `projectPath`. A single match confirms identity and the
+  check short-circuits.
 
 #### Refused
 
-- None at runtime. `LocateProject` fails hard when the project directory
-  does not exist. Optional directories silently return empty.
+- `LocateProject` fails when the project directory does not exist.
+- `LocateProject` also fails when the encoded directory has at least one
+  session witness and none of them report a matching `cwd`. Two distinct
+  real paths can encode to the same directory name (`my project`,
+  `my-project`, and `my.project` all encode the same); without this guard
+  a rewrite would splice one project's data into another's. The error
+  names the encoded directory and the requested project path.
 
 #### Not covered
 
-- None inherent to project enumeration. Callers that need an exhaustive
-  walk use `AllFlatFiles()`, which applies the sidecar filter automatically.
+- Callers that need an exhaustive walk use `AllFlatFiles()`, which applies
+  the sidecar filter automatically.
+- Projects with no session witnesses (no sessions attributed yet, or the
+  sessions directory absent) cannot be identity-verified. `LocateProject`
+  logs a one-line warning to `os.Stderr` and proceeds so fresh projects
+  still work.
 
 ### Session-keyed registry
 
@@ -246,4 +263,10 @@ Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`. Coverage:
 - encoding round-trips for representative paths.
 - symlink resolution with and without trailing non-existent components.
 - round-trip marshal and unmarshal of each schema type.
-- `LocateProject` hit and miss paths.
+- `LocateProject` hit and miss paths, including the identity guard's match,
+  contradiction, and no-witness outcomes.
+
+Fuzz target `FuzzVerifyProjectIdentity` in `locations_fuzz_test.go` asserts
+the identity guard's three-state outcome is deterministic under arbitrary
+projectPath and cwd byte sequences. Reached via the test-only
+`VerifyProjectIdentityForTest` shim in `export_test.go`.

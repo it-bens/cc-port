@@ -129,6 +129,22 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
 	return result.Bytes(), count
 }
 
+// ReplacePathInBytesWithJSONEscape runs the boundary-aware rewriter twice:
+// once against the raw path, once against the JSON-escaped form where every
+// "/" becomes "\/". The boundary check applies to each pass independently.
+// Output is byte-identical to ReplacePathInBytes when data contains no
+// JSON-escaped forward slashes.
+func ReplacePathInBytesWithJSONEscape(data []byte, oldPath, newPath string) ([]byte, int) {
+	first, count1 := ReplacePathInBytes(data, oldPath, newPath)
+	if !bytes.Contains(first, []byte(`\/`)) {
+		return first, count1
+	}
+	escapedOld := strings.ReplaceAll(oldPath, "/", `\/`)
+	escapedNew := strings.ReplaceAll(newPath, "/", `\/`)
+	second, count2 := ReplacePathInBytes(first, escapedOld, escapedNew)
+	return second, count1 + count2
+}
+
 // ContainsBoundedPath reports whether data contains at least one occurrence
 // of path bounded on the right by a non-path-continuation byte — the same
 // boundary rule ReplacePathInBytes uses when deciding whether a match is a
@@ -243,7 +259,7 @@ func rewriteHistoryLine(body []byte, oldProject, newProject string, count *int) 
 	if err := json.Unmarshal(body, &probe); err != nil {
 		return body, true
 	}
-	rewritten, replaced := ReplacePathInBytes(body, oldProject, newProject)
+	rewritten, replaced := ReplacePathInBytesWithJSONEscape(body, oldProject, newProject)
 	if replaced > 0 {
 		*count++
 	}
@@ -267,7 +283,7 @@ func SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, erro
 		return nil, false, fmt.Errorf("unmarshal session file: %w", err)
 	}
 
-	rewritten, count := ReplacePathInBytes(data, oldProject, newProject)
+	rewritten, count := ReplacePathInBytesWithJSONEscape(data, oldProject, newProject)
 	return rewritten, count > 0, nil
 }
 
@@ -294,7 +310,7 @@ func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error
 		return data, false, nil
 	}
 
-	rewrittenBlock, _ := ReplacePathInBytes([]byte(existing.Raw), oldProject, newProject)
+	rewrittenBlock, _ := ReplacePathInBytesWithJSONEscape([]byte(existing.Raw), oldProject, newProject)
 
 	updated, err := sjson.DeleteBytes(data, oldPath)
 	if err != nil {

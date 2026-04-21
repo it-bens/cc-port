@@ -9,12 +9,13 @@ Every path-rewriting command routes through this package so the boundary contrac
 
 - **Core replacement**
   - `ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int)`: boundary-aware substring replace; returns rewritten bytes and match count.
+  - `ReplacePathInBytesWithJSONEscape(data []byte, oldPath, newPath string) ([]byte, int)`: two-pass variant that also matches the JSON-escaped `\/` form. Byte-identical to `ReplacePathInBytes` when the input contains no escaped slashes.
   - `ContainsBoundedPath(data []byte, path string) bool`: same boundary check without rewriting.
   - `EscapeSJSONKey(key string) string`: escapes a key for use as a single segment in an sjson path expression.
 - **Typed file helpers**
-  - `StreamHistoryJSONL(ctx context.Context, src io.Reader, dst io.Writer, oldProject, newProject string) (int, []int, error)`: streams `history.jsonl` line by line, writing the rewritten output to dst; returns changed-line count, malformed-line numbers, and error. Caps one line at `claude.MaxHistoryLine`.
-  - `SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites a session JSON file.
-  - `UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites `~/.claude.json`.
+  - `StreamHistoryJSONL(ctx context.Context, src io.Reader, dst io.Writer, oldProject, newProject string) (int, []int, error)`: streams `history.jsonl` line by line, writing the rewritten output to dst; returns changed-line count, malformed-line numbers, and error. Caps one line at `claude.MaxHistoryLine`. Routes through `ReplacePathInBytesWithJSONEscape` so escape-form slashes in emitted JSON are rewritten.
+  - `SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites a session JSON file. Uses the JSON-escape variant for the same reason.
+  - `UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites `~/.claude.json`. The raw-block pass uses the JSON-escape variant.
 - **Placeholder scanning**
   - `FindPlaceholderTokens(data []byte) []string`: tamper-defense scan for undeclared `{{UPPER_SNAKE}}` tokens.
 - **Atomic rename**
@@ -42,6 +43,16 @@ lookahead because it appears both as an extension separator (`.v2`, `.txt`)
 and as sentence-ending punctuation. A `.` immediately after a match blocks the
 rewrite only when the first non-dot byte that follows is a path-component byte.
 Otherwise the dot is prose and the rewrite proceeds.
+
+JSON emitters that write `\/` instead of `/` defeat a single-pass raw-byte
+rewriter. `ReplacePathInBytesWithJSONEscape` runs the raw pass first, then
+a second pass keyed on `oldPath` and `newPath` with every `/` replaced by
+`\/`. The boundary check applies independently to each pass, so
+`\/Users\/me\/foo\/bar` still matches while `\/Users\/me\/foobar` does not.
+`StreamHistoryJSONL`, `SessionFile`, and `UserConfig` route through this
+variant; callers rewriting raw filesystem bytes (memory files,
+session-keyed flat files) stay on `ReplacePathInBytes` because a second
+pass would be noise.
 
 #### Handled
 
