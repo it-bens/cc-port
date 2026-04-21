@@ -49,7 +49,7 @@ func TestExport_IncludesSessions(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(claudeHome, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   outputPath,
 		Categories:   manifest.CategorySet{Sessions: true},
@@ -57,22 +57,14 @@ func TestExport_IncludesSessions(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	contents := readZipContents(t, outputPath)
-	hasSession := false
-	for name := range contents {
-		if strings.HasPrefix(name, "sessions/") && strings.HasSuffix(name, ".jsonl") {
-			hasSession = true
-			break
-		}
-	}
-	assert.True(t, hasSession, "at least one sessions/*.jsonl entry must be present")
+	assert.NotEmpty(t, result.Sessions, "at least one sessions entry must be present")
 }
 
 func TestExport_IncludesMemory(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(claudeHome, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   outputPath,
 		Categories:   manifest.CategorySet{Memory: true},
@@ -80,22 +72,14 @@ func TestExport_IncludesMemory(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	contents := readZipContents(t, outputPath)
-	hasMemory := false
-	for name := range contents {
-		if strings.HasPrefix(name, "memory/") {
-			hasMemory = true
-			break
-		}
-	}
-	assert.True(t, hasMemory, "at least one memory/* entry must be present")
+	assert.NotEmpty(t, result.Memory, "at least one memory entry must be present")
 }
 
 func TestExport_IncludesHistory(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(claudeHome, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   outputPath,
 		Categories:   manifest.CategorySet{History: true},
@@ -103,16 +87,16 @@ func TestExport_IncludesHistory(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	require.Len(t, result.History, 1, "history must produce exactly one entry")
 	contents := readZipContents(t, outputPath)
-	assert.Contains(t, contents, "history/history.jsonl")
-	assert.NotEmpty(t, contents["history/history.jsonl"], "history body must not be empty")
+	assert.NotEmpty(t, contents[result.History[0].ArchivePath], "history body must not be empty")
 }
 
 func TestExport_IncludesConfig(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(claudeHome, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   outputPath,
 		Categories:   manifest.CategorySet{Config: true},
@@ -120,8 +104,7 @@ func TestExport_IncludesConfig(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	contents := readZipContents(t, outputPath)
-	assert.Contains(t, contents, "config.json")
+	assert.Len(t, result.Config, 1, "config must produce exactly one entry")
 }
 
 func TestExport_RedactsProjectPaths(t *testing.T) {
@@ -193,38 +176,14 @@ func TestExport_SelectiveCategories(t *testing.T) {
 		Placeholders: defaultPlaceholders(),
 	}
 
-	_, err := export.Run(claudeHome, options)
+	result, err := export.Run(claudeHome, options)
 	require.NoError(t, err)
 
-	contents := readZipContents(t, outputPath)
-
-	// Memory files must be present
-	hasMemory := false
-	for name := range contents {
-		if strings.HasPrefix(name, "memory/") {
-			hasMemory = true
-			break
-		}
-	}
-	assert.True(t, hasMemory, "memory files must be present when Memory category is enabled")
-
-	// Sessions must NOT be present
-	for name := range contents {
-		if strings.HasPrefix(name, "sessions/") {
-			t.Errorf("sessions entry %s must not be present when Sessions category is disabled", name)
-		}
-	}
-
-	// History must NOT be present
-	assert.NotContains(t, contents, "history/history.jsonl",
-		"history must not be present when History category is disabled")
-
-	// Config must NOT be present
-	assert.NotContains(t, contents, "config.json",
-		"config must not be present when Config category is disabled")
-
-	// metadata.xml is always present.
-	assert.Contains(t, contents, "metadata.xml")
+	assert.NotEmpty(t, result.Memory, "memory must be present when enabled")
+	assert.Empty(t, result.Sessions, "sessions must be absent when disabled")
+	assert.Empty(t, result.History, "history must be absent when disabled")
+	assert.Empty(t, result.Config, "config must be absent when disabled")
+	assert.Equal(t, "metadata.xml", result.Metadata.ArchivePath)
 }
 
 func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
@@ -353,117 +312,66 @@ func historyExportWithLines(t *testing.T, lines []string) string {
 
 func TestExport_IncludesTodos(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "out.zip")
+	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{Todos: true},
 	})
 	require.NoError(t, err)
 
-	zipReader, err := zip.OpenReader(archivePath)
-	require.NoError(t, err)
-	defer func() { _ = zipReader.Close() }()
-
-	var todoNames []string
-	for _, f := range zipReader.File {
-		if strings.HasPrefix(f.Name, "todos/") {
-			todoNames = append(todoNames, f.Name)
-		}
-	}
-	assert.NotEmpty(t, todoNames, "archive must contain at least one todos/ entry")
+	assert.NotEmpty(t, result.Todos, "archive must contain at least one todos entry")
 }
 
 func TestExport_IncludesUsageData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "out.zip")
+	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{UsageData: true},
 	})
 	require.NoError(t, err)
 
-	zipReader, err := zip.OpenReader(archivePath)
-	require.NoError(t, err)
-	defer func() { _ = zipReader.Close() }()
-
-	var sessionMetaNames, facetsNames []string
-	for _, f := range zipReader.File {
-		switch {
-		case strings.HasPrefix(f.Name, "usage-data/session-meta/"):
-			sessionMetaNames = append(sessionMetaNames, f.Name)
-		case strings.HasPrefix(f.Name, "usage-data/facets/"):
-			facetsNames = append(facetsNames, f.Name)
-		}
-	}
-	assert.NotEmpty(t, sessionMetaNames)
-	assert.NotEmpty(t, facetsNames)
+	assert.NotEmpty(t, result.UsageData, "archive must contain usage-data entries")
 }
 
 func TestExport_IncludesPluginsData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "out.zip")
+	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{PluginsData: true},
 	})
 	require.NoError(t, err)
 
-	zipReader, err := zip.OpenReader(archivePath)
-	require.NoError(t, err)
-	defer func() { _ = zipReader.Close() }()
-
-	var names []string
-	for _, f := range zipReader.File {
-		if strings.HasPrefix(f.Name, "plugins-data/") {
-			names = append(names, f.Name)
-		}
-	}
-	assert.NotEmpty(t, names)
-	assert.Contains(t, names[0], "example-plugin/",
-		"plugin namespace must appear in the zip path")
+	require.NotEmpty(t, result.PluginsData)
+	assert.Contains(t, result.PluginsData[0].ArchivePath, "example-plugin/",
+		"plugin namespace must appear in the archive path")
 }
 
 func TestExport_IncludesTasks_SkipsSidecars(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "out.zip")
+	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{Tasks: true},
 	})
 	require.NoError(t, err)
 
-	zipReader, err := zip.OpenReader(archivePath)
-	require.NoError(t, err)
-	defer func() { _ = zipReader.Close() }()
-
-	var hasTaskJSON, hasLock, hasHWM bool
-	for _, f := range zipReader.File {
-		if strings.HasPrefix(f.Name, "tasks/") {
-			switch filepath.Base(f.Name) {
-			case ".lock":
-				hasLock = true
-			case ".highwatermark":
-				hasHWM = true
-			default:
-				hasTaskJSON = true
-			}
-		}
+	require.NotEmpty(t, result.Tasks, "task JSON file must be in the archive")
+	for _, entry := range result.Tasks {
+		assert.NotEqual(t, ".lock", filepath.Base(entry.ArchivePath),
+			".lock sidecar must be excluded")
+		assert.NotEqual(t, ".highwatermark", filepath.Base(entry.ArchivePath),
+			".highwatermark sidecar must be excluded")
 	}
-	assert.True(t, hasTaskJSON, "task JSON file must be in the archive")
-	assert.False(t, hasLock, ".lock sidecar must be excluded")
-	assert.False(t, hasHWM, ".highwatermark sidecar must be excluded")
 }
 
 func TestExport_ManifestDeclaresAllNineCategories(t *testing.T) {

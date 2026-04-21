@@ -82,13 +82,13 @@ var exportCmd = &cobra.Command{
 			return fmt.Errorf("export: %w", err)
 		}
 
-		if result.FileHistorySnapshotsArchived > 0 {
+		if snapshotCount := len(result.FileHistory); snapshotCount > 0 {
 			fmt.Fprintf(
 				os.Stderr,
 				"Warning: %d file-history snapshot(s) archived as-is — "+
 					"contents may still reference the original project path "+
 					"(used for in-session rewinds, not persisted data)\n",
-				result.FileHistorySnapshotsArchived,
+				snapshotCount,
 			)
 		}
 

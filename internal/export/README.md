@@ -74,7 +74,7 @@ Governed by the cross-cutting policy in [`docs/architecture.md`](../../docs/arch
 
 #### Handled
 
-When `file-history` is enabled, each snapshot is written verbatim under `file-history/<uuid>/...`. No path anonymisation runs. `Run` returns a `Result` with `FileHistorySnapshotsArchived` set. The CLI prints a warning when the count is positive.
+When `file-history` is enabled, each snapshot is written verbatim under `file-history/<uuid>/...`. No path anonymisation runs. `Run` returns a `Result` whose `FileHistory` slice carries one `ArchiveEntry` per snapshot. The CLI prints a warning when the slice is non-empty.
 
 #### Refused
 

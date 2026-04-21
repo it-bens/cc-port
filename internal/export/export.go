@@ -36,13 +36,59 @@ type Options struct {
 // rejecting deliberately pathological inputs.
 const maxScannerLine = 16 << 20
 
-// Result summarises observable side effects of a successful export that the
-// CLI layer may want to surface to the user. Today it carries the number of
-// file-history snapshots archived verbatim; callers render a warning when
-// the count is positive so the user knows the archive contains un-anonymised
-// user-file bytes.
+// ArchiveEntry names one file inside the produced archive. Bodies are not
+// retained; callers that need bytes reopen the zip. Keeping bodies out of
+// Result means a large session export does not pin every byte in memory
+// on the return path.
+type ArchiveEntry struct {
+	ArchivePath string
+	Size        int64
+}
+
+// Result summarises the observable contents of a successful export.
+// Category slices appear in manifest.AllCategories order.
 type Result struct {
-	FileHistorySnapshotsArchived int
+	// Metadata is always populated with metadata.xml.
+	Metadata ArchiveEntry
+
+	Sessions    []ArchiveEntry
+	Memory      []ArchiveEntry
+	History     []ArchiveEntry // zero or one entry
+	FileHistory []ArchiveEntry
+	Config      []ArchiveEntry // zero or one entry
+	Todos       []ArchiveEntry
+	UsageData   []ArchiveEntry
+	PluginsData []ArchiveEntry
+	Tasks       []ArchiveEntry
+}
+
+// categoryEntriesByName returns a pointer to the Result slice that receives
+// archive entries for the named category. Names come from
+// manifest.AllCategories; the drift-guard test in result_coverage_test.go
+// ensures every AllCategories entry has a case here.
+func categoryEntriesByName(result *Result, name string) (*[]ArchiveEntry, error) {
+	switch name {
+	case "sessions":
+		return &result.Sessions, nil
+	case "memory":
+		return &result.Memory, nil
+	case "history":
+		return &result.History, nil
+	case "file-history":
+		return &result.FileHistory, nil
+	case "config":
+		return &result.Config, nil
+	case "todos":
+		return &result.Todos, nil
+	case "usage-data":
+		return &result.UsageData, nil
+	case "plugins-data":
+		return &result.PluginsData, nil
+	case "tasks":
+		return &result.Tasks, nil
+	default:
+		return nil, fmt.Errorf("no Result slice for category %q", name)
+	}
 }
 
 // RunOption configures one call to Run.
@@ -74,8 +120,9 @@ func WithArchiveOpener(opener func(string) (io.WriteCloser, error)) RunOption {
 // Options.OutputPath, and writes the requested categories with path
 // anonymization. File-history snapshots are archived verbatim — their
 // contents are treated as opaque user-file bytes and are not scanned or
-// rewritten. The returned Result carries the number of snapshots included so
-// the caller can surface a warning.
+// rewritten. The returned Result carries one ArchiveEntry per file written,
+// grouped per category; callers surface a warning when result.FileHistory
+// is non-empty.
 func Run(
 	claudeHome *claude.Home, exportOptions Options, runOptions ...RunOption,
 ) (result Result, err error) {
@@ -106,26 +153,26 @@ func Run(
 		}
 	}()
 
-	if err := writeMetadataToZip(archiveWriter, exportOptions); err != nil {
+	if err := writeMetadataToZip(archiveWriter, exportOptions, &result); err != nil {
 		return result, err
 	}
 
 	placeholders := exportOptions.Placeholders
 
-	if err := exportCoreCategories(archiveWriter, claudeHome, locations, exportOptions, placeholders); err != nil {
+	if err := exportCoreCategories(
+		archiveWriter, &result, claudeHome, locations, exportOptions, placeholders,
+	); err != nil {
 		return result, err
 	}
 
 	if exportOptions.Categories.FileHistory {
-		archived, err := exportFileHistory(archiveWriter, locations)
-		if err != nil {
+		if err := exportFileHistory(archiveWriter, &result, locations); err != nil {
 			return result, err
 		}
-		result.FileHistorySnapshotsArchived = archived
 	}
 
 	if exportOptions.Categories.Config {
-		if err := exportConfig(archiveWriter, claudeHome, exportOptions, placeholders); err != nil {
+		if err := exportConfig(archiveWriter, &result, claudeHome, exportOptions, placeholders); err != nil {
 			return result, err
 		}
 	}
@@ -133,41 +180,44 @@ func Run(
 	return result, nil
 }
 
-func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions Options) error {
+func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions Options, result *Result) error {
 	metadata := buildMetadata(exportOptions)
 	metadataXMLData, err := buildMetadataXML(metadata)
 	if err != nil {
 		return fmt.Errorf("build metadata XML: %w", err)
 	}
-	if err := writeToZip(archiveWriter, "metadata.xml", metadataXMLData); err != nil {
+	size, err := writeToZip(archiveWriter, "metadata.xml", metadataXMLData)
+	if err != nil {
 		return fmt.Errorf("write metadata.xml: %w", err)
 	}
+	result.Metadata = ArchiveEntry{ArchivePath: "metadata.xml", Size: size}
 	return nil
 }
 
 // exportCoreCategories is extracted from Run to stay within the linter's
 // line-count budget.
 func exportCoreCategories(
-	archiveWriter *zip.Writer, claudeHome *claude.Home,
-	locations *claude.ProjectLocations, exportOptions Options, placeholders []manifest.Placeholder,
+	archiveWriter *zip.Writer, result *Result,
+	claudeHome *claude.Home, locations *claude.ProjectLocations,
+	exportOptions Options, placeholders []manifest.Placeholder,
 ) error {
 	if exportOptions.Categories.Sessions {
-		if err := exportSessions(archiveWriter, locations, placeholders); err != nil {
+		if err := exportSessions(archiveWriter, result, locations, placeholders); err != nil {
 			return err
 		}
 	}
 	if exportOptions.Categories.Memory {
-		if err := exportMemory(archiveWriter, locations, placeholders); err != nil {
+		if err := exportMemory(archiveWriter, result, locations, placeholders); err != nil {
 			return err
 		}
 	}
 	if err := exportSessionKeyed(
-		archiveWriter, claudeHome, locations, exportOptions.Categories, placeholders,
+		archiveWriter, result, claudeHome, locations, exportOptions.Categories, placeholders,
 	); err != nil {
 		return err
 	}
 	if exportOptions.Categories.History {
-		if err := exportHistory(archiveWriter, claudeHome, exportOptions, placeholders); err != nil {
+		if err := exportHistory(archiveWriter, result, claudeHome, exportOptions, placeholders); err != nil {
 			return err
 		}
 	}
@@ -175,7 +225,8 @@ func exportCoreCategories(
 }
 
 func exportSessions(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
+	archiveWriter *zip.Writer, result *Result,
+	locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
 ) error {
 	for _, transcriptPath := range locations.SessionTranscripts {
 		data, err := os.ReadFile(transcriptPath) //nolint:gosec // G304: path from trusted ClaudeHome
@@ -184,7 +235,7 @@ func exportSessions(
 		}
 		anonymizedData := applyPlaceholders(data, placeholders)
 		zipName := "sessions/" + filepath.Base(transcriptPath)
-		if err := writeToZip(archiveWriter, zipName, anonymizedData); err != nil {
+		if err := writeCategoryEntry(archiveWriter, result, "sessions", zipName, anonymizedData); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
 	}
@@ -192,7 +243,7 @@ func exportSessions(
 	for _, subdirPath := range locations.SessionSubdirs {
 		dirName := filepath.Base(subdirPath)
 		zipPrefix := "sessions/" + dirName
-		if err := addDirToZip(archiveWriter, subdirPath, zipPrefix, placeholders); err != nil {
+		if err := addDirToZip(archiveWriter, result, "sessions", subdirPath, zipPrefix, placeholders); err != nil {
 			return fmt.Errorf("add session subdir %s: %w", subdirPath, err)
 		}
 	}
@@ -200,7 +251,8 @@ func exportSessions(
 }
 
 func exportMemory(
-	archiveWriter *zip.Writer, locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
+	archiveWriter *zip.Writer, result *Result,
+	locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
 ) error {
 	for _, memoryFilePath := range locations.MemoryFiles {
 		data, err := os.ReadFile(memoryFilePath) //nolint:gosec // G304: path from trusted ClaudeHome
@@ -209,19 +261,33 @@ func exportMemory(
 		}
 		anonymizedData := applyPlaceholders(data, placeholders)
 		zipName := "memory/" + filepath.Base(memoryFilePath)
-		if err := writeToZip(archiveWriter, zipName, anonymizedData); err != nil {
+		if err := writeCategoryEntry(archiveWriter, result, "memory", zipName, anonymizedData); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
 	}
 	return nil
 }
 
+// groupToCategoryName returns the manifest category name for a
+// transport.SessionKeyedTarget Group. The two usage-data subgroups
+// collapse onto the single "usage-data" category; every other group
+// name passes through unchanged.
+func groupToCategoryName(groupName string) string {
+	switch groupName {
+	case "usage-data/session-meta", "usage-data/facets":
+		return "usage-data"
+	default:
+		return groupName
+	}
+}
+
 // exportSessionKeyed drives the zip layout for the five session-keyed groups
 // from the transport registry, iterating locations.AllFlatFiles() once and
 // skipping groups whose category flag is off.
 func exportSessionKeyed(
-	archiveWriter *zip.Writer, claudeHome *claude.Home,
-	locations *claude.ProjectLocations, categories manifest.CategorySet, placeholders []manifest.Placeholder,
+	archiveWriter *zip.Writer, result *Result, claudeHome *claude.Home,
+	locations *claude.ProjectLocations, categories manifest.CategorySet,
+	placeholders []manifest.Placeholder,
 ) error {
 	included := map[string]bool{
 		"todos":                   categories.Todos,
@@ -252,7 +318,8 @@ func exportSessionKeyed(
 		}
 		anonymized := applyPlaceholders(data, placeholders)
 		zipName := prefixByGroup[group.Name] + filepath.ToSlash(relative)
-		if err := writeToZip(archiveWriter, zipName, anonymized); err != nil {
+		category := groupToCategoryName(group.Name)
+		if err := writeCategoryEntry(archiveWriter, result, category, zipName, anonymized); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
 	}
@@ -260,14 +327,17 @@ func exportSessionKeyed(
 }
 
 func exportHistory(
-	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
+	archiveWriter *zip.Writer, result *Result,
+	claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
 ) error {
 	historyData, err := extractProjectHistory(claudeHome.HistoryFile(), exportOptions.ProjectPath)
 	if err != nil {
 		return fmt.Errorf("extract project history: %w", err)
 	}
 	anonymizedHistory := applyPlaceholders(historyData, placeholders)
-	if err := writeToZip(archiveWriter, "history/history.jsonl", anonymizedHistory); err != nil {
+	if err := writeCategoryEntry(
+		archiveWriter, result, "history", "history/history.jsonl", anonymizedHistory,
+	); err != nil {
 		return fmt.Errorf("write history/history.jsonl: %w", err)
 	}
 	return nil
@@ -275,29 +345,29 @@ func exportHistory(
 
 // exportFileHistory archives every file under ~/.claude/file-history verbatim.
 // No body inspection, no anonymisation — opaque by policy.
-func exportFileHistory(archiveWriter *zip.Writer, locations *claude.ProjectLocations) (int, error) {
-	total := 0
+func exportFileHistory(
+	archiveWriter *zip.Writer, result *Result, locations *claude.ProjectLocations,
+) error {
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
 		dirName := filepath.Base(fileHistoryDir)
 		zipPrefix := "file-history/" + dirName
-		count, err := addDirVerbatimToZip(archiveWriter, fileHistoryDir, zipPrefix)
-		if err != nil {
-			return total, fmt.Errorf("add file-history dir %s: %w", fileHistoryDir, err)
+		if err := addDirVerbatimToZip(archiveWriter, result, fileHistoryDir, zipPrefix); err != nil {
+			return fmt.Errorf("add file-history dir %s: %w", fileHistoryDir, err)
 		}
-		total += count
 	}
-	return total, nil
+	return nil
 }
 
 func exportConfig(
-	archiveWriter *zip.Writer, claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
+	archiveWriter *zip.Writer, result *Result,
+	claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
 ) error {
 	configData, err := extractProjectConfig(claudeHome.ConfigFile, exportOptions.ProjectPath)
 	if err != nil {
 		return fmt.Errorf("extract project config: %w", err)
 	}
 	anonymizedConfig := applyPlaceholders(configData, placeholders)
-	if err := writeToZip(archiveWriter, "config.json", anonymizedConfig); err != nil {
+	if err := writeCategoryEntry(archiveWriter, result, "config", "config.json", anonymizedConfig); err != nil {
 		return fmt.Errorf("write config.json: %w", err)
 	}
 	return nil
@@ -328,21 +398,46 @@ func applyPlaceholders(data []byte, placeholders []manifest.Placeholder) []byte 
 	return data
 }
 
-func writeToZip(archiveWriter *zip.Writer, name string, data []byte) error {
+// writeToZip creates and writes one archive entry. It returns the entry's
+// size (the length of data in bytes) so callers can record an ArchiveEntry
+// in the matching Result slice.
+func writeToZip(archiveWriter *zip.Writer, name string, data []byte) (int64, error) {
 	writer, err := archiveWriter.Create(name)
 	if err != nil {
-		return fmt.Errorf("create zip entry %s: %w", name, err)
+		return 0, fmt.Errorf("create zip entry %s: %w", name, err)
 	}
 	if _, err := writer.Write(data); err != nil {
-		return fmt.Errorf("write zip entry %s: %w", name, err)
+		return 0, fmt.Errorf("write zip entry %s: %w", name, err)
 	}
+	return int64(len(data)), nil
+}
+
+// writeCategoryEntry writes one archive entry and appends a matching
+// ArchiveEntry to the Result slice for category. Returns an error on
+// unknown category (drift guard — cannot happen for production category
+// names, and is caught at test time by TestResult_CoversEveryManifestCategory).
+func writeCategoryEntry(
+	archiveWriter *zip.Writer, result *Result, category, name string, data []byte,
+) error {
+	size, err := writeToZip(archiveWriter, name, data)
+	if err != nil {
+		return err
+	}
+	entries, err := categoryEntriesByName(result, category)
+	if err != nil {
+		return err
+	}
+	*entries = append(*entries, ArchiveEntry{ArchivePath: name, Size: size})
 	return nil
 }
 
 // addDirToZip is only called by exportSessions' session-subdir walk, whose
 // content is always textual (JSONL transcripts, subagent files, session-memory
 // entries).
-func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeholders []manifest.Placeholder) error {
+func addDirToZip(
+	archiveWriter *zip.Writer, result *Result, category string,
+	sourceDir, zipPrefix string, placeholders []manifest.Placeholder,
+) error {
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {
 		return fmt.Errorf("read directory %s: %w", sourceDir, err)
@@ -353,7 +448,7 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeho
 		entryZipName := zipPrefix + "/" + entry.Name()
 
 		if entry.IsDir() {
-			if err := addDirToZip(archiveWriter, entryPath, entryZipName, placeholders); err != nil {
+			if err := addDirToZip(archiveWriter, result, category, entryPath, entryZipName, placeholders); err != nil {
 				return err
 			}
 			continue
@@ -366,7 +461,7 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeho
 
 		data = applyPlaceholders(data, placeholders)
 
-		if err := writeToZip(archiveWriter, entryZipName, data); err != nil {
+		if err := writeCategoryEntry(archiveWriter, result, category, entryZipName, data); err != nil {
 			return err
 		}
 	}
@@ -375,40 +470,37 @@ func addDirToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string, placeho
 }
 
 // addDirVerbatimToZip is used for file-history snapshots, whose contents are
-// opaque user-file bytes that cc-port must not transform. Returns the number
-// of files written.
-func addDirVerbatimToZip(archiveWriter *zip.Writer, sourceDir, zipPrefix string) (int, error) {
+// opaque user-file bytes that cc-port must not transform.
+func addDirVerbatimToZip(
+	archiveWriter *zip.Writer, result *Result, sourceDir, zipPrefix string,
+) error {
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {
-		return 0, fmt.Errorf("read directory %s: %w", sourceDir, err)
+		return fmt.Errorf("read directory %s: %w", sourceDir, err)
 	}
 
-	count := 0
 	for _, entry := range entries {
 		entryPath := filepath.Join(sourceDir, entry.Name())
 		entryZipName := zipPrefix + "/" + entry.Name()
 
 		if entry.IsDir() {
-			subCount, err := addDirVerbatimToZip(archiveWriter, entryPath, entryZipName)
-			if err != nil {
-				return count, err
+			if err := addDirVerbatimToZip(archiveWriter, result, entryPath, entryZipName); err != nil {
+				return err
 			}
-			count += subCount
 			continue
 		}
 
 		data, err := os.ReadFile(entryPath) //nolint:gosec // G304: path is constructed from trusted input
 		if err != nil {
-			return count, fmt.Errorf("read file %s: %w", entryPath, err)
+			return fmt.Errorf("read file %s: %w", entryPath, err)
 		}
 
-		if err := writeToZip(archiveWriter, entryZipName, data); err != nil {
-			return count, err
+		if err := writeCategoryEntry(archiveWriter, result, "file-history", entryZipName, data); err != nil {
+			return err
 		}
-		count++
 	}
 
-	return count, nil
+	return nil
 }
 
 // extractProjectHistory reads historyPath line by line and returns a JSONL byte
