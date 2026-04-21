@@ -1,33 +1,75 @@
 package move
 
 import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
-func scanHistoryFile(claudeHome *claude.Home, moveOptions Options) (int, []int, error) {
+// scanHistoryFile opens history.jsonl and walks it one line at a time,
+// counting well-formed lines that would pick up at least one replacement if
+// apply ran. Mirrors StreamHistoryJSONL's classification rules so dry-run
+// and apply agree on which lines are in scope.
+func scanHistoryFile(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (int, []int, error) {
 	historyFile := claudeHome.HistoryFile()
-	if _, err := os.Stat(historyFile); err != nil {
-		return 0, nil, nil
+	file, err := os.Open(historyFile) //nolint:gosec // path constructed from trusted internal data
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, nil, nil
+		}
+		return 0, nil, fmt.Errorf("open history.jsonl: %w", err)
 	}
+	defer func() { _ = file.Close() }()
 
-	data, err := os.ReadFile(historyFile) //nolint:gosec // path constructed from trusted internal data
-	if err != nil {
-		return 0, nil, fmt.Errorf("read history.jsonl: %w", err)
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64<<10), claude.MaxHistoryLine)
+
+	count := 0
+	lineNumber := 0
+	var malformed []int
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return 0, nil, err
+		}
+		lineNumber++
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var probe claude.HistoryEntry
+		if err := json.Unmarshal(line, &probe); err != nil {
+			malformed = append(malformed, lineNumber)
+			continue
+		}
+		_, replaced := rewrite.ReplacePathInBytes(line, moveOptions.OldPath, moveOptions.NewPath)
+		if replaced > 0 {
+			count++
+		}
 	}
-	_, count, malformed, err := rewrite.HistoryJSONL(data, moveOptions.OldPath, moveOptions.NewPath)
-	if err != nil {
-		return 0, nil, fmt.Errorf("analyse history.jsonl: %w", err)
+	if err := scanner.Err(); err != nil {
+		return 0, nil, fmt.Errorf("scan history.jsonl: %w", err)
 	}
 	return count, malformed, nil
 }
 
-func countSessionFileReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
+func countSessionFileReplacements(
+	ctx context.Context,
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+) (int, error) {
 	count := 0
 	for _, sessionFilePath := range locations.SessionFiles {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // path constructed from trusted internal data
 		if err != nil {
 			return 0, fmt.Errorf("read session file %s: %w", sessionFilePath, err)
@@ -43,7 +85,10 @@ func countSessionFileReplacements(locations *claude.ProjectLocations, moveOption
 	return count, nil
 }
 
-func countSettingsReplacements(claudeHome *claude.Home, moveOptions Options) (int, error) {
+func countSettingsReplacements(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	settingsFile := claudeHome.SettingsFile()
 	if _, err := os.Stat(settingsFile); err != nil {
 		return 0, nil
@@ -57,7 +102,10 @@ func countSettingsReplacements(claudeHome *claude.Home, moveOptions Options) (in
 	return count, nil
 }
 
-func checkConfigBlockRekey(claudeHome *claude.Home, moveOptions Options) (bool, error) {
+func checkConfigBlockRekey(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if _, err := os.Stat(claudeHome.ConfigFile); err != nil {
 		return false, nil
 	}
@@ -73,14 +121,21 @@ func checkConfigBlockRekey(claudeHome *claude.Home, moveOptions Options) (bool, 
 	return rekeyed, nil
 }
 
-func countTranscriptReplacements(locations *claude.ProjectLocations, moveOptions Options) (int, error) {
-	transcriptPaths, err := listTranscriptFiles(locations.ProjectDir)
+func countTranscriptReplacements(
+	ctx context.Context,
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+) (int, error) {
+	transcriptPaths, err := listTranscriptFiles(ctx, locations.ProjectDir)
 	if err != nil {
 		return 0, err
 	}
 
 	total := 0
 	for _, transcriptPath := range transcriptPaths {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		data, err := os.ReadFile(transcriptPath) //nolint:gosec // path constructed from trusted internal data
 		if err != nil {
 			return 0, fmt.Errorf("read transcript %s: %w", transcriptPath, err)
@@ -93,8 +148,8 @@ func countTranscriptReplacements(locations *claude.ProjectLocations, moveOptions
 
 // countFileHistorySnapshots returns the number of snapshot files under the
 // project's file-history directories for the dry-run plan.
-func countFileHistorySnapshots(locations *claude.ProjectLocations) (int, error) {
-	paths, err := snapshotPaths(locations)
+func countFileHistorySnapshots(ctx context.Context, locations *claude.ProjectLocations) (int, error) {
+	paths, err := snapshotPaths(ctx, locations)
 	if err != nil {
 		return 0, err
 	}
@@ -105,8 +160,16 @@ func countFileHistorySnapshots(locations *claude.ProjectLocations) (int, error) 
 // plan.ReplacementsByCategory by walking locations.AllFlatFiles() exactly
 // once. A file with any non-zero replacement count counts once toward its
 // group total.
-func countSessionKeyedReplacements(plan *Plan, locations *claude.ProjectLocations, moveOptions Options) error {
+func countSessionKeyedReplacements(
+	ctx context.Context,
+	plan *Plan,
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+) error {
 	for group, path := range locations.AllFlatFiles() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		data, err := os.ReadFile(path) //nolint:gosec // path from trusted ProjectLocations
 		if err != nil {
 			return fmt.Errorf("read %s file %s: %w", group.Name, path, err)

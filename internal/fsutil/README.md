@@ -6,7 +6,7 @@ Shared filesystem helpers for recursive directory copy and path resolution. `Res
 
 ## Public API
 
-- `CopyDir(source, destination string) error`: recursively copies a directory tree, preserving file and directory permissions. Symlinks are replicated as symlinks. Irregular entries fail-hard. Writes go through an `os.Root` opened on `destination`.
+- `CopyDir(ctx context.Context, source, destination string) error`: recursively copies a directory tree, preserving file and directory permissions. Symlinks are replicated as symlinks. Irregular entries fail-hard. Writes go through an `os.Root` opened on `destination`. `ctx.Err()` is checked at the top of every `WalkDir` callback so a cancelled context aborts within one iteration.
 - `ResolveExistingAncestor(absDir string) (string, error)`: walks `absDir` upward to the longest prefix that exists on disk. Runs `filepath.EvalSymlinks` on that prefix and re-attaches any missing trailing components unchanged. Requires an absolute path. See §Contracts.
 
 ## Contracts

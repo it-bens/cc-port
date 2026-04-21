@@ -38,7 +38,7 @@ func TestIntegration_MoveRoundTrip(t *testing.T) {
 	newPath := "/Users/test/Projects/renamed"
 
 	// Dry run: verify replacements are detected.
-	plan, err := move.DryRun(sourceHome, move.Options{
+	plan, err := move.DryRun(t.Context(), sourceHome, move.Options{
 		OldPath:  oldPath,
 		NewPath:  newPath,
 		RefsOnly: true,
@@ -47,7 +47,7 @@ func TestIntegration_MoveRoundTrip(t *testing.T) {
 	assert.Positive(t, plan.ReplacementsByCategory["history"], "dry run should detect history replacements")
 
 	// Apply the move. RefsOnly=true avoids trying to copy a non-existent disk directory.
-	err = move.Apply(sourceHome, move.Options{
+	err = move.Apply(t.Context(), sourceHome, move.Options{
 		OldPath:  oldPath,
 		NewPath:  newPath,
 		RefsOnly: true,
@@ -88,7 +88,7 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 		},
 	}
 
-	err := importer.Run(destinationHome, importOptions)
+	err := importer.Run(t.Context(), destinationHome, importOptions)
 	require.NoError(t, err, "import should succeed")
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
@@ -114,7 +114,7 @@ func runExportRoundTrip(t *testing.T, sourceHome *claude.Home, archivePath strin
 		},
 	}
 
-	_, err := export.Run(sourceHome, exportOptions)
+	_, err := export.Run(t.Context(), sourceHome, exportOptions)
 	require.NoError(t, err, "export should succeed")
 	assert.FileExists(t, archivePath, "archive file should exist after export")
 
@@ -242,7 +242,7 @@ func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	_, err := export.Run(sourceHome, exportOptions)
+	_, err := export.Run(t.Context(), sourceHome, exportOptions)
 	require.NoError(t, err)
 
 	// Inject a literal {{EXTERNAL_TOOL}} into one of the archive's memory
@@ -262,7 +262,7 @@ func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
 			"{{HOME}}":         destinationHomeDir,
 		},
 	}
-	require.NoError(t, importer.Run(destinationHome, importOptions))
+	require.NoError(t, importer.Run(t.Context(), destinationHome, importOptions))
 
 	// The literal {{EXTERNAL_TOOL}} must survive in the imported memory file.
 	memoryPath := filepath.Join(
@@ -326,7 +326,7 @@ func TestIntegration_MoveRefsOnly(t *testing.T) {
 	oldPath := fixtureProjectPath
 	newPath := "/Users/test/Projects/renamed-refsonly"
 
-	err := move.Apply(sourceHome, move.Options{
+	err := move.Apply(t.Context(), sourceHome, move.Options{
 		OldPath:  oldPath,
 		NewPath:  newPath,
 		RefsOnly: true,
@@ -359,7 +359,7 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "export-all-categories.zip")
 
 	trueVal := true
-	_, err := export.Run(sourceHome, export.Options{
+	_, err := export.Run(t.Context(), sourceHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  archivePath,
 		Categories: manifest.CategorySet{
@@ -384,7 +384,7 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 
 	destinationHome := setupDestinationHome(t)
 
-	err = importer.Run(destinationHome, importer.Options{
+	err = importer.Run(t.Context(), destinationHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  destinationProjectPath,
 		Resolutions: map[string]string{
@@ -477,7 +477,7 @@ func TestIntegration_ImportConflict(t *testing.T) {
 		},
 	}
 
-	_, err := export.Run(sourceHome, exportOptions)
+	_, err := export.Run(t.Context(), sourceHome, exportOptions)
 	require.NoError(t, err, "export should succeed")
 
 	// Try to import back to the same ClaudeHome at the same project path.
@@ -490,7 +490,7 @@ func TestIntegration_ImportConflict(t *testing.T) {
 		},
 	}
 
-	err = importer.Run(sourceHome, importOptions)
+	err = importer.Run(t.Context(), sourceHome, importOptions)
 	require.Error(t, err, "import to existing project should fail with a conflict error")
 	assert.Contains(t, err.Error(), "already exists",
 		"conflict error message should mention 'already exists'")

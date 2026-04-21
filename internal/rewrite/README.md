@@ -12,7 +12,7 @@ Every path-rewriting command routes through this package so the boundary contrac
   - `ContainsBoundedPath(data []byte, path string) bool`: same boundary check without rewriting.
   - `EscapeSJSONKey(key string) string`: escapes a key for use as a single segment in an sjson path expression.
 - **Typed file helpers**
-  - `HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, []int, error)`: rewrites `history.jsonl`; returns rewritten bytes, changed-line count, malformed-line numbers, and error.
+  - `StreamHistoryJSONL(ctx context.Context, src io.Reader, dst io.Writer, oldProject, newProject string) (int, []int, error)`: streams `history.jsonl` line by line, writing the rewritten output to dst; returns changed-line count, malformed-line numbers, and error. Caps one line at `claude.MaxHistoryLine`.
   - `SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites a session JSON file.
   - `UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites `~/.claude.json`.
 - **Placeholder scanning**
@@ -98,7 +98,7 @@ affected because cc-port's export path declares every key it embeds.
 
 ## Tests
 
-Unit tests in `rewrite_test.go` cover `HistoryJSONL`, `ReplacePathInBytes`
+Unit tests in `rewrite_test.go` cover `StreamHistoryJSONL`, `ReplacePathInBytes`
 (including dot-boundary lookahead), `SessionFile`, `UserConfig`,
 `FindPlaceholderTokens`, `SafeRenamePromoter` (files, dirs, rollback path),
 `EscapeSJSONKey`, `ContainsBoundedPath`, and `SafeWriteFile`.

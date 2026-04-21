@@ -2,9 +2,11 @@ package export_test
 
 import (
 	"archive/zip"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -49,7 +51,7 @@ func TestExport_IncludesSessions(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	result, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   outputPath,
 		Categories:   manifest.CategorySet{Sessions: true},
@@ -64,7 +66,7 @@ func TestExport_IncludesMemory(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	result, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   outputPath,
 		Categories:   manifest.CategorySet{Memory: true},
@@ -79,7 +81,7 @@ func TestExport_IncludesHistory(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	result, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   outputPath,
 		Categories:   manifest.CategorySet{History: true},
@@ -96,7 +98,7 @@ func TestExport_IncludesConfig(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	result, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   outputPath,
 		Categories:   manifest.CategorySet{Config: true},
@@ -111,7 +113,7 @@ func TestExport_RedactsProjectPaths(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories: manifest.CategorySet{
@@ -137,7 +139,7 @@ func TestExport_AddsPlaceholderForProjectPath(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories: manifest.CategorySet{
@@ -176,7 +178,7 @@ func TestExport_SelectiveCategories(t *testing.T) {
 		Placeholders: defaultPlaceholders(),
 	}
 
-	result, err := export.Run(claudeHome, options)
+	result, err := export.Run(t.Context(), claudeHome, options)
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, result.Memory, "memory must be present when enabled")
@@ -195,7 +197,7 @@ func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
 	// byte-for-byte equality.
 	claudeHome1 := testutil.SetupFixture(t)
 	out1 := filepath.Join(t.TempDir(), "export-longer-first.zip")
-	_, err := export.Run(claudeHome1, export.Options{
+	_, err := export.Run(t.Context(), claudeHome1, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   out1,
 		Categories:   manifest.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
@@ -209,7 +211,7 @@ func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
 		{Key: "{{HOME}}", Original: "/Users/test"},
 		{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
 	}
-	_, err = export.Run(claudeHome2, export.Options{
+	_, err = export.Run(t.Context(), claudeHome2, export.Options{
 		ProjectPath:  fixtureProjectPath,
 		OutputPath:   out2,
 		Categories:   manifest.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
@@ -299,7 +301,7 @@ func historyExportWithLines(t *testing.T, lines []string) string {
 	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), historyData, 0600))
 
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
-	_, err := export.Run(claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories:  manifest.CategorySet{History: true},
@@ -314,7 +316,7 @@ func TestExport_IncludesTodos(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	result, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{Todos: true},
@@ -328,7 +330,7 @@ func TestExport_IncludesUsageData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	result, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{UsageData: true},
@@ -342,7 +344,7 @@ func TestExport_IncludesPluginsData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	result, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{PluginsData: true},
@@ -358,7 +360,7 @@ func TestExport_IncludesTasks_SkipsSidecars(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	result, err := export.Run(claudeHome, export.Options{
+	result, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{Tasks: true},
@@ -379,7 +381,7 @@ func TestExport_ManifestDeclaresAllNineCategories(t *testing.T) {
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "out.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
 		OutputPath:  archivePath,
 		Categories:  manifest.CategorySet{Sessions: true},
@@ -409,7 +411,7 @@ func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories: manifest.CategorySet{
@@ -431,4 +433,71 @@ func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {
 	// the HOME segment ahead of it may be rewritten.
 	assert.Contains(t, memory, "Projects/myproject-extras",
 		"-extras suffix must not be lost to a broken substitution")
+}
+
+func TestRun_CancelsWhenContextCancelled(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "out.zip")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := export.Run(ctx, claudeHome, export.Options{
+		ProjectPath: fixtureProjectPath,
+		OutputPath:  outputPath,
+		Categories:  manifest.CategorySet{Sessions: true, History: true},
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoFileExists(t, outputPath)
+}
+
+// TestRun_SessionTranscriptsMatchAppliedPlaceholders is a byte-identity
+// regression guard for the streaming ZIP writer refactor. Each session
+// transcript archive entry must equal applyPlaceholders(os.ReadFile(source))
+// run against the on-disk fixture, line by line — ensuring the streaming
+// path produces the same bytes as the pre-streaming whole-file path.
+func TestRun_SessionTranscriptsMatchAppliedPlaceholders(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "out.zip")
+	placeholders := defaultPlaceholders()
+
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{Sessions: true},
+		Placeholders: placeholders,
+	})
+	require.NoError(t, err)
+
+	encodedProjectDir := claudeHome.ProjectDir(fixtureProjectPath)
+	contents := readZipContents(t, outputPath)
+	sessionEntries := sessionEntryNames(t, contents)
+	require.NotEmpty(t, sessionEntries, "fixture must produce at least one sessions/ entry")
+
+	for _, zipName := range sessionEntries {
+		relative := strings.TrimPrefix(zipName, "sessions/")
+		sourcePath := filepath.Join(encodedProjectDir, relative)
+		sourceBytes, readErr := os.ReadFile(sourcePath) //nolint:gosec // G304: fixture path under t.TempDir()
+		require.NoError(t, readErr, "read source transcript %s", sourcePath)
+
+		reference := export.ApplyPlaceholders(sourceBytes, placeholders)
+		assert.Equal(t, string(reference), contents[zipName],
+			"streaming ZIP entry %s must match applyPlaceholders(os.ReadFile(source))", zipName)
+	}
+}
+
+// sessionEntryNames returns every archive entry whose name starts with
+// "sessions/". Deterministic ordering via a lexicographic sort so failing
+// assertions point at a stable name.
+func sessionEntryNames(t *testing.T, contents map[string]string) []string {
+	t.Helper()
+	var names []string
+	for name := range contents {
+		if strings.HasPrefix(name, "sessions/") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }

@@ -2,6 +2,7 @@
 package fsutil
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,15 +12,18 @@ import (
 )
 
 // CopyDir recursively copies source to destination, preserving file and
-// directory permissions. Symlinks are replicated as symlinks — their
+// directory permissions. Symlinks are replicated as symlinks: their
 // target string is written verbatim and never followed for content.
 // Regular files are streamed via io.Copy to avoid loading them whole
 // into memory. Irregular entries (sockets, FIFOs, devices) cause the
 // copy to fail-hard.
 //
+// ctx is checked at the top of every WalkDir callback so a cancelled
+// context aborts a long copy within one iteration.
+//
 // Writes go through an os.Root opened on destination, so even a
 // malformed relative path cannot land outside destination.
-func CopyDir(source, destination string) error {
+func CopyDir(ctx context.Context, source, destination string) error {
 	if err := os.MkdirAll(destination, 0o755); err != nil { //nolint:gosec // G301: cc-port-wide 0o755 convention
 		return fmt.Errorf("create destination %q: %w", destination, err)
 	}
@@ -31,6 +35,9 @@ func CopyDir(source, destination string) error {
 	defer func() { _ = destRoot.Close() }()
 
 	return filepath.WalkDir(source, func(path string, dirEntry fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}

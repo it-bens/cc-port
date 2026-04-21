@@ -21,7 +21,7 @@ func TestCopyDir_PreservesSymlinkAsSymlink(t *testing.T) {
 	require.NoError(t, os.Symlink(outsideFile, linkPath))
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	require.NoError(t, CopyDir(source, destination))
+	require.NoError(t, CopyDir(t.Context(), source, destination))
 
 	info, err := os.Lstat(filepath.Join(destination, "escape"))
 	require.NoError(t, err)
@@ -41,7 +41,7 @@ func TestCopyDir_HandlesSymlinkToDirectory(t *testing.T) {
 	require.NoError(t, os.Symlink(realDir, dirLink))
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	require.NoError(t, CopyDir(source, destination))
+	require.NoError(t, CopyDir(t.Context(), source, destination))
 
 	info, err := os.Lstat(filepath.Join(destination, "via-link"))
 	require.NoError(t, err)
@@ -64,7 +64,7 @@ func TestCopyDir_StreamsLargeFile(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	require.NoError(t, CopyDir(source, destination))
+	require.NoError(t, CopyDir(t.Context(), source, destination))
 
 	info, err := os.Stat(filepath.Join(destination, "big.bin"))
 	require.NoError(t, err)

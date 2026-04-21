@@ -1,6 +1,7 @@
 package fsutil
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -51,7 +52,7 @@ func TestCopyDirPreservesDirectoryMode0755(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	if err := CopyDir(source, destination); err != nil {
+	if err := CopyDir(t.Context(), source, destination); err != nil {
 		t.Fatalf("CopyDir: %v", err)
 	}
 
@@ -75,7 +76,7 @@ func TestCopyDirPreservesDirectoryMode0700(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	if err := CopyDir(source, destination); err != nil {
+	if err := CopyDir(t.Context(), source, destination); err != nil {
 		t.Fatalf("CopyDir: %v", err)
 	}
 
@@ -104,7 +105,7 @@ func TestCopyDirPreservesNestedMixedDirectoryModes(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	if err := CopyDir(source, destination); err != nil {
+	if err := CopyDir(t.Context(), source, destination); err != nil {
 		t.Fatalf("CopyDir: %v", err)
 	}
 
@@ -142,7 +143,7 @@ func TestCopyDirPreservesFileMode(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	if err := CopyDir(source, destination); err != nil {
+	if err := CopyDir(t.Context(), source, destination); err != nil {
 		t.Fatalf("CopyDir: %v", err)
 	}
 
@@ -195,8 +196,28 @@ func TestCopyDir_CloseErrorPropagates(t *testing.T) {
 	dst := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(src, "f.txt"), []byte("payload"), 0o600))
 
-	err := CopyDir(src, dst)
+	err := CopyDir(t.Context(), src, dst)
 	require.Error(t, err, "CopyDir must surface the deferred close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
 	require.ErrorContains(t, err, "close destination")
+}
+
+func TestCopyDir_AbortsOnCancelledContext(t *testing.T) {
+	// Arrange: source dir with one regular file so the WalkDir callback has
+	// at least one non-root entry to iterate; the copy must therefore pass
+	// through a callback invocation where the ctx check can fire.
+	source := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(source, "source-with-one-file"), []byte("payload"), 0o600,
+	))
+	destination := filepath.Join(t.TempDir(), "destination")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	// Act
+	err := CopyDir(ctx, source, destination)
+
+	// Assert
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 }

@@ -5,15 +5,16 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/it-bens/cc-port/internal/claude"
@@ -118,8 +119,15 @@ func WithArchiveOpener(opener func(string) (io.WriteCloser, error)) RunOption {
 // grouped per category; callers surface a warning when result.FileHistory
 // is non-empty.
 func Run(
-	claudeHome *claude.Home, exportOptions Options, runOptions ...RunOption,
+	ctx context.Context, claudeHome *claude.Home, exportOptions Options, runOptions ...RunOption,
 ) (result Result, err error) {
+	// Check ctx before any file creation so a cancel-before-start leaves no
+	// output archive on disk. The test contract (TestRun_CancelsWhenContext
+	// Cancelled) requires require.NoFileExists on the output path.
+	if err := ctx.Err(); err != nil {
+		return result, fmt.Errorf("canceled: %w", err)
+	}
+
 	config := defaultRunConfig()
 	for _, option := range runOptions {
 		option(&config)
@@ -154,13 +162,13 @@ func Run(
 	placeholders := exportOptions.Placeholders
 
 	if err := exportCoreCategories(
-		archiveWriter, &result, claudeHome, locations, exportOptions, placeholders,
+		ctx, archiveWriter, &result, claudeHome, locations, exportOptions, placeholders,
 	); err != nil {
 		return result, err
 	}
 
 	if exportOptions.Categories.FileHistory {
-		if err := exportFileHistory(archiveWriter, &result, locations); err != nil {
+		if err := exportFileHistory(ctx, archiveWriter, &result, locations); err != nil {
 			return result, err
 		}
 	}
@@ -191,27 +199,28 @@ func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions Options, result
 // exportCoreCategories is extracted from Run to stay within the linter's
 // line-count budget.
 func exportCoreCategories(
+	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
 	claudeHome *claude.Home, locations *claude.ProjectLocations,
 	exportOptions Options, placeholders []manifest.Placeholder,
 ) error {
 	if exportOptions.Categories.Sessions {
-		if err := exportSessions(archiveWriter, result, locations, placeholders); err != nil {
+		if err := exportSessions(ctx, archiveWriter, result, locations, placeholders); err != nil {
 			return err
 		}
 	}
 	if exportOptions.Categories.Memory {
-		if err := exportMemory(archiveWriter, result, locations, placeholders); err != nil {
+		if err := exportMemory(ctx, archiveWriter, result, locations, placeholders); err != nil {
 			return err
 		}
 	}
 	if err := exportSessionKeyed(
-		archiveWriter, result, claudeHome, locations, exportOptions.Categories, placeholders,
+		ctx, archiveWriter, result, claudeHome, locations, exportOptions.Categories, placeholders,
 	); err != nil {
 		return err
 	}
 	if exportOptions.Categories.History {
-		if err := exportHistory(archiveWriter, result, claudeHome, exportOptions, placeholders); err != nil {
+		if err := exportHistory(ctx, archiveWriter, result, claudeHome, exportOptions, placeholders); err != nil {
 			return err
 		}
 	}
@@ -219,43 +228,80 @@ func exportCoreCategories(
 }
 
 func exportSessions(
+	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
 	locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
 ) error {
 	for _, transcriptPath := range locations.SessionTranscripts {
-		data, err := os.ReadFile(transcriptPath) //nolint:gosec // G304: path from trusted ClaudeHome
-		if err != nil {
-			return fmt.Errorf("read session transcript %s: %w", transcriptPath, err)
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		anonymizedData := applyPlaceholders(data, placeholders)
 		zipName := "sessions/" + filepath.Base(transcriptPath)
-		if err := writeCategoryEntry(archiveWriter, result, "sessions", zipName, anonymizedData); err != nil {
+		if err := streamJSONLEntry(
+			ctx, archiveWriter, result, "sessions", zipName, transcriptPath, placeholders,
+		); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
 	}
 
 	for _, subdirPath := range locations.SessionSubdirs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		dirName := filepath.Base(subdirPath)
 		zipPrefix := "sessions/" + dirName
-		if err := addDirToZip(archiveWriter, result, "sessions", subdirPath, zipPrefix, placeholders); err != nil {
+		if err := addDirToZip(ctx, archiveWriter, result, "sessions", subdirPath, zipPrefix, placeholders); err != nil {
 			return fmt.Errorf("add session subdir %s: %w", subdirPath, err)
 		}
 	}
 	return nil
 }
 
+// streamJSONLEntry opens sourcePath, streams its contents line by line
+// through applyPlaceholders into a new ZIP entry, and records the entry on
+// result under category. Source file is closed before the function returns.
+func streamJSONLEntry(
+	ctx context.Context,
+	archiveWriter *zip.Writer, result *Result, category, zipName, sourcePath string,
+	placeholders []manifest.Placeholder,
+) error {
+	source, err := os.Open(sourcePath) //nolint:gosec // G304: path from trusted ClaudeHome
+	if err != nil {
+		return fmt.Errorf("open %s: %w", sourcePath, err)
+	}
+	defer func() { _ = source.Close() }()
+
+	size, err := writeJSONLToZip(ctx, archiveWriter, zipName, source, func(line []byte) []byte {
+		// Preserve blank lines: applyPlaceholders on an empty body routes
+		// through rewrite.ReplacePathInBytes which returns nil for empty
+		// inputs, and writeJSONLToZip treats nil as "drop line".
+		if len(line) == 0 {
+			return line
+		}
+		return applyPlaceholders(line, placeholders)
+	})
+	if err != nil {
+		return err
+	}
+	entries, err := categoryEntriesByName(result, category)
+	if err != nil {
+		return err
+	}
+	*entries = append(*entries, ArchiveEntry{ArchivePath: zipName, Size: size})
+	return nil
+}
+
 func exportMemory(
+	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
 	locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
 ) error {
 	for _, memoryFilePath := range locations.MemoryFiles {
-		data, err := os.ReadFile(memoryFilePath) //nolint:gosec // G304: path from trusted ClaudeHome
-		if err != nil {
-			return fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		anonymizedData := applyPlaceholders(data, placeholders)
 		zipName := "memory/" + filepath.Base(memoryFilePath)
-		if err := writeCategoryEntry(archiveWriter, result, "memory", zipName, anonymizedData); err != nil {
+		if err := streamJSONLEntry(ctx, archiveWriter, result, "memory", zipName, memoryFilePath, placeholders); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
 	}
@@ -279,6 +325,7 @@ func groupToCategoryName(groupName string) string {
 // from the transport registry, iterating locations.AllFlatFiles() once and
 // skipping groups whose category flag is off.
 func exportSessionKeyed(
+	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result, claudeHome *claude.Home,
 	locations *claude.ProjectLocations, categories manifest.CategorySet,
 	placeholders []manifest.Placeholder,
@@ -299,6 +346,9 @@ func exportSessionKeyed(
 	}
 
 	for group, path := range locations.AllFlatFiles() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !included[group.Name] {
 			continue
 		}
@@ -306,14 +356,12 @@ func exportSessionKeyed(
 		if err != nil {
 			return fmt.Errorf("compute relative path for %s: %w", path, err)
 		}
-		data, err := os.ReadFile(path) //nolint:gosec // G304: path from trusted ProjectLocations
-		if err != nil {
-			return fmt.Errorf("read %s file %s: %w", group.Name, path, err)
-		}
-		anonymized := applyPlaceholders(data, placeholders)
 		zipName := prefixByGroup[group.Name] + filepath.ToSlash(relative)
 		category := groupToCategoryName(group.Name)
-		if err := writeCategoryEntry(archiveWriter, result, category, zipName, anonymized); err != nil {
+		// Session-keyed bodies are small JSON or JSONL. streamJSONLEntry
+		// applies placeholders per line; since paths never straddle '\n',
+		// the output matches a whole-file transform byte-for-byte.
+		if err := streamJSONLEntry(ctx, archiveWriter, result, category, zipName, path, placeholders); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
 	}
@@ -321,31 +369,52 @@ func exportSessionKeyed(
 }
 
 func exportHistory(
+	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
 	claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
 ) error {
-	historyData, err := extractProjectHistory(claudeHome.HistoryFile(), exportOptions.ProjectPath)
+	historyPath := claudeHome.HistoryFile()
+	historyFile, err := os.Open(historyPath) //nolint:gosec // G304: path from trusted ClaudeHome
 	if err != nil {
-		return fmt.Errorf("extract project history: %w", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("open history file: %w", err)
 	}
-	anonymizedHistory := applyPlaceholders(historyData, placeholders)
-	if err := writeCategoryEntry(
-		archiveWriter, result, "history", "history/history.jsonl", anonymizedHistory,
-	); err != nil {
+	defer func() { _ = historyFile.Close() }()
+
+	projectPath := exportOptions.ProjectPath
+	zipName := "history/history.jsonl"
+	size, err := writeJSONLToZip(ctx, archiveWriter, zipName, historyFile, func(line []byte) []byte {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			return nil
+		}
+		if !historyLineBelongsToProject(trimmed, projectPath) {
+			return nil
+		}
+		return applyPlaceholders(trimmed, placeholders)
+	})
+	if err != nil {
 		return fmt.Errorf("write history/history.jsonl: %w", err)
 	}
+	result.History = append(result.History, ArchiveEntry{ArchivePath: zipName, Size: size})
 	return nil
 }
 
 // exportFileHistory archives every file under ~/.claude/file-history verbatim.
 // No body inspection, no anonymisation — opaque by policy.
 func exportFileHistory(
+	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result, locations *claude.ProjectLocations,
 ) error {
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		dirName := filepath.Base(fileHistoryDir)
 		zipPrefix := "file-history/" + dirName
-		if err := addDirVerbatimToZip(archiveWriter, result, fileHistoryDir, zipPrefix); err != nil {
+		if err := addDirVerbatimToZip(ctx, archiveWriter, result, fileHistoryDir, zipPrefix); err != nil {
 			return fmt.Errorf("add file-history dir %s: %w", fileHistoryDir, err)
 		}
 	}
@@ -406,6 +475,120 @@ func writeToZip(archiveWriter *zip.Writer, name string, data []byte) (int64, err
 	return int64(len(data)), nil
 }
 
+// writeReaderToZip streams src into a new ZIP entry named name. Honours ctx
+// so long streams abort promptly on cancellation. Returns the bytes written.
+// No transform is applied; chunk-level substring substitution would corrupt
+// content that straddles a read boundary, so callers needing byte
+// transforms must use writeJSONLToZip.
+func writeReaderToZip(
+	ctx context.Context,
+	archiveWriter *zip.Writer,
+	name string,
+	src io.Reader,
+) (int64, error) {
+	entry, err := archiveWriter.Create(name)
+	if err != nil {
+		return 0, fmt.Errorf("create zip entry %s: %w", name, err)
+	}
+	var written int64
+	buffer := make([]byte, 64<<10)
+	for {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
+		n, readErr := src.Read(buffer)
+		if n > 0 {
+			if _, writeErr := entry.Write(buffer[:n]); writeErr != nil {
+				return written, fmt.Errorf("write zip entry %s: %w", name, writeErr)
+			}
+			written += int64(n)
+		}
+		if errors.Is(readErr, io.EOF) {
+			return written, nil
+		}
+		if readErr != nil {
+			return written, fmt.Errorf("read source for %s: %w", name, readErr)
+		}
+	}
+}
+
+// writeJSONLToZip streams src line by line through lineTransform (if
+// non-nil) into a new ZIP entry named name. The original line terminator
+// ('\n' or absence thereof) is preserved so the archive entry is
+// byte-identical to what a whole-file transform would produce. ctx is
+// checked at each line boundary. Oversized lines produce bufio.ErrTooLong
+// via claude.MaxHistoryLine. Returns the bytes written.
+//
+// A lineTransform that returns a nil slice drops the line entirely: the
+// body and its terminator are both skipped, so the output contains no
+// orphan blank line in place of a dropped entry. Returning an empty
+// non-nil slice (`[]byte{}`) is distinct: it writes a zero-byte body
+// followed by the preserved terminator.
+func writeJSONLToZip(
+	ctx context.Context,
+	archiveWriter *zip.Writer,
+	name string,
+	src io.Reader,
+	lineTransform func([]byte) []byte,
+) (int64, error) {
+	entry, err := archiveWriter.Create(name)
+	if err != nil {
+		return 0, fmt.Errorf("create zip entry %s: %w", name, err)
+	}
+	reader := bufio.NewReaderSize(src, 64<<10)
+	var written int64
+	lineNumber := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
+		line, readErr := reader.ReadBytes('\n')
+		if int64(len(line)) > claude.MaxHistoryLine {
+			return written, fmt.Errorf(
+				"%s line %d exceeds %d bytes: %w",
+				name, lineNumber+1, claude.MaxHistoryLine, bufio.ErrTooLong,
+			)
+		}
+		if len(line) > 0 {
+			lineNumber++
+			body, terminator := splitJSONLTerminator(line)
+			out := body
+			if lineTransform != nil {
+				out = lineTransform(body)
+			}
+			if out != nil {
+				if _, err := entry.Write(out); err != nil {
+					return written, fmt.Errorf("write zip entry %s: %w", name, err)
+				}
+				written += int64(len(out))
+				if len(terminator) > 0 {
+					if _, err := entry.Write(terminator); err != nil {
+						return written, fmt.Errorf("write zip entry %s: %w", name, err)
+					}
+					written += int64(len(terminator))
+				}
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return written, nil
+		}
+		if readErr != nil {
+			return written, fmt.Errorf("read source for %s: %w", name, readErr)
+		}
+	}
+}
+
+// splitJSONLTerminator separates a line read by bufio.Reader.ReadBytes('\n')
+// into its body and the trailing '\n' terminator (empty when the last line
+// has no terminator). Mirrors splitLineTerminator in internal/rewrite; kept
+// local so the zip writer owns its own primitive.
+func splitJSONLTerminator(line []byte) (body, terminator []byte) {
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		return line[:len(line)-1], line[len(line)-1:]
+	}
+	return line, nil
+}
+
 // writeCategoryEntry writes one archive entry and appends a matching
 // ArchiveEntry to the Result slice for category. Returns an error on
 // unknown category (drift guard — cannot happen for production category
@@ -429,6 +612,7 @@ func writeCategoryEntry(
 // content is always textual (JSONL transcripts, subagent files, session-memory
 // entries).
 func addDirToZip(
+	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result, category string,
 	sourceDir, zipPrefix string, placeholders []manifest.Placeholder,
 ) error {
@@ -438,24 +622,20 @@ func addDirToZip(
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		entryPath := filepath.Join(sourceDir, entry.Name())
 		entryZipName := zipPrefix + "/" + entry.Name()
 
 		if entry.IsDir() {
-			if err := addDirToZip(archiveWriter, result, category, entryPath, entryZipName, placeholders); err != nil {
+			if err := addDirToZip(ctx, archiveWriter, result, category, entryPath, entryZipName, placeholders); err != nil {
 				return err
 			}
 			continue
 		}
 
-		data, err := os.ReadFile(entryPath) //nolint:gosec // G304: path is constructed from trusted input
-		if err != nil {
-			return fmt.Errorf("read file %s: %w", entryPath, err)
-		}
-
-		data = applyPlaceholders(data, placeholders)
-
-		if err := writeCategoryEntry(archiveWriter, result, category, entryZipName, data); err != nil {
+		if err := streamJSONLEntry(ctx, archiveWriter, result, category, entryZipName, entryPath, placeholders); err != nil {
 			return err
 		}
 	}
@@ -466,6 +646,7 @@ func addDirToZip(
 // addDirVerbatimToZip is used for file-history snapshots, whose contents are
 // opaque user-file bytes that cc-port must not transform.
 func addDirVerbatimToZip(
+	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result, sourceDir, zipPrefix string,
 ) error {
 	entries, err := os.ReadDir(sourceDir)
@@ -474,22 +655,20 @@ func addDirVerbatimToZip(
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		entryPath := filepath.Join(sourceDir, entry.Name())
 		entryZipName := zipPrefix + "/" + entry.Name()
 
 		if entry.IsDir() {
-			if err := addDirVerbatimToZip(archiveWriter, result, entryPath, entryZipName); err != nil {
+			if err := addDirVerbatimToZip(ctx, archiveWriter, result, entryPath, entryZipName); err != nil {
 				return err
 			}
 			continue
 		}
 
-		data, err := os.ReadFile(entryPath) //nolint:gosec // G304: path is constructed from trusted input
-		if err != nil {
-			return fmt.Errorf("read file %s: %w", entryPath, err)
-		}
-
-		if err := writeCategoryEntry(archiveWriter, result, "file-history", entryZipName, data); err != nil {
+		if err := streamVerbatimEntry(ctx, archiveWriter, result, "file-history", entryZipName, entryPath); err != nil {
 			return err
 		}
 	}
@@ -497,11 +676,35 @@ func addDirVerbatimToZip(
 	return nil
 }
 
-// extractProjectHistory reads historyPath line by line and returns a JSONL byte
-// slice containing every entry that belongs to projectPath. A line belongs
-// when any of the following hold:
+// streamVerbatimEntry streams sourcePath straight into a ZIP entry with no
+// transform. Suited to opaque bytes (file-history snapshots) where any
+// byte-level rewrite would violate the opacity contract.
+func streamVerbatimEntry(
+	ctx context.Context,
+	archiveWriter *zip.Writer, result *Result, category, zipName, sourcePath string,
+) error {
+	source, err := os.Open(sourcePath) //nolint:gosec // G304: path is constructed from trusted input
+	if err != nil {
+		return fmt.Errorf("open %s: %w", sourcePath, err)
+	}
+	defer func() { _ = source.Close() }()
+
+	size, err := writeReaderToZip(ctx, archiveWriter, zipName, source)
+	if err != nil {
+		return err
+	}
+	entries, err := categoryEntriesByName(result, category)
+	if err != nil {
+		return err
+	}
+	*entries = append(*entries, ArchiveEntry{ArchivePath: zipName, Size: size})
+	return nil
+}
+
+// historyLineBelongsToProject reports whether one history.jsonl line
+// belongs to projectPath. A line belongs when any of the following hold:
 //
-//  1. Its structured `project` field equals projectPath (the primary signal —
+//  1. Its structured `project` field equals projectPath (the primary signal:
 //     the authoritative tag Claude Code writes alongside each entry).
 //  2. Its `project` field is empty AND the line body contains a bounded
 //     reference to projectPath (e.g. inside `display` or `pastedContents`).
@@ -513,50 +716,13 @@ func addDirVerbatimToZip(
 //     recipient sees what the sender saw.
 //
 // Lines whose `project` field names a different project are NEVER included,
-// even if they happen to quote projectPath in free text — that preserves the
+// even if they happen to quote projectPath in free text: that preserves the
 // privacy property that another project's structurally tagged entries are
 // not leaked just because they reference this project's path.
 //
 // The bounded reference check goes through rewrite.ContainsBoundedPath so
 // prefix-collision paths (e.g. "/a/myproject-extras" when projectPath is
 // "/a/myproject") are not misclassified as in-scope.
-func extractProjectHistory(historyPath, projectPath string) ([]byte, error) {
-	historyFile, err := os.Open(historyPath) //nolint:gosec // G304: path from trusted ClaudeHome
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []byte{}, nil
-		}
-		return nil, fmt.Errorf("open history file: %w", err)
-	}
-	defer func() { _ = historyFile.Close() }()
-
-	var outputBuffer bytes.Buffer
-	scanner := bufio.NewScanner(historyFile)
-	scanner.Buffer(make([]byte, 64<<10), claude.MaxHistoryLine)
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		if !historyLineBelongsToProject([]byte(line), projectPath) {
-			continue
-		}
-
-		outputBuffer.WriteString(line)
-		outputBuffer.WriteByte('\n')
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan history file: %w", err)
-	}
-
-	return outputBuffer.Bytes(), nil
-}
-
-// historyLineBelongsToProject encodes the three-branch inclusion rule
-// documented on extractProjectHistory.
 func historyLineBelongsToProject(line []byte, projectPath string) bool {
 	var historyEntry claude.HistoryEntry
 	if err := json.Unmarshal(line, &historyEntry); err != nil {

@@ -33,7 +33,7 @@ var exportCmd = &cobra.Command{
 	Short: "Export a project to a portable ZIP archive",
 	Long:  "Exports Claude Code project data to a ZIP archive with path anonymization.",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		projectPath, err := claude.ResolveProjectPath(args[0])
 		if err != nil {
 			return fmt.Errorf("resolve project path: %w", err)
@@ -77,7 +77,7 @@ var exportCmd = &cobra.Command{
 			Placeholders: placeholders,
 		}
 
-		result, err := export.Run(claudeHome, exportOptions)
+		result, err := export.Run(cmd.Context(), claudeHome, exportOptions)
 		if err != nil {
 			return fmt.Errorf("export: %w", err)
 		}

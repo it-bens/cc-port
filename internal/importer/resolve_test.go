@@ -1,6 +1,8 @@
 package importer_test
 
 import (
+	"bytes"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -34,6 +36,125 @@ func TestResolvePlaceholders_UnresolvedLeft(t *testing.T) {
 	result := importer.ResolvePlaceholders(content, resolutions)
 
 	assert.Equal(t, []byte("known: /home/user/known unknown: __UNKNOWN__"), result)
+}
+
+func TestResolvePlaceholdersStream_PassesThroughWhenNoResolutions(t *testing.T) {
+	src := bytes.NewReader([]byte("hello {{UNKNOWN}} world"))
+	var dst bytes.Buffer
+
+	err := importer.ResolvePlaceholdersStream(src, &dst, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "hello {{UNKNOWN}} world", dst.String())
+}
+
+func TestResolvePlaceholdersStream_ReplacesTokenAtStart(t *testing.T) {
+	src := bytes.NewReader([]byte("{{HOME}}/projects/myproject"))
+	var dst bytes.Buffer
+
+	err := importer.ResolvePlaceholdersStream(src, &dst, map[string]string{
+		"{{HOME}}": "/Users/dest",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "/Users/dest/projects/myproject", dst.String())
+}
+
+func TestResolvePlaceholdersStream_ReplacesTokenInMiddle(t *testing.T) {
+	src := bytes.NewReader([]byte("prefix {{KEY}} suffix"))
+	var dst bytes.Buffer
+
+	err := importer.ResolvePlaceholdersStream(src, &dst, map[string]string{
+		"{{KEY}}": "value",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "prefix value suffix", dst.String())
+}
+
+func TestResolvePlaceholdersStream_ReplacesTokenAtEnd(t *testing.T) {
+	src := bytes.NewReader([]byte("prefix {{KEY}}"))
+	var dst bytes.Buffer
+
+	err := importer.ResolvePlaceholdersStream(src, &dst, map[string]string{
+		"{{KEY}}": "value",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "prefix value", dst.String())
+}
+
+func TestResolvePlaceholdersStream_PrefersLongestMatchingKey(t *testing.T) {
+	// One key is a strict prefix of the other. Longest-first ordering
+	// must resolve `{{PROJECT_PATH}}` as a whole rather than consuming
+	// `{{PROJECT}}` and leaving `_PATH}}` behind.
+	src := bytes.NewReader([]byte("{{PROJECT_PATH}} and {{PROJECT}}"))
+	var dst bytes.Buffer
+
+	err := importer.ResolvePlaceholdersStream(src, &dst, map[string]string{
+		"{{PROJECT}}":      "P",
+		"{{PROJECT_PATH}}": "PP",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "PP and P", dst.String())
+}
+
+func TestResolvePlaceholdersStream_LoneOpenBraceSurvives(t *testing.T) {
+	src := bytes.NewReader([]byte("single { brace"))
+	var dst bytes.Buffer
+
+	err := importer.ResolvePlaceholdersStream(src, &dst, map[string]string{
+		"{{KEY}}": "value",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "single { brace", dst.String())
+}
+
+// chunkReader yields n bytes per Read call, emulating a network-style
+// reader whose boundaries don't align with token boundaries. Used to
+// verify tokens straddling a buffered-reader fill produce the same
+// output as a whole-body transform.
+type chunkReader struct {
+	data  []byte
+	chunk int
+	pos   int
+}
+
+func (r *chunkReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := r.chunk
+	if n > len(p) {
+		n = len(p)
+	}
+	remaining := len(r.data) - r.pos
+	if n > remaining {
+		n = remaining
+	}
+	copy(p, r.data[r.pos:r.pos+n])
+	r.pos += n
+	return n, nil
+}
+
+func TestResolvePlaceholdersStream_HandlesTokenStraddlingReadBoundary(t *testing.T) {
+	// A body with a placeholder token interleaved with surrounding bytes.
+	// The chunkReader hands data to the stream one byte per Read, so the
+	// token's first byte and the rest of the token cross many fill
+	// cycles of the internal bufio.Reader.
+	body := []byte("abc{{KEY}}xyz and tail {{KEY}} end")
+	resolutions := map[string]string{"{{KEY}}": "RESOLVED"}
+
+	var streamed bytes.Buffer
+	require.NoError(t, importer.ResolvePlaceholdersStream(
+		&chunkReader{data: body, chunk: 1}, &streamed, resolutions,
+	))
+
+	whole := importer.ResolvePlaceholders(body, resolutions)
+	assert.Equal(t, string(whole), streamed.String(),
+		"streaming output must equal whole-body ResolvePlaceholders output")
 }
 
 func TestValidateResolutions(t *testing.T) {

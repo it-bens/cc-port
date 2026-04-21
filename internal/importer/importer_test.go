@@ -2,9 +2,11 @@ package importer_test
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,7 +278,7 @@ func runBasicImport(t *testing.T) *claude.Home {
 	destClaudeHome := buildEmptyDestClaudeHome(t)
 	destHomeDir := filepath.Join(t.TempDir(), "home")
 
-	require.NoError(t, importer.Run(destClaudeHome, importer.Options{
+	require.NoError(t, importer.Run(t.Context(), destClaudeHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  fixtureDestProjectPath,
 		Resolutions: map[string]string{
@@ -304,7 +306,7 @@ func TestImport_LeavesNoStagingTemps(t *testing.T) {
 			"{{HOME}}":         destHomeDir,
 		},
 	}
-	require.NoError(t, importer.Run(destClaudeHome, importOptions))
+	require.NoError(t, importer.Run(t.Context(), destClaudeHome, importOptions))
 
 	assertNoStagingTemps(t, destClaudeHome)
 }
@@ -331,7 +333,7 @@ func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
 		},
 	}
-	err = importer.Run(destClaudeHome, importOptions)
+	err = importer.Run(t.Context(), destClaudeHome, importOptions)
 	require.Error(t, err, "import must refuse when a declared placeholder is not resolved")
 	assert.Contains(t, err.Error(), "{{EXTRA}}")
 
@@ -360,7 +362,7 @@ func TestImport_AllowsUnresolvableDeclaredKey(t *testing.T) {
 			"{{HOME}}": filepath.Join(t.TempDir(), "home"),
 		},
 	}
-	require.NoError(t, importer.Run(destClaudeHome, importOptions))
+	require.NoError(t, importer.Run(t.Context(), destClaudeHome, importOptions))
 
 	memoryPath := filepath.Join(
 		destClaudeHome.ProjectDir(destProjectPath), "memory", "MEMORY.md",
@@ -394,7 +396,7 @@ func TestImport_RefusesUndeclaredKey(t *testing.T) {
 			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
 		},
 	}
-	err = importer.Run(destClaudeHome, importOptions)
+	err = importer.Run(t.Context(), destClaudeHome, importOptions)
 	require.Error(t, err, "import must refuse an archive carrying an undeclared token")
 	assert.Contains(t, err.Error(), "{{SECRET}}")
 
@@ -433,7 +435,7 @@ func TestImport_AtomicRollbackOnFailure(t *testing.T) {
 			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
 		},
 	}
-	err = importer.RunWithRenameHook(destClaudeHome, importOptions, injector)
+	err = importer.RunWithRenameHook(t.Context(), destClaudeHome, importOptions, injector)
 	require.Error(t, err, "import must fail when a promote rename fails")
 
 	// Encoded project dir must not exist — it was promoted then rolled back.
@@ -681,7 +683,7 @@ func TestImport_ConflictRefused(t *testing.T) {
 		},
 	}
 
-	err := importer.Run(sourceClaudeHome, importOptions)
+	err := importer.Run(t.Context(), sourceClaudeHome, importOptions)
 	require.Error(t, err, "import to existing project should fail")
 	assert.Contains(t, err.Error(), "already exists", "error should mention conflict")
 }
@@ -691,7 +693,7 @@ func TestImport_RoundTrip_NewCategories(t *testing.T) {
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "out.zip")
 
-	_, err := export.Run(claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: fixtureSourceProjectPath,
 		OutputPath:  archivePath,
 		Categories: manifest.CategorySet{
@@ -709,7 +711,7 @@ func TestImport_RoundTrip_NewCategories(t *testing.T) {
 	// freshHome already has the project dir, so remove it to avoid CheckConflict.
 	require.NoError(t, os.RemoveAll(freshHome.ProjectDir(fixtureSourceProjectPath)))
 
-	err = importer.Run(freshHome, importer.Options{
+	err = importer.Run(t.Context(), freshHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  fixtureSourceProjectPath,
 	})
@@ -753,7 +755,7 @@ func TestImport_HardFailsOnUnknownManifestCategory(t *testing.T) {
 	require.NoError(t, zw.Close())
 	require.NoError(t, zipFile.Close())
 
-	err = importer.Run(claudeHome, importer.Options{
+	err = importer.Run(t.Context(), claudeHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  fixtureSourceProjectPath,
 	})
@@ -785,7 +787,7 @@ func TestImport_HardFailsOnMissingManifestCategory(t *testing.T) {
 	require.NoError(t, zw.Close())
 	require.NoError(t, zipFile.Close())
 
-	err = importer.Run(claudeHome, importer.Options{
+	err = importer.Run(t.Context(), claudeHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  fixtureSourceProjectPath,
 	})
@@ -826,7 +828,7 @@ func TestImport_HardFailsOnUnknownEntryPrefix(t *testing.T) {
 	require.NoError(t, zw.Close())
 	require.NoError(t, zipFile.Close())
 
-	err = importer.Run(claudeHome, importer.Options{
+	err = importer.Run(t.Context(), claudeHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  fixtureSourceProjectPath,
 	})
@@ -904,7 +906,7 @@ func TestRun_RejectsZipSlipEntry(t *testing.T) {
 		"sessions/../escape.txt": []byte("pwned"),
 	})
 
-	err := importer.Run(destClaudeHome, importer.Options{
+	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  filepath.Join(t.TempDir(), "project"),
 	})
@@ -923,7 +925,7 @@ func TestRun_RejectsAbsoluteZipEntry(t *testing.T) {
 		"sessions//etc/bogus": []byte("x"),
 	})
 
-	err := importer.Run(destClaudeHome, importer.Options{
+	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  filepath.Join(t.TempDir(), "project"),
 	})
@@ -966,10 +968,103 @@ func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
 	require.NoError(t, zipWriter.Close())
 	require.NoError(t, archiveFile.Close())
 
-	err = importer.Run(destClaudeHome, importer.Options{
+	err = importer.Run(t.Context(), destClaudeHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  filepath.Join(t.TempDir(), "project"),
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds")
+}
+
+// TestRun_RefusesArchiveExceedingAggregateUncompressedCap builds an archive
+// whose total decompressed payload exceeds importer.MaxArchiveUncompressedBytes
+// and asserts that Run rejects it before staging. The archive consists of
+// many 500 MiB entries so no individual entry trips the per-entry cap; only
+// the aggregate guard can fire. Skipped in -short because the test
+// materialises multiple gigabytes.
+func TestRun_RefusesArchiveExceedingAggregateUncompressedCap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a multi-GiB archive")
+	}
+
+	archivePath := buildArchiveWithAggregateSize(t, importer.MaxArchiveUncompressedBytes+1)
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+
+	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  filepath.Join(t.TempDir(), "project"),
+		Resolutions: map[string]string{},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "archive decompressed size exceeds")
+}
+
+func TestRun_CancelsWhenContextCancelled(t *testing.T) {
+	sourceClaudeHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceClaudeHome, archivePath)
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := importer.Run(ctx, destClaudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  fixtureDestProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": fixtureDestProjectPath,
+			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
+		},
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// buildArchiveWithAggregateSize writes a ZIP at t.TempDir whose entries (after
+// metadata.xml) sum to at least minAggregateBytes uncompressed. Individual
+// entries are kept below the per-entry 512 MiB cap so only the aggregate
+// guard can reject the archive. Bodies are zero-filled for compressibility:
+// the on-disk footprint is small even when minAggregateBytes is multiple GiB.
+func buildArchiveWithAggregateSize(t *testing.T, minAggregateBytes int64) string {
+	t.Helper()
+
+	const entrySize = int64(500 << 20) // 500 MiB, under the 512 MiB per-entry cap
+	archivePath := filepath.Join(t.TempDir(), "aggregate.zip")
+
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	defer func() { _ = archiveFile.Close() }()
+
+	zipWriter := zip.NewWriter(archiveFile)
+	defer func() { _ = zipWriter.Close() }()
+
+	md := manifest.Metadata{
+		Export: manifest.Info{
+			Created:    time.Now().UTC(),
+			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{Sessions: true}),
+		},
+	}
+	mdBytes, err := xml.MarshalIndent(&md, "", "  ")
+	require.NoError(t, err)
+	mdEntry, err := zipWriter.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = mdEntry.Write(append([]byte(xml.Header), mdBytes...))
+	require.NoError(t, err)
+
+	chunk := make([]byte, 1<<20) // 1 MiB of zeros, reused across writes
+	var aggregateWritten int64
+	for entryIndex := 0; aggregateWritten < minAggregateBytes; entryIndex++ {
+		entryName := fmt.Sprintf("sessions/entry-%03d.bin", entryIndex)
+		entry, err := zipWriter.Create(entryName)
+		require.NoError(t, err)
+		var written int64
+		for written < entrySize {
+			n, err := entry.Write(chunk)
+			require.NoError(t, err)
+			written += int64(n)
+		}
+		aggregateWritten += written
+	}
+	return archivePath
 }

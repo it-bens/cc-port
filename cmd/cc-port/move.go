@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -21,7 +22,9 @@ var moveCmd = &cobra.Command{
 	Long: "Renames a project directory and rewrites all Claude Code references.\n" +
 		"Default is dry-run — use --apply to execute.",
 	Args: cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
+
 		claudeHome, err := claude.NewHome(claudeDir)
 		if err != nil {
 			return err
@@ -44,9 +47,9 @@ var moveCmd = &cobra.Command{
 		}
 
 		if !moveApply {
-			return runMoveDryRun(claudeHome, moveOptions)
+			return runMoveDryRun(ctx, claudeHome, moveOptions)
 		}
-		return move.Apply(claudeHome, moveOptions)
+		return move.Apply(ctx, claudeHome, moveOptions)
 	},
 }
 
@@ -63,8 +66,8 @@ func init() {
 	rootCmd.AddCommand(moveCmd)
 }
 
-func runMoveDryRun(claudeHome *claude.Home, moveOptions move.Options) error {
-	movePlan, err := move.DryRun(claudeHome, moveOptions)
+func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions move.Options) error {
+	movePlan, err := move.DryRun(ctx, claudeHome, moveOptions)
 	if err != nil {
 		return err
 	}

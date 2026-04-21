@@ -3,9 +3,13 @@
 package rewrite
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,49 +144,110 @@ func ContainsBoundedPath(data []byte, path string) bool {
 	return count > 0
 }
 
-// HistoryJSONL processes a JSONL file line by line. For each well-formed line,
-// it rewrites occurrences of oldProject to newProject — both the structured
-// `project` field AND any free-text reference (e.g. inside `display`, inside
-// `pastedContents`) — using path-boundary-aware substring replacement so that
-// unrelated paths sharing a prefix (e.g. "myproject-extras") are not corrupted.
+// StreamHistoryJSONL streams src line by line, rewriting every well-formed
+// entry so oldProject becomes newProject (in the structured `project` field
+// AND in any free-text reference such as `display` or `pastedContents`),
+// using path-boundary-aware substring replacement so unrelated paths sharing
+// a prefix (e.g. "myproject-extras") are not corrupted.
 //
-// Returns the rewritten bytes, the count of lines whose contents changed, and
-// the 1-based line numbers of malformed (non-JSON) lines. Malformed lines are
-// preserved verbatim — cc-port cannot reliably repair data that was already
-// broken before the move. Callers should surface the returned line numbers to
-// the user so the malformed entries can be inspected manually.
+// Returns the count of lines whose contents changed and the 1-based line
+// numbers of malformed (non-JSON) lines. Malformed lines are preserved
+// verbatim — cc-port cannot reliably repair data that was already broken
+// before the move. Callers should surface the line numbers so the malformed
+// entries can be inspected manually.
 //
-// Empty lines and the trailing newline are preserved.
-func HistoryJSONL(data []byte, oldProject, newProject string) ([]byte, int, []int, error) {
-	lines := bytes.Split(data, []byte("\n"))
+// The output is byte-for-byte equivalent to the previous whole-file path:
+// empty lines are preserved, and the trailing newline (or its absence) is
+// mirrored from the input. Lines exceeding claude.MaxHistoryLine fail with
+// bufio.ErrTooLong rather than being silently truncated.
+//
+// Cancellation: ctx is checked at each line boundary; a cancelled ctx
+// short-circuits the stream and returns ctx.Err() after a best-effort flush.
+func StreamHistoryJSONL(
+	ctx context.Context,
+	src io.Reader,
+	dst io.Writer,
+	oldProject, newProject string,
+) (int, []int, error) {
+	reader := bufio.NewReaderSize(src, 64<<10)
+	writer := bufio.NewWriterSize(dst, 64<<10)
 
-	var outputLines [][]byte
-	var malformedLineNumbers []int
 	count := 0
-
-	for lineIndex, line := range lines {
-		if len(bytes.TrimSpace(line)) == 0 {
-			outputLines = append(outputLines, line)
-			continue
+	var malformed []int
+	lineNumber := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, nil, err
 		}
 
-		var probe claude.HistoryEntry
-		if err := json.Unmarshal(line, &probe); err != nil {
-			// Malformed line — preserve verbatim, do not abort the whole file.
-			// Record the 1-based line number so callers can warn the user.
-			malformedLineNumbers = append(malformedLineNumbers, lineIndex+1)
-			outputLines = append(outputLines, append([]byte(nil), line...))
-			continue
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > claude.MaxHistoryLine {
+			return 0, nil, fmt.Errorf(
+				"history.jsonl line %d exceeds %d bytes: %w",
+				lineNumber+1, claude.MaxHistoryLine, bufio.ErrTooLong,
+			)
 		}
 
-		rewritten, replaced := ReplacePathInBytes(line, oldProject, newProject)
-		if replaced > 0 {
-			count++
+		if len(line) > 0 {
+			lineNumber++
+			body, terminator := splitLineTerminator(line)
+
+			out, isMalformed := rewriteHistoryLine(body, oldProject, newProject, &count)
+			if isMalformed {
+				malformed = append(malformed, lineNumber)
+			}
+
+			if _, err := writer.Write(out); err != nil {
+				return 0, nil, fmt.Errorf("write history line %d: %w", lineNumber, err)
+			}
+			if len(terminator) > 0 {
+				if _, err := writer.Write(terminator); err != nil {
+					return 0, nil, fmt.Errorf("write history line %d terminator: %w", lineNumber, err)
+				}
+			}
 		}
-		outputLines = append(outputLines, rewritten)
+
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return 0, nil, fmt.Errorf("read history line %d: %w", lineNumber+1, readErr)
+		}
 	}
 
-	return bytes.Join(outputLines, []byte("\n")), count, malformedLineNumbers, nil
+	if err := writer.Flush(); err != nil {
+		return 0, nil, fmt.Errorf("flush history output: %w", err)
+	}
+	return count, malformed, nil
+}
+
+// splitLineTerminator separates a line read by bufio.Reader.ReadBytes('\n')
+// into its body and the trailing '\n' terminator (empty when the last line
+// has no terminator). Exposed separately so the rewrite loop never writes a
+// terminator that was not present in the source.
+func splitLineTerminator(line []byte) (body, terminator []byte) {
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		return line[:len(line)-1], line[len(line)-1:]
+	}
+	return line, nil
+}
+
+// rewriteHistoryLine applies the per-line transform. Empty lines round-trip
+// unchanged; malformed lines are preserved verbatim; well-formed lines go
+// through ReplacePathInBytes and bump *count when at least one match lands.
+func rewriteHistoryLine(body []byte, oldProject, newProject string, count *int) ([]byte, bool) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return body, false
+	}
+	var probe claude.HistoryEntry
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return body, true
+	}
+	rewritten, replaced := ReplacePathInBytes(body, oldProject, newProject)
+	if replaced > 0 {
+		*count++
+	}
+	return rewritten, false
 }
 
 // SessionFile rewrites every occurrence of oldProject to newProject inside

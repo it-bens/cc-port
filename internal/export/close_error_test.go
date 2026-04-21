@@ -91,7 +91,7 @@ func TestRun_ArchiveFileCloseError(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, closeErrorOptions(outputPath), export.WithArchiveOpener(opener))
+	_, err := export.Run(t.Context(), claudeHome, closeErrorOptions(outputPath), export.WithArchiveOpener(opener))
 
 	require.Error(t, err, "Run must surface the deferred archive-file close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
@@ -116,7 +116,7 @@ func TestRun_ArchiveWriterCloseError(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
-	_, err := export.Run(claudeHome, closeErrorOptions(outputPath), export.WithArchiveOpener(opener))
+	_, err := export.Run(t.Context(), claudeHome, closeErrorOptions(outputPath), export.WithArchiveOpener(opener))
 
 	require.Error(t, err, "Run must surface the deferred archive-writer close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")

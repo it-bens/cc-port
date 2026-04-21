@@ -8,9 +8,10 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 
 ## Public API
 
-- `Run(claudeHome *claude.Home, importOptions Options) error`: import an archive end-to-end. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure.
+- `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) error`: import an archive end-to-end. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure.
 - `ClassifyPlaceholders(bodies [][]byte, declared []manifest.Placeholder, resolutions map[string]string) (missing, undeclared []string)`: diff the archive's declared placeholders against the caller's resolutions and the bodies' embedded tokens. Returns alphabetically sorted slices of missing declared keys and undeclared upper-snake tokens.
-- `ResolvePlaceholders(content []byte, resolutions map[string]string) []byte`: substitute every declared `{{KEY}}` in a body.
+- `ResolvePlaceholders(content []byte, resolutions map[string]string) []byte`: substitute every declared `{{KEY}}` in a body. Used by the in-memory merge paths (history appends, config block).
+- `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`: same substitution semantics as `ResolvePlaceholders` but reader-to-writer. Peak memory is bounded by the longest placeholder key, not by the body size. Used by the staging paths that write directly to a sibling temp (sessions, memory, session-keyed categories).
 - `ValidateResolutions(resolutions map[string]string) error`: syntactic validation of caller-supplied resolutions (non-empty, absolute paths only).
 - `CheckConflict(encodedProjectDir string) error`: refuse the import if the encoded target directory already exists. Also refuse when existence cannot be determined (e.g. a permission error on an intermediate component). Only a clean "does not exist" returns `nil`.
 - `BuildHistoryBytes(existing []byte, appends [][]byte) []byte`: pure byte concatenation used by staging to compute the merged history bytes before atomic promote. No I/O, no lock.
@@ -50,7 +51,8 @@ These paths abort before any write:
 - Archive embeds a declared placeholder in at least one body whose key has no matching resolution. `Resolvable` is unset or `true`, the key is absent from `Options.Resolutions`, and the key is not the implicit `{{PROJECT_PATH}}`. The error lists every missing key in alphabetical order.
 - Archive body contains a `{{KEY}}` that the manifest does not declare. The error lists every undeclared key in alphabetical order.
 - Archive entries whose names escape the staging base (containing `..` components or an absolute-path prefix). The `os.Root` handle rejects any path that would land outside the base. No temp file is created.
-- Archive entries whose decompressed size exceeds `maxZipEntryBytes` (512 MiB). `readZipFile` checks both the declared `UncompressedSize64` and the actual post-decode byte count. A misdeclared size does not slip through.
+- Archive entries whose decompressed size exceeds `maxZipEntryBytes` (512 MiB). Both passes check the declared `UncompressedSize64` up front and the actual post-decode byte count after streaming. A misdeclared size does not slip through.
+- Archives whose aggregate decompressed payload exceeds `maxArchiveUncompressedBytes` (4 GiB). Enforced in both passes of `loadArchive` so an archive that misdeclares per-entry sizes between passes cannot slip through the cap.
 
 #### Not covered
 
@@ -94,7 +96,7 @@ The manifest-is-authoritative design avoids that tradeoff entirely on the resolu
 
 A bare-sibling temp path sits on the wrong side of the boundary when a destination's parent is a symlink to another volume (e.g. `~/.claude/file-history` on an external disk). That would fail mid-import with `EXDEV`.
 
-Project, memory, file-history, and session-keyed writes route through an `os.Root` handle opened on the staging base. A path-escaping entry is rejected before any write. `stageIntoRoot` writes through the root. `assertWithinRoot` is the containment gate for the sibling-temp writers (`stageFileHistory`, `stageSessionKeyedFile`) that must keep the layout `SafeRenamePromoter` requires.
+Project, memory, file-history, and session-keyed writes route through an `os.Root` handle opened on the staging base. A path-escaping entry is rejected before any write. `streamResolveIntoRoot` opens the root and writes through it. `assertWithinRoot` is the containment gate for the sibling-temp writers (`stageFileHistoryFromZip`, `stageSessionKeyedFileFromZip`) that must keep the layout `SafeRenamePromoter` requires.
 
 `importer.go:stagingTempPath` resolves the parent directory of each final destination through any symlinks before forming the temp path. Temp and final are then siblings of the resolved parent and always share a filesystem.
 
@@ -132,7 +134,7 @@ The session-keyed prefixes are staged alongside the existing ones:
 - `plugins-data/` staged to `~/.claude/plugins/data/`
 - `tasks/` staged to `~/.claude/tasks/`
 
-The prefix-to-destination mapping is owned by `transport.SessionKeyedTargets` (see [`internal/transport/README.md`](../transport/README.md)). This package does not hard-code any of the prefixes. Dispatch inside `stageArchiveEntries` runs one loop (`dispatchSessionKeyed`) that walks the transport registry and routes an entry to `stageSessionKeyedFile` on the first `ZipPrefix` match.
+The prefix-to-destination mapping is owned by `transport.SessionKeyedTargets` (see [`internal/transport/README.md`](../transport/README.md)). This package does not hard-code any of the prefixes. Dispatch inside `stageArchiveEntries` runs one loop (`dispatchSessionKeyed`) that walks the transport registry and routes an entry to `stageSessionKeyedFileFromZip` on the first `ZipPrefix` match.
 
 There are no per-group staging helpers. The unified `importPlan.sessionKeyedStagedFiles` slice accumulates every session-keyed entry regardless of group, and the same slice drives promotion and cleanup.
 
@@ -165,12 +167,11 @@ File-history snapshots are opaque byte streams. See [`docs/architecture.md`](../
 
 #### Handled
 
-- `cc-port import` writes snapshots back to disk as the opaque bytes the archive carried.
-- `ResolvePlaceholders` still runs over every entry for compatibility with older archives. A `{{KEY}}` that somehow survived inside a snapshot body will still be substituted. On snapshots produced by current cc-port the pass is a no-op because no tokens are present.
+- `cc-port import` streams snapshots back to disk byte-for-byte. No placeholder resolution runs over their bodies: the opacity contract says snapshot bytes are not inspected or rewritten, and that applies on the import side the same as it does on the export and move sides.
 
 #### Refused
 
-- None at runtime. File-history entries reach `stageFileHistory` only after the closed-contract pre-flight in §Import contract has passed.
+- None at runtime. File-history entries reach `stageFileHistoryFromZip` only after the closed-contract pre-flight in §Import contract has passed.
 
 #### Not covered
 
@@ -188,7 +189,8 @@ Unit tests in `importer_test.go` and `resolve_test.go`. Coverage:
 - conflict refusal on pre-existing encoded directories.
 - zip-slip rejection (`..`-escaping entry).
 - absolute-entry rejection.
-- oversized-entry rejection (`readZipFile` 512 MiB cap, built from a 600 MiB archive that skips under `go test -short`).
+- oversized-entry rejection (512 MiB per-entry cap, built from a 600 MiB archive that skips under `go test -short`).
+- streaming placeholder replacer: passthrough when resolutions are empty, single and boundary positions, longest-match across prefix keys, and token straddling a buffered-reader fill boundary (chunk-reader wrapper).
 
 Fuzz target in `resolve_fuzz_test.go`. `FuzzResolvePlaceholders` asserts no-panic, empty-map identity, absent-key identity, and the length-accounting invariant `len(out) == len(in) + count*(len(value)-len(key))`.
 

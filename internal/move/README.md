@@ -25,7 +25,9 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
 
 `rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` (settings, the session-keyed groups) routes through it so the rollback tracker sees pre-write bytes consistently.
 
-`snapshotPaths(locations)` enumerates every snapshot path under `locations.FileHistoryDirs`. Contents are never read; only path discovery. The returned length equals the dry-run `plan.ReplacementsByCategory["file-history-snapshots"]`. `DryRun`'s counter and `Apply`'s preservation warning call it so both stay in lock-step off one enumeration. The helper is unexported; the black-box test file reaches it through a `_test.go` binding.
+`snapshotPaths(ctx, locations)` enumerates every snapshot path under `locations.FileHistoryDirs`. Contents are never read; only path discovery. The returned length equals the dry-run `plan.ReplacementsByCategory["file-history-snapshots"]`. `DryRun`'s counter and `Apply`'s preservation warning call it so both stay in lock-step off one enumeration. `ctx` is checked at the top of the outer loop and inside the `listFilesRecursive` walk so a long enumeration aborts within one iteration. The helper is unexported; the black-box test file reaches it through a `_test.go` binding.
+
+`rewriteHistoryFile` picks the rollback snapshot route by `history.jsonl` size. Files under `siblingBackupThreshold` (1 MiB) take the in-memory route via `tracker.save`; larger files take the on-disk `saveToSibling` route so the original never lands whole in RAM. Both routes share `rewrite.StreamHistoryJSONL` for the actual rewrite, so behavior parity between the two sizes is guaranteed.
 
 ## Contracts
 

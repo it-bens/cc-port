@@ -24,7 +24,7 @@ var importCmd = &cobra.Command{
 	Short: "Import a project from a cc-port ZIP archive",
 	Long:  "Imports Claude Code project data from a ZIP archive into the given target path.",
 	Args:  cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		archivePath := args[0]
 		targetPath, err := claude.ResolveProjectPath(args[1])
 		if err != nil {
@@ -64,7 +64,7 @@ var importCmd = &cobra.Command{
 			Resolutions: resolutions,
 		}
 
-		if err := importer.Run(claudeHome, importOptions); err != nil {
+		if err := importer.Run(cmd.Context(), claudeHome, importOptions); err != nil {
 			return fmt.Errorf("import: %w", err)
 		}
 

@@ -3,11 +3,14 @@ package importer
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -40,6 +43,12 @@ const stagingSuffix = ".cc-port-import.tmp"
 // orders of magnitude above any real transcript and still rejects every
 // known zip bomb payload.
 const maxZipEntryBytes = 512 << 20
+
+// maxArchiveUncompressedBytes caps the aggregate decompressed size of one
+// import archive. Per-entry caps alone do not prevent a crafted archive
+// with N entries of maxZipEntryBytes each from exhausting memory and disk
+// before any individual check fires.
+const maxArchiveUncompressedBytes = 4 << 30
 
 // stagingTempPath returns the temp path used to stage finalPath before
 // atomic promotion. The temp is formed inside the symlink-resolved parent
@@ -100,19 +109,29 @@ type Options struct {
 	renameHook func(oldpath, newpath string) error
 }
 
-// archiveEntry is one decoded non-metadata ZIP entry, holding the raw body
-// content after placeholder resolution has been applied.
-type archiveEntry struct {
-	name    string
-	content []byte
+// archiveClassification captures the data runPreflight needs without
+// retaining entry bodies: which declared keys appear in the archive (so the
+// missing-resolution check can skip keys the archive never embeds), and
+// which undeclared upper-snake tokens appear (so a tampered archive
+// carrying an unlisted placeholder is rejected).
+type archiveClassification struct {
+	presentDeclaredKeys map[string]struct{}
+	undeclaredTokens    map[string]struct{}
 }
 
 // Run imports a cc-port ZIP archive into claudeHome. Acquires the claudeHome
 // lock, validates resolutions and staging parents up front, then reads and
 // stages the archive. SafeRenamePromoter promotes all staged temps atomically
 // and rolls back on any rename failure.
-func Run(claudeHome *claude.Home, importOptions Options) error {
+func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("canceled: %w", err)
+	}
 	return lock.WithLock(claudeHome, func() error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("canceled: %w", err)
+		}
+
 		if err := ValidateResolutions(importOptions.Resolutions); err != nil {
 			return fmt.Errorf("validate resolutions: %w", err)
 		}
@@ -126,24 +145,28 @@ func Run(claudeHome *claude.Home, importOptions Options) error {
 			return err
 		}
 
-		entries, metadata, err := loadArchive(importOptions.ArchivePath)
+		metadata, err := manifest.ReadManifestFromZip(importOptions.ArchivePath)
 		if err != nil {
-			return err
+			return fmt.Errorf("read metadata from archive: %w", err)
 		}
-
 		if _, err := manifest.ApplyCategoryEntries(metadata.Export.Categories); err != nil {
 			return fmt.Errorf("manifest categories: %w", err)
 		}
 
-		resolutions := withProjectPath(importOptions.Resolutions, importOptions.TargetPath)
-
-		if err := runPreflight(entries, metadata, resolutions); err != nil {
+		classification, err := classifyArchive(ctx, importOptions.ArchivePath, metadata)
+		if err != nil {
 			return err
 		}
 
-		resolveEntryContents(entries, resolutions)
+		resolutions := withProjectPath(importOptions.Resolutions, importOptions.TargetPath)
 
-		plan, err := buildImportPlan(claudeHome, importOptions.TargetPath, encodedProjectDir, entries)
+		if err := runPreflight(classification, metadata, resolutions); err != nil {
+			return err
+		}
+
+		plan, err := buildImportPlan(
+			ctx, claudeHome, importOptions.ArchivePath, importOptions.TargetPath, encodedProjectDir, resolutions,
+		)
 		if err != nil {
 			// Clean up whatever temp paths the plan managed to create before
 			// the error. buildImportPlan always returns a non-nil plan
@@ -159,31 +182,77 @@ func Run(claudeHome *claude.Home, importOptions Options) error {
 	})
 }
 
-func loadArchive(archivePath string) ([]archiveEntry, *manifest.Metadata, error) {
+// classifyArchive is pass one of the two-pass archive read. It opens the
+// archive, walks each non-metadata entry, and builds an archiveClassification
+// (which declared keys appear, which undeclared upper-snake tokens appear)
+// without retaining any entry body. Enforces both the per-entry cap
+// (maxZipEntryBytes) and the aggregate cap (maxArchiveUncompressedBytes).
+func classifyArchive(
+	ctx context.Context, archivePath string, metadata *manifest.Metadata,
+) (archiveClassification, error) {
+	classification := archiveClassification{
+		presentDeclaredKeys: make(map[string]struct{}),
+		undeclaredTokens:    make(map[string]struct{}),
+	}
+	declaredByKey := make(map[string]struct{}, len(metadata.Placeholders))
+	for _, placeholder := range metadata.Placeholders {
+		declaredByKey[placeholder.Key] = struct{}{}
+	}
+
 	zipReader, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open archive: %w", err)
+		return classification, fmt.Errorf("open archive: %w", err)
 	}
 	defer func() { _ = zipReader.Close() }()
 
-	metadata, err := manifest.ReadManifestFromZip(archivePath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("read metadata from archive: %w", err)
-	}
-
-	var entries []archiveEntry
+	var aggregate int64
 	for _, zipFile := range zipReader.File {
+		if err := ctx.Err(); err != nil {
+			return classification, err
+		}
 		if zipFile.Name == "metadata.xml" {
 			continue
 		}
 		content, err := readZipFile(zipFile)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read zip entry %q: %w", zipFile.Name, err)
+			return classification, fmt.Errorf("read zip entry %q: %w", zipFile.Name, err)
 		}
-		entries = append(entries, archiveEntry{name: zipFile.Name, content: content})
+		aggregate += int64(len(content))
+		if aggregate > maxArchiveUncompressedBytes {
+			return classification, fmt.Errorf(
+				"archive decompressed size exceeds %d bytes", maxArchiveUncompressedBytes,
+			)
+		}
+		recordPresentDeclaredKeys(content, declaredByKey, classification.presentDeclaredKeys)
+		recordUndeclaredTokens(content, declaredByKey, classification.undeclaredTokens)
 	}
 
-	return entries, metadata, nil
+	return classification, nil
+}
+
+// recordPresentDeclaredKeys marks each declared key that appears as a
+// literal substring in body. Mirrors anyBodyContains but updates a shared
+// set directly so the archive body can be discarded after each entry.
+func recordPresentDeclaredKeys(body []byte, declaredByKey, presentKeys map[string]struct{}) {
+	for key := range declaredByKey {
+		if _, already := presentKeys[key]; already {
+			continue
+		}
+		if bytes.Contains(body, []byte(key)) {
+			presentKeys[key] = struct{}{}
+		}
+	}
+}
+
+// recordUndeclaredTokens scans body for `{{UPPER_SNAKE}}` tokens and marks
+// each that is not in declaredByKey.
+func recordUndeclaredTokens(body []byte, declaredByKey, undeclaredTokens map[string]struct{}) {
+	for _, token := range rewrite.FindPlaceholderTokens(body) {
+		if _, isDeclared := declaredByKey[token]; isDeclared {
+			continue
+		}
+		undeclaredTokens[token] = struct{}{}
+	}
 }
 
 // withProjectPath returns a copy of resolutions that always contains an
@@ -200,16 +269,15 @@ func withProjectPath(resolutions map[string]string, targetPath string) map[strin
 	return result
 }
 
-// runPreflight fails the import if any placeholder token present in the
-// archive bodies is either declared-but-unresolved or present-but-undeclared.
-// No write has occurred at this point — aborting here leaves the destination
+// runPreflight fails the import if any placeholder token classified in
+// pass one is either declared-but-unresolved or present-but-undeclared. No
+// write has occurred at this point — aborting here leaves the destination
 // untouched.
-func runPreflight(entries []archiveEntry, metadata *manifest.Metadata, resolutions map[string]string) error {
-	bodies := make([][]byte, len(entries))
-	for index, entry := range entries {
-		bodies[index] = entry.content
-	}
-	missing, undeclared := ClassifyPlaceholders(bodies, metadata.Placeholders, resolutions)
+func runPreflight(
+	classification archiveClassification, metadata *manifest.Metadata, resolutions map[string]string,
+) error {
+	missing := classifyMissingResolutions(classification, metadata, resolutions)
+	undeclared := sortedKeys(classification.undeclaredTokens)
 	if len(missing) == 0 && len(undeclared) == 0 {
 		return nil
 	}
@@ -228,14 +296,44 @@ func runPreflight(entries []archiveEntry, metadata *manifest.Metadata, resolutio
 	return fmt.Errorf("archive preflight: %s", strings.Join(parts, "; "))
 }
 
-// resolveEntryContents applies ResolvePlaceholders to each archive entry in
-// place. Separated from stage so that the pre-flight gate operates on the
-// raw archive bytes (where the placeholder tokens are visible for
-// classification).
-func resolveEntryContents(entries []archiveEntry, resolutions map[string]string) {
-	for index := range entries {
-		entries[index].content = ResolvePlaceholders(entries[index].content, resolutions)
+// classifyMissingResolutions mirrors ClassifyPlaceholders's missing-key
+// logic over the streamed classification rather than retained bodies.
+// Declared keys the archive never embeds stay out of the result even when
+// the caller did not provide a resolution for them.
+func classifyMissingResolutions(
+	classification archiveClassification, metadata *manifest.Metadata, resolutions map[string]string,
+) []string {
+	var missing []string
+	for _, placeholder := range metadata.Placeholders {
+		if placeholder.Resolvable != nil && !*placeholder.Resolvable {
+			continue
+		}
+		if _, isResolved := resolutions[placeholder.Key]; isResolved {
+			continue
+		}
+		if placeholder.Key == ProjectPathKey {
+			continue
+		}
+		if _, present := classification.presentDeclaredKeys[placeholder.Key]; !present {
+			continue
+		}
+		missing = append(missing, placeholder.Key)
 	}
+	sort.Strings(missing)
+	return missing
+}
+
+// sortedKeys returns the keys of set in deterministic, alphabetical order.
+func sortedKeys(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // importPlan records every staged artifact and the final destination it
@@ -331,72 +429,134 @@ func newImportPlan(claudeHome *claude.Home, encodedProjectDir string) (*importPl
 	}, nil
 }
 
-// stageArchiveEntries routes each entry to its staging helper, populating the
-// plan's slice fields in place. It returns the accumulated history chunks and
-// the raw config block so buildImportPlan can post-process them after all
-// entries have been staged.
+// stageArchiveEntries is pass two of the two-pass archive read. It re-opens
+// the archive and routes each non-metadata entry to the matching staging
+// helper. Most entries stream directly from the ZIP entry reader to their
+// staging temp; only the two in-memory accumulators (history appends and
+// the config block) buffer a whole body. Peak memory is bounded by the
+// largest of those two entries, not by the archive size.
+//
+// The aggregate cap is enforced a second time using actual bytes observed
+// in-stream, not the zip central-directory's declared sizes, so a crafted
+// archive that misdeclares sizes cannot slip through.
 func stageArchiveEntries(
+	ctx context.Context,
 	claudeHome *claude.Home,
 	plan *importPlan,
-	entries []archiveEntry,
+	archivePath string,
+	resolutions map[string]string,
 ) (historyAppends [][]byte, configBlock []byte, err error) {
-	for _, entry := range entries {
-		if handled, err := dispatchSessionKeyed(claudeHome, plan, entry); err != nil {
-			return nil, nil, err
-		} else if handled {
+	zipReader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open archive: %w", err)
+	}
+	defer func() { _ = zipReader.Close() }()
+
+	var aggregate int64
+	for _, zipFile := range zipReader.File {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, ctxErr
+		}
+		if zipFile.Name == "metadata.xml" {
 			continue
 		}
-		switch {
-		case strings.HasPrefix(entry.name, "sessions/"):
-			if err := stageProjectFile(plan.tempProjectDir, entry.name, "sessions/", entry.content); err != nil {
-				return nil, nil, err
-			}
-		case strings.HasPrefix(entry.name, "memory/"):
-			if err := stageMemoryFile(plan.tempProjectDir, entry.name, entry.content); err != nil {
-				return nil, nil, err
-			}
-		case entry.name == "history/history.jsonl":
-			historyAppends = append(historyAppends, entry.content)
-		case strings.HasPrefix(entry.name, "file-history/"):
-			staged, err := stageFileHistory(claudeHome.FileHistoryDir(), entry.name, entry.content)
-			if err != nil {
-				return nil, nil, err
-			}
-			plan.fileHistoryFiles = append(plan.fileHistoryFiles, staged)
-		case entry.name == "config.json":
-			configBlock = entry.content
-		default:
-			return nil, nil, fmt.Errorf("unknown archive entry: %q", entry.name)
+		entryBytes, newAppends, newConfig, routeErr := routeArchiveEntry(
+			claudeHome, plan, zipFile, resolutions, historyAppends, configBlock,
+		)
+		if routeErr != nil {
+			return nil, nil, routeErr
+		}
+		historyAppends = newAppends
+		configBlock = newConfig
+		aggregate += entryBytes
+		if aggregate > maxArchiveUncompressedBytes {
+			return nil, nil, fmt.Errorf(
+				"archive decompressed size exceeds %d bytes", maxArchiveUncompressedBytes,
+			)
 		}
 	}
 	return historyAppends, configBlock, nil
 }
 
-// dispatchSessionKeyed stages entry against the first matching ZipPrefix in
-// transport.SessionKeyedTargets. First prefix match wins.
-func dispatchSessionKeyed(claudeHome *claude.Home, plan *importPlan, entry archiveEntry) (bool, error) {
-	for _, target := range transport.SessionKeyedTargets {
-		if !strings.HasPrefix(entry.name, target.ZipPrefix) {
-			continue
-		}
-		staged, err := stageSessionKeyedFile(claudeHome, target, entry.name, entry.content)
-		if err != nil {
-			return true, err
-		}
-		plan.sessionKeyedStagedFiles = append(plan.sessionKeyedStagedFiles, staged)
-		return true, nil
+// routeArchiveEntry dispatches one archive entry to the matching staging
+// helper. Returns the number of uncompressed bytes observed so the caller
+// can tally the aggregate-cap counter.
+func routeArchiveEntry(
+	claudeHome *claude.Home,
+	plan *importPlan,
+	zipFile *zip.File,
+	resolutions map[string]string,
+	historyAppends [][]byte,
+	configBlock []byte,
+) (int64, [][]byte, []byte, error) {
+	name := zipFile.Name
+	if handled, bytesRead, err := dispatchSessionKeyed(claudeHome, plan, zipFile, resolutions); err != nil {
+		return bytesRead, historyAppends, configBlock, err
+	} else if handled {
+		return bytesRead, historyAppends, configBlock, nil
 	}
-	return false, nil
+	switch {
+	case strings.HasPrefix(name, "sessions/"):
+		bytesRead, err := stageProjectFileFromZip(plan.tempProjectDir, zipFile, "sessions/", resolutions)
+		return bytesRead, historyAppends, configBlock, err
+	case strings.HasPrefix(name, "memory/"):
+		bytesRead, err := stageMemoryFileFromZip(plan.tempProjectDir, zipFile, resolutions)
+		return bytesRead, historyAppends, configBlock, err
+	case name == "history/history.jsonl":
+		content, bytesRead, err := readAndResolve(zipFile, resolutions)
+		if err != nil {
+			return bytesRead, historyAppends, configBlock, err
+		}
+		return bytesRead, append(historyAppends, content), configBlock, nil
+	case strings.HasPrefix(name, "file-history/"):
+		staged, bytesRead, err := stageFileHistoryFromZip(claudeHome.FileHistoryDir(), zipFile)
+		if err != nil {
+			return bytesRead, historyAppends, configBlock, err
+		}
+		plan.fileHistoryFiles = append(plan.fileHistoryFiles, staged)
+		return bytesRead, historyAppends, configBlock, nil
+	case name == "config.json":
+		content, bytesRead, err := readAndResolve(zipFile, resolutions)
+		if err != nil {
+			return bytesRead, historyAppends, configBlock, err
+		}
+		return bytesRead, historyAppends, content, nil
+	default:
+		return 0, historyAppends, configBlock, fmt.Errorf("unknown archive entry: %q", name)
+	}
 }
 
-// buildImportPlan routes each archive entry to its staged temp destination
-// and writes it there. Caller must either call promotePlan (success path)
-// or plan.cleanupTemps (failure path).
+// dispatchSessionKeyed streams one session-keyed entry against the first
+// matching ZipPrefix in transport.SessionKeyedTargets. First prefix match
+// wins. Returns (handled, bytesRead, err).
+func dispatchSessionKeyed(
+	claudeHome *claude.Home, plan *importPlan, zipFile *zip.File, resolutions map[string]string,
+) (bool, int64, error) {
+	for _, target := range transport.SessionKeyedTargets {
+		if !strings.HasPrefix(zipFile.Name, target.ZipPrefix) {
+			continue
+		}
+		staged, bytesRead, err := stageSessionKeyedFileFromZip(claudeHome, target, zipFile, resolutions)
+		if err != nil {
+			return true, bytesRead, err
+		}
+		plan.sessionKeyedStagedFiles = append(plan.sessionKeyedStagedFiles, staged)
+		return true, bytesRead, nil
+	}
+	return false, 0, nil
+}
+
+// buildImportPlan drives pass two: it creates staging temps, streams each
+// archive entry into its destination, and post-processes the accumulated
+// history and config bodies. Callers invoke promotePlan on success or
+// plan.cleanupTemps on failure.
 func buildImportPlan(
+	ctx context.Context,
 	claudeHome *claude.Home,
+	archivePath string,
 	targetPath string,
 	encodedProjectDir string,
-	entries []archiveEntry,
+	resolutions map[string]string,
 ) (*importPlan, error) {
 	plan, err := newImportPlan(claudeHome, encodedProjectDir)
 	if err != nil {
@@ -408,7 +568,7 @@ func buildImportPlan(
 	}
 	plan.projectDirCreated = true
 
-	historyAppends, configBlock, err := stageArchiveEntries(claudeHome, plan, entries)
+	historyAppends, configBlock, err := stageArchiveEntries(ctx, claudeHome, plan, archivePath, resolutions)
 	if err != nil {
 		return plan, err
 	}
@@ -420,33 +580,6 @@ func buildImportPlan(
 		return plan, err
 	}
 	return plan, nil
-}
-
-// stageIntoRoot writes content to relativePath under baseDir through an
-// os.Root handle. The handle rejects every path that escapes baseDir via
-// ".." or via a symlink, so a malicious zip entry name cannot land outside
-// the staging tree. Parent directories are created inside the root.
-func stageIntoRoot(baseDir, relativePath string, content []byte) error {
-	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
-		return fmt.Errorf("create staging base %q: %w", baseDir, err)
-	}
-
-	root, err := os.OpenRoot(baseDir)
-	if err != nil {
-		return fmt.Errorf("open staging root %q: %w", baseDir, err)
-	}
-	defer func() { _ = root.Close() }()
-
-	relativePath = filepath.Clean(relativePath)
-	if dir := filepath.Dir(relativePath); dir != "." {
-		if err := root.MkdirAll(dir, dirPerm); err != nil {
-			return fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
-		}
-	}
-	if err := root.WriteFile(relativePath, content, filePerm); err != nil {
-		return fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
-	}
-	return nil
 }
 
 // assertWithinRoot verifies that relativePath would be addressable via an
@@ -472,57 +605,269 @@ func assertWithinRoot(baseDir, relativePath string) error {
 	return nil
 }
 
-func stageProjectFile(tempProjectDir, zipName, zipPrefix string, content []byte) error {
-	relativePath := strings.TrimPrefix(zipName, zipPrefix)
-	return stageIntoRoot(tempProjectDir, relativePath, content)
+// stageProjectFileFromZip streams one sessions/ entry directly into the
+// project staging tree, resolving placeholders on the way. Returns the
+// number of bytes read from the zip entry.
+func stageProjectFileFromZip(
+	tempProjectDir string, zipFile *zip.File, zipPrefix string, resolutions map[string]string,
+) (int64, error) {
+	relativePath := strings.TrimPrefix(zipFile.Name, zipPrefix)
+	return streamResolveIntoRoot(tempProjectDir, relativePath, zipFile, resolutions)
 }
 
-func stageMemoryFile(tempProjectDir, zipName string, content []byte) error {
-	relativePath := strings.TrimPrefix(zipName, "memory/")
-	return stageIntoRoot(tempProjectDir, filepath.Join("memory", relativePath), content)
+// stageMemoryFileFromZip streams one memory/ entry directly into the
+// project staging tree under the memory/ subdirectory.
+func stageMemoryFileFromZip(
+	tempProjectDir string, zipFile *zip.File, resolutions map[string]string,
+) (int64, error) {
+	relativePath := strings.TrimPrefix(zipFile.Name, "memory/")
+	return streamResolveIntoRoot(
+		tempProjectDir, filepath.Join("memory", relativePath), zipFile, resolutions,
+	)
 }
 
-// stageFileHistory writes a file-history/<uuid>/<hash>@vN entry to a sibling
-// temp path of its final destination. The os.Root gate on the file-history
-// base rejects escapes before any write; the actual write uses the
-// sibling-temp layout required by SafeRenamePromoter.
-func stageFileHistory(fileHistoryBaseDir, zipName string, content []byte) (stagedFile, error) {
-	relativePath := strings.TrimPrefix(zipName, "file-history/")
+// stageFileHistoryFromZip streams a file-history/<uuid>/<hash>@vN entry to
+// a sibling temp path of its final destination. File-history bytes are
+// opaque by policy: no placeholder resolution runs over them. The os.Root
+// gate on the file-history base rejects escapes before any write.
+func stageFileHistoryFromZip(
+	fileHistoryBaseDir string, zipFile *zip.File,
+) (stagedFile, int64, error) {
+	relativePath := strings.TrimPrefix(zipFile.Name, "file-history/")
 	if err := assertWithinRoot(fileHistoryBaseDir, relativePath); err != nil {
-		return stagedFile{}, err
+		return stagedFile{}, 0, err
 	}
 	finalPath := filepath.Join(fileHistoryBaseDir, relativePath)
 	tempPath, err := stagingTempPath(finalPath)
 	if err != nil {
-		return stagedFile{}, err
+		return stagedFile{}, 0, err
 	}
-	if err := writeStagedFile(tempPath, content); err != nil {
-		return stagedFile{}, err
+	bytesRead, err := streamVerbatimToTemp(tempPath, zipFile)
+	if err != nil {
+		return stagedFile{}, bytesRead, err
 	}
-	return stagedFile{finalPath: finalPath, tempPath: tempPath}, nil
+	return stagedFile{finalPath: finalPath, tempPath: tempPath}, bytesRead, nil
 }
 
-// stageSessionKeyedFile stages one session-keyed archive entry to a sibling
-// temp path under the target group's home base directory. The returned
-// stagedFile is tagged with the target's Group name so downstream diagnostics
-// can attribute the entry to its originating registry row.
-func stageSessionKeyedFile(
-	claudeHome *claude.Home, target transport.SessionKeyedTarget, zipName string, content []byte,
-) (stagedFile, error) {
-	relative := strings.TrimPrefix(zipName, target.ZipPrefix)
+// stageSessionKeyedFileFromZip streams one session-keyed archive entry to
+// a sibling temp path under the target group's home base directory.
+// Placeholder resolution runs in-stream.
+func stageSessionKeyedFileFromZip(
+	claudeHome *claude.Home, target transport.SessionKeyedTarget,
+	zipFile *zip.File, resolutions map[string]string,
+) (stagedFile, int64, error) {
+	relative := strings.TrimPrefix(zipFile.Name, target.ZipPrefix)
 	baseDir := target.HomeBaseDir(claudeHome)
 	if err := assertWithinRoot(baseDir, relative); err != nil {
-		return stagedFile{}, err
+		return stagedFile{}, 0, err
 	}
 	finalPath := filepath.Join(baseDir, relative)
 	tempPath, err := stagingTempPath(finalPath)
 	if err != nil {
-		return stagedFile{}, err
+		return stagedFile{}, 0, err
 	}
-	if err := writeStagedFile(tempPath, content); err != nil {
-		return stagedFile{}, err
+	bytesRead, err := streamResolveToTemp(tempPath, zipFile, resolutions)
+	if err != nil {
+		return stagedFile{}, bytesRead, err
 	}
-	return stagedFile{group: target.Group, finalPath: finalPath, tempPath: tempPath}, nil
+	return stagedFile{group: target.Group, finalPath: finalPath, tempPath: tempPath}, bytesRead, nil
+}
+
+// streamResolveIntoRoot streams a zip entry through the per-entry cap and
+// ResolvePlaceholdersStream into relativePath under baseDir, using an
+// os.Root handle to contain path escapes. The handle rejects `..` and
+// absolute-path prefixes before any write, so a malicious zip entry name
+// cannot land outside baseDir.
+func streamResolveIntoRoot(
+	baseDir, relativePath string, zipFile *zip.File, resolutions map[string]string,
+) (int64, error) {
+	relativePath = filepath.Clean(relativePath)
+	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
+		return 0, fmt.Errorf("create staging base %q: %w", baseDir, err)
+	}
+	root, err := os.OpenRoot(baseDir)
+	if err != nil {
+		return 0, fmt.Errorf("open staging root %q: %w", baseDir, err)
+	}
+	defer func() { _ = root.Close() }()
+
+	if dir := filepath.Dir(relativePath); dir != "." {
+		if err := root.MkdirAll(dir, dirPerm); err != nil {
+			return 0, fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+		}
+	}
+
+	writer, err := root.OpenFile(relativePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
+	if err != nil {
+		return 0, fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+	}
+	defer func() { _ = writer.Close() }()
+
+	bytesRead, err := streamResolveEntry(zipFile, writer, resolutions)
+	if err != nil {
+		return bytesRead, err
+	}
+	if err := writer.Close(); err != nil {
+		return bytesRead, fmt.Errorf("close staged %q: %w", relativePath, err)
+	}
+	return bytesRead, nil
+}
+
+// streamResolveToTemp streams a zip entry through ResolvePlaceholdersStream
+// into the given sibling temp path (used by file-history and session-keyed
+// staging).
+func streamResolveToTemp(
+	tempPath string, zipFile *zip.File, resolutions map[string]string,
+) (int64, error) {
+	if err := os.MkdirAll(filepath.Dir(tempPath), dirPerm); err != nil {
+		return 0, fmt.Errorf("create directories for %q: %w", tempPath, err)
+	}
+	//nolint:gosec // G304: tempPath constructed from resolved, containment-checked staging base
+	writer, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
+	if err != nil {
+		return 0, fmt.Errorf("create staging temp %q: %w", tempPath, err)
+	}
+	defer func() { _ = writer.Close() }()
+
+	bytesRead, err := streamResolveEntry(zipFile, writer, resolutions)
+	if err != nil {
+		return bytesRead, err
+	}
+	if err := writer.Close(); err != nil {
+		return bytesRead, fmt.Errorf("close staging temp %q: %w", tempPath, err)
+	}
+	return bytesRead, nil
+}
+
+// streamVerbatimToTemp copies a zip entry byte-for-byte to the given
+// sibling temp path without any placeholder resolution. Used for
+// file-history snapshots, whose contents are opaque by policy.
+func streamVerbatimToTemp(tempPath string, zipFile *zip.File) (int64, error) {
+	if err := os.MkdirAll(filepath.Dir(tempPath), dirPerm); err != nil {
+		return 0, fmt.Errorf("create directories for %q: %w", tempPath, err)
+	}
+	//nolint:gosec // G304: tempPath constructed from resolved, containment-checked staging base
+	writer, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, filePerm)
+	if err != nil {
+		return 0, fmt.Errorf("create staging temp %q: %w", tempPath, err)
+	}
+	defer func() { _ = writer.Close() }()
+
+	reader, capped, err := openCappedZipEntry(zipFile)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = reader.Close() }()
+
+	bytesRead, err := io.Copy(writer, capped)
+	if err != nil {
+		return bytesRead, fmt.Errorf("stream zip entry %q: %w", zipFile.Name, err)
+	}
+	if err := enforcePostDecodeCap(zipFile.Name, bytesRead); err != nil {
+		return bytesRead, err
+	}
+	if err := writer.Close(); err != nil {
+		return bytesRead, fmt.Errorf("close staging temp %q: %w", tempPath, err)
+	}
+	return bytesRead, nil
+}
+
+// streamResolveEntry drives the common open + cap + resolve pipeline for
+// every path that writes a resolved body. Returns the number of bytes
+// observed from the zip entry.
+func streamResolveEntry(
+	zipFile *zip.File, writer io.Writer, resolutions map[string]string,
+) (int64, error) {
+	reader, capped, err := openCappedZipEntry(zipFile)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = reader.Close() }()
+
+	counter := &countingReader{inner: capped}
+	if err := ResolvePlaceholdersStream(counter, writer, resolutions); err != nil {
+		return counter.bytesRead, fmt.Errorf("resolve zip entry %q: %w", zipFile.Name, err)
+	}
+	if err := enforcePostDecodeCap(zipFile.Name, counter.bytesRead); err != nil {
+		return counter.bytesRead, err
+	}
+	return counter.bytesRead, nil
+}
+
+// openCappedZipEntry opens zipFile, rejects it up-front if its declared
+// UncompressedSize64 exceeds the per-entry cap, and wraps the read side in
+// an io.LimitReader sized to one byte beyond the cap. The post-decode
+// counter check catches archives that misdeclare the size.
+func openCappedZipEntry(zipFile *zip.File) (io.ReadCloser, io.Reader, error) {
+	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) {
+		return nil, nil, fmt.Errorf(
+			"archive entry %q exceeds %d-byte limit (declared %d)",
+			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
+		)
+	}
+	readCloser, err := zipFile.Open()
+	if err != nil {
+		return nil, nil, fmt.Errorf("open zip entry %q: %w", zipFile.Name, err)
+	}
+	capped := io.LimitReader(readCloser, int64(maxZipEntryBytes)+1)
+	return readCloser, capped, nil
+}
+
+// enforcePostDecodeCap rejects entries whose actual decoded size exceeds
+// the per-entry cap, catching archives that misdeclare UncompressedSize64.
+func enforcePostDecodeCap(name string, bytesRead int64) error {
+	if bytesRead > int64(maxZipEntryBytes) {
+		return fmt.Errorf(
+			"archive entry %q exceeds %d-byte limit (post-decode)",
+			name, maxZipEntryBytes,
+		)
+	}
+	return nil
+}
+
+// countingReader wraps an io.Reader and remembers the total number of
+// bytes successfully read. Used to attribute per-entry and aggregate
+// cap bookkeeping to actual observed bytes, not the archive's declared
+// sizes.
+type countingReader struct {
+	inner     io.Reader
+	bytesRead int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.inner.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
+}
+
+// readAndResolve reads one zip entry whole and applies ResolvePlaceholders.
+// Used for history appends and the config block, both of which feed into
+// in-memory merge logic. Enforces the per-entry cap in-stream.
+func readAndResolve(zipFile *zip.File, resolutions map[string]string) ([]byte, int64, error) {
+	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) {
+		return nil, 0, fmt.Errorf(
+			"archive entry %q exceeds %d-byte limit (declared %d)",
+			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
+		)
+	}
+	readCloser, err := zipFile.Open()
+	if err != nil {
+		return nil, 0, fmt.Errorf("open zip entry %q: %w", zipFile.Name, err)
+	}
+	defer func() { _ = readCloser.Close() }()
+
+	capped := io.LimitReader(readCloser, int64(maxZipEntryBytes)+1)
+	data, err := io.ReadAll(capped)
+	if err != nil {
+		return nil, int64(len(data)), fmt.Errorf("read zip entry %q: %w", zipFile.Name, err)
+	}
+	if int64(len(data)) > int64(maxZipEntryBytes) {
+		return nil, int64(len(data)), fmt.Errorf(
+			"archive entry %q exceeds %d-byte limit (post-decode)",
+			zipFile.Name, maxZipEntryBytes,
+		)
+	}
+	return ResolvePlaceholders(data, resolutions), int64(len(data)), nil
 }
 
 func stageHistoryIfNeeded(plan *importPlan, appends [][]byte) error {

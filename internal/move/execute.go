@@ -1,6 +1,7 @@
 package move
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -19,11 +20,16 @@ import (
 // state: on any failure, newly created paths are removed and any globally
 // modified files are restored from the tracker.
 func executeMove(
+	ctx context.Context,
 	claudeHome *claude.Home,
 	locations *claude.ProjectLocations,
 	oldProjectDir, newProjectDir string,
 	moveOptions Options,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	var createdPaths []string
 	success := false
 	defer func() {
@@ -35,23 +41,23 @@ func executeMove(
 	}()
 
 	createdPaths = append(createdPaths, newProjectDir)
-	if err := fsutil.CopyDir(oldProjectDir, newProjectDir); err != nil {
+	if err := fsutil.CopyDir(ctx, oldProjectDir, newProjectDir); err != nil {
 		return fmt.Errorf("copy project directory: %w", err)
 	}
 
 	tracker := &globalFileTracker{}
 
-	if err := rewriteNewProjectDir(newProjectDir, moveOptions); err != nil {
+	if err := rewriteNewProjectDir(ctx, newProjectDir, moveOptions); err != nil {
 		return err
 	}
 
-	if err := rewriteGlobalFiles(claudeHome, locations, moveOptions, tracker); err != nil {
+	if err := rewriteGlobalFiles(ctx, claudeHome, locations, moveOptions, tracker); err != nil {
 		return errors.Join(err, tracker.restore())
 	}
 
 	if !moveOptions.RefsOnly {
 		createdPaths = append(createdPaths, moveOptions.NewPath)
-		if err := fsutil.CopyDir(moveOptions.OldPath, moveOptions.NewPath); err != nil {
+		if err := fsutil.CopyDir(ctx, moveOptions.OldPath, moveOptions.NewPath); err != nil {
 			return errors.Join(fmt.Errorf("copy project on disk: %w", err), tracker.restore())
 		}
 	}
@@ -64,22 +70,41 @@ func executeMove(
 		return err
 	}
 
-	warnFileHistoryPreserved(locations, moveOptions)
+	warnFileHistoryPreserved(ctx, locations, moveOptions)
 
+	tracker.cleanupSiblings()
 	success = true
 	return nil
 }
 
+// siblingSuffix names the sibling rollback file that saveToSibling writes
+// next to any large tracked target. Kept as a constant so the test package
+// and rewriteHistoryFile agree on the name without duplicating the string.
+const siblingSuffix = ".cc-port-rollback.tmp"
+
+// siblingBackupThreshold is the size above which rewriteHistoryFile routes
+// the rollback snapshot through saveToSibling (on-disk streamed backup)
+// rather than save (in-memory bytes). 1 MiB; see spec §Move rollback tracker.
+const siblingBackupThreshold = 1 << 20
+
 // globalFileTracker records the original contents of global files so they can
-// be restored if Apply fails partway through.
+// be restored if Apply fails partway through. Two storage shapes are
+// supported: in-memory byte snapshots (save) for small files, and sibling
+// rollback files (saveToSibling) for large streamed rewrites where holding
+// the original in RAM would defeat the streaming-I/O promise.
 type globalFileTracker struct {
 	saved []savedFile
 }
 
+// savedFile records one tracked rollback target. Exactly one of data or
+// sibling carries the backup payload: when sibling is non-empty, restore
+// renames that file back onto path; otherwise it writes data through
+// SafeWriteFile.
 type savedFile struct {
-	path string
-	data []byte
-	mode os.FileMode
+	path    string
+	data    []byte
+	mode    os.FileMode
+	sibling string
 }
 
 func (t *globalFileTracker) save(path string) ([]byte, os.FileMode, error) {
@@ -91,13 +116,69 @@ func (t *globalFileTracker) save(path string) ([]byte, os.FileMode, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	t.saved = append(t.saved, savedFile{path, data, info.Mode()})
+	t.saved = append(t.saved, savedFile{path: path, data: data, mode: info.Mode()})
 	return data, info.Mode(), nil
+}
+
+// saveToSibling streams path into a sibling rollback file and registers it
+// with the tracker. The sibling lives on the same filesystem as path so
+// restore can rename it back atomically on failure; cleanupSiblings removes
+// it once Apply succeeds. Streaming keeps peak memory bounded by the
+// io.Copy buffer, not by the source file's total size.
+func (t *globalFileTracker) saveToSibling(path string) (string, os.FileMode, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", 0, fmt.Errorf("stat %s: %w", path, err)
+	}
+	source, err := os.Open(path) //nolint:gosec // G304: path constructed from trusted internal data
+	if err != nil {
+		return "", 0, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer func() { _ = source.Close() }()
+
+	sibling := path + siblingSuffix
+	//nolint:gosec // G304: sibling path constructed from trusted internal data
+	destination, err := os.OpenFile(sibling, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return "", 0, fmt.Errorf("create %s: %w", sibling, err)
+	}
+	if _, err := io.Copy(destination, source); err != nil {
+		_ = destination.Close()
+		_ = os.Remove(sibling)
+		return "", 0, fmt.Errorf("copy %s to %s: %w", path, sibling, err)
+	}
+	if err := destination.Close(); err != nil {
+		_ = os.Remove(sibling)
+		return "", 0, fmt.Errorf("close %s: %w", sibling, err)
+	}
+
+	t.saved = append(t.saved, savedFile{path: path, mode: info.Mode(), sibling: sibling})
+	return sibling, info.Mode(), nil
+}
+
+// cleanupSiblings removes every registered sibling rollback file. Called
+// from executeMove once success is certain. In-memory savedFile entries
+// (sibling == "") are skipped. os.Remove on an already-absent sibling is
+// swallowed because the post-condition (sibling absent) holds either way.
+func (t *globalFileTracker) cleanupSiblings() {
+	for _, s := range t.saved {
+		if s.sibling == "" {
+			continue
+		}
+		// sibling already gone: nothing to remove
+		_ = os.Remove(s.sibling)
+	}
 }
 
 func (t *globalFileTracker) restore() error {
 	var errs []error
 	for _, s := range t.saved {
+		if s.sibling != "" {
+			if err := os.Rename(s.sibling, s.path); err != nil {
+				errs = append(errs, fmt.Errorf("restore %s from sibling %s: %w", s.path, s.sibling, err))
+			}
+			continue
+		}
 		if err := rewrite.SafeWriteFile(s.path, s.data, s.mode); err != nil {
 			errs = append(errs, fmt.Errorf("restore %s: %w", s.path, err))
 		}
@@ -168,7 +249,7 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 // `memory/` is excluded because rewriteMemoryFilesInDir handles it separately.
 // `sessions/` is excluded because rewriteSessionFiles in rewrite_global.go
 // already rewrites those files; listing them here would double-rewrite them.
-func listTranscriptFiles(projectDir string) ([]string, error) {
+func listTranscriptFiles(ctx context.Context, projectDir string) ([]string, error) {
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("read project directory: %w", err)
@@ -176,6 +257,9 @@ func listTranscriptFiles(projectDir string) ([]string, error) {
 
 	var transcripts []string
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		name := entry.Name()
 		fullPath := filepath.Join(projectDir, name)
 		if !entry.IsDir() {
@@ -187,7 +271,7 @@ func listTranscriptFiles(projectDir string) ([]string, error) {
 		if name == "memory" || name == "sessions" {
 			continue
 		}
-		subdirFiles, err := listFilesRecursive(fullPath)
+		subdirFiles, err := listFilesRecursive(ctx, fullPath)
 		if err != nil {
 			return nil, err
 		}
@@ -197,9 +281,14 @@ func listTranscriptFiles(projectDir string) ([]string, error) {
 }
 
 // listFilesRecursive returns every file path under dir, skipping directories.
-func listFilesRecursive(dir string) ([]string, error) {
+// ctx is checked at the top of every WalkDir callback so a cancelled
+// context aborts a long enumeration within one iteration.
+func listFilesRecursive(ctx context.Context, dir string) ([]string, error) {
 	var files []string
 	walkErr := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -218,11 +307,15 @@ func listFilesRecursive(dir string) ([]string, error) {
 // snapshotPaths returns every snapshot file path under locations.FileHistoryDirs.
 // Snapshot contents are not read; path discovery only matches the opaque-bytes
 // invariant. Used by DryRun for the plan count and by Apply's preservation
-// warning so both stay in lock-step with one enumeration.
-func snapshotPaths(locations *claude.ProjectLocations) ([]string, error) {
+// warning so both stay in lock-step with one enumeration. ctx is checked at
+// the top of the outer loop as well as inside each listFilesRecursive walk.
+func snapshotPaths(ctx context.Context, locations *claude.ProjectLocations) ([]string, error) {
 	var paths []string
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
-		snapshots, err := listFilesRecursive(fileHistoryDir)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		snapshots, err := listFilesRecursive(ctx, fileHistoryDir)
 		if err != nil {
 			return nil, fmt.Errorf("walk file-history dir %s: %w", fileHistoryDir, err)
 		}
@@ -244,8 +337,10 @@ func resolveWarningWriter(moveOptions Options) io.Writer {
 // warnFileHistoryPreserved emits a warning when the project has file-history
 // snapshots. Snapshot contents are preserved verbatim; the warning surfaces
 // that the old project path may still appear inside them after a move.
-func warnFileHistoryPreserved(locations *claude.ProjectLocations, moveOptions Options) {
-	paths, err := snapshotPaths(locations)
+func warnFileHistoryPreserved(
+	ctx context.Context, locations *claude.ProjectLocations, moveOptions Options,
+) {
+	paths, err := snapshotPaths(ctx, locations)
 	if err != nil {
 		// snapshotPaths re-walks dirs that rewriteGlobalFiles already walked
 		// successfully; an error here is unexpected. Skip the warning rather

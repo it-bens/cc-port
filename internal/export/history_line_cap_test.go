@@ -41,7 +41,7 @@ func TestExport_AcceptsLargeHistoryLine(t *testing.T) {
 	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), line, 0600))
 
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
-	_, err := export.Run(claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories:  manifest.CategorySet{History: true},
@@ -62,7 +62,7 @@ func TestExport_RejectsHistoryLineOverLimit(t *testing.T) {
 	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), huge, 0600))
 
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
-	_, err := export.Run(claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories:  manifest.CategorySet{History: true},

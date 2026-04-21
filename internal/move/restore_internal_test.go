@@ -3,8 +3,10 @@ package move
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,4 +42,48 @@ func TestGlobalFileTracker_RestoreAggregatesErrors(t *testing.T) {
 	require.NoError(t, readErr)
 	require.Equal(t, "restored", string(restoredBytes),
 		"writable path must still be restored despite sibling failure")
+}
+
+func TestGlobalFileTracker_RollbackFromSibling(t *testing.T) {
+	// Arrange
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "history.jsonl")
+	original := []byte(strings.Repeat("abc\n", 100_000))
+	require.NoError(t, os.WriteFile(target, original, 0o600))
+
+	tracker := &globalFileTracker{}
+	_, _, err := tracker.saveToSibling(target)
+	require.NoError(t, err)
+
+	// Overwrite to simulate a partial rewrite.
+	require.NoError(t, os.WriteFile(target, []byte("damaged"), 0o600))
+
+	// Act
+	require.NoError(t, tracker.restore())
+
+	// Assert
+	got, err := os.ReadFile(target) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Equal(t, original, got)
+}
+
+func TestGlobalFileTracker_CleanupSiblingsRemovesBackups(t *testing.T) {
+	// Arrange
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "history.jsonl")
+	require.NoError(t, os.WriteFile(target, []byte("original"), 0o600))
+
+	tracker := &globalFileTracker{}
+	sibling, _, err := tracker.saveToSibling(target)
+	require.NoError(t, err)
+	require.FileExists(t, sibling)
+
+	// Act
+	tracker.cleanupSiblings()
+
+	// Assert
+	require.NoFileExists(t, sibling)
+	got, err := os.ReadFile(target) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Equal(t, []byte("original"), got)
 }

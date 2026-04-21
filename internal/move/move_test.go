@@ -2,6 +2,7 @@ package move_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -26,7 +27,7 @@ const (
 func TestDryRun(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	plan, err := move.DryRun(claudeHome, move.Options{
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath:            oldProjectPath,
 		NewPath:            newProjectPath,
 		RewriteTranscripts: false,
@@ -55,7 +56,7 @@ func TestDryRun(t *testing.T) {
 func TestDryRun_WithTranscripts(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	plan, err := move.DryRun(claudeHome, move.Options{
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath:            oldProjectPath,
 		NewPath:            newProjectPath,
 		RewriteTranscripts: true,
@@ -71,7 +72,7 @@ func TestDryRun_WithTranscripts(t *testing.T) {
 func TestDryRun_RefsOnly(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	plan, err := move.DryRun(claudeHome, move.Options{
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  newProjectPath,
 		RefsOnly: true,
@@ -86,7 +87,7 @@ func TestDryRun_RefsOnly(t *testing.T) {
 func TestDryRun_ProjectNotFound(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	_, err := move.DryRun(claudeHome, move.Options{
+	_, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath: "/Users/test/Projects/doesnotexist",
 		NewPath: newProjectPath,
 	})
@@ -97,7 +98,7 @@ func TestDryRun_ProjectNotFound(t *testing.T) {
 func TestApply(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:            oldProjectPath,
 		NewPath:            newProjectPath,
 		RewriteTranscripts: false,
@@ -143,7 +144,7 @@ func TestApply(t *testing.T) {
 func TestApply_RefsOnly(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  newProjectPath,
 		RefsOnly: true,
@@ -168,7 +169,7 @@ func TestApply_RefsOnly(t *testing.T) {
 func TestApply_WithTranscripts(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:            oldProjectPath,
 		NewPath:            newProjectPath,
 		RewriteTranscripts: true,
@@ -194,7 +195,7 @@ func TestDryRun_AbortsOnEncodedDirCollision(t *testing.T) {
 	occupiedDir := claudeHome.ProjectDir(collidingOther)
 	require.NoError(t, os.MkdirAll(occupiedDir, 0o750))
 
-	_, err := move.DryRun(claudeHome, move.Options{
+	_, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath: oldProjectPath,
 		NewPath: collidingPath,
 	})
@@ -209,7 +210,7 @@ func TestDryRun_AbortsWhenOldAndNewEncodeIdentically(t *testing.T) {
 	// both encode to -Users-test-Projects-my-project.
 	identicalEncoding := "/Users/test/Projects/my.project"
 
-	_, err := move.DryRun(claudeHome, move.Options{
+	_, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath: "/Users/test/Projects/my-project",
 		NewPath: identicalEncoding,
 	})
@@ -230,7 +231,7 @@ func TestApply_AbortsOnEncodedDirCollision(t *testing.T) {
 	sentinelPath := filepath.Join(occupiedDir, "sentinel.txt")
 	require.NoError(t, os.WriteFile(sentinelPath, []byte("do-not-touch"), 0600))
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  collidingPath,
 		RefsOnly: true,
@@ -267,7 +268,7 @@ func TestApply_AbortsWhenClaudeSessionIsLive(t *testing.T) {
 	before, err := os.ReadDir(oldProjectDir)
 	require.NoError(t, err)
 
-	applyErr := move.Apply(claudeHome, move.Options{
+	applyErr := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  newProjectPath,
 		RefsOnly: true,
@@ -288,7 +289,7 @@ func TestApply_AbortsWhenClaudeSessionIsLive(t *testing.T) {
 func TestDryRun_ReportsMalformedHistoryLines(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	plan, err := move.DryRun(claudeHome, move.Options{
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath: oldProjectPath,
 		NewPath: newProjectPath,
 	})
@@ -302,7 +303,7 @@ func TestApply_WarnsOnMalformedHistoryLines(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
 	var warnings bytes.Buffer
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:       oldProjectPath,
 		NewPath:       newProjectPath,
 		RefsOnly:      true,
@@ -331,7 +332,7 @@ func TestSnapshotPaths_EnumeratesFileHistoryDirs(t *testing.T) {
 	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
 	require.NoError(t, err)
 
-	paths, err := move.SnapshotPaths(locations)
+	paths, err := move.SnapshotPaths(t.Context(), locations)
 	require.NoError(t, err)
 
 	assert.Contains(t, paths, extraSnapshot,
@@ -343,10 +344,10 @@ func TestDryRun_ReportsFileHistorySnapshotCount(t *testing.T) {
 
 	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
 	require.NoError(t, err)
-	expected, err := move.SnapshotPaths(locations)
+	expected, err := move.SnapshotPaths(t.Context(), locations)
 	require.NoError(t, err)
 
-	plan, err := move.DryRun(claudeHome, move.Options{
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath: oldProjectPath,
 		NewPath: newProjectPath,
 	})
@@ -372,7 +373,7 @@ func TestApply_PreservesSnapshotBytes(t *testing.T) {
 	require.Contains(t, string(textBefore), oldProjectPath,
 		"fixture precondition: text snapshot must reference old path")
 
-	err = move.Apply(claudeHome, move.Options{
+	err = move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  newProjectPath,
 		RefsOnly: true,
@@ -395,13 +396,13 @@ func TestApply_EmitsFileHistoryWarning(t *testing.T) {
 
 	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
 	require.NoError(t, err)
-	snapshots, err := move.SnapshotPaths(locations)
+	snapshots, err := move.SnapshotPaths(t.Context(), locations)
 	require.NoError(t, err)
 	require.NotEmpty(t, snapshots,
 		"fixture precondition: must have at least one snapshot to warn about")
 
 	var warnings bytes.Buffer
-	err = move.Apply(claudeHome, move.Options{
+	err = move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:       oldProjectPath,
 		NewPath:       newProjectPath,
 		RefsOnly:      true,
@@ -419,7 +420,7 @@ func TestApply_EmitsFileHistoryWarning(t *testing.T) {
 func TestDryRun_CountsSessionKeyedReplacements(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	plan, err := move.DryRun(claudeHome, move.Options{
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
 		OldPath:  "/Users/test/Projects/myproject",
 		NewPath:  renamedProjectPath,
 		RefsOnly: true,
@@ -455,7 +456,7 @@ func TestApply_Rollback_RestoresAllShapesOnFailure(t *testing.T) {
 	// (refused by checkEncodedDirCollision before any write).
 	collidingNewPath := "/Users/test/Projects/my-project-v2"
 
-	err = move.Apply(claudeHome, move.Options{
+	err = move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  collidingNewPath,
 		RefsOnly: true,
@@ -478,7 +479,7 @@ func TestApply_Rollback_RestoresAllShapesOnFailure(t *testing.T) {
 func TestApply_RewritesTasks_SkipsSidecars(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  renamedProjectPath,
 		RefsOnly: true,
@@ -522,7 +523,7 @@ func TestApply_RewritesTasks_SkipsSidecars(t *testing.T) {
 func TestApply_RewritesPluginsData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  renamedProjectPath,
 		RefsOnly: true,
@@ -550,7 +551,7 @@ func TestApply_RewritesPluginsData(t *testing.T) {
 func TestApply_RewritesUsageData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  renamedProjectPath,
 		RefsOnly: true,
@@ -570,7 +571,7 @@ func TestApply_RewritesUsageData(t *testing.T) {
 func TestApply_RewritesTodos(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
 		NewPath:  renamedProjectPath,
 		RefsOnly: true,
@@ -633,7 +634,7 @@ func TestApply_Rollback_RestoresGlobalsOnSecondDeleteFailure(t *testing.T) {
 		_ = os.Chmod(readOnlyParent, 0o700) //nolint:gosec // G302: restore for t.TempDir cleanup
 	})
 
-	err := move.Apply(claudeHome, move.Options{
+	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldOnDiskPath,
 		NewPath:  newOnDiskPath,
 		RefsOnly: false,
@@ -667,6 +668,34 @@ func TestApply_Rollback_RestoresGlobalsOnSecondDeleteFailure(t *testing.T) {
 	_, statNewOnDiskErr := os.Stat(newOnDiskPath)
 	assert.True(t, os.IsNotExist(statNewOnDiskErr),
 		"new on-disk project dir must be torn down by executeMove's defer")
+}
+
+func TestApply_CancelsBeforeExecuteWhenContextCancelled(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := move.Apply(ctx, claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestDryRun_CancelsWhenContextCancelled(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := move.DryRun(ctx, claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 // assertSessionSubdirFilesRewritten walks the session subdirectories under

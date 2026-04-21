@@ -2,6 +2,7 @@ package rewrite_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -24,38 +25,36 @@ func splitLines(data []byte) []string {
 	return result
 }
 
-func TestHistoryJSONL(t *testing.T) {
-	t.Run("rewrites matching lines and preserves non-matching lines", assertHistoryJSONLRewritesMatching)
+// runStreamHistoryJSONL invokes StreamHistoryJSONL on input, rewriting
+// "/old/project" to "/new/project". Keeps each test focused on behaviour
+// rather than reader/writer plumbing.
+func runStreamHistoryJSONL(t *testing.T, input string) ([]byte, int, []int) {
+	t.Helper()
+	var dst bytes.Buffer
+	replaced, malformed, err := rewrite.StreamHistoryJSONL(
+		t.Context(), strings.NewReader(input), &dst, "/old/project", "/new/project",
+	)
+	require.NoError(t, err)
+	return dst.Bytes(), replaced, malformed
+}
+
+func TestStreamHistoryJSONL(t *testing.T) {
+	t.Run("rewrites matching lines and preserves non-matching lines", assertStreamHistoryJSONLRewritesMatching)
 
 	t.Run("returns zero count when no lines match", func(t *testing.T) {
-		input := []byte(`{"project":"/other/project","command":"ls"}` + "\n")
-		_, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
-		require.NoError(t, err)
+		input := `{"project":"/other/project","command":"ls"}` + "\n"
+
+		_, count, malformed := runStreamHistoryJSONL(t, input)
+
 		assert.Equal(t, 0, count)
 		assert.Empty(t, malformed)
 	})
 
-	t.Run("preserves malformed JSON lines verbatim and reports their line numbers", func(t *testing.T) {
-		good := `{"project":"/old/project","display":"a"}`
-		bad := `{ this is not valid json`
-		alsoGood := `{"project":"/old/project","display":"b"}`
-		input := []byte(good + "\n" + bad + "\n" + alsoGood + "\n")
-
-		result, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.Equal(t, 2, count, "two well-formed lines should be rewritten")
-		assert.Equal(t, []int{2}, malformed, "1-based line number of the malformed line")
-
-		lines := splitLines(result)
-		assert.Equal(t, bad, lines[1], "malformed line must be preserved verbatim")
-		assert.Contains(t, lines[0], "/new/project")
-		assert.Contains(t, lines[2], "/new/project")
-	})
-
 	t.Run("rewrites path occurrences inside non-project fields", func(t *testing.T) {
-		input := []byte(`{"project":"/old/project","display":"open /old/project/main.go please"}` + "\n")
-		result, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
-		require.NoError(t, err)
+		input := `{"project":"/old/project","display":"open /old/project/main.go please"}` + "\n"
+
+		result, count, malformed := runStreamHistoryJSONL(t, input)
+
 		assert.Equal(t, 1, count)
 		assert.Empty(t, malformed)
 		assert.NotContains(t, string(result), "/old/project")
@@ -63,24 +62,74 @@ func TestHistoryJSONL(t *testing.T) {
 	})
 
 	t.Run("does not rewrite a path that is a prefix of another path", func(t *testing.T) {
-		input := []byte(`{"project":"/old/project-extras","display":"unrelated"}` + "\n")
-		result, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
-		require.NoError(t, err)
+		input := `{"project":"/old/project-extras","display":"unrelated"}` + "\n"
+
+		result, count, malformed := runStreamHistoryJSONL(t, input)
+
 		assert.Equal(t, 0, count, "path-boundary protection must skip prefix collision")
 		assert.Empty(t, malformed)
 		assert.Contains(t, string(result), "/old/project-extras")
 		assert.NotContains(t, string(result), "/new/project-extras")
 	})
+
+	t.Run("preserves the absence of a trailing newline", func(t *testing.T) {
+		input := `{"project":"/old/project"}`
+
+		result, _, _ := runStreamHistoryJSONL(t, input)
+
+		assert.False(t, bytes.HasSuffix(result, []byte("\n")),
+			"output must not invent a trailing newline that was not in the input")
+	})
+
+	t.Run("preserves the presence of a trailing newline", func(t *testing.T) {
+		input := `{"project":"/old/project"}` + "\n"
+
+		result, _, _ := runStreamHistoryJSONL(t, input)
+
+		assert.True(t, bytes.HasSuffix(result, []byte("\n")),
+			"output must keep the trailing newline present in the input")
+	})
 }
 
-func assertHistoryJSONLRewritesMatching(t *testing.T) {
+func TestStreamHistoryJSONL_RewritesAndReportsMalformed(t *testing.T) {
+	input := `{"project":"/old","display":"x"}
+not-valid-json
+{"project":"/old/sub","display":"y"}
+`
+	var dst bytes.Buffer
+
+	replaced, malformed, err := rewrite.StreamHistoryJSONL(
+		t.Context(), strings.NewReader(input), &dst, "/old", "/new",
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, replaced)
+	assert.Equal(t, []int{2}, malformed)
+	assert.Contains(t, dst.String(), `"project":"/new"`)
+	assert.Contains(t, dst.String(), `"project":"/new/sub"`)
+	assert.Contains(t, dst.String(), `not-valid-json`)
+}
+
+func TestStreamHistoryJSONL_CancelMidStream(t *testing.T) {
+	input := strings.Repeat(`{"project":"/old"}`+"\n", 10_000)
+	var dst bytes.Buffer
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, _, err := rewrite.StreamHistoryJSONL(ctx, strings.NewReader(input), &dst, "/old", "/new")
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func assertStreamHistoryJSONLRewritesMatching(t *testing.T) {
 	line1 := `{"project":"/old/project","command":"ls"}`
 	line2 := `{"project":"/other/project","command":"pwd"}`
 	line3 := `{"project":"/old/project","command":"git status"}`
-	input := []byte(line1 + "\n" + line2 + "\n" + line3 + "\n")
+	input := line1 + "\n" + line2 + "\n" + line3 + "\n"
 
-	result, count, malformed, err := rewrite.HistoryJSONL(input, "/old/project", "/new/project")
-	require.NoError(t, err)
+	result, count, malformed := runStreamHistoryJSONL(t, input)
+
 	assert.Equal(t, 2, count)
 	assert.Empty(t, malformed)
 
@@ -98,6 +147,23 @@ func assertHistoryJSONLRewritesMatching(t *testing.T) {
 	assert.Equal(t, "/other/project", entry2["project"])
 	assert.Equal(t, "/new/project", entry3["project"])
 	assert.Equal(t, "git status", entry3["command"])
+}
+
+func TestStreamHistoryJSONL_PreservesMalformedLinesVerbatim(t *testing.T) {
+	good := `{"project":"/old/project","display":"a"}`
+	bad := `{ this is not valid json`
+	alsoGood := `{"project":"/old/project","display":"b"}`
+	input := good + "\n" + bad + "\n" + alsoGood + "\n"
+
+	result, count, malformed := runStreamHistoryJSONL(t, input)
+
+	assert.Equal(t, 2, count, "two well-formed lines should be rewritten")
+	assert.Equal(t, []int{2}, malformed, "1-based line number of the malformed line")
+
+	lines := splitLines(result)
+	assert.Equal(t, bad, lines[1], "malformed line must be preserved verbatim")
+	assert.Contains(t, lines[0], "/new/project")
+	assert.Contains(t, lines[2], "/new/project")
 }
 
 func TestReplacePathInBytes(t *testing.T) {

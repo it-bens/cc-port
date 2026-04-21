@@ -2,6 +2,7 @@
 package move
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -62,7 +63,10 @@ func PlanCategories() []string {
 }
 
 // DryRun computes the move plan without writing any files; lock-free contrast to Apply.
-func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
+func DryRun(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("canceled: %w", err)
+	}
 	if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
 		return nil, err
 	}
@@ -79,40 +83,7 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 		ReplacementsByCategory: make(map[string]int, len(planCategories)),
 	}
 
-	historyCount, malformed, err := scanHistoryFile(claudeHome, moveOptions)
-	if err != nil {
-		return nil, err
-	}
-	plan.ReplacementsByCategory["history"] = historyCount
-	plan.HistoryMalformedLines = malformed
-
-	if plan.ReplacementsByCategory["sessions"], err = countSessionFileReplacements(locations, moveOptions); err != nil {
-		return nil, err
-	}
-
-	if plan.ReplacementsByCategory["settings"], err = countSettingsReplacements(claudeHome, moveOptions); err != nil {
-		return nil, err
-	}
-
-	plan.ConfigBlockRekey, err = checkConfigBlockRekey(claudeHome, moveOptions)
-	if err != nil {
-		return nil, err
-	}
-
-	if moveOptions.RewriteTranscripts {
-		plan.TranscriptReplacements, err = countTranscriptReplacements(locations, moveOptions)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	snapshots, err := countFileHistorySnapshots(locations)
-	if err != nil {
-		return nil, err
-	}
-	plan.ReplacementsByCategory["file-history-snapshots"] = snapshots
-
-	if err := countSessionKeyedReplacements(plan, locations, moveOptions); err != nil {
+	if err := populatePlanCounts(ctx, plan, claudeHome, locations, moveOptions); err != nil {
 		return nil, err
 	}
 
@@ -125,9 +96,64 @@ func DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
 	return plan, nil
 }
 
+// populatePlanCounts fills every counter on plan by walking each count helper
+// in ReplacementsByCategory order; keeps DryRun's top-level flow readable.
+func populatePlanCounts(
+	ctx context.Context,
+	plan *Plan,
+	claudeHome *claude.Home,
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+) error {
+	historyCount, malformed, err := scanHistoryFile(ctx, claudeHome, moveOptions)
+	if err != nil {
+		return err
+	}
+	plan.ReplacementsByCategory["history"] = historyCount
+	plan.HistoryMalformedLines = malformed
+
+	sessionCount, err := countSessionFileReplacements(ctx, locations, moveOptions)
+	if err != nil {
+		return err
+	}
+	plan.ReplacementsByCategory["sessions"] = sessionCount
+
+	settingsCount, err := countSettingsReplacements(ctx, claudeHome, moveOptions)
+	if err != nil {
+		return err
+	}
+	plan.ReplacementsByCategory["settings"] = settingsCount
+
+	plan.ConfigBlockRekey, err = checkConfigBlockRekey(ctx, claudeHome, moveOptions)
+	if err != nil {
+		return err
+	}
+
+	if moveOptions.RewriteTranscripts {
+		plan.TranscriptReplacements, err = countTranscriptReplacements(ctx, locations, moveOptions)
+		if err != nil {
+			return err
+		}
+	}
+
+	snapshots, err := countFileHistorySnapshots(ctx, locations)
+	if err != nil {
+		return err
+	}
+	plan.ReplacementsByCategory["file-history-snapshots"] = snapshots
+
+	return countSessionKeyedReplacements(ctx, plan, locations, moveOptions)
+}
+
 // Apply performs the project move via copy-verify-delete inside lock.WithLock.
-func Apply(claudeHome *claude.Home, moveOptions Options) error {
+func Apply(ctx context.Context, claudeHome *claude.Home, moveOptions Options) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("canceled: %w", err)
+	}
 	return lock.WithLock(claudeHome, func() error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("canceled: %w", err)
+		}
 		if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
 			return err
 		}
@@ -139,6 +165,6 @@ func Apply(claudeHome *claude.Home, moveOptions Options) error {
 
 		oldProjectDir := claudeHome.ProjectDir(moveOptions.OldPath)
 		newProjectDir := claudeHome.ProjectDir(moveOptions.NewPath)
-		return executeMove(claudeHome, locations, oldProjectDir, newProjectDir, moveOptions)
+		return executeMove(ctx, claudeHome, locations, oldProjectDir, newProjectDir, moveOptions)
 	})
 }

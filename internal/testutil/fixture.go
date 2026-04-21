@@ -2,6 +2,7 @@
 package testutil
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func SetupFixture(t *testing.T) *claude.Home {
 
 	fixtureDir := findFixtureDir(t)
 
-	if err := fsutil.CopyDir(filepath.Join(fixtureDir, "dotclaude"), claudeDir); err != nil {
+	if err := fsutil.CopyDir(context.Background(), filepath.Join(fixtureDir, "dotclaude"), claudeDir); err != nil {
 		t.Fatalf("copy fixture directory: %v", err)
 	}
 
