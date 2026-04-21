@@ -20,9 +20,9 @@ Prebuilt releases (macOS / Linux tarballs, checksums) are published under [GitHu
 
 ## Commands
 
-Full flag reference: `cc-port <subcommand> --help`.
+Full flag reference: `cc-port <subcommand> --help`. `cc-port --version` prints the build version.
 
-- `cc-port move <old-path> <new-path> [--apply]`: rewrite every reference to `<old-path>` under `~/.claude/` to `<new-path>`. Default is dry-run. `--apply` copies, verifies, then deletes the old encoded directory.
+- `cc-port move <old-path> <new-path> [--apply] [--refs-only] [--rewrite-transcripts]`: rewrite every reference to `<old-path>` under `~/.claude/` to `<new-path>`. Default is dry-run. `--apply` copies, verifies, then deletes the old encoded directory. `--refs-only` updates references only and leaves the project directory in place on disk. `--rewrite-transcripts` also rewrites paths inside session transcripts.
 
   ```
   cc-port move /Users/me/old-project /Users/me/new-project --apply
@@ -34,16 +34,22 @@ Full flag reference: `cc-port <subcommand> --help`.
   cc-port export /Users/me/project --output /tmp/project.zip --all
   ```
 
-- `cc-port export manifest <project-path> [--output <manifest.xml>]`: emit only the manifest for review or editing. Feed it back via `--from-manifest` on a subsequent `export` or `import`.
+- `cc-port export manifest <project-path> [-o|--output <manifest.xml>]`: emit only the manifest for review or editing. Feed it back via `--from-manifest` on a subsequent `export` or `import`. Refuses to overwrite an existing output path.
 
   ```
   cc-port export manifest /Users/me/project --output /tmp/project.xml
   ```
 
-- `cc-port import <archive.zip> <target-path>`: apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`.
+- `cc-port import <archive.zip> <target-path>`: apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`. Mixing `--from-manifest` with `--resolution` is rejected. Pick one source.
 
   ```
   cc-port import /tmp/project.zip /Users/teammate/project
+  ```
+
+- `cc-port import manifest <archive.zip> [-o|--output <manifest.xml>]`: read the metadata from an archive and write a manifest XML with empty resolve attributes for hand-editing. Feed it back via `--from-manifest` on a subsequent `import`. Refuses to overwrite an existing output path.
+
+  ```
+  cc-port import manifest /tmp/project.zip --output /tmp/project.xml
   ```
 
 ## Development

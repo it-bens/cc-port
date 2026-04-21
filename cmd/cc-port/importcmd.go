@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -15,16 +17,28 @@ import (
 )
 
 var (
-	importFromManifest string
-	importResolutionKV []string
+	importFromManifest   string
+	importResolutionKV   []string
+	importManifestOutput string
 )
 
 var importCmd = &cobra.Command{
 	Use:   "import <archive.zip> <target-path>",
 	Short: "Import a project from a cc-port ZIP archive",
 	Long:  "Imports Claude Code project data from a ZIP archive into the given target path.",
-	Args:  cobra.ExactArgs(2),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+			return &usageError{err: err}
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if importFromManifest != "" && cmd.Flags().Changed("resolution") {
+			return fmt.Errorf(
+				"--from-manifest is mutually exclusive with --resolution; pass one or the other",
+			)
+		}
+
 		archivePath := args[0]
 		targetPath, err := claude.ResolveProjectPath(args[1])
 		if err != nil {
@@ -80,28 +94,44 @@ var importManifestCmd = &cobra.Command{
 	Use:   "manifest <archive.zip>",
 	Short: "Write a manifest XML from a ZIP archive for manual editing",
 	Long:  "Reads the metadata from a ZIP archive and writes a manifest XML with empty resolve fields for hand-editing.",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		archivePath := args[0]
-
-		metadata, err := manifest.ReadManifestFromZip(archivePath)
-		if err != nil {
-			return fmt.Errorf("read manifest from zip: %w", err)
+	Args: func(cmd *cobra.Command, args []string) error {
+		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+			return &usageError{err: err}
 		}
-
-		for i := range metadata.Placeholders {
-			metadata.Placeholders[i].Resolve = ""
-		}
-
-		outputPath := "manifest.xml"
-		if err := manifest.WriteManifest(outputPath, metadata); err != nil {
-			return fmt.Errorf("write manifest: %w", err)
-		}
-
-		fmt.Printf("Manifest written to %s\n", outputPath)
-		fmt.Println("Edit the resolve attributes and use --from-manifest to import.")
 		return nil
 	},
+	RunE: runImportManifest,
+}
+
+// runImportManifest is the import manifest subcommand body, extracted so
+// tests can drive it without re-wiring the whole cobra tree. Refuses to
+// overwrite an existing output file; the user deletes it or picks a
+// different path with --output.
+func runImportManifest(_ *cobra.Command, args []string) error {
+	archivePath := args[0]
+
+	if _, err := os.Stat(importManifestOutput); err == nil {
+		return fmt.Errorf("%s already exists; remove it or pass --output", importManifestOutput)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("stat %s: %w", importManifestOutput, err)
+	}
+
+	metadata, err := manifest.ReadManifestFromZip(archivePath)
+	if err != nil {
+		return fmt.Errorf("read manifest from zip: %w", err)
+	}
+
+	for i := range metadata.Placeholders {
+		metadata.Placeholders[i].Resolve = ""
+	}
+
+	if err := manifest.WriteManifest(importManifestOutput, metadata); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+
+	fmt.Printf("Manifest written to %s\n", importManifestOutput)
+	fmt.Println("Edit the resolve attributes and use --from-manifest to import.")
+	return nil
 }
 
 func init() {
@@ -114,6 +144,10 @@ func init() {
 		"resolve a placeholder non-interactively (repeatable; KEY=VALUE, "+
 			"e.g. --resolution '{{HOME}}=/Users/me'). When combined with "+
 			"--from-manifest, flag values win per key.",
+	)
+	importManifestCmd.Flags().StringVarP(
+		&importManifestOutput, "output", "o", "manifest.xml",
+		"path to write the manifest XML",
 	)
 	importCmd.AddCommand(importManifestCmd)
 	rootCmd.AddCommand(importCmd)
@@ -177,13 +211,19 @@ func parseResolutionFlags(raw []string) (map[string]string, error) {
 		equalsIndex := strings.IndexByte(entry, '=')
 		if equalsIndex < 0 {
 			return nil, fmt.Errorf(
-				"--resolution %q: expected KEY=VALUE (no '=' found)", entry,
+				"--resolution %q: expected KEY=VALUE (no '=' found), "+
+					"or use `cc-port import manifest <archive>` to generate a manifest for hand-editing",
+				entry,
 			)
 		}
 		key := entry[:equalsIndex]
 		value := entry[equalsIndex+1:]
 		if key == "" {
-			return nil, fmt.Errorf("--resolution %q: empty key", entry)
+			return nil, fmt.Errorf(
+				"--resolution %q: empty key, "+
+					"or use `cc-port import manifest <archive>` to generate a manifest for hand-editing",
+				entry,
+			)
 		}
 		if key == importer.ProjectPathKey {
 			return nil, fmt.Errorf(

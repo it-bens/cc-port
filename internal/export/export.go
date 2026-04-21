@@ -23,12 +23,16 @@ import (
 	"github.com/it-bens/cc-port/internal/transport"
 )
 
-// Options holds all parameters for an export operation.
+// Options holds all parameters for an export operation. FromManifest is
+// a CLI-layer carrier only: when non-empty the CLI loads categories and
+// placeholders from that file instead of discovering them. Run ignores
+// this field and behaves solely on Categories and Placeholders.
 type Options struct {
 	ProjectPath  string
 	OutputPath   string
 	Categories   manifest.CategorySet
 	Placeholders []manifest.Placeholder
+	FromManifest string
 }
 
 // ArchiveEntry names one file inside the produced archive. Bodies are not

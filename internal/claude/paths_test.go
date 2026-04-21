@@ -131,6 +131,29 @@ func TestResolveProjectPath(t *testing.T) {
 	})
 }
 
+func TestResolveProjectPath_ExpandsLeadingTilde(t *testing.T) {
+	fakeHome := t.TempDir()
+	realFakeHome, err := filepath.EvalSymlinks(fakeHome)
+	require.NoError(t, err)
+	t.Setenv("HOME", fakeHome)
+
+	target := filepath.Join(realFakeHome, "Projects", "myproject")
+	require.NoError(t, os.MkdirAll(target, 0o750))
+
+	resolved, err := claude.ResolveProjectPath("~/Projects/myproject")
+
+	require.NoError(t, err)
+	assert.Equal(t, target, resolved)
+}
+
+func TestResolveProjectPath_BareTildeIsLiteral(t *testing.T) {
+	// ~user style is not expanded; the literal ~ survives to filepath.Abs.
+	resolved, err := claude.ResolveProjectPath("~nonexistent-user/Projects")
+
+	require.NoError(t, err)
+	assert.Contains(t, resolved, "~nonexistent-user")
+}
+
 func TestHome_DerivesPaths(t *testing.T) {
 	home := claude.Home{
 		Dir:        "/home/user/.claude",

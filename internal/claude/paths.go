@@ -26,6 +26,13 @@ func EncodePath(absPath string) string {
 // on macOS and Linux, where /tmp is a symlink: without this step,
 // cc-port move /tmp/foo would encode to -tmp-foo and miss the real directory.
 func ResolveProjectPath(path string) (string, error) {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve leading ~: %w", err)
+		}
+		path = filepath.Join(home, path[2:])
+	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("absolute path for %q: %w", path, err)

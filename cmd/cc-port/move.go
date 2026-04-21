@@ -10,40 +10,30 @@ import (
 	"github.com/it-bens/cc-port/internal/move"
 )
 
-var (
-	moveApply              bool
-	moveRefsOnly           bool
-	moveRewriteTranscripts bool
-)
+var moveApply bool
 
 var moveCmd = &cobra.Command{
 	Use:   "move <old-path> <new-path>",
 	Short: "Move a project and update Claude Code references",
 	Long: "Renames a project directory and rewrites all Claude Code references.\n" +
 		"Default is dry-run — use --apply to execute.",
-	Args: cobra.ExactArgs(2),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+			return &usageError{err: err}
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 
-		claudeHome, err := claude.NewHome(claudeDir)
+		moveOptions, err := parseMoveOptions(cmd, args)
 		if err != nil {
 			return err
 		}
 
-		oldPath, err := claude.ResolveProjectPath(args[0])
+		claudeHome, err := claude.NewHome(claudeDir)
 		if err != nil {
-			return fmt.Errorf("resolve old path: %w", err)
-		}
-		newPath, err := claude.ResolveProjectPath(args[1])
-		if err != nil {
-			return fmt.Errorf("resolve new path: %w", err)
-		}
-
-		moveOptions := move.Options{
-			OldPath:            oldPath,
-			NewPath:            newPath,
-			RefsOnly:           moveRefsOnly,
-			RewriteTranscripts: moveRewriteTranscripts,
+			return err
 		}
 
 		if !moveApply {
@@ -53,14 +43,39 @@ var moveCmd = &cobra.Command{
 	},
 }
 
+// parseMoveOptions turns the cobra command + positional args into a
+// move.Options. Kept pure (no lock, no domain call) so it is
+// unit-testable in isolation.
+func parseMoveOptions(cmd *cobra.Command, args []string) (move.Options, error) {
+	oldPath, err := claude.ResolveProjectPath(args[0])
+	if err != nil {
+		return move.Options{}, fmt.Errorf("resolve old path: %w", err)
+	}
+	newPath, err := claude.ResolveProjectPath(args[1])
+	if err != nil {
+		return move.Options{}, fmt.Errorf("resolve new path: %w", err)
+	}
+	if oldPath == newPath {
+		return move.Options{}, fmt.Errorf("old and new paths are identical after resolution")
+	}
+	refsOnly, _ := cmd.Flags().GetBool("refs-only")
+	rewriteTranscripts, _ := cmd.Flags().GetBool("rewrite-transcripts")
+	return move.Options{
+		OldPath:            oldPath,
+		NewPath:            newPath,
+		RefsOnly:           refsOnly,
+		RewriteTranscripts: rewriteTranscripts,
+	}, nil
+}
+
 func init() {
 	moveCmd.Flags().BoolVar(&moveApply, "apply", false, "execute the move (default is dry-run)")
-	moveCmd.Flags().BoolVar(
-		&moveRefsOnly, "refs-only", false,
+	moveCmd.Flags().Bool(
+		"refs-only", false,
 		"update references only, do not move project directory on disk",
 	)
-	moveCmd.Flags().BoolVar(
-		&moveRewriteTranscripts, "rewrite-transcripts", false,
+	moveCmd.Flags().Bool(
+		"rewrite-transcripts", false,
 		"also rewrite paths in session transcripts",
 	)
 	rootCmd.AddCommand(moveCmd)

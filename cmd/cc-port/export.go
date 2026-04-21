@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -14,29 +17,33 @@ import (
 )
 
 var (
-	exportOutput       string
-	exportAll          bool
-	exportSessions     bool
-	exportMemory       bool
-	exportHistory      bool
-	exportFileHistory  bool
-	exportConfig       bool
-	exportFromManifest string
-	exportTodos        bool
-	exportUsageData    bool
-	exportPluginsData  bool
-	exportTasks        bool
+	exportOutput         string
+	exportFromManifest   string
+	exportManifestOutput string
 )
+
+// categoryFlags are the per-category booleans the export command
+// accepts. Defined once so parseExportOptions and the conflict check
+// share the list.
+var categoryFlags = []string{
+	"all", "sessions", "memory", "history", "file-history",
+	"config", "todos", "usage-data", "plugins-data", "tasks",
+}
 
 var exportCmd = &cobra.Command{
 	Use:   "export <project-path>",
 	Short: "Export a project to a portable ZIP archive",
 	Long:  "Exports Claude Code project data to a ZIP archive with path anonymization.",
-	Args:  cobra.ExactArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+			return &usageError{err: err}
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		projectPath, err := claude.ResolveProjectPath(args[0])
+		exportOptions, err := parseExportOptions(cmd, args)
 		if err != nil {
-			return fmt.Errorf("resolve project path: %w", err)
+			return err
 		}
 
 		claudeHome, err := claude.NewHome(claudeDir)
@@ -44,38 +51,26 @@ var exportCmd = &cobra.Command{
 			return err
 		}
 
-		var categories manifest.CategorySet
 		var placeholders []manifest.Placeholder
-
-		if exportFromManifest != "" {
-			metadata, err := manifest.ReadManifest(exportFromManifest)
+		if exportOptions.FromManifest != "" {
+			metadata, err := manifest.ReadManifest(exportOptions.FromManifest)
 			if err != nil {
 				return fmt.Errorf("read manifest: %w", err)
 			}
-			categories, err = manifest.ApplyCategoryEntries(metadata.Export.Categories)
+			exportOptions.Categories, err = manifest.ApplyCategoryEntries(metadata.Export.Categories)
 			if err != nil {
 				return fmt.Errorf("categories from manifest: %w", err)
 			}
 			placeholders = metadata.Placeholders
 		} else {
-			categories, err = resolveExportCategories()
-			if err != nil {
-				return err
-			}
-			placeholders, err = discoverAndPromptPlaceholders(claudeHome, projectPath)
+			placeholders, err = discoverAndPromptPlaceholders(claudeHome, exportOptions.ProjectPath)
 			if err != nil {
 				return err
 			}
 		}
+		exportOptions.Placeholders = placeholders
 
-		printExportRulesWarnings(claudeHome, projectPath)
-
-		exportOptions := export.Options{
-			ProjectPath:  projectPath,
-			OutputPath:   exportOutput,
-			Categories:   categories,
-			Placeholders: placeholders,
-		}
+		printExportRulesWarnings(claudeHome, exportOptions.ProjectPath)
 
 		result, err := export.Run(cmd.Context(), claudeHome, exportOptions)
 		if err != nil {
@@ -92,7 +87,7 @@ var exportCmd = &cobra.Command{
 			)
 		}
 
-		fmt.Printf("Exported to %s\n", exportOutput)
+		fmt.Printf("Exported to %s\n", exportOptions.OutputPath)
 		return nil
 	},
 }
@@ -101,111 +96,179 @@ var exportManifestCmd = &cobra.Command{
 	Use:   "manifest <project-path>",
 	Short: "Write a manifest XML for an export without creating the ZIP",
 	Long:  "Discovers placeholders and categories for the project and writes a manifest XML file.",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		projectPath, err := claude.ResolveProjectPath(args[0])
-		if err != nil {
-			return fmt.Errorf("resolve project path: %w", err)
+	Args: func(cmd *cobra.Command, args []string) error {
+		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+			return &usageError{err: err}
 		}
-
-		claudeHome, err := claude.NewHome(claudeDir)
-		if err != nil {
-			return err
-		}
-
-		categories, err := resolveExportCategories()
-		if err != nil {
-			return err
-		}
-
-		placeholders, err := discoverAndPromptPlaceholders(claudeHome, projectPath)
-		if err != nil {
-			return err
-		}
-
-		printExportRulesWarnings(claudeHome, projectPath)
-
-		exportOptions := export.Options{
-			ProjectPath:  projectPath,
-			OutputPath:   exportOutput,
-			Categories:   categories,
-			Placeholders: placeholders,
-		}
-
-		metadata := buildExportMetadata(exportOptions)
-		outputPath := exportOutput
-		if outputPath == "" {
-			outputPath = "manifest.xml"
-		}
-
-		if err := manifest.WriteManifest(outputPath, metadata); err != nil {
-			return fmt.Errorf("write manifest: %w", err)
-		}
-
-		fmt.Printf("Manifest written to %s\n", outputPath)
 		return nil
 	},
+	RunE: runExportManifest,
+}
+
+// runExportManifest is the export manifest subcommand body, extracted so
+// tests can drive it without re-wiring the whole cobra tree. Refuses to
+// overwrite an existing output file; the user deletes it or picks a
+// different path with --output. The guard runs before placeholder
+// discovery so the user is not asked to answer prompts only to fail on
+// the pre-existing output.
+func runExportManifest(cmd *cobra.Command, args []string) error {
+	if _, err := os.Stat(exportManifestOutput); err == nil {
+		return fmt.Errorf("%s already exists; remove it or pass --output", exportManifestOutput)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("stat %s: %w", exportManifestOutput, err)
+	}
+
+	projectPath, err := claude.ResolveProjectPath(args[0])
+	if err != nil {
+		return fmt.Errorf("resolve project path: %w", err)
+	}
+
+	claudeHome, err := claude.NewHome(claudeDir)
+	if err != nil {
+		return err
+	}
+
+	categories, err := resolveExportCategories(cmd)
+	if err != nil {
+		return err
+	}
+
+	placeholders, err := discoverAndPromptPlaceholders(claudeHome, projectPath)
+	if err != nil {
+		return err
+	}
+
+	printExportRulesWarnings(claudeHome, projectPath)
+
+	exportOptions := export.Options{
+		ProjectPath:  projectPath,
+		OutputPath:   exportManifestOutput,
+		Categories:   categories,
+		Placeholders: placeholders,
+	}
+
+	metadata := buildExportMetadata(exportOptions)
+
+	if err := manifest.WriteManifest(exportManifestOutput, metadata); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+
+	fmt.Printf("Manifest written to %s\n", exportManifestOutput)
+	return nil
 }
 
 func init() {
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "output file path (required for export)")
-	exportCmd.Flags().BoolVar(&exportAll, "all", false, "export all categories")
-	exportCmd.Flags().BoolVar(&exportSessions, "sessions", false, "export sessions")
-	exportCmd.Flags().BoolVar(&exportMemory, "memory", false, "export memory")
-	exportCmd.Flags().BoolVar(&exportHistory, "history", false, "export history")
-	exportCmd.Flags().BoolVar(&exportFileHistory, "file-history", false, "export file history")
-	exportCmd.Flags().BoolVar(&exportConfig, "config", false, "export config")
+	exportCmd.Flags().Bool("all", false, "export all categories")
+	exportCmd.Flags().Bool("sessions", false, "export sessions")
+	exportCmd.Flags().Bool("memory", false, "export memory")
+	exportCmd.Flags().Bool("history", false, "export history")
+	exportCmd.Flags().Bool("file-history", false, "export file history")
+	exportCmd.Flags().Bool("config", false, "export config")
 	exportCmd.Flags().StringVar(
 		&exportFromManifest, "from-manifest", "",
 		"path to a manifest XML file to read categories and placeholders from",
 	)
-	exportCmd.Flags().BoolVar(&exportTodos, "todos", false, "export todos")
-	exportCmd.Flags().BoolVar(&exportUsageData, "usage-data", false, "export usage-data (session-meta + facets)")
-	exportCmd.Flags().BoolVar(&exportPluginsData, "plugins-data", false, "export plugins/data")
-	exportCmd.Flags().BoolVar(&exportTasks, "tasks", false, "export tasks")
+	exportCmd.Flags().Bool("todos", false, "export todos")
+	exportCmd.Flags().Bool("usage-data", false, "export usage-data (session-meta + facets)")
+	exportCmd.Flags().Bool("plugins-data", false, "export plugins/data")
+	exportCmd.Flags().Bool("tasks", false, "export tasks")
 	// MarkFlagRequired errors only when the flag name doesn't exist; "output" was registered above.
 	_ = exportCmd.MarkFlagRequired("output")
 
 	exportManifestCmd.Flags().StringVarP(
-		&exportOutput, "output", "o", "",
-		"output manifest file path (defaults to manifest.xml)",
+		&exportManifestOutput, "output", "o", "manifest.xml",
+		"path to write the manifest XML",
 	)
-	exportManifestCmd.Flags().BoolVar(&exportAll, "all", false, "include all categories")
-	exportManifestCmd.Flags().BoolVar(&exportSessions, "sessions", false, "include sessions")
-	exportManifestCmd.Flags().BoolVar(&exportMemory, "memory", false, "include memory")
-	exportManifestCmd.Flags().BoolVar(&exportHistory, "history", false, "include history")
-	exportManifestCmd.Flags().BoolVar(&exportFileHistory, "file-history", false, "include file history")
-	exportManifestCmd.Flags().BoolVar(&exportConfig, "config", false, "include config")
-	exportManifestCmd.Flags().BoolVar(&exportTodos, "todos", false, "include todos")
-	exportManifestCmd.Flags().BoolVar(&exportUsageData, "usage-data", false, "include usage-data")
-	exportManifestCmd.Flags().BoolVar(&exportPluginsData, "plugins-data", false, "include plugins/data")
-	exportManifestCmd.Flags().BoolVar(&exportTasks, "tasks", false, "include tasks")
+	exportManifestCmd.Flags().Bool("all", false, "include all categories")
+	exportManifestCmd.Flags().Bool("sessions", false, "include sessions")
+	exportManifestCmd.Flags().Bool("memory", false, "include memory")
+	exportManifestCmd.Flags().Bool("history", false, "include history")
+	exportManifestCmd.Flags().Bool("file-history", false, "include file history")
+	exportManifestCmd.Flags().Bool("config", false, "include config")
+	exportManifestCmd.Flags().Bool("todos", false, "include todos")
+	exportManifestCmd.Flags().Bool("usage-data", false, "include usage-data")
+	exportManifestCmd.Flags().Bool("plugins-data", false, "include plugins/data")
+	exportManifestCmd.Flags().Bool("tasks", false, "include tasks")
 
 	exportCmd.AddCommand(exportManifestCmd)
 	rootCmd.AddCommand(exportCmd)
 }
 
-func resolveExportCategories() (manifest.CategorySet, error) {
-	if exportAll {
+// parseExportOptions turns the cobra command + positional args into an
+// export.Options. Pure — does not load manifests or discover
+// placeholders. Callers handle those side effects based on the returned
+// FromManifest value.
+func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, error) {
+	projectPath, err := claude.ResolveProjectPath(args[0])
+	if err != nil {
+		return export.Options{}, fmt.Errorf("resolve project path: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	fromManifest, _ := cmd.Flags().GetString("from-manifest")
+
+	if fromManifest != "" {
+		var conflicts []string
+		for _, name := range categoryFlags {
+			if cmd.Flags().Changed(name) {
+				conflicts = append(conflicts, "--"+name)
+			}
+		}
+		if len(conflicts) > 0 {
+			return export.Options{}, fmt.Errorf(
+				"--from-manifest is mutually exclusive with %s; pass one or the other",
+				strings.Join(conflicts, ", "),
+			)
+		}
+	}
+
+	var categories manifest.CategorySet
+	if fromManifest == "" {
+		categories, err = resolveExportCategories(cmd)
+		if err != nil {
+			return export.Options{}, err
+		}
+	}
+	return export.Options{
+		ProjectPath:  projectPath,
+		OutputPath:   output,
+		Categories:   categories,
+		FromManifest: fromManifest,
+	}, nil
+}
+
+func resolveExportCategories(cmd *cobra.Command) (manifest.CategorySet, error) {
+	all, _ := cmd.Flags().GetBool("all")
+	if all {
 		return manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, FileHistory: true, Config: true,
 			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
 		}, nil
 	}
 
-	anyExplicit := exportSessions || exportMemory || exportHistory || exportFileHistory || exportConfig ||
-		exportTodos || exportUsageData || exportPluginsData || exportTasks
+	sessions, _ := cmd.Flags().GetBool("sessions")
+	memory, _ := cmd.Flags().GetBool("memory")
+	history, _ := cmd.Flags().GetBool("history")
+	fileHistory, _ := cmd.Flags().GetBool("file-history")
+	config, _ := cmd.Flags().GetBool("config")
+	todos, _ := cmd.Flags().GetBool("todos")
+	usageData, _ := cmd.Flags().GetBool("usage-data")
+	pluginsData, _ := cmd.Flags().GetBool("plugins-data")
+	tasks, _ := cmd.Flags().GetBool("tasks")
+
+	anyExplicit := sessions || memory || history || fileHistory || config ||
+		todos || usageData || pluginsData || tasks
 	if anyExplicit {
 		return manifest.CategorySet{
-			Sessions:    exportSessions,
-			Memory:      exportMemory,
-			History:     exportHistory,
-			FileHistory: exportFileHistory,
-			Config:      exportConfig,
-			Todos:       exportTodos,
-			UsageData:   exportUsageData,
-			PluginsData: exportPluginsData,
-			Tasks:       exportTasks,
+			Sessions:    sessions,
+			Memory:      memory,
+			History:     history,
+			FileHistory: fileHistory,
+			Config:      config,
+			Todos:       todos,
+			UsageData:   usageData,
+			PluginsData: pluginsData,
+			Tasks:       tasks,
 		}, nil
 	}
 
