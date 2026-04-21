@@ -9,7 +9,7 @@
   `internal/fsutil/README.md §Absolute-path contract for ResolveExistingAncestor`).
 - Return empty (not an error) from new session-keyed location collectors
   when the parent directory is absent (README §Project enumeration).
-- When adding a sixth session-keyed group, append one entry to
+- When adding a session-keyed group, append one entry to
   `SessionKeyedGroups` and one index-aligned entry to
   `transport.SessionKeyedTargets` (README §Session-keyed registry).
 - Any new `bufio.Scanner` reader of `history.jsonl` must cap the buffer

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Owns the `metadata.xml` wire format and the nine-category enum table.
+Owns the `metadata.xml` wire format and the category enum table.
 Both `internal/export` (producer) and `internal/importer` (consumer) depend
 on this package. It has no internal project dependencies, so the two sibling
 command modules agree on the wire contract through a neutral third party.
@@ -17,7 +17,7 @@ command modules agree on the wire contract through a neutral third party.
 - **Category enum table**
   - `CategorySet`: in-memory bool struct (one field per category) used by callers and by `Options.Categories` in `internal/export`.
   - `CategorySpec`: one entry in the enum table: wire name plus `Get`/`Set` accessors onto the matching `CategorySet` field.
-  - `AllCategories []CategorySpec`: the ordered source of truth for the nine categories. Slice order is the canonical display and wire order.
+  - `AllCategories []CategorySpec`: the ordered source of truth for categories. Slice order is the canonical display and wire order.
   - `BuildCategoryEntries(*CategorySet) []Category`: produces the `<categories>` list in canonical order for `metadata.xml`.
   - `ApplyCategoryEntries([]Category) (CategorySet, error)`: validates a read manifest's category list and returns the matching `CategorySet`. Aggregates every missing and every unknown name into one `errors.Join` error.
 - **Manifest I/O**
@@ -34,7 +34,7 @@ Called by `internal/export` (producer via `BuildCategoryEntries`) and
 
 #### Handled
 
-- Every export declares all nine `AllCategories` names in `metadata.xml`.
+- Every export declares all `AllCategories` names in `metadata.xml`.
   `BuildCategoryEntries` always emits every entry, so a caller cannot accidentally
   publish a partial list.
 - `ApplyCategoryEntries` is the only validator for a parsed manifest.
@@ -49,7 +49,7 @@ Called by `internal/export` (producer via `BuildCategoryEntries`) and
 
 #### Refused
 
-- Manifests that declare a subset of the nine category names. All nine must be
+- Manifests that declare a subset of the category names. All must be
   present even when `Included: false`.
 - Manifests that declare a name outside `AllCategories`. Unknown names
   hard-fail. No warn-and-continue path.

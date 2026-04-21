@@ -24,7 +24,7 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
 
 ### Internal helpers
 
-`rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` (settings, the five session-keyed groups) routes through it so the rollback tracker sees pre-write bytes consistently.
+`rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` (settings, the session-keyed groups) routes through it so the rollback tracker sees pre-write bytes consistently.
 
 ## Contracts
 
@@ -50,9 +50,9 @@ None at runtime. Malformed lines never block the rewrite. They pass through unch
 
 ### Apply contract
 
-`Apply` copies, verifies, and rewrites every file that belongs to the project. Beyond the encoded project directory, history, sessions, and settings, the five session-keyed user-wide shapes also receive copy, rewrite, and rollback coverage.
+`Apply` copies, verifies, and rewrites every file that belongs to the project. Beyond the encoded project directory, history, sessions, and settings, the session-keyed user-wide shapes also receive copy, rewrite, and rollback coverage.
 
-All five session-keyed shapes flow through the same `globalFileTracker` rollback as history, sessions, settings, and config. No separate tracker exists for the session-keyed categories.
+Every session-keyed shape flows through the same `globalFileTracker` rollback as history, sessions, settings, and config. No separate tracker exists for the session-keyed categories.
 
 If rollback cannot restore every saved file, per-file restoration errors are aggregated via `errors.Join` and returned alongside the primary failure.
 

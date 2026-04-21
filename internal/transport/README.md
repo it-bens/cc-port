@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Zip-layout descriptors for the five session-UUID-keyed groups. This package is a neutral third module so neither `internal/export` nor `internal/importer` has to import the other.
+Zip-layout descriptors for the session-UUID-keyed groups. This package is a neutral third module so neither `internal/export` nor `internal/importer` has to import the other.
 
 This package is not a ZIP reader or writer. The struct names the per-group layout shape; entry I/O lives in the export and import orchestrators.
 
@@ -33,7 +33,7 @@ Slice order is user-visible: downstream consumers iterate `SessionKeyedTargets` 
 
 ## Tests
 
-`alignment_test.go` covers the three invariants above.
+`alignment_test.go` covers the invariants above.
 
 ## Navigation
 

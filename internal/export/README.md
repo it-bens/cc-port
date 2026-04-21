@@ -22,11 +22,11 @@ Called by `cmd/cc-port`. Delegates to `internal/manifest` (see [`internal/manife
 
 #### Handled
 
-Every archive declares all nine category names in `metadata.xml` via `manifest.BuildCategoryEntries(&opts.Categories)`.
+Every archive declares all category names in `metadata.xml` via `manifest.BuildCategoryEntries(&opts.Categories)`.
 
 #### Refused
 
-Hand-rolling a parallel nine-entry literal is refused. The only correct path is `manifest.BuildCategoryEntries`.
+Hand-rolling a parallel category literal is refused. The only correct path is `manifest.BuildCategoryEntries`.
 
 #### Not covered
 
@@ -38,7 +38,7 @@ Called by `cmd/cc-port` for every full export. `applyPlaceholders` is also the `
 
 #### Handled
 
-Every body written to the archive passes through `applyPlaceholders` before hitting the ZIP. This applies to sessions, memory, history, config, and all five session-keyed groups (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`).
+Every body written to the archive passes through `applyPlaceholders` before hitting the ZIP. This applies to sessions, memory, history, config, and every session-keyed group (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`).
 
 Placeholder replacement is order-independent across runs: a re-export of the same project produces the same placeholder set. Covered by `export_test.go:TestExport_PathAnonymization_OrderIndependent`.
 
@@ -58,7 +58,7 @@ Used internally by `exportSessionKeyed`.
 
 #### Handled
 
-The five session-keyed groups (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`) are written by one registry-driven loop. `exportSessionKeyed` iterates `locations.AllFlatFiles()` once and skips groups whose `CategorySet` flag is off. Each entry's zip prefix and relative-path base come from `transport.SessionKeyedTargets`. There are no per-group helpers.
+The session-keyed groups (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`) are written by one registry-driven loop. `exportSessionKeyed` iterates `locations.AllFlatFiles()` once and skips groups whose `CategorySet` flag is off. Each entry's zip prefix and relative-path base come from `transport.SessionKeyedTargets`. There are no per-group helpers.
 
 #### Refused
 
@@ -66,7 +66,7 @@ Hard-coding a zip prefix or home base directory in this package is refused. All 
 
 #### Not covered
 
-Adding a sixth session-keyed group. That requires appending to `claude.SessionKeyedGroups` and `transport.SessionKeyedTargets`, not editing this package.
+Adding a new session-keyed group. That requires appending to `claude.SessionKeyedGroups` and `transport.SessionKeyedTargets`, not editing this package.
 
 ### File-history handling (export)
 

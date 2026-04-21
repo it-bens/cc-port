@@ -14,8 +14,6 @@ import (
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
-const projectPathKey = "{{PROJECT_PATH}}"
-
 var (
 	importFromManifest string
 	importResolutionKV []string
@@ -133,7 +131,7 @@ func promptImportResolutions(
 	resolutions := make(map[string]string, len(metadata.Placeholders))
 
 	for _, placeholder := range metadata.Placeholders {
-		if placeholder.Key == projectPathKey {
+		if placeholder.Key == importer.ProjectPathKey {
 			resolutions[placeholder.Key] = targetPath
 			continue
 		}
@@ -161,7 +159,7 @@ func promptImportResolutions(
 func resolutionsFromManifest(metadata *manifest.Metadata, targetPath string) map[string]string {
 	resolutions := make(map[string]string)
 	for _, placeholder := range metadata.Placeholders {
-		if placeholder.Key == projectPathKey {
+		if placeholder.Key == importer.ProjectPathKey {
 			resolutions[placeholder.Key] = targetPath
 			continue
 		}
@@ -187,11 +185,11 @@ func parseResolutionFlags(raw []string) (map[string]string, error) {
 		if key == "" {
 			return nil, fmt.Errorf("--resolution %q: empty key", entry)
 		}
-		if key == projectPathKey {
+		if key == importer.ProjectPathKey {
 			return nil, fmt.Errorf(
 				"--resolution %s is not allowed: "+
 					"the import target argument supplies this key",
-				projectPathKey,
+				importer.ProjectPathKey,
 			)
 		}
 		if _, duplicate := parsed[key]; duplicate {

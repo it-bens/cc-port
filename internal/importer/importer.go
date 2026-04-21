@@ -194,8 +194,8 @@ func withProjectPath(resolutions map[string]string, targetPath string) map[strin
 	for key, value := range resolutions {
 		result[key] = value
 	}
-	if _, hasProjectPath := result[projectPathKey]; !hasProjectPath {
-		result[projectPathKey] = targetPath
+	if _, hasProjectPath := result[ProjectPathKey]; !hasProjectPath {
+		result[ProjectPathKey] = targetPath
 	}
 	return result
 }

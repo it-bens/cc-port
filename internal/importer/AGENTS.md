@@ -1,7 +1,5 @@
 # internal/importer — agent notes
 
-Apply a cc-port archive: validate, stage, promote, roll back. See `README.md` for the full contracts.
-
 ## Before editing
 
 - Refuse any archive with an unresolved declared key or an undeclared `{{UPPER_SNAKE}}` token. No best-effort fallback (README §Import contract).

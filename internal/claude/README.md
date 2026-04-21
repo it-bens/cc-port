@@ -60,13 +60,13 @@ cc-port identifies every project by its encoded directory name under
 input path is resolved through the filesystem following symlinks, then `/`,
 `.`, and space each map to `-`, and a leading `-` is prepended.
 
-The encoding is lossy. Three distinct paths collapse to the same name:
+The encoding is lossy. Distinct paths collapse to the same name:
 
 - `/Users/x/Projects/my project`
 - `/Users/x/Projects/my-project`
 - `/Users/x/Projects/my.project`
 
-All three encode to `-Users-x-Projects-my-project`. cc-port applies the same
+All encode to `-Users-x-Projects-my-project`. cc-port applies the same
 encoding and symlink resolution to user-supplied paths. The encoded name must
 match what Claude Code wrote on disk. The original path cannot be recovered
 from the encoded form.
@@ -157,9 +157,9 @@ every file and directory tied to the project:
 
 ### Session-keyed registry
 
-The five session-keyed groups are published as a canonical registry.
+The session-keyed groups are published as a canonical registry.
 Downstream consumers (move, export, import, CLI renderers) iterate the
-registry rather than open-coding group names. Adding a sixth group requires
+registry rather than open-coding group names. Adding a new group requires
 one entry in `SessionKeyedGroups` and one index-aligned entry in
 `transport.SessionKeyedTargets`. The alignment test in `internal/transport`
 catches drift between those two slices.
@@ -180,7 +180,7 @@ catches drift between those two slices.
 
 #### Not covered
 
-- None inherent to the registry. Extension (adding a sixth group) is a
+- None inherent to the registry. Extension (adding a group) is a
   compile-time edit, not a runtime concern.
 
 ### Schema types

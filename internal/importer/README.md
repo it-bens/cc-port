@@ -100,7 +100,7 @@ Project, memory, file-history, and session-keyed writes route through an `os.Roo
 
 The walk uses `fsutil.ResolveExistingAncestor` (see [`internal/fsutil/README.md`](../fsutil/README.md) §Absolute-path contract for `ResolveExistingAncestor`). The longest existing prefix is symlink-resolved. Any missing tail is re-attached unchanged so `MkdirAll` creates it on the resolved filesystem.
 
-`importer.go:checkStagingFilesystems` runs this resolution once up front. It covers the encoded project directory, `history.jsonl`, `.claude.json`, the file-history base, and the five session-keyed bases (`todos/`, `usage-data/session-meta/`, `usage-data/facets/`, `plugins/data/`, `tasks/`). Any failures are aggregated into a single error before the archive is read or any temp is written.
+`importer.go:checkStagingFilesystems` runs this resolution once up front. It covers the encoded project directory, `history.jsonl`, `.claude.json`, the file-history base, and the session-keyed bases (`todos/`, `usage-data/session-meta/`, `usage-data/facets/`, `plugins/data/`, `tasks/`). Any failures are aggregated into a single error before the archive is read or any temp is written.
 
 #### Handled
 
@@ -124,7 +124,7 @@ The rollback surface is driven by `SafeRenamePromoter`. See `internal/rewrite/RE
 
 #### Session-keyed prefix arms
 
-The five session-keyed prefixes are staged alongside the existing ones:
+The session-keyed prefixes are staged alongside the existing ones:
 
 - `todos/` staged to `~/.claude/todos/`
 - `usage-data/session-meta/` staged to `~/.claude/usage-data/session-meta/`
@@ -132,7 +132,7 @@ The five session-keyed prefixes are staged alongside the existing ones:
 - `plugins-data/` staged to `~/.claude/plugins/data/`
 - `tasks/` staged to `~/.claude/tasks/`
 
-The prefix-to-destination mapping is owned by `transport.SessionKeyedTargets` (see [`internal/transport/README.md`](../transport/README.md)). This package does not hard-code any of the five prefixes. Dispatch inside `stageArchiveEntries` runs one loop (`dispatchSessionKeyed`) that walks the transport registry and routes an entry to `stageSessionKeyedFile` on the first `ZipPrefix` match.
+The prefix-to-destination mapping is owned by `transport.SessionKeyedTargets` (see [`internal/transport/README.md`](../transport/README.md)). This package does not hard-code any of the prefixes. Dispatch inside `stageArchiveEntries` runs one loop (`dispatchSessionKeyed`) that walks the transport registry and routes an entry to `stageSessionKeyedFile` on the first `ZipPrefix` match.
 
 There are no per-group staging helpers. The unified `importPlan.sessionKeyedStagedFiles` slice accumulates every session-keyed entry regardless of group, and the same slice drives promotion and cleanup.
 

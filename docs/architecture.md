@@ -11,7 +11,7 @@ cc-port/
 │   ├── fsutil/             Shared filesystem helpers: directory copy, path-ancestor resolution
 │   ├── importer/           Import orchestration: placeholder validation, atomic staging
 │   ├── lock/               Advisory lock + live-session refusal
-│   ├── manifest/           metadata.xml wire DTOs + nine-category enum table
+│   ├── manifest/           metadata.xml wire DTOs + category enum table
 │   ├── move/               Move plan, dry-run, apply with copy-verify-delete
 │   ├── rewrite/            Byte-level rewrite primitives + SafeRenamePromoter
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
@@ -37,14 +37,14 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Malformed `history.jsonl` lines preserved, not repaired | [`internal/move/README.md`](../internal/move/README.md)                          |
 | `history.jsonl` lines bounded at 16 MiB, oversized fail  | [`internal/claude/README.md`](../internal/claude/README.md) §History line cap    |
 | Archives are a closed placeholder contract              | [`internal/importer/README.md`](../internal/importer/README.md) §Import contract |
-| Every export declares all 9 categories; unknown refused | [`internal/manifest/README.md`](../internal/manifest/README.md) §Category manifest |
+| Every export declares all categories; unknown refused   | [`internal/manifest/README.md`](../internal/manifest/README.md) §Category manifest |
 | Import writes are atomic with rollback                  | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
 | Mutating commands lock + refuse during live sessions    | [`internal/lock/README.md`](../internal/lock/README.md)                          |
 | Session-keyed user-wide directories follow the project  | [`internal/claude/README.md`](../internal/claude/README.md) §Project enumeration |
 
 ## Session-UUID-keyed user-wide data (cross-cutting)
 
-Five `~/.claude/` directories carry per-session state belonging to a project:
+Several `~/.claude/` directories carry per-session state belonging to a project:
 `todos/<sid>-agent-<sid>.json`,
 `usage-data/{session-meta,facets}/<sid>.json`,
 `plugins/data/<ns>/<sid>/**`, and
@@ -59,7 +59,7 @@ the relevant module:
   opt-in via `--todos`, `--usage-data`, `--plugins-data`, `--tasks`, included
   in `--all`. Bodies pass through `applyPlaceholders`.
 - [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging:
-  4 new prefix arms staged at sibling temps, promoted last in the
+  session-keyed prefix arms staged at sibling temps, promoted last in
   order so the most load-bearing data settles first.
 
 ### Registry source of truth
@@ -71,8 +71,8 @@ registry). Archive layout (zip prefix + import home base directory) lives in
 `transport.SessionKeyedTargets`, index-aligned with `SessionKeyedGroups` and
 verified by an alignment unit test in `internal/transport`. Every per-command
 consumer (move, export, import, CLI renderers) iterates these registries
-instead of open-coding the five group names. Adding a sixth session-keyed
-group means editing both slices in the same commit plus one entry in
+instead of open-coding group names. Adding a new session-keyed group
+means editing both slices in the same commit plus one entry in
 `internal/move`'s `planCategories`.
 
 `~/.claude/teams/<team>/**` is intentionally NOT in this set. Team directories

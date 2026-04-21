@@ -12,10 +12,10 @@ import (
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
-// projectPathKey is the manifest key cc-port always pre-fills with the import
+// ProjectPathKey is the manifest key cc-port always pre-fills with the import
 // target path. It is treated as resolved even when the caller did not list it
 // explicitly in Resolutions, because importer.Run injects it unconditionally.
-const projectPathKey = "{{PROJECT_PATH}}"
+const ProjectPathKey = "{{PROJECT_PATH}}"
 
 // ResolvePlaceholders replaces each placeholder token in content with its
 // resolved value. Tokens without a mapping are left verbatim — the import
@@ -94,7 +94,7 @@ func ClassifyPlaceholders(
 		if _, isResolved := resolutions[placeholder.Key]; isResolved {
 			continue
 		}
-		if placeholder.Key == projectPathKey {
+		if placeholder.Key == ProjectPathKey {
 			// Run injects PROJECT_PATH unconditionally; treat as resolved
 			// even if the caller did not list it explicitly.
 			continue
