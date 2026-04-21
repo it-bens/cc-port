@@ -55,7 +55,7 @@ func rewriteHistoryFile(claudeHome *claude.Home, moveOptions Options, tracker *g
 	}
 	if len(malformed) > 0 {
 		_, _ = fmt.Fprintf(
-			warningWriter(moveOptions),
+			resolveWarningWriter(moveOptions),
 			"warning: history.jsonl contains %d malformed line(s) at %v — preserved verbatim, not rewritten\n",
 			len(malformed), malformed,
 		)

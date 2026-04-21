@@ -187,7 +187,7 @@ func listTranscriptFiles(projectDir string) ([]string, error) {
 		if name == "memory" || name == "sessions" {
 			continue
 		}
-		subdirFiles, err := ListFilesRecursive(fullPath)
+		subdirFiles, err := listFilesRecursive(fullPath)
 		if err != nil {
 			return nil, err
 		}
@@ -196,8 +196,8 @@ func listTranscriptFiles(projectDir string) ([]string, error) {
 	return transcripts, nil
 }
 
-// ListFilesRecursive returns every file path under dir, skipping directories.
-func ListFilesRecursive(dir string) ([]string, error) {
+// listFilesRecursive returns every file path under dir, skipping directories.
+func listFilesRecursive(dir string) ([]string, error) {
 	var files []string
 	walkErr := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -215,14 +215,14 @@ func ListFilesRecursive(dir string) ([]string, error) {
 	return files, nil
 }
 
-// SnapshotPaths returns every snapshot file path under locations.FileHistoryDirs.
+// snapshotPaths returns every snapshot file path under locations.FileHistoryDirs.
 // Snapshot contents are not read; path discovery only matches the opaque-bytes
 // invariant. Used by DryRun for the plan count and by Apply's preservation
 // warning so both stay in lock-step with one enumeration.
-func SnapshotPaths(locations *claude.ProjectLocations) ([]string, error) {
+func snapshotPaths(locations *claude.ProjectLocations) ([]string, error) {
 	var paths []string
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
-		snapshots, err := ListFilesRecursive(fileHistoryDir)
+		snapshots, err := listFilesRecursive(fileHistoryDir)
 		if err != nil {
 			return nil, fmt.Errorf("walk file-history dir %s: %w", fileHistoryDir, err)
 		}
@@ -231,10 +231,10 @@ func SnapshotPaths(locations *claude.ProjectLocations) ([]string, error) {
 	return paths, nil
 }
 
-// warningWriter returns the writer to which Apply sends human-readable
-// warnings. It defaults to os.Stderr so unconfigured callers still see
-// warnings; tests inject a buffer via Options.WarningWriter.
-func warningWriter(moveOptions Options) io.Writer {
+// resolveWarningWriter returns the writer to which Apply sends
+// human-readable warnings. Defaults to os.Stderr so unconfigured callers
+// still see warnings; tests inject a buffer via Options.WarningWriter.
+func resolveWarningWriter(moveOptions Options) io.Writer {
 	if moveOptions.WarningWriter != nil {
 		return moveOptions.WarningWriter
 	}
@@ -245,9 +245,9 @@ func warningWriter(moveOptions Options) io.Writer {
 // snapshots. Snapshot contents are preserved verbatim; the warning surfaces
 // that the old project path may still appear inside them after a move.
 func warnFileHistoryPreserved(locations *claude.ProjectLocations, moveOptions Options) {
-	paths, err := SnapshotPaths(locations)
+	paths, err := snapshotPaths(locations)
 	if err != nil {
-		// SnapshotPaths re-walks dirs that rewriteGlobalFiles already walked
+		// snapshotPaths re-walks dirs that rewriteGlobalFiles already walked
 		// successfully; an error here is unexpected. Skip the warning rather
 		// than fail the apply — the move itself is complete.
 		return
@@ -256,7 +256,7 @@ func warnFileHistoryPreserved(locations *claude.ProjectLocations, moveOptions Op
 		return
 	}
 	_, _ = fmt.Fprintf(
-		warningWriter(moveOptions),
+		resolveWarningWriter(moveOptions),
 		"warning: %d file-history snapshot(s) preserved as-is — contents may still reference the old project path "+
 			"(used for in-session rewinds, not persisted data)\n",
 		len(paths),

@@ -20,7 +20,8 @@ type Warning struct {
 
 // maxScannerLine caps a single line that bufio.Scanner will read from a
 // rules file. Above this, the scanner returns bufio.ErrTooLong rather
-// than silently truncating.
+// than silently truncating. Independently chosen for this package; not
+// derived from claude.MaxHistoryLine despite sharing 16 MiB today.
 const maxScannerLine = 16 << 20
 
 // Rules scans .md files directly in rulesDir (non-recursive); emits one Warning per matched line, not per matched path.

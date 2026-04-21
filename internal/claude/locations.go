@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -134,6 +135,7 @@ func collectProjectDirEntries(locations *ProjectLocations, projectDir string) ([
 	for uuid := range uuidSet {
 		sessionUUIDs = append(sessionUUIDs, uuid)
 	}
+	sort.Strings(sessionUUIDs)
 	return sessionUUIDs, nil
 }
 

@@ -20,62 +20,64 @@ type CategorySet struct {
 }
 
 // CategorySpec defines one entry in the export-category enum table: the
-// on-wire name in metadata.xml plus Get/Set accessors onto the matching
-// CategorySet field.
+// on-wire name in metadata.xml plus function-typed Value/Apply hooks onto
+// the matching CategorySet field. These are fields, not interface methods,
+// so Go's "no Get prefix" convention is sidestepped by naming them for
+// what they do rather than what a Java bean would call them.
 type CategorySpec struct {
-	Name string
-	Get  func(*CategorySet) bool
-	Set  func(*CategorySet, bool)
+	Name  string
+	Value func(*CategorySet) bool
+	Apply func(*CategorySet, bool)
 }
 
-// AllCategories is the source of truth for the nine export categories.
+// AllCategories is the source of truth for the export categories.
 // Slice order is the canonical display order used by every consumer (CLI
 // help, dry-run summaries, metadata.xml entries).
 var AllCategories = []CategorySpec{
 	{
-		Name: "sessions",
-		Get:  func(c *CategorySet) bool { return c.Sessions },
-		Set:  func(c *CategorySet, v bool) { c.Sessions = v },
+		Name:  "sessions",
+		Value: func(c *CategorySet) bool { return c.Sessions },
+		Apply: func(c *CategorySet, v bool) { c.Sessions = v },
 	},
 	{
-		Name: "memory",
-		Get:  func(c *CategorySet) bool { return c.Memory },
-		Set:  func(c *CategorySet, v bool) { c.Memory = v },
+		Name:  "memory",
+		Value: func(c *CategorySet) bool { return c.Memory },
+		Apply: func(c *CategorySet, v bool) { c.Memory = v },
 	},
 	{
-		Name: "history",
-		Get:  func(c *CategorySet) bool { return c.History },
-		Set:  func(c *CategorySet, v bool) { c.History = v },
+		Name:  "history",
+		Value: func(c *CategorySet) bool { return c.History },
+		Apply: func(c *CategorySet, v bool) { c.History = v },
 	},
 	{
-		Name: "file-history",
-		Get:  func(c *CategorySet) bool { return c.FileHistory },
-		Set:  func(c *CategorySet, v bool) { c.FileHistory = v },
+		Name:  "file-history",
+		Value: func(c *CategorySet) bool { return c.FileHistory },
+		Apply: func(c *CategorySet, v bool) { c.FileHistory = v },
 	},
 	{
-		Name: "config",
-		Get:  func(c *CategorySet) bool { return c.Config },
-		Set:  func(c *CategorySet, v bool) { c.Config = v },
+		Name:  "config",
+		Value: func(c *CategorySet) bool { return c.Config },
+		Apply: func(c *CategorySet, v bool) { c.Config = v },
 	},
 	{
-		Name: "todos",
-		Get:  func(c *CategorySet) bool { return c.Todos },
-		Set:  func(c *CategorySet, v bool) { c.Todos = v },
+		Name:  "todos",
+		Value: func(c *CategorySet) bool { return c.Todos },
+		Apply: func(c *CategorySet, v bool) { c.Todos = v },
 	},
 	{
-		Name: "usage-data",
-		Get:  func(c *CategorySet) bool { return c.UsageData },
-		Set:  func(c *CategorySet, v bool) { c.UsageData = v },
+		Name:  "usage-data",
+		Value: func(c *CategorySet) bool { return c.UsageData },
+		Apply: func(c *CategorySet, v bool) { c.UsageData = v },
 	},
 	{
-		Name: "plugins-data",
-		Get:  func(c *CategorySet) bool { return c.PluginsData },
-		Set:  func(c *CategorySet, v bool) { c.PluginsData = v },
+		Name:  "plugins-data",
+		Value: func(c *CategorySet) bool { return c.PluginsData },
+		Apply: func(c *CategorySet, v bool) { c.PluginsData = v },
 	},
 	{
-		Name: "tasks",
-		Get:  func(c *CategorySet) bool { return c.Tasks },
-		Set:  func(c *CategorySet, v bool) { c.Tasks = v },
+		Name:  "tasks",
+		Value: func(c *CategorySet) bool { return c.Tasks },
+		Apply: func(c *CategorySet, v bool) { c.Tasks = v },
 	},
 }
 
@@ -84,7 +86,7 @@ var AllCategories = []CategorySpec{
 func BuildCategoryEntries(set *CategorySet) []Category {
 	entries := make([]Category, len(AllCategories))
 	for i, spec := range AllCategories {
-		entries[i] = Category{Name: spec.Name, Included: spec.Get(set)}
+		entries[i] = Category{Name: spec.Name, Included: spec.Value(set)}
 	}
 	return entries
 }
@@ -108,7 +110,7 @@ func ApplyCategoryEntries(entries []Category) (CategorySet, error) {
 			continue
 		}
 		seen[entry.Name] = true
-		spec.Set(&set, entry.Included)
+		spec.Apply(&set, entry.Included)
 	}
 
 	for _, spec := range AllCategories {

@@ -94,7 +94,7 @@ func countTranscriptReplacements(locations *claude.ProjectLocations, moveOptions
 // countFileHistorySnapshots returns the number of snapshot files under the
 // project's file-history directories for the dry-run plan.
 func countFileHistorySnapshots(locations *claude.ProjectLocations) (int, error) {
-	paths, err := SnapshotPaths(locations)
+	paths, err := snapshotPaths(locations)
 	if err != nil {
 		return 0, err
 	}

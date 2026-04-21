@@ -4,7 +4,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/transport"
 )
 
@@ -37,6 +41,30 @@ func TestSessionKeyedTargets_ZipPrefixesTerminatedWithSlash(t *testing.T) {
 		if !strings.HasSuffix(target.ZipPrefix, "/") {
 			t.Errorf("index %d (%s): ZipPrefix %q must end with '/'",
 				index, target.Group, target.ZipPrefix)
+		}
+	}
+}
+
+// TestSessionKeyedTargets_FilesRootedUnderHomeBaseDir checks that paths a
+// collector places into ProjectLocations for each session-keyed group are
+// rooted under the matching SessionKeyedTargets[i].HomeBaseDir(home). A
+// drifted collector that populated the wrong ProjectLocations field, or a
+// transport target whose HomeBaseDir no longer matched the group's on-disk
+// location, would silently produce wrong archive prefixes and wrong import
+// destinations. The name-and-length alignment test above cannot catch this.
+func TestSessionKeyedTargets_FilesRootedUnderHomeBaseDir(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	locations, err := claude.LocateProject(claudeHome, "/Users/test/Projects/myproject")
+	require.NoError(t, err)
+
+	for index, target := range transport.SessionKeyedTargets {
+		group := claude.SessionKeyedGroups[index]
+		base := target.HomeBaseDir(claudeHome)
+		for _, path := range group.Files(locations) {
+			assert.Truef(t, strings.HasPrefix(path, base+"/") || path == base,
+				"group %q path %q must live under HomeBaseDir %q",
+				group.Name, path, base)
 		}
 	}
 }
