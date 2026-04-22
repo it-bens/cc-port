@@ -189,7 +189,8 @@ Unit tests in `importer_test.go` and `resolve_test.go`. Coverage:
 - conflict refusal on pre-existing encoded directories.
 - zip-slip rejection (`..`-escaping entry).
 - absolute-entry rejection.
-- oversized-entry rejection (512 MiB per-entry cap, built from a 600 MiB archive that skips under `go test -short`).
+- oversized-entry rejection (512 MiB per-entry cap). The default run uses a 1 MiB test override so CI can exercise the guard on a few-megabyte archive. A 600 MiB sibling in `importer_large_test.go` exercises the real cap and runs only under `go test -tags large`.
+- aggregate-size rejection (4 GiB aggregate cap) with the same small-override plus `-tags large` sibling split.
 - streaming placeholder replacer: passthrough when resolutions are empty, single and boundary positions, longest-match across prefix keys, and token straddling a buffered-reader fill boundary (chunk-reader wrapper).
 
 Fuzz target in `resolve_fuzz_test.go`. `FuzzResolvePlaceholders` asserts no-panic, empty-map identity, absent-key identity, and the length-accounting invariant `len(out) == len(in) + count*(len(value)-len(key))`.

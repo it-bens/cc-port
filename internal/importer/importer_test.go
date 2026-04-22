@@ -1017,29 +1017,10 @@ func TestRun_RejectsAbsoluteZipEntry(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping 600 MiB bomb test in short mode")
-	}
-
-	// 600 MiB entry, well above the 512 MiB cap; zero-fill deflates to ~600 KiB.
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	archivePath := filepath.Join(t.TempDir(), "bomb.zip")
-	buildArchiveWithSingleEntry(t, archivePath, "sessions/bomb.json", 600<<20)
-
-	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
-		ArchivePath: archivePath,
-		TargetPath:  filepath.Join(t.TempDir(), "project"),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds")
-}
-
-// TestReadZipFile_RejectsOversizedEntry_SmallCap is the CI-runnable proxy
-// for TestReadZipFile_RejectsOversizedEntry: it exercises the per-entry
-// cap guard under a 1 MiB test override so the archive is a few megabytes
-// rather than 600. Runs every CI push; the 600 MiB sibling runs only
-// without -short.
+// TestReadZipFile_RejectsOversizedEntry_SmallCap exercises the per-entry cap
+// guard under a 1 MiB test override so the archive is a few megabytes rather
+// than 600. The scale sibling in importer_large_test.go materializes a real
+// 600 MiB archive and runs only under `-tags large`.
 func TestReadZipFile_RejectsOversizedEntry_SmallCap(t *testing.T) {
 	importer.SetMaxEntryBytes(t, 1<<20)
 
@@ -1055,35 +1036,11 @@ func TestReadZipFile_RejectsOversizedEntry_SmallCap(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds")
 }
 
-// TestRun_RefusesArchiveExceedingAggregateUncompressedCap builds an archive
-// whose total decompressed payload exceeds the production aggregate cap and
-// asserts that Run rejects it before staging. The archive consists of many
-// 500 MiB entries so no individual entry trips the per-entry cap; only the
-// aggregate guard can fire. Skipped in -short because the test materializes
-// multiple gigabytes.
-func TestRun_RefusesArchiveExceedingAggregateUncompressedCap(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds a multi-GiB archive")
-	}
-
-	archivePath := buildArchiveWithAggregateSize(t, importer.MaxArchiveBytes()+1, 500<<20)
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-
-	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
-		ArchivePath: archivePath,
-		TargetPath:  filepath.Join(t.TempDir(), "project"),
-		Resolutions: map[string]string{},
-	})
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "archive decompressed size exceeds")
-}
-
-// TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap is the
-// CI-runnable proxy for TestRun_RefusesArchiveExceedingAggregateUncompressedCap:
-// exercises the pass-1 aggregate-cap guard in classifyArchive under a 2 MiB
-// test override, using three 1 MiB entries instead of multi-GiB payloads.
-// Runs every CI push; the scale sibling runs only without -short.
+// TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap exercises
+// the pass-1 aggregate-cap guard in classifyArchive under a 2 MiB test
+// override, using three 1 MiB entries instead of multi-GiB payloads. The
+// scale sibling in importer_large_test.go materializes the real multi-GiB
+// archive and runs only under `-tags large`.
 func TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap(t *testing.T) {
 	importer.SetMaxArchiveBytes(t, 2<<20)
 
