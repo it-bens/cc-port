@@ -2,6 +2,9 @@
 
 `cc-port` rewrites Claude Code project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into `~/.claude/projects/<encoded>/`, `~/.claude/history.jsonl`, and `~/.claude.json`. cc-port rewrites the references safely: boundary-aware substring replacement, atomic writes with rollback, and a lock-plus-live-session check. No operation collides with a running Claude Code process.
 
+> [!CAUTION]
+> cc-port is experimental. Don't use it in production yet. Data loss or corruption may happen. Back up `~/.claude/` before running any mutating command.
+
 ## Install
 
 Homebrew (this repo's tap):
@@ -79,3 +82,8 @@ Contributing or modifying cc-port? See [`DEVELOPMENT.md`](DEVELOPMENT.md) for ar
 ## License
 
 See [`LICENSE`](LICENSE).
+
+---
+
+> [!NOTE]
+> Yes, an AI wrote this README. And everything else as well. A human with ADHD steers it. His brain ran on associative pattern-matching and nonlinear leaps long before LLMs made it cool. They call him ... LLMartin.
