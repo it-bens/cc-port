@@ -107,12 +107,12 @@ type savedFile struct {
 	sibling string
 }
 
-func (t *globalFileTracker) save(path string) ([]byte, os.FileMode, error) {
+func (t *globalFileTracker) save(path string) (data []byte, mode os.FileMode, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, 0, err
 	}
-	data, err := os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
+	data, err = os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
 	if err != nil {
 		return nil, 0, err
 	}
@@ -125,7 +125,7 @@ func (t *globalFileTracker) save(path string) ([]byte, os.FileMode, error) {
 // restore can rename it back atomically on failure; cleanupSiblings removes
 // it once Apply succeeds. Streaming keeps peak memory bounded by the
 // io.Copy buffer, not by the source file's total size.
-func (t *globalFileTracker) saveToSibling(path string) (string, os.FileMode, error) {
+func (t *globalFileTracker) saveToSibling(path string) (sibling string, mode os.FileMode, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", 0, fmt.Errorf("stat %s: %w", path, err)
@@ -136,7 +136,7 @@ func (t *globalFileTracker) saveToSibling(path string) (string, os.FileMode, err
 	}
 	defer func() { _ = source.Close() }()
 
-	sibling := path + siblingSuffix
+	sibling = path + siblingSuffix
 	//nolint:gosec // G304: sibling path constructed from trusted internal data
 	destination, err := os.OpenFile(sibling, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
 	if err != nil {
@@ -295,7 +295,7 @@ func listTranscriptFiles(ctx context.Context, projectDir string) ([]string, erro
 }
 
 // listFilesRecursive returns every file path under dir, skipping directories.
-// ctx is checked at the top of every WalkDir callback so a cancelled
+// ctx is checked at the top of every WalkDir callback so a canceled
 // context aborts a long enumeration within one iteration.
 func listFilesRecursive(ctx context.Context, dir string) ([]string, error) {
 	var files []string

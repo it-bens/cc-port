@@ -253,7 +253,7 @@ func TestApply_AbortsOnEncodedDirCollision(t *testing.T) {
 
 	// Drop a sentinel file so we can confirm Apply left the occupier untouched.
 	sentinelPath := filepath.Join(occupiedDir, "sentinel.txt")
-	require.NoError(t, os.WriteFile(sentinelPath, []byte("do-not-touch"), 0600))
+	require.NoError(t, os.WriteFile(sentinelPath, []byte("do-not-touch"), 0o600))
 
 	err := move.Apply(t.Context(), claudeHome, move.Options{
 		OldPath:  oldProjectPath,
@@ -284,7 +284,7 @@ func TestApply_AbortsWhenClaudeSessionIsLive(t *testing.T) {
 	liveSessionData, err := json.Marshal(liveSession)
 	require.NoError(t, err)
 	liveSessionPath := filepath.Join(sessionsDir, "live-session.json")
-	require.NoError(t, os.WriteFile(liveSessionPath, liveSessionData, 0600))
+	require.NoError(t, os.WriteFile(liveSessionPath, liveSessionData, 0o600))
 
 	// Snapshot the encoded project dir before the attempted move so we can
 	// assert Apply left the filesystem untouched on abort.
@@ -351,7 +351,7 @@ func TestSnapshotPaths_EnumeratesFileHistoryDirs(t *testing.T) {
 		claudeHome.FileHistoryDir(), "a1b2c3d4-0000-0000-0000-000000000001",
 	)
 	extraSnapshot := filepath.Join(sessionDir, "planted0000000000@v1")
-	require.NoError(t, os.WriteFile(extraSnapshot, []byte("planted"), 0600))
+	require.NoError(t, os.WriteFile(extraSnapshot, []byte("planted"), 0o600))
 
 	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
 	require.NoError(t, err)
@@ -389,7 +389,7 @@ func TestApply_PreservesSnapshotBytes(t *testing.T) {
 	)
 	binarySnapshotPath := filepath.Join(fileHistorySessionDir, "binary0000000000@v1")
 	binarySnapshotContent := append([]byte{0x00, 0x01, 0x02}, []byte(oldProjectPath)...)
-	require.NoError(t, os.WriteFile(binarySnapshotPath, binarySnapshotContent, 0600))
+	require.NoError(t, os.WriteFile(binarySnapshotPath, binarySnapshotContent, 0o600))
 
 	textSnapshotPath := filepath.Join(fileHistorySessionDir, "cafebabe11111111@v1")
 	textBefore, err := os.ReadFile(textSnapshotPath) //nolint:gosec // test path

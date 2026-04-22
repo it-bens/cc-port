@@ -63,7 +63,7 @@ func Rules(rulesDir string, paths ...string) ([]Warning, error) {
 	return warnings, nil
 }
 
-func scanFile(filePath string, fileName string, paths []string) ([]Warning, error) {
+func scanFile(filePath, fileName string, paths []string) ([]Warning, error) {
 	file, err := os.Open(filePath) //nolint:gosec // G304: entry from caller-supplied rulesDir
 	if err != nil {
 		return nil, err

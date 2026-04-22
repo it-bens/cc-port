@@ -54,7 +54,7 @@ func WriteManifest(path string, metadata *Metadata) error {
 
 	content := append([]byte(xml.Header), data...)
 
-	if err := os.WriteFile(path, content, 0644); err != nil { //nolint:gosec // G306: manifest files are user-readable
+	if err := os.WriteFile(path, content, 0o644); err != nil { //nolint:gosec // G306: manifest files are user-readable
 		return fmt.Errorf("write manifest file: %w", err)
 	}
 

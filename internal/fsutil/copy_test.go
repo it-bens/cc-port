@@ -15,7 +15,7 @@ import (
 // tempDir and returns the actual permission bits the kernel applied. This
 // makes mode assertions umask-agnostic: the copy only needs to match what the
 // kernel would have produced for an ordinary MkdirAll at the same mode.
-func dirModeAfterUmask(t *testing.T, tempDir string, name string, mode os.FileMode) os.FileMode {
+func dirModeAfterUmask(t *testing.T, tempDir, name string, mode os.FileMode) os.FileMode {
 	t.Helper()
 	referencePath := filepath.Join(tempDir, name)
 	if err := os.Mkdir(referencePath, mode); err != nil {
@@ -28,7 +28,7 @@ func dirModeAfterUmask(t *testing.T, tempDir string, name string, mode os.FileMo
 	return info.Mode().Perm()
 }
 
-func fileModeAfterUmask(t *testing.T, tempDir string, name string, mode os.FileMode) os.FileMode {
+func fileModeAfterUmask(t *testing.T, tempDir, name string, mode os.FileMode) os.FileMode {
 	t.Helper()
 	referencePath := filepath.Join(tempDir, name)
 	if err := os.WriteFile(referencePath, []byte("ref"), mode); err != nil {

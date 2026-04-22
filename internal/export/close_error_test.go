@@ -63,8 +63,8 @@ func (w *writeLimitCloser) Close() error {
 
 // closeErrorOptions builds export.Options for the close-error tests.
 // fixtureProjectPath is declared in export_test.go (same package).
-func closeErrorOptions(outputPath string) export.Options {
-	return export.Options{
+func closeErrorOptions(outputPath string) *export.Options {
+	return &export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories: manifest.CategorySet{
@@ -120,5 +120,5 @@ func TestRun_ArchiveWriterCloseError(t *testing.T) {
 
 	require.Error(t, err, "Run must surface the deferred archive-writer close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
-	require.ErrorContains(t, err, "finalise archive")
+	require.ErrorContains(t, err, "finalize archive")
 }

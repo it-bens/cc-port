@@ -85,8 +85,8 @@ func TestNewHome_OverrideNormalisesRelative(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, filepath.IsAbs(home.Dir), "Dir must be absolute, got %q", home.Dir)
-	assert.Equal(t, filepath.Join(workingDir, "relative/subdir"), home.Dir)
-	assert.Equal(t, filepath.Join(workingDir, "relative/subdir")+".json", home.ConfigFile)
+	assert.Equal(t, filepath.Join(workingDir, "relative", "subdir"), home.Dir)
+	assert.Equal(t, filepath.Join(workingDir, "relative", "subdir")+".json", home.ConfigFile)
 }
 
 func TestHome_ProjectDir(t *testing.T) {

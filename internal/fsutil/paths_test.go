@@ -11,7 +11,6 @@ import (
 	"github.com/it-bens/cc-port/internal/fsutil"
 )
 
-//nolint:funlen // subtests share tempdir + symlink scaffolding; splitting would duplicate the fixture.
 func TestResolveExistingAncestor(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -81,7 +80,7 @@ func TestResolveExistingAncestor(t *testing.T) {
 		require.Error(t, err)
 		// The error is either a "stat" error from the walk-up loop or an
 		// "resolve symlinks" error from EvalSymlinks on the restricted dir.
-		// Both are acceptable contract-honouring failures; only ENOENT
+		// Both are acceptable contract-honoring failures; only ENOENT
 		// would be a regression.
 		assert.NotErrorIs(t, err, os.ErrNotExist)
 	})

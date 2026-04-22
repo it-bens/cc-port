@@ -38,10 +38,10 @@ func TestExport_AcceptsLargeHistoryLine(t *testing.T) {
 	// 1 MiB of filler — comfortably under the 16 MiB scanner cap while
 	// still exercising the large-line read path.
 	line := makeHistoryLine(1<<20, fixtureProjectPath)
-	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), line, 0600))
+	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), line, 0o600))
 
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
-	_, err := export.Run(t.Context(), claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories:  manifest.CategorySet{History: true},
@@ -59,10 +59,10 @@ func TestExport_RejectsHistoryLineOverLimit(t *testing.T) {
 	// 17 MiB — 1 MiB over the scanner cap. No JSON wrapper needed; the
 	// scanner fails before any parsing.
 	huge := bytes.Repeat([]byte("a"), 17<<20)
-	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), huge, 0600))
+	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), huge, 0o600))
 
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
-	_, err := export.Run(t.Context(), claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  outputPath,
 		Categories:  manifest.CategorySet{History: true},

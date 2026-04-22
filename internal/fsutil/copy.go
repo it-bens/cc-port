@@ -18,7 +18,7 @@ import (
 // into memory. Irregular entries (sockets, FIFOs, devices) cause the
 // copy to fail-hard.
 //
-// ctx is checked at the top of every WalkDir callback so a cancelled
+// ctx is checked at the top of every WalkDir callback so a canceled
 // context aborts a long copy within one iteration.
 //
 // Writes go through an os.Root opened on destination, so even a

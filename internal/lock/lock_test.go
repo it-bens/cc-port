@@ -34,7 +34,7 @@ func writeSessionFile(t *testing.T, claudeHome *claude.Home, name string, pid in
 	data, err := json.Marshal(sessionFile)
 	require.NoError(t, err)
 
-	require.NoError(t, os.WriteFile(filepath.Join(sessionsDir, name+".json"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(sessionsDir, name+".json"), data, 0o600))
 }
 
 func TestWithLock_SucceedsWithNoSessions(t *testing.T) {

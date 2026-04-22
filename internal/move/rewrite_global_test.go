@@ -1,6 +1,7 @@
 package move
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,7 +59,7 @@ func TestRewriteTracked_NoReplacement_NoOp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if string(got) != string(original) {
+	if !bytes.Equal(got, original) {
 		t.Fatalf("contents changed: %q", string(got))
 	}
 }

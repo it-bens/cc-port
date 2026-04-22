@@ -512,9 +512,9 @@ func buildEmptyDestClaudeHome(t *testing.T) *claude.Home {
 	destClaudeDir := filepath.Join(destTempDir, "dotclaude")
 	destConfigFile := filepath.Join(destTempDir, "dotclaude.json")
 
-	require.NoError(t, os.MkdirAll(filepath.Join(destClaudeDir, "projects"), 0755)) //nolint:gosec // G301: test setup
+	require.NoError(t, os.MkdirAll(filepath.Join(destClaudeDir, "projects"), 0o755)) //nolint:gosec // G301: test setup
 	initialConfig := []byte(`{"projects":{}}`)
-	require.NoError(t, os.WriteFile(destConfigFile, initialConfig, 0644)) //nolint:gosec // G306: test setup
+	require.NoError(t, os.WriteFile(destConfigFile, initialConfig, 0o644)) //nolint:gosec // G306: test setup
 
 	return &claude.Home{
 		Dir:        destClaudeDir,
@@ -671,7 +671,7 @@ func buildArchiveWithOverrides(t *testing.T, overrides archiveOverrides) {
 }
 
 // writeMetadataEntryWithOverrides is the parameterised cousin of
-// writeMetadataEntry that honours archiveOverrides.extraDeclaredKey and
+// writeMetadataEntry that honors archiveOverrides.extraDeclaredKey and
 // extraResolvable.
 func writeMetadataEntryWithOverrides(t *testing.T, zipWriter *zip.Writer, overrides archiveOverrides) {
 	t.Helper()
@@ -741,7 +741,7 @@ func TestImport_RoundTrip_NewCategories(t *testing.T) {
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "out.zip")
 
-	_, err := export.Run(t.Context(), claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureSourceProjectPath,
 		OutputPath:  archivePath,
 		Categories: manifest.CategorySet{
@@ -778,7 +778,7 @@ func TestImport_LandsSessionKeyedFileAt0644(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	_, err := export.Run(t.Context(), claudeHome, export.Options{
+	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureSourceProjectPath,
 		OutputPath:  archivePath,
 		Categories: manifest.CategorySet{
@@ -1066,7 +1066,7 @@ func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
 // and asserts that Run rejects it before staging. The archive consists of
 // many 500 MiB entries so no individual entry trips the per-entry cap; only
 // the aggregate guard can fire. Skipped in -short because the test
-// materialises multiple gigabytes.
+// materializes multiple gigabytes.
 func TestRun_RefusesArchiveExceedingAggregateUncompressedCap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a multi-GiB archive")

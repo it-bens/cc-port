@@ -371,7 +371,7 @@ func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []
 // reported by witnesses that contradicted it. An empty seenCwds slice with
 // matched=false means no session's UUID was found in the encoded dir's set,
 // the "no witness" case. A missing sessions directory collapses to the same.
-func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}, projectPath string) (bool, []string, error) {
+func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}, projectPath string) (matched bool, seenCwds []string, err error) {
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -381,7 +381,6 @@ func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}, proje
 	}
 
 	seen := make(map[string]struct{})
-	var seenCwds []string
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue

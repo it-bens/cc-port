@@ -53,7 +53,7 @@ func SelectCategories() (manifest.CategorySet, error) {
 	)
 
 	if err := form.Run(); err != nil {
-		return manifest.CategorySet{}, fmt.Errorf("category selection cancelled: %w", err)
+		return manifest.CategorySet{}, fmt.Errorf("category selection canceled: %w", err)
 	}
 
 	var categories manifest.CategorySet
@@ -111,7 +111,7 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 	)
 
 	if err := form.Run(); err != nil {
-		return "", fmt.Errorf("resolution cancelled: %w", err)
+		return "", fmt.Errorf("resolution canceled: %w", err)
 	}
 
 	return resolvedValue, nil

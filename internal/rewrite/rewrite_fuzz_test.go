@@ -32,7 +32,7 @@ func FuzzReplacePathInBytes(f *testing.F) {
 			t.Fatalf("negative replacement count: %d", count)
 		}
 
-		if len(oldPath) == 0 {
+		if oldPath == "" {
 			if count != 0 {
 				t.Fatalf("empty oldPath produced non-zero count %d", count)
 			}
@@ -108,7 +108,7 @@ func isValidPlaceholderToken(token string) bool {
 		return false
 	}
 	key := token[openLen : len(token)-closeLen]
-	if len(key) == 0 || len(key) > 64 {
+	if key == "" || len(key) > 64 {
 		return false
 	}
 	for index := range len(key) {

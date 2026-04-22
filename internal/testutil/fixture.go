@@ -16,7 +16,7 @@ import (
 // deadSessionPID exceeds the Linux/macOS PID ceiling but stays below int32 max, so Kill(pid, 0) returns ESRCH.
 const deadSessionPID = 2_000_000_001
 
-// SetupFixture stages testdata/dotclaude under t.TempDir(), sanitises session PIDs, and returns a Home pointing to it.
+// SetupFixture stages testdata/dotclaude under t.TempDir(), sanitizes session PIDs, and returns a Home pointing to it.
 func SetupFixture(t *testing.T) *claude.Home {
 	t.Helper()
 
@@ -36,7 +36,7 @@ func SetupFixture(t *testing.T) *claude.Home {
 		t.Fatalf("read fixture .claude.json: %v", err)
 	}
 	//nolint:gosec // G306: 0600 intentional for fixture
-	if err := os.WriteFile(configFilePath, configData, 0600); err != nil {
+	if err := os.WriteFile(configFilePath, configData, 0o600); err != nil {
 		t.Fatalf("write config file: %v", err)
 	}
 	_ = os.Remove(sourceConfigPath)
@@ -80,7 +80,7 @@ func replaceSessionPIDs(sessionsDir string, deadPID int) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(sessionFilePath, updated, 0600); err != nil {
+		if err := os.WriteFile(sessionFilePath, updated, 0o600); err != nil {
 			return err
 		}
 	}

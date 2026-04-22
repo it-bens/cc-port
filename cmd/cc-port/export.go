@@ -72,7 +72,7 @@ var exportCmd = &cobra.Command{
 
 		printExportRulesWarnings(claudeHome, exportOptions.ProjectPath)
 
-		result, err := export.Run(cmd.Context(), claudeHome, exportOptions)
+		result, err := export.Run(cmd.Context(), claudeHome, &exportOptions)
 		if err != nil {
 			return fmt.Errorf("export: %w", err)
 		}
@@ -147,7 +147,7 @@ func runExportManifest(cmd *cobra.Command, args []string) error {
 		Placeholders: placeholders,
 	}
 
-	metadata := buildExportMetadata(exportOptions)
+	metadata := buildExportMetadata(&exportOptions)
 
 	if err := manifest.WriteManifest(exportManifestOutput, metadata); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
@@ -395,7 +395,7 @@ func printExportRulesWarnings(claudeHome *claude.Home, projectPath string) {
 	}
 }
 
-func buildExportMetadata(exportOptions export.Options) *manifest.Metadata {
+func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {
 	resolvableTrue := true
 	placeholders := make([]manifest.Placeholder, 0, len(exportOptions.Placeholders))
 	for _, placeholder := range exportOptions.Placeholders {

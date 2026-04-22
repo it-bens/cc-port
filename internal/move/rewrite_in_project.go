@@ -38,7 +38,7 @@ func rewriteTranscriptsInDir(ctx context.Context, newProjectDir string, moveOpti
 			return fmt.Errorf("read transcript %s: %w", transcriptPath, err)
 		}
 		rewritten, _ := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
-		if err := rewrite.SafeWriteFile(transcriptPath, rewritten, 0644); err != nil {
+		if err := rewrite.SafeWriteFile(transcriptPath, rewritten, 0o644); err != nil {
 			return fmt.Errorf("write transcript %s: %w", transcriptPath, err)
 		}
 	}
@@ -68,7 +68,7 @@ func rewriteMemoryFilesInDir(ctx context.Context, newProjectDir string, moveOpti
 			return fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
 		}
 		rewritten, _ := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
-		if err := rewrite.SafeWriteFile(memoryFilePath, rewritten, 0644); err != nil {
+		if err := rewrite.SafeWriteFile(memoryFilePath, rewritten, 0o644); err != nil {
 			return fmt.Errorf("write memory file %s: %w", memoryFilePath, err)
 		}
 	}

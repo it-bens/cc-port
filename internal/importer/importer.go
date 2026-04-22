@@ -25,13 +25,13 @@ import (
 	"github.com/it-bens/cc-port/internal/transport"
 )
 
-// dirPerm — 0755, so group/others can traverse project subdirs shared with tooling.
-const dirPerm = os.FileMode(0755)
+// dirPerm — 0o755, so group/others can traverse project subdirs shared with tooling.
+const dirPerm = os.FileMode(0o755)
 
 // filePerm is the mode used for files written during import.
 // rw-r--r-- — owner read/write, group and others read-only, matching the
 // permissions Claude Code itself writes for project data files.
-const filePerm = os.FileMode(0644)
+const filePerm = os.FileMode(0o644)
 
 // secretFilePerm is the mode used for files that may carry user secrets
 // (history.jsonl, .claude.json, session transcripts). Locked to owner so a
@@ -495,7 +495,7 @@ func routeArchiveEntry(
 	resolutions map[string]string,
 	historyAppends [][]byte,
 	configBlock []byte,
-) (int64, [][]byte, []byte, error) {
+) (bytesRead int64, updatedAppends [][]byte, updatedConfig []byte, err error) {
 	name := zipFile.Name
 	if handled, bytesRead, err := dispatchSessionKeyed(claudeHome, plan, zipFile, resolutions); err != nil {
 		return bytesRead, historyAppends, configBlock, err
@@ -538,7 +538,7 @@ func routeArchiveEntry(
 // wins. Returns (handled, bytesRead, err).
 func dispatchSessionKeyed(
 	claudeHome *claude.Home, plan *importPlan, zipFile *zip.File, resolutions map[string]string,
-) (bool, int64, error) {
+) (handled bool, bytesRead int64, err error) {
 	for _, target := range transport.SessionKeyedTargets {
 		if !strings.HasPrefix(zipFile.Name, target.ZipPrefix) {
 			continue
@@ -850,7 +850,7 @@ func (r *countingReader) Read(p []byte) (int, error) {
 // readAndResolve reads one zip entry whole and applies ResolvePlaceholders.
 // Used for history appends and the config block, both of which feed into
 // in-memory merge logic. Enforces the per-entry cap in-stream.
-func readAndResolve(zipFile *zip.File, resolutions map[string]string) ([]byte, int64, error) {
+func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved []byte, bytesRead int64, err error) {
 	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) {
 		return nil, 0, fmt.Errorf(
 			"archive entry %q exceeds %d-byte limit (declared %d)",

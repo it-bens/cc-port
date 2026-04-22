@@ -44,7 +44,7 @@ type ArchiveEntry struct {
 	Size        int64
 }
 
-// Result summarises the observable contents of a successful export.
+// Result summarizes the observable contents of a successful export.
 // Category slices appear in manifest.AllCategories order.
 type Result struct {
 	// Metadata is always populated with metadata.xml.
@@ -123,11 +123,11 @@ func WithArchiveOpener(opener func(string) (io.WriteCloser, error)) RunOption {
 // grouped per category; callers surface a warning when result.FileHistory
 // is non-empty.
 func Run(
-	ctx context.Context, claudeHome *claude.Home, exportOptions Options, runOptions ...RunOption,
+	ctx context.Context, claudeHome *claude.Home, exportOptions *Options, runOptions ...RunOption,
 ) (result Result, err error) {
 	// Check ctx before any file creation so a cancel-before-start leaves no
 	// output archive on disk. The test contract (TestRun_CancelsWhenContext
-	// Cancelled) requires require.NoFileExists on the output path.
+	// Canceled) requires require.NoFileExists on the output path.
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("canceled: %w", err)
 	}
@@ -155,7 +155,7 @@ func Run(
 	archiveWriter := zip.NewWriter(zipFile)
 	defer func() {
 		if cerr := archiveWriter.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("finalise archive: %w", cerr))
+			err = errors.Join(err, fmt.Errorf("finalize archive: %w", cerr))
 		}
 	}()
 
@@ -186,7 +186,7 @@ func Run(
 	return result, nil
 }
 
-func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions Options, result *Result) error {
+func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions *Options, result *Result) error {
 	metadata := buildMetadata(exportOptions)
 	metadataXMLData, err := buildMetadataXML(metadata)
 	if err != nil {
@@ -206,7 +206,7 @@ func exportCoreCategories(
 	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
 	claudeHome *claude.Home, locations *claude.ProjectLocations,
-	exportOptions Options, placeholders []manifest.Placeholder,
+	exportOptions *Options, placeholders []manifest.Placeholder,
 ) error {
 	if exportOptions.Categories.Sessions {
 		if err := exportSessions(ctx, archiveWriter, result, locations, placeholders); err != nil {
@@ -375,7 +375,7 @@ func exportSessionKeyed(
 func exportHistory(
 	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
-	claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
+	claudeHome *claude.Home, exportOptions *Options, placeholders []manifest.Placeholder,
 ) error {
 	historyPath := claudeHome.HistoryFile()
 	historyFile, err := os.Open(historyPath) //nolint:gosec // G304: path from trusted ClaudeHome
@@ -427,7 +427,7 @@ func exportFileHistory(
 
 func exportConfig(
 	archiveWriter *zip.Writer, result *Result,
-	claudeHome *claude.Home, exportOptions Options, placeholders []manifest.Placeholder,
+	claudeHome *claude.Home, exportOptions *Options, placeholders []manifest.Placeholder,
 ) error {
 	configData, err := extractProjectConfig(claudeHome.ConfigFile, exportOptions.ProjectPath)
 	if err != nil {
@@ -479,7 +479,7 @@ func writeToZip(archiveWriter *zip.Writer, name string, data []byte) (int64, err
 	return int64(len(data)), nil
 }
 
-// writeReaderToZip streams src into a new ZIP entry named name. Honours ctx
+// writeReaderToZip streams src into a new ZIP entry named name. Honors ctx
 // so long streams abort promptly on cancellation. Returns the bytes written.
 // No transform is applied; chunk-level substring substitution would corrupt
 // content that straddles a read boundary, so callers needing byte
@@ -767,7 +767,7 @@ func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
 	return projectBlock, nil
 }
 
-func buildMetadata(exportOptions Options) *manifest.Metadata {
+func buildMetadata(exportOptions *Options) *manifest.Metadata {
 	return &manifest.Metadata{
 		Export: manifest.Info{
 			Created:    time.Now(),

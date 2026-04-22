@@ -26,9 +26,9 @@ func splitLines(data []byte) []string {
 }
 
 // runStreamHistoryJSONL invokes StreamHistoryJSONL on input, rewriting
-// "/old/project" to "/new/project". Keeps each test focused on behaviour
+// "/old/project" to "/new/project". Keeps each test focused on behavior
 // rather than reader/writer plumbing.
-func runStreamHistoryJSONL(t *testing.T, input string) ([]byte, int, []int) {
+func runStreamHistoryJSONL(t *testing.T, input string) (written []byte, count int, malformed []int) {
 	t.Helper()
 	var dst bytes.Buffer
 	replaced, malformed, err := rewrite.StreamHistoryJSONL(
@@ -557,7 +557,7 @@ func TestSafeWriteFile(t *testing.T) {
 		temporaryDirectory := t.TempDir()
 		targetPath := filepath.Join(temporaryDirectory, "output.json")
 		data := []byte(`{"key": "value"}`)
-		permissions := os.FileMode(0600)
+		permissions := os.FileMode(0o600)
 
 		err := rewrite.SafeWriteFile(targetPath, data, permissions)
 		require.NoError(t, err)
@@ -575,10 +575,10 @@ func TestSafeWriteFile(t *testing.T) {
 		temporaryDirectory := t.TempDir()
 		targetPath := filepath.Join(temporaryDirectory, "output.json")
 
-		require.NoError(t, os.WriteFile(targetPath, []byte("old content"), 0600))
+		require.NoError(t, os.WriteFile(targetPath, []byte("old content"), 0o600))
 
 		newData := []byte("new content")
-		require.NoError(t, rewrite.SafeWriteFile(targetPath, newData, 0600))
+		require.NoError(t, rewrite.SafeWriteFile(targetPath, newData, 0o600))
 
 		written, err := os.ReadFile(targetPath) //nolint:gosec // G304
 		require.NoError(t, err)
@@ -586,7 +586,7 @@ func TestSafeWriteFile(t *testing.T) {
 	})
 
 	t.Run("returns error when directory does not exist", func(t *testing.T) {
-		err := rewrite.SafeWriteFile("/nonexistent/directory/file.json", []byte("data"), 0600)
+		err := rewrite.SafeWriteFile("/nonexistent/directory/file.json", []byte("data"), 0o600)
 		assert.Error(t, err)
 	})
 }
@@ -652,7 +652,7 @@ func TestSafeRenamePromoter_Files(t *testing.T) {
 		dir := t.TempDir()
 		final := filepath.Join(dir, "final.txt")
 		temp := filepath.Join(dir, "final.txt.tmp")
-		require.NoError(t, os.WriteFile(temp, []byte("staged"), 0600))
+		require.NoError(t, os.WriteFile(temp, []byte("staged"), 0o600))
 
 		promoter := rewrite.NewSafeRenamePromoter()
 		promoter.StageFile(temp, final)
@@ -668,8 +668,8 @@ func TestSafeRenamePromoter_Files(t *testing.T) {
 		dir := t.TempDir()
 		final := filepath.Join(dir, "final.txt")
 		temp := filepath.Join(dir, "final.txt.tmp")
-		require.NoError(t, os.WriteFile(final, []byte("old"), 0600))
-		require.NoError(t, os.WriteFile(temp, []byte("new"), 0600))
+		require.NoError(t, os.WriteFile(final, []byte("old"), 0o600))
+		require.NoError(t, os.WriteFile(temp, []byte("new"), 0o600))
 
 		promoter := rewrite.NewSafeRenamePromoter()
 		promoter.StageFile(temp, final)
@@ -689,8 +689,8 @@ func TestSafeRenamePromoter_Dirs(t *testing.T) {
 		dir := t.TempDir()
 		final := filepath.Join(dir, "project")
 		temp := filepath.Join(dir, "project.tmp")
-		require.NoError(t, os.MkdirAll(filepath.Join(temp, "sub"), 0750))
-		require.NoError(t, os.WriteFile(filepath.Join(temp, "sub", "x.txt"), []byte("x"), 0600))
+		require.NoError(t, os.MkdirAll(filepath.Join(temp, "sub"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(temp, "sub", "x.txt"), []byte("x"), 0o600))
 
 		promoter := rewrite.NewSafeRenamePromoter()
 		promoter.StageDir(temp, final)
@@ -712,10 +712,10 @@ func assertRollbackRestoresFile(t *testing.T) {
 	finalB := filepath.Join(dir, "b.txt")
 	tempB := filepath.Join(dir, "b.txt.tmp")
 
-	require.NoError(t, os.WriteFile(finalA, []byte("A-old"), 0600))
-	require.NoError(t, os.WriteFile(finalB, []byte("B-old"), 0600))
-	require.NoError(t, os.WriteFile(tempA, []byte("A-new"), 0600))
-	require.NoError(t, os.WriteFile(tempB, []byte("B-new"), 0600))
+	require.NoError(t, os.WriteFile(finalA, []byte("A-old"), 0o600))
+	require.NoError(t, os.WriteFile(finalB, []byte("B-old"), 0o600))
+	require.NoError(t, os.WriteFile(tempA, []byte("A-new"), 0o600))
+	require.NoError(t, os.WriteFile(tempB, []byte("B-new"), 0o600))
 
 	promoter := rewrite.NewSafeRenamePromoter()
 	promoter.StageFile(tempA, finalA)
@@ -740,8 +740,8 @@ func assertRollbackRemovesNewFile(t *testing.T) {
 	tempA := filepath.Join(dir, "a.txt.tmp")
 	finalB := filepath.Join(dir, "b.txt")
 	tempB := filepath.Join(dir, "b.txt.tmp")
-	require.NoError(t, os.WriteFile(tempA, []byte("A-new"), 0600))
-	require.NoError(t, os.WriteFile(tempB, []byte("B-new"), 0600))
+	require.NoError(t, os.WriteFile(tempA, []byte("A-new"), 0o600))
+	require.NoError(t, os.WriteFile(tempB, []byte("B-new"), 0o600))
 
 	promoter := rewrite.NewSafeRenamePromoter()
 	promoter.StageFile(tempA, finalA)
@@ -760,14 +760,14 @@ func assertRollbackRestoresDir(t *testing.T) {
 	final := filepath.Join(dir, "project")
 	temp := filepath.Join(dir, "project.tmp")
 
-	require.NoError(t, os.MkdirAll(final, 0750))
-	require.NoError(t, os.WriteFile(filepath.Join(final, "old.txt"), []byte("old"), 0600))
-	require.NoError(t, os.MkdirAll(temp, 0750))
-	require.NoError(t, os.WriteFile(filepath.Join(temp, "new.txt"), []byte("new"), 0600))
+	require.NoError(t, os.MkdirAll(final, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(final, "old.txt"), []byte("old"), 0o600))
+	require.NoError(t, os.MkdirAll(temp, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(temp, "new.txt"), []byte("new"), 0o600))
 
 	other := filepath.Join(dir, "other.txt")
 	otherTemp := filepath.Join(dir, "other.txt.tmp")
-	require.NoError(t, os.WriteFile(otherTemp, []byte("o"), 0600))
+	require.NoError(t, os.WriteFile(otherTemp, []byte("o"), 0o600))
 
 	promoter := rewrite.NewSafeRenamePromoter()
 	promoter.StageDir(temp, final)
@@ -785,7 +785,7 @@ func assertRollbackRestoresDir(t *testing.T) {
 }
 
 // failOnCallN returns a rename hook that invokes os.Rename on every call
-// except the nth, where it returns a simulated failure. Centralises the
+// except the nth, where it returns a simulated failure. Centralizes the
 // "fail on call N" pattern shared by the rollback sub-tests.
 func failOnCallN(n int) func(oldpath, newpath string) error {
 	callCount := 0

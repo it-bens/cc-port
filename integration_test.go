@@ -114,7 +114,7 @@ func runExportRoundTrip(t *testing.T, sourceHome *claude.Home, archivePath strin
 		},
 	}
 
-	_, err := export.Run(t.Context(), sourceHome, exportOptions)
+	_, err := export.Run(t.Context(), sourceHome, &exportOptions)
 	require.NoError(t, err, "export should succeed")
 	assert.FileExists(t, archivePath, "archive file should exist after export")
 
@@ -159,12 +159,12 @@ func setupDestinationHome(t *testing.T) *claude.Home {
 	destinationClaudeDir := filepath.Join(destinationTempDir, "dotclaude")
 	destinationConfigFile := filepath.Join(destinationTempDir, "dotclaude.json")
 
-	require.NoError(t, os.MkdirAll(filepath.Join(destinationClaudeDir, "projects"), 0750))
-	require.NoError(t, os.WriteFile(destinationConfigFile, []byte(`{"projects":{}}`), 0600))
+	require.NoError(t, os.MkdirAll(filepath.Join(destinationClaudeDir, "projects"), 0o750))
+	require.NoError(t, os.WriteFile(destinationConfigFile, []byte(`{"projects":{}}`), 0o600))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(destinationClaudeDir, "history.jsonl"),
 		[]byte{},
-		0600,
+		0o600,
 	))
 
 	return &claude.Home{
@@ -242,7 +242,7 @@ func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	_, err := export.Run(t.Context(), sourceHome, exportOptions)
+	_, err := export.Run(t.Context(), sourceHome, &exportOptions)
 	require.NoError(t, err)
 
 	// Inject a literal {{EXTERNAL_TOOL}} into one of the archive's memory
@@ -359,7 +359,7 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "export-all-categories.zip")
 
 	trueVal := true
-	_, err := export.Run(t.Context(), sourceHome, export.Options{
+	_, err := export.Run(t.Context(), sourceHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
 		OutputPath:  archivePath,
 		Categories: manifest.CategorySet{
@@ -477,7 +477,7 @@ func TestIntegration_ImportConflict(t *testing.T) {
 		},
 	}
 
-	_, err := export.Run(t.Context(), sourceHome, exportOptions)
+	_, err := export.Run(t.Context(), sourceHome, &exportOptions)
 	require.NoError(t, err, "export should succeed")
 
 	// Try to import back to the same ClaudeHome at the same project path.

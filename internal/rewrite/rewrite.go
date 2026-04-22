@@ -78,8 +78,8 @@ func isExtensionDotAt(data []byte, dotIndex int) bool {
 // produce "/a/renamed-extras", silently corrupting an unrelated project's data.
 //
 // It returns the resulting bytes and the number of replacements made.
-func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
-	if len(oldPath) == 0 || len(data) == 0 {
+func ReplacePathInBytes(data []byte, oldPath, newPath string) (rewritten []byte, count int) {
+	if oldPath == "" || len(data) == 0 {
 		return append([]byte(nil), data...), 0
 	}
 
@@ -89,7 +89,6 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
 	var result bytes.Buffer
 	result.Grow(len(data))
 
-	count := 0
 	cursor := 0
 	for cursor <= len(data)-len(oldBytes) {
 		if !bytes.Equal(data[cursor:cursor+len(oldBytes)], oldBytes) {
@@ -135,7 +134,7 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int) {
 // "/" becomes "\/". The boundary check applies to each pass independently.
 // Output is byte-identical to ReplacePathInBytes when data contains no
 // JSON-escaped forward slashes.
-func ReplacePathInBytesWithJSONEscape(data []byte, oldPath, newPath string) ([]byte, int) {
+func ReplacePathInBytesWithJSONEscape(data []byte, oldPath, newPath string) (rewritten []byte, count int) {
 	first, count1 := ReplacePathInBytes(data, oldPath, newPath)
 	if !bytes.Contains(first, []byte(`\/`)) {
 		return first, count1
@@ -178,19 +177,17 @@ func ContainsBoundedPath(data []byte, path string) bool {
 // mirrored from the input. Lines exceeding claude.MaxHistoryLine fail with
 // bufio.ErrTooLong rather than being silently truncated.
 //
-// Cancellation: ctx is checked at each line boundary; a cancelled ctx
+// Cancellation: ctx is checked at each line boundary; a canceled ctx
 // short-circuits the stream and returns ctx.Err() after a best-effort flush.
 func StreamHistoryJSONL(
 	ctx context.Context,
 	src io.Reader,
 	dst io.Writer,
 	oldProject, newProject string,
-) (int, []int, error) {
+) (count int, malformed []int, err error) {
 	reader := bufio.NewReaderSize(src, 64<<10)
 	writer := bufio.NewWriterSize(dst, 64<<10)
 
-	count := 0
-	var malformed []int
 	lineNumber := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -278,14 +275,14 @@ func rewriteHistoryLine(body []byte, oldProject, newProject string, count *int) 
 // does the mutation and only byte-level JSON validity matters there.)
 //
 // The bool return indicates whether at least one occurrence was rewritten.
-func SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error) {
+func SessionFile(data []byte, oldProject, newProject string) (rewritten []byte, changed bool, err error) {
 	var sessionFile claude.SessionFile
 	if err := json.Unmarshal(data, &sessionFile); err != nil {
 		return nil, false, fmt.Errorf("unmarshal session file: %w", err)
 	}
 
-	rewritten, count := ReplacePathInBytesWithJSONEscape(data, oldProject, newProject)
-	return rewritten, count > 0, nil
+	body, count := ReplacePathInBytesWithJSONEscape(data, oldProject, newProject)
+	return body, count > 0, nil
 }
 
 // UserConfig rewrites ~/.claude.json to re-key the project entry from
@@ -300,7 +297,7 @@ func SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, erro
 //
 // The bool return indicates whether the old key was found and moved. Other
 // project keys and top-level fields are left untouched.
-func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error) {
+func UserConfig(data []byte, oldProject, newProject string) (updated []byte, rekeyed bool, err error) {
 	if !gjson.ValidBytes(data) {
 		return nil, false, fmt.Errorf("invalid user config JSON")
 	}
@@ -313,7 +310,7 @@ func UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error
 
 	rewrittenBlock, _ := ReplacePathInBytesWithJSONEscape([]byte(existing.Raw), oldProject, newProject)
 
-	updated, err := sjson.DeleteBytes(data, oldPath)
+	updated, err = sjson.DeleteBytes(data, oldPath)
 	if err != nil {
 		return nil, false, fmt.Errorf("delete old project key: %w", err)
 	}

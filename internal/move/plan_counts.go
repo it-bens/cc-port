@@ -18,7 +18,7 @@ import (
 // counting well-formed lines that would pick up at least one replacement if
 // apply ran. Mirrors StreamHistoryJSONL's classification rules so dry-run
 // and apply agree on which lines are in scope.
-func scanHistoryFile(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (int, []int, error) {
+func scanHistoryFile(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (count int, malformed []int, err error) {
 	historyFile := claudeHome.HistoryFile()
 	file, err := os.Open(historyFile) //nolint:gosec // path constructed from trusted internal data
 	if err != nil {
@@ -32,12 +32,10 @@ func scanHistoryFile(ctx context.Context, claudeHome *claude.Home, moveOptions O
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64<<10), claude.MaxHistoryLine)
 
-	count := 0
 	lineNumber := 0
-	var malformed []int
 	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return 0, nil, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return 0, nil, ctxErr
 		}
 		lineNumber++
 		line := scanner.Bytes()
@@ -45,7 +43,7 @@ func scanHistoryFile(ctx context.Context, claudeHome *claude.Home, moveOptions O
 			continue
 		}
 		var probe claude.HistoryEntry
-		if err := json.Unmarshal(line, &probe); err != nil {
+		if jsonErr := json.Unmarshal(line, &probe); jsonErr != nil {
 			malformed = append(malformed, lineNumber)
 			continue
 		}
@@ -54,8 +52,8 @@ func scanHistoryFile(ctx context.Context, claudeHome *claude.Home, moveOptions O
 			count++
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return 0, nil, fmt.Errorf("scan history.jsonl: %w", err)
+	if scanErr := scanner.Err(); scanErr != nil {
+		return 0, nil, fmt.Errorf("scan history.jsonl: %w", scanErr)
 	}
 	return count, malformed, nil
 }
@@ -76,7 +74,7 @@ func countSessionFileReplacements(
 		}
 		_, changed, err := rewrite.SessionFile(data, moveOptions.OldPath, moveOptions.NewPath)
 		if err != nil {
-			return 0, fmt.Errorf("analyse session file %s: %w", sessionFilePath, err)
+			return 0, fmt.Errorf("analyze session file %s: %w", sessionFilePath, err)
 		}
 		if changed {
 			count++
@@ -116,7 +114,7 @@ func checkConfigBlockRekey(ctx context.Context, claudeHome *claude.Home, moveOpt
 	}
 	_, rekeyed, err := rewrite.UserConfig(data, moveOptions.OldPath, moveOptions.NewPath)
 	if err != nil {
-		return false, fmt.Errorf("analyse config file: %w", err)
+		return false, fmt.Errorf("analyze config file: %w", err)
 	}
 	return rekeyed, nil
 }
