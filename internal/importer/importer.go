@@ -49,13 +49,18 @@ const stagingSuffix = ".cc-port-import.tmp"
 // Claude session transcripts can legitimately be large; 512 MiB is two
 // orders of magnitude above any real transcript and still rejects every
 // known zip bomb payload.
-const maxZipEntryBytes = 512 << 20
+//
+// var, not const, so SetMaxEntryBytes in export_test.go can lower it for
+// CI-runnable cap tests. Production paths never reassign.
+var maxZipEntryBytes int64 = 512 << 20
 
 // maxArchiveUncompressedBytes caps the aggregate decompressed size of one
 // import archive. Per-entry caps alone do not prevent a crafted archive
 // with N entries of maxZipEntryBytes each from exhausting memory and disk
 // before any individual check fires.
-const maxArchiveUncompressedBytes = 4 << 30
+//
+// var, not const, for the same test-override reason as maxZipEntryBytes.
+var maxArchiveUncompressedBytes int64 = 4 << 30
 
 // stagingTempPath returns the temp path used to stage finalPath before
 // atomic promotion. The temp is formed inside the symlink-resolved parent
@@ -806,7 +811,7 @@ func streamResolveEntry(
 // an io.LimitReader sized to one byte beyond the cap. The post-decode
 // counter check catches archives that misdeclare the size.
 func openCappedZipEntry(zipFile *zip.File) (io.ReadCloser, io.Reader, error) {
-	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) {
+	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) { //nolint:gosec // G115: maxZipEntryBytes is positive by construction
 		return nil, nil, fmt.Errorf(
 			"archive entry %q exceeds %d-byte limit (declared %d)",
 			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
@@ -816,14 +821,14 @@ func openCappedZipEntry(zipFile *zip.File) (io.ReadCloser, io.Reader, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("open zip entry %q: %w", zipFile.Name, err)
 	}
-	capped := io.LimitReader(readCloser, int64(maxZipEntryBytes)+1)
+	capped := io.LimitReader(readCloser, maxZipEntryBytes+1)
 	return readCloser, capped, nil
 }
 
 // enforcePostDecodeCap rejects entries whose actual decoded size exceeds
 // the per-entry cap, catching archives that misdeclare UncompressedSize64.
 func enforcePostDecodeCap(name string, bytesRead int64) error {
-	if bytesRead > int64(maxZipEntryBytes) {
+	if bytesRead > maxZipEntryBytes {
 		return fmt.Errorf(
 			"archive entry %q exceeds %d-byte limit (post-decode)",
 			name, maxZipEntryBytes,
@@ -851,7 +856,7 @@ func (r *countingReader) Read(p []byte) (int, error) {
 // Used for history appends and the config block, both of which feed into
 // in-memory merge logic. Enforces the per-entry cap in-stream.
 func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved []byte, bytesRead int64, err error) {
-	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) {
+	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) { //nolint:gosec // G115: maxZipEntryBytes is positive by construction
 		return nil, 0, fmt.Errorf(
 			"archive entry %q exceeds %d-byte limit (declared %d)",
 			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
@@ -863,12 +868,12 @@ func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved 
 	}
 	defer func() { _ = readCloser.Close() }()
 
-	capped := io.LimitReader(readCloser, int64(maxZipEntryBytes)+1)
+	capped := io.LimitReader(readCloser, maxZipEntryBytes+1)
 	data, err := io.ReadAll(capped)
 	if err != nil {
 		return nil, int64(len(data)), fmt.Errorf("read zip entry %q: %w", zipFile.Name, err)
 	}
-	if int64(len(data)) > int64(maxZipEntryBytes) {
+	if int64(len(data)) > maxZipEntryBytes {
 		return nil, int64(len(data)), fmt.Errorf(
 			"archive entry %q exceeds %d-byte limit (post-decode)",
 			zipFile.Name, maxZipEntryBytes,
@@ -972,7 +977,7 @@ func writeStagedFile(path string, content []byte, perm os.FileMode) error {
 func readZipFile(zipFile *zip.File) ([]byte, error) {
 	// Pre-declared size check. Malicious archives can misdeclare
 	// UncompressedSize64, so the post-decode check below is still required.
-	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) {
+	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) { //nolint:gosec // G115: maxZipEntryBytes is positive by construction
 		return nil, fmt.Errorf(
 			"archive entry %q exceeds %d-byte limit (declared %d)",
 			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
@@ -985,12 +990,12 @@ func readZipFile(zipFile *zip.File) ([]byte, error) {
 	}
 	defer func() { _ = readCloser.Close() }()
 
-	limited := io.LimitReader(readCloser, int64(maxZipEntryBytes)+1)
+	limited := io.LimitReader(readCloser, maxZipEntryBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("read zip file entry: %w", err)
 	}
-	if int64(len(data)) > int64(maxZipEntryBytes) {
+	if int64(len(data)) > maxZipEntryBytes {
 		return nil, fmt.Errorf(
 			"archive entry %q exceeds %d-byte limit (post-decode)",
 			zipFile.Name, maxZipEntryBytes,

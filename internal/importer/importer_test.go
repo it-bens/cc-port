@@ -1022,38 +1022,32 @@ func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
 		t.Skip("skipping 600 MiB bomb test in short mode")
 	}
 
+	// 600 MiB entry, well above the 512 MiB cap; zero-fill deflates to ~600 KiB.
 	destClaudeHome := buildEmptyDestClaudeHome(t)
 	archivePath := filepath.Join(t.TempDir(), "bomb.zip")
+	buildArchiveWithSingleEntry(t, archivePath, "sessions/bomb.json", 600<<20)
 
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	zipWriter := zip.NewWriter(archiveFile)
+	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  filepath.Join(t.TempDir(), "project"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
 
-	md := manifest.Metadata{
-		Export: manifest.Info{
-			Created:    time.Now().UTC(),
-			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{Sessions: true}),
-		},
-	}
-	data, err := xml.MarshalIndent(&md, "", "  ")
-	require.NoError(t, err)
-	mdEntry, err := zipWriter.Create("metadata.xml")
-	require.NoError(t, err)
-	_, err = mdEntry.Write(append([]byte(xml.Header), data...))
-	require.NoError(t, err)
+// TestReadZipFile_RejectsOversizedEntry_SmallCap is the CI-runnable proxy
+// for TestReadZipFile_RejectsOversizedEntry: it exercises the per-entry
+// cap guard under a 1 MiB test override so the archive is a few megabytes
+// rather than 600. Runs every CI push; the 600 MiB sibling runs only
+// without -short.
+func TestReadZipFile_RejectsOversizedEntry_SmallCap(t *testing.T) {
+	importer.SetMaxEntryBytes(t, 1<<20)
 
-	// 600 MiB of zeros — well above 512 MiB cap, compresses to ~600 KiB.
-	bombEntry, err := zipWriter.Create("sessions/bomb.json")
-	require.NoError(t, err)
-	zeros := make([]byte, 1<<20)
-	for range 600 {
-		_, err = bombEntry.Write(zeros)
-		require.NoError(t, err)
-	}
-	require.NoError(t, zipWriter.Close())
-	require.NoError(t, archiveFile.Close())
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	archivePath := filepath.Join(t.TempDir(), "bomb.zip")
+	buildArchiveWithSingleEntry(t, archivePath, "sessions/bomb.json", 2<<20)
 
-	err = importer.Run(t.Context(), destClaudeHome, importer.Options{
+	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
 		ArchivePath: archivePath,
 		TargetPath:  filepath.Join(t.TempDir(), "project"),
 	})
@@ -1062,17 +1056,38 @@ func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
 }
 
 // TestRun_RefusesArchiveExceedingAggregateUncompressedCap builds an archive
-// whose total decompressed payload exceeds importer.MaxArchiveUncompressedBytes
-// and asserts that Run rejects it before staging. The archive consists of
-// many 500 MiB entries so no individual entry trips the per-entry cap; only
-// the aggregate guard can fire. Skipped in -short because the test
-// materializes multiple gigabytes.
+// whose total decompressed payload exceeds the production aggregate cap and
+// asserts that Run rejects it before staging. The archive consists of many
+// 500 MiB entries so no individual entry trips the per-entry cap; only the
+// aggregate guard can fire. Skipped in -short because the test materializes
+// multiple gigabytes.
 func TestRun_RefusesArchiveExceedingAggregateUncompressedCap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a multi-GiB archive")
 	}
 
-	archivePath := buildArchiveWithAggregateSize(t, importer.MaxArchiveUncompressedBytes+1)
+	archivePath := buildArchiveWithAggregateSize(t, importer.MaxArchiveBytes()+1, 500<<20)
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+
+	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+		ArchivePath: archivePath,
+		TargetPath:  filepath.Join(t.TempDir(), "project"),
+		Resolutions: map[string]string{},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "archive decompressed size exceeds")
+}
+
+// TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap is the
+// CI-runnable proxy for TestRun_RefusesArchiveExceedingAggregateUncompressedCap:
+// exercises the pass-1 aggregate-cap guard in classifyArchive under a 2 MiB
+// test override, using three 1 MiB entries instead of multi-GiB payloads.
+// Runs every CI push; the scale sibling runs only without -short.
+func TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap(t *testing.T) {
+	importer.SetMaxArchiveBytes(t, 2<<20)
+
+	archivePath := buildArchiveWithAggregateSize(t, (2<<20)+1, 1<<20)
 	destClaudeHome := buildEmptyDestClaudeHome(t)
 
 	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
@@ -1107,14 +1122,13 @@ func TestRun_CancelsWhenContextCancelled(t *testing.T) {
 }
 
 // buildArchiveWithAggregateSize writes a ZIP at t.TempDir whose entries (after
-// metadata.xml) sum to at least minAggregateBytes uncompressed. Individual
-// entries are kept below the per-entry 512 MiB cap so only the aggregate
-// guard can reject the archive. Bodies are zero-filled for compressibility:
-// the on-disk footprint is small even when minAggregateBytes is multiple GiB.
-func buildArchiveWithAggregateSize(t *testing.T, minAggregateBytes int64) string {
+// metadata.xml) sum to at least minAggregateBytes uncompressed, split into
+// entries of size entrySize. Callers pick entrySize below the active per-entry
+// cap so only the aggregate guard can reject the archive. Bodies are zero-
+// filled: on-disk footprint stays small even for multi-GiB minAggregateBytes.
+func buildArchiveWithAggregateSize(t *testing.T, minAggregateBytes, entrySize int64) string {
 	t.Helper()
 
-	const entrySize = int64(500 << 20) // 500 MiB, under the 512 MiB per-entry cap
 	archivePath := filepath.Join(t.TempDir(), "aggregate.zip")
 
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
@@ -1124,6 +1138,59 @@ func buildArchiveWithAggregateSize(t *testing.T, minAggregateBytes int64) string
 	zipWriter := zip.NewWriter(archiveFile)
 	defer func() { _ = zipWriter.Close() }()
 
+	writeMetadataXML(t, zipWriter)
+
+	chunk := make([]byte, 1<<20) // 1 MiB of zeros, reused across writes
+	var aggregateWritten int64
+	for entryIndex := 0; aggregateWritten < minAggregateBytes; entryIndex++ {
+		entryName := fmt.Sprintf("sessions/entry-%03d.bin", entryIndex)
+		entry, err := zipWriter.Create(entryName)
+		require.NoError(t, err)
+		var written int64
+		for written < entrySize {
+			take := min(int64(len(chunk)), entrySize-written)
+			_, err = entry.Write(chunk[:take])
+			require.NoError(t, err)
+			written += take
+		}
+		aggregateWritten += written
+	}
+	return archivePath
+}
+
+// buildArchiveWithSingleEntry writes a cc-port-shaped archive at archivePath
+// with metadata.xml plus one entry named entryName filled with sizeBytes
+// zeros. Zero-fill keeps the on-disk footprint in the low KiB regardless of
+// sizeBytes, so tests that exercise the per-entry cap guard do not need
+// gigabytes of real data.
+func buildArchiveWithSingleEntry(t *testing.T, archivePath, entryName string, sizeBytes int64) {
+	t.Helper()
+
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	defer func() { _ = archiveFile.Close() }()
+
+	zipWriter := zip.NewWriter(archiveFile)
+	defer func() { _ = zipWriter.Close() }()
+
+	writeMetadataXML(t, zipWriter)
+
+	entry, err := zipWriter.Create(entryName)
+	require.NoError(t, err)
+	chunk := make([]byte, 1<<20)
+	var written int64
+	for written < sizeBytes {
+		take := min(int64(len(chunk)), sizeBytes-written)
+		_, err = entry.Write(chunk[:take])
+		require.NoError(t, err)
+		written += take
+	}
+}
+
+// writeMetadataXML emits the sessions-only metadata.xml header entry that
+// every test archive needs for importer.Run to accept the archive shape.
+func writeMetadataXML(t *testing.T, zipWriter *zip.Writer) {
+	t.Helper()
 	md := manifest.Metadata{
 		Export: manifest.Info{
 			Created:    time.Now().UTC(),
@@ -1136,20 +1203,4 @@ func buildArchiveWithAggregateSize(t *testing.T, minAggregateBytes int64) string
 	require.NoError(t, err)
 	_, err = mdEntry.Write(append([]byte(xml.Header), mdBytes...))
 	require.NoError(t, err)
-
-	chunk := make([]byte, 1<<20) // 1 MiB of zeros, reused across writes
-	var aggregateWritten int64
-	for entryIndex := 0; aggregateWritten < minAggregateBytes; entryIndex++ {
-		entryName := fmt.Sprintf("sessions/entry-%03d.bin", entryIndex)
-		entry, err := zipWriter.Create(entryName)
-		require.NoError(t, err)
-		var written int64
-		for written < entrySize {
-			n, err := entry.Write(chunk)
-			require.NoError(t, err)
-			written += int64(n)
-		}
-		aggregateWritten += written
-	}
-	return archivePath
 }
