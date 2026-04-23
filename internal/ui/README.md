@@ -14,6 +14,10 @@ Not a general UI layer. The only prompts this package exposes are the two listed
 
 ## Contracts
 
+### Interactive banner
+
+Both prompt entry points call `showInteractiveBanner` after `requireTTY` returns nil and before constructing the form. The banner renders `internal/logo` to `os.Stdout` behind a package-scoped `sync.Once`, so `import` flows that prompt categories and then one or more placeholders print the logo exactly once. The banner is cosmetic; `logo.Render` already suppresses itself on non-terminal writers and under `NO_COLOR`.
+
 ### Interactive prompts require a TTY
 
 Callers: `export`, `export manifest`, `import` (via `internal/export` and `internal/importer`).

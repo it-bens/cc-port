@@ -2,11 +2,14 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/it-bens/cc-port/internal/logo"
 )
 
 // Set by goreleaser ldflags.
@@ -48,12 +51,34 @@ func init() {
 	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &usageError{err: err}
 	})
+
+	defaultHelp := rootCmd.HelpFunc()
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		// Capture cobra's help output into a buffer by swapping the
+		// command's out writer, then render the logo beside it. The
+		// defer restores the original writer so subsequent help calls
+		// are unaffected.
+		originalOut := cmd.OutOrStdout()
+		var helpBuffer bytes.Buffer
+		cmd.SetOut(&helpBuffer)
+		defer cmd.SetOut(originalOut)
+		defaultHelp(cmd, args)
+		_ = logo.RenderBeside(originalOut, helpBuffer.String())
+	})
+
+	// Cobra writes the version template to stdout for the --version flag.
+	// The template func cannot receive a writer, so BesideString gates
+	// on os.Stdout directly to match what cobra will write to.
+	cobra.AddTemplateFunc("ccPortVersionBanner", func() string {
+		return logo.BesideString(fmt.Sprintf("cc-port %s\n", rootCmd.Version))
+	})
+	rootCmd.SetVersionTemplate("{{ccPortVersionBanner}}")
 }
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
-	Run: func(_ *cobra.Command, _ []string) {
-		fmt.Printf("cc-port %s\n", version)
+	Run: func(cmd *cobra.Command, _ []string) {
+		_ = logo.RenderBeside(cmd.OutOrStdout(), fmt.Sprintf("cc-port %s\n", version))
 	},
 }

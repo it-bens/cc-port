@@ -4,12 +4,25 @@ package ui
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/term"
 
+	"github.com/it-bens/cc-port/internal/logo"
 	"github.com/it-bens/cc-port/internal/manifest"
 )
+
+// Interactive flows can call into each other (export prompts categories
+// then may prompt placeholders); sync.Once keeps the banner to a single
+// render per process.
+var interactiveBannerOnce sync.Once
+
+func showInteractiveBanner() {
+	interactiveBannerOnce.Do(func() {
+		_ = logo.Render(os.Stdout)
+	})
+}
 
 // requireTTY fails fast when stdin is not a terminal, with a message naming
 // the non-interactive alternative for the calling surface. huh's own error in
@@ -31,6 +44,7 @@ func SelectCategories() (manifest.CategorySet, error) {
 	); err != nil {
 		return manifest.CategorySet{}, err
 	}
+	showInteractiveBanner()
 	var selectedCategories []string
 
 	form := huh.NewForm(
@@ -94,6 +108,7 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 	); err != nil {
 		return "", err
 	}
+	showInteractiveBanner()
 
 	resolvedValue := autoValue
 
