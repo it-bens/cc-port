@@ -7,7 +7,7 @@
 
 ## Install
 
-Homebrew (this repo's tap):
+Homebrew:
 
 ```
 brew install it-bens/tap/cc-port

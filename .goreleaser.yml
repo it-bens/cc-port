@@ -39,5 +39,5 @@ brews:
       system "#{bin}/cc-port", "version"
     repository:
       owner: it-bens
-      name: cc-port
+      name: homebrew-tap
       branch: main
