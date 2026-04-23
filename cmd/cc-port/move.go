@@ -150,14 +150,16 @@ func reportActiveSessionOnSource(claudeHome *claude.Home, oldProjectPath string)
 // displayLabels maps planCategories keys to left-column labels used in the
 // dry-run output. Keys absent from this map fall back to the key itself.
 var displayLabels = map[string]string{
-	"history":                 "history.jsonl",
-	"sessions":                "sessions/*.json",
-	"settings":                "settings.json",
-	"todos":                   "todos/",
-	"usage-data/session-meta": "usage-data/session-meta/",
-	"usage-data/facets":       "usage-data/facets/",
-	"plugins-data":            "plugins/data/",
-	"tasks":                   "tasks/",
+	"history":                    "history.jsonl",
+	"sessions":                   "sessions/*.json",
+	"settings":                   "settings.json",
+	"plugins/installed_plugins":  "plugins/installed_plugins.json",
+	"plugins/known_marketplaces": "plugins/known_marketplaces.json",
+	"todos":                      "todos/",
+	"usage-data/session-meta":    "usage-data/session-meta/",
+	"usage-data/facets":          "usage-data/facets/",
+	"plugins-data":               "plugins/data/",
+	"tasks":                      "tasks/",
 }
 
 func renderReferencesBlock(movePlan *move.Plan) {
@@ -184,10 +186,10 @@ func renderReferencesBlock(movePlan *move.Plan) {
 		if !ok {
 			label = key
 		}
-		fmt.Printf("  │   %-26s %d replacements\n", label, count)
+		fmt.Printf("  │   %-32s %d replacements\n", label, count)
 	}
 	if movePlan.ConfigBlockRekey {
-		fmt.Printf("  │   %-26s re-key project block\n", "~/.claude.json")
+		fmt.Printf("  │   %-32s re-key project block\n", "~/.claude.json")
 	}
 }
 

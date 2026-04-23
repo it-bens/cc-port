@@ -83,21 +83,35 @@ func countSessionFileReplacements(
 	return count, nil
 }
 
-func countSettingsReplacements(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (int, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, err
+// countUserWideReplacements walks claude.UserWideRewriteTargets, counts
+// boundary-aware occurrences of moveOptions.OldPath per target, and writes
+// each count to plan.ReplacementsByCategory[target.Name]. Missing targets
+// contribute zero, matching the existing convention for absent global files.
+func countUserWideReplacements(
+	ctx context.Context,
+	plan *Plan,
+	claudeHome *claude.Home,
+	moveOptions Options,
+) error {
+	for _, target := range claude.UserWideRewriteTargets {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		path := target.Path(claudeHome)
+		if _, err := os.Stat(path); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		data, err := os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		_, count := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+		plan.ReplacementsByCategory[target.Name] = count
 	}
-	settingsFile := claudeHome.SettingsFile()
-	if _, err := os.Stat(settingsFile); err != nil {
-		return 0, nil
-	}
-
-	data, err := os.ReadFile(settingsFile) //nolint:gosec // path constructed from trusted internal data
-	if err != nil {
-		return 0, fmt.Errorf("read settings.json: %w", err)
-	}
-	_, count := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
-	return count, nil
+	return nil
 }
 
 func checkConfigBlockRekey(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (bool, error) {

@@ -133,3 +133,13 @@ func (claudeHome *Home) PluginsDataDir() string {
 func (claudeHome *Home) TasksDir() string {
 	return filepath.Join(claudeHome.Dir, "tasks")
 }
+
+// PluginsInstalledFile returns the path to the ~/.claude/plugins/installed_plugins.json file.
+func (claudeHome *Home) PluginsInstalledFile() string {
+	return filepath.Join(claudeHome.Dir, "plugins", "installed_plugins.json")
+}
+
+// KnownMarketplacesFile returns the path to the ~/.claude/plugins/known_marketplaces.json file.
+func (claudeHome *Home) KnownMarketplacesFile() string {
+	return filepath.Join(claudeHome.Dir, "plugins", "known_marketplaces.json")
+}

@@ -174,6 +174,8 @@ func TestHome_DerivesPaths(t *testing.T) {
 		{"TodosDir", home.TodosDir(), "/home/user/.claude/todos"},
 		{"UsageDataDir", home.UsageDataDir(), "/home/user/.claude/usage-data"},
 		{"PluginsDataDir", home.PluginsDataDir(), "/home/user/.claude/plugins/data"},
+		{"PluginsInstalledFile", home.PluginsInstalledFile(), "/home/user/.claude/plugins/installed_plugins.json"},
+		{"KnownMarketplacesFile", home.KnownMarketplacesFile(), "/home/user/.claude/plugins/known_marketplaces.json"},
 		{"TasksDir", home.TasksDir(), "/home/user/.claude/tasks"},
 	}
 	for _, testCase := range cases {

@@ -27,7 +27,7 @@ func rewriteGlobalFiles(
 	if err := rewriteSessionFiles(ctx, locations, moveOptions, tracker); err != nil {
 		return err
 	}
-	if err := rewriteSettingsFile(ctx, claudeHome, moveOptions, tracker); err != nil {
+	if err := rewriteUserWideFiles(ctx, claudeHome, moveOptions, tracker); err != nil {
 		return err
 	}
 	if err := rewriteConfigFile(ctx, claudeHome, moveOptions, tracker); err != nil {
@@ -186,24 +186,32 @@ func rewriteSessionFiles(
 	return nil
 }
 
-func rewriteSettingsFile(
+// rewriteUserWideFiles applies boundary-aware byte replacement to every file
+// registered in claude.UserWideRewriteTargets. Each target is stat-gated so
+// absent files skip (matching the existing settings-missing behavior) and
+// non-ErrNotExist stat errors abort Apply so rollback runs. Every rewrite
+// flows through rewriteTracked so the globalFileTracker can restore
+// byte-for-byte on a later failure.
+func rewriteUserWideFiles(
 	ctx context.Context,
 	claudeHome *claude.Home,
 	moveOptions Options,
 	tracker *globalFileTracker,
 ) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	settingsFile := claudeHome.SettingsFile()
-	if _, err := os.Stat(settingsFile); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+	for _, target := range claude.UserWideRewriteTargets {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		return fmt.Errorf("stat %s: %w", settingsFile, err)
-	}
-	if err := rewriteTracked(settingsFile, moveOptions.OldPath, moveOptions.NewPath, tracker); err != nil {
-		return fmt.Errorf("rewrite settings.json: %w", err)
+		path := target.Path(claudeHome)
+		if _, err := os.Stat(path); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("stat %s: %w", path, err)
+		}
+		if err := rewriteTracked(path, moveOptions.OldPath, moveOptions.NewPath, tracker); err != nil {
+			return fmt.Errorf("rewrite %s %s: %w", target.Name, path, err)
+		}
 	}
 	return nil
 }

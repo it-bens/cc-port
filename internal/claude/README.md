@@ -25,7 +25,8 @@ Not a rewriting package. The module produces locations and types.
   - `Home`: struct with `Dir` and `ConfigFile` fields plus path-deriving
     methods `ProjectsDir`, `ProjectDir`, `HistoryFile`, `SessionsDir`,
     `SettingsFile`, `RulesDir`, `FileHistoryDir`, `TodosDir`,
-    `UsageDataDir`, `PluginsDataDir`, `TasksDir`.
+    `UsageDataDir`, `PluginsDataDir`, `TasksDir`, `PluginsInstalledFile`,
+    `KnownMarketplacesFile`.
 - **Project enumeration**
   - `LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, error)`:
     returns every file tied to a project. Errors if the project directory
@@ -41,6 +42,14 @@ Not a rewriting package. The module produces locations and types.
     yields `(group, absolute path)` pairs in registry order, applying
     each group's `SidecarFilter`. Performs no I/O and supports early
     termination via `break`.
+- **User-wide registry**
+  - `UserWideRewriteTarget`: descriptor struct with `Name` (stable machine
+    key and display label) and `Path func(*Home) string`.
+  - `UserWideRewriteTargets`: ordered slice that is the registry. Slice
+    order is the display and iteration order used by every downstream
+    consumer. Consumed by `internal/move`; `internal/export` and
+    `internal/importer` intentionally do not iterate it (these files are
+    machine-local and do not belong in a cross-machine archive).
 - **Schemas**
   - `HistoryEntry`, `SessionFile`, `UserConfig`, `SettingsMarketplace`,
     `SettingsMarketplaceSource`: Go types for the JSON/JSONL files
@@ -199,6 +208,44 @@ catches drift between those two slices.
 
 - None inherent to the registry. Extension (adding a group) is a
   compile-time edit, not a runtime concern.
+
+### User-wide registry
+
+`UserWideRewriteTargets` lists the user-wide files whose bytes may contain
+references to a project path and can be rewritten by component-boundary-aware
+byte replacement. Current entries: `settings` (`~/.claude/settings.json`),
+`plugins/installed_plugins` (`~/.claude/plugins/installed_plugins.json`),
+`plugins/known_marketplaces` (`~/.claude/plugins/known_marketplaces.json`).
+
+Files with structurally distinct rewriters stay outside the registry:
+`history.jsonl` (JSONL streaming), session files under
+`~/.claude/sessions/*.json` (JSON round-trip via `rewrite.SessionFile`), and
+`~/.claude.json` (JSON round-trip via `rewrite.UserConfig`). Forcing them in
+would require a strategy field on every entry.
+
+Adding a user-wide file means one entry in `UserWideRewriteTargets` and one
+`Home` path-derivation method on `paths.go`.
+
+#### Handled
+
+- Registry iteration in `internal/move` walks `UserWideRewriteTargets` once
+  in `rewriteUserWideFiles` (Apply) and once in `countUserWideReplacements`
+  (DryRun). Both use the same slice order.
+- Missing target files contribute zero to DryRun counts and are skipped at
+  Apply (matching the existing settings-absent behavior).
+
+#### Refused
+
+- None at runtime. The registry is a package-level var. Callers read it and
+  do not add to it at runtime.
+
+#### Not covered
+
+- `internal/export` and `internal/importer` do not consume the registry.
+  Plugin-registry files are machine-local and stay out of archives. A future
+  iteration can add archive handling by introducing an index-aligned
+  descriptor slice, matching the
+  `SessionKeyedGroups` ↔ `transport.SessionKeyedTargets` pattern.
 
 ### Schema types
 

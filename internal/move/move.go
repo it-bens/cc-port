@@ -43,10 +43,14 @@ type Plan struct {
 }
 
 // planCategories is the canonical ordering of ReplacementsByCategory keys:
-// history, sessions, settings, then the five claude.SessionKeyedGroups in
-// order, then file-history-snapshots as a tail counter.
+// history, sessions, then the claude.UserWideRewriteTargets entries in order,
+// then the claude.SessionKeyedGroups in order, then file-history-snapshots as
+// a tail counter.
 var planCategories = func() []string {
-	out := []string{"history", "sessions", "settings"}
+	out := []string{"history", "sessions"}
+	for _, target := range claude.UserWideRewriteTargets {
+		out = append(out, target.Name)
+	}
 	for _, group := range claude.SessionKeyedGroups {
 		out = append(out, group.Name)
 	}
@@ -118,11 +122,9 @@ func populatePlanCounts(
 	}
 	plan.ReplacementsByCategory["sessions"] = sessionCount
 
-	settingsCount, err := countSettingsReplacements(ctx, claudeHome, moveOptions)
-	if err != nil {
+	if err := countUserWideReplacements(ctx, plan, claudeHome, moveOptions); err != nil {
 		return err
 	}
-	plan.ReplacementsByCategory["settings"] = settingsCount
 
 	plan.ConfigBlockRekey, err = checkConfigBlockRekey(ctx, claudeHome, moveOptions)
 	if err != nil {

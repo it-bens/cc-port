@@ -12,6 +12,9 @@
 - When adding a session-keyed group, append one entry to
   `SessionKeyedGroups` and one index-aligned entry to
   `transport.SessionKeyedTargets` (README §Session-keyed registry).
+- When adding a user-wide file whose content references the moved project
+  path, append one entry to `UserWideRewriteTargets` and one `Home`
+  path-derivation method (README §User-wide registry).
 - Any new `bufio.Scanner` reader of `history.jsonl` must cap the buffer
   with `MaxHistoryLine` (README §History line cap).
 
@@ -21,5 +24,6 @@
 - Home and derived paths: `paths.go:NewHome`, `paths.go:Home`.
 - Project enumeration: `locations.go:LocateProject`.
 - Session-keyed registry: `session_keyed_groups.go`.
+- User-wide registry: `user_wide_groups.go`.
 - Schemas and constants: `schema.go` (`HistoryEntry`, `MaxHistoryLine`).
 - Tests: `paths_test.go`, `locations_test.go`, `schema_test.go`.

@@ -23,7 +23,7 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
 
 ### Internal helpers
 
-`rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` (settings, the session-keyed groups) routes through it so the rollback tracker sees pre-write bytes consistently.
+`rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` routes through it so the rollback tracker sees pre-write bytes consistently: `rewriteUserWideFiles` iterates `claude.UserWideRewriteTargets` (settings.json, plugins/installed_plugins.json, plugins/known_marketplaces.json), and the session-keyed-groups loop iterates `locations.AllFlatFiles()`.
 
 `snapshotPaths(ctx, locations)` enumerates every snapshot path under `locations.FileHistoryDirs`. Contents are never read; only path discovery. The returned length equals the dry-run `plan.ReplacementsByCategory["file-history-snapshots"]`. `DryRun`'s counter and `Apply`'s preservation warning call it so both stay in lock-step off one enumeration. `ctx` is checked at the top of the outer loop and inside the `listFilesRecursive` walk so a long enumeration aborts within one iteration. The helper is unexported; the black-box test file reaches it through a `_test.go` binding.
 
@@ -66,6 +66,7 @@ Callers: `cc-port move --apply` command in `cmd/cc-port`. See `internal/lock/REA
 - Encoded-dir collision check runs before any write. Moves where old and new paths encode to the same directory, or where the new encoded directory already exists, are refused with a descriptive error.
 - `Apply` wraps its body in `lock.WithLock`, which aborts if a Claude Code session is live or another cc-port invocation is running.
 - Session-keyed categories: `~/.claude/todos/<sid>-agent-<sid>.json`, `~/.claude/usage-data/session-meta/<sid>.json`, `~/.claude/usage-data/facets/<sid>.json`, `~/.claude/plugins/data/<ns>/<sid>/**`, `~/.claude/tasks/<sid>/**`.
+- User-wide categories iterated via `claude.UserWideRewriteTargets`: `~/.claude/settings.json`, `~/.claude/plugins/installed_plugins.json`, `~/.claude/plugins/known_marketplaces.json`. Each is stat-gated; missing files skip without error.
 
 #### Refused
 

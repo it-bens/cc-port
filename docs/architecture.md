@@ -41,6 +41,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Import writes are atomic with rollback                  | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
 | Mutating commands lock + refuse during live sessions    | [`internal/lock/README.md`](../internal/lock/README.md)                          |
 | Session-keyed user-wide directories follow the project  | [`internal/claude/README.md`](../internal/claude/README.md) §Project enumeration |
+| User-wide files are rewritten via a polymorphic registry | [`internal/claude/README.md`](../internal/claude/README.md) §User-wide registry |
 
 ## Session-UUID-keyed user-wide data (cross-cutting)
 

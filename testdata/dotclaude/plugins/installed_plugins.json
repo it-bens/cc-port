@@ -1,0 +1,23 @@
+{
+  "plugins": {
+    "typescript-lsp@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/home/user/.claude/plugins/cache/claude-plugins-official/typescript-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-01-01T00:00:00.000Z",
+        "lastUpdated": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "content-discipline@shopware-plugins": [
+      {
+        "scope": "project",
+        "projectPath": "/Users/test/Projects/myproject",
+        "installPath": "/home/user/.claude/plugins/cache/shopware-plugins/content-discipline/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-01-01T00:00:00.000Z",
+        "lastUpdated": "2026-01-01T00:00:00.000Z"
+      }
+    ]
+  }
+}

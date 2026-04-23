@@ -53,6 +53,44 @@ func TestDryRun(t *testing.T) {
 	assert.True(t, plan.MoveProjectDir, "RefsOnly=false should set MoveProjectDir=true")
 }
 
+func TestDryRunCountsPluginRegistryReplacements(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+
+	require.NoError(t, err)
+	assert.Positive(t, plan.ReplacementsByCategory["plugins/installed_plugins"],
+		"expected plugins/installed_plugins replacements for project-scope entry")
+	assert.Positive(t, plan.ReplacementsByCategory["plugins/known_marketplaces"],
+		"expected plugins/known_marketplaces replacements for directory-source marketplace")
+}
+
+// TestDryRun_PropagatesStatErrorOnSettingsSymlinkLoop pins the DryRun-side
+// stat-error policy: when os.Stat on a user-wide rewrite target returns a
+// non-ENOENT error, DryRun must propagate it instead of silently reporting
+// zero replacements. Mirrors the Apply-side guarantee in
+// TestApply_PropagatesStatErrorOnSettingsSymlinkLoop.
+func TestDryRun_PropagatesStatErrorOnSettingsSymlinkLoop(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	settingsPath := claudeHome.SettingsFile()
+	loopTarget := settingsPath + ".loop-target"
+	require.NoError(t, os.Remove(settingsPath))
+	require.NoError(t, os.Symlink(loopTarget, settingsPath))
+	require.NoError(t, os.Symlink(settingsPath, loopTarget))
+
+	_, err := move.DryRun(t.Context(), claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "settings.json",
+		"error must identify the settings.json file whose stat failed")
+}
+
 func TestDryRun_WithTranscripts(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
@@ -571,6 +609,147 @@ func TestApply_RewritesTasks_SkipsSidecars(t *testing.T) {
 	hwBody, err := os.ReadFile(hwPath) //nolint:gosec // test-controlled path
 	require.NoError(t, err)
 	assert.Equal(t, "1", string(hwBody), ".highwatermark must be preserved verbatim")
+}
+
+func TestApply_RewritesInstalledPlugins(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	installedPath := claudeHome.PluginsInstalledFile()
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	installedBytes, readErr := os.ReadFile(installedPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+	assert.Contains(t, string(installedBytes), newProjectPath,
+		"installed_plugins.json must contain the new path after Apply")
+	assert.NotContains(t, string(installedBytes), oldProjectPath,
+		"installed_plugins.json must not contain the old path after Apply")
+}
+
+func TestApply_RewritesKnownMarketplaces(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	marketplacesPath := claudeHome.KnownMarketplacesFile()
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	marketplacesBytes, readErr := os.ReadFile(marketplacesPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+	assert.Contains(t, string(marketplacesBytes), newProjectPath,
+		"known_marketplaces.json must contain the new path after Apply")
+	assert.NotContains(t, string(marketplacesBytes), oldProjectPath,
+		"known_marketplaces.json must not contain the old path after Apply")
+}
+
+func TestDryRunReportsZeroWhenPluginFilesAbsent(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	require.NoError(t, os.Remove(claudeHome.PluginsInstalledFile()))
+	require.NoError(t, os.Remove(claudeHome.KnownMarketplacesFile()))
+
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+
+	require.NoError(t, err)
+	assert.Zero(t, plan.ReplacementsByCategory["plugins/installed_plugins"],
+		"missing installed_plugins.json must contribute zero to the plan count")
+	assert.Zero(t, plan.ReplacementsByCategory["plugins/known_marketplaces"],
+		"missing known_marketplaces.json must contribute zero to the plan count")
+}
+
+func TestApplyToleratesMissingPluginFiles(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	require.NoError(t, os.Remove(claudeHome.PluginsInstalledFile()))
+	require.NoError(t, os.Remove(claudeHome.KnownMarketplacesFile()))
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+
+	require.NoError(t, err)
+}
+
+func TestApply_LeavesUserScopePluginEntryAlone(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	installedPath := claudeHome.PluginsInstalledFile()
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	installedBytes, readErr := os.ReadFile(installedPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+	assert.Contains(t, string(installedBytes), "typescript-lsp@claude-plugins-official",
+		"user-scope entry must survive the rewrite")
+	assert.Contains(t, string(installedBytes),
+		"/home/user/.claude/plugins/cache/claude-plugins-official/typescript-lsp/1.0.0",
+		"user-scope installPath must be untouched")
+}
+
+func TestApply_LeavesGithubSourceMarketplaceAlone(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	marketplacesPath := claudeHome.KnownMarketplacesFile()
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	marketplacesBytes, readErr := os.ReadFile(marketplacesPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+	assert.Contains(t, string(marketplacesBytes), "anthropics/claude-plugins-official",
+		"github-source marketplace must be untouched")
+	assert.Contains(t, string(marketplacesBytes),
+		"/home/user/.claude/plugins/marketplaces/claude-plugins-official",
+		"github-source installLocation must be untouched")
+}
+
+func TestApplyRollsBackPluginFilesOnLaterFailure(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	installedPath := claudeHome.PluginsInstalledFile()
+	marketplacesPath := claudeHome.KnownMarketplacesFile()
+
+	originalInstalled, readErr := os.ReadFile(installedPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+	originalMarketplaces, readErr := os.ReadFile(marketplacesPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+
+	// Corrupt .claude.json so rewriteConfigFile fails after the plugin-registry
+	// loop has already rewritten the plugin files. Apply must roll them back.
+	require.NoError(t, os.WriteFile(claudeHome.ConfigFile, []byte("{not valid json"), 0o600))
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.Error(t, err)
+
+	restoredInstalled, readErr := os.ReadFile(installedPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+	assert.Equal(t, originalInstalled, restoredInstalled,
+		"installed_plugins.json must be restored byte-for-byte after rollback")
+
+	restoredMarketplaces, readErr := os.ReadFile(marketplacesPath) //nolint:gosec // test-controlled path
+	require.NoError(t, readErr)
+	assert.Equal(t, originalMarketplaces, restoredMarketplaces,
+		"known_marketplaces.json must be restored byte-for-byte after rollback")
 }
 
 func TestApply_RewritesPluginsData(t *testing.T) {
