@@ -62,8 +62,22 @@ func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
 	}
 
 	defer func() {
-		if unlockErr := unlockFn(fileLock); unlockErr != nil && returnErr == nil {
+		unlockErr := unlockFn(fileLock)
+		// Cleanup runs unconditionally: unlink is orthogonal to flock state, and
+		// leaving the file on an unlock error would just re-accumulate stubs.
+		removeErr := os.Remove(lockPath)
+		if errors.Is(removeErr, os.ErrNotExist) {
+			removeErr = nil
+		}
+		if returnErr != nil {
+			return
+		}
+		if unlockErr != nil {
 			returnErr = fmt.Errorf("release cc-port lock: %w", unlockErr)
+			return
+		}
+		if removeErr != nil {
+			returnErr = fmt.Errorf("remove cc-port lock file: %w", removeErr)
 		}
 	}()
 

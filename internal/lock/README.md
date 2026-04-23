@@ -98,16 +98,28 @@ Called by:
   encoding, session enumeration) is Unix-shaped.
 - Cross-host locking (NFS, AFS). `flock(2)` semantics on networked filesystems
   are implementation-defined. cc-port assumes a local filesystem.
+- Three-process race at cleanup time. cc-port removes the lock file after
+  `Unlock` (see §Quirks). If invocation A unlocks and unlinks while
+  invocation B is between `OpenFile(O_CREATE)` and `flock()` on the same
+  path, B's flock lands on A's now-unlinked inode. A third invocation C
+  arriving after the unlink does `OpenFile(O_CREATE)` and creates a fresh
+  inode; its flock lands on that fresh inode. B and C both hold exclusive
+  flocks on different inodes and no longer exclude each other. The window
+  is one `flock(2)` call wide and requires three concurrent cc-port
+  invocations, so interactive use cannot reach it; scripted parallel runs
+  against the same `~/.claude/` can.
 
 ## Quirks
 
-`Flock.Unlock` does not delete the lock file. cc-port also does not. The file
-stub `~/.claude/.cc-port.lock` remains on disk between invocations (`go doc
-github.com/gofrs/flock.Flock.Unlock` documents this behavior).
+`Flock.Unlock` does not delete the lock file (`go doc
+github.com/gofrs/flock.Flock.Unlock` documents this behavior). cc-port calls
+`os.Remove(lockPath)` in the same defer right after `Unlock`, so
+`~/.claude/` does not accumulate a `.cc-port.lock` stub after a normal run.
+Removal is unconditional: unlink is orthogonal to flock state, and skipping
+it on an unlock error would just leak stubs.
 
-Do not add `os.Remove(lockPath)`. That would introduce a race where a sibling
-invocation is mid-`OpenFile` while we remove the entry. There is no
-user-visible benefit to cleaning it up.
+The cleanup exposes a narrow three-process race. See §Concurrency guard
+§Not covered.
 
 ## Tests
 

@@ -65,8 +65,25 @@ func TestWithLock_SucceedsWithNoSessions(t *testing.T) {
 
 	err := WithLock(claudeHome, func() error { return nil })
 	require.NoError(t, err)
+}
 
-	assert.FileExists(t, filepath.Join(claudeHome.Dir, FileName))
+func TestWithLock_RemovesLockFileOnSuccess(t *testing.T) {
+	claudeHome := newTestHome(t)
+
+	err := WithLock(claudeHome, func() error { return nil })
+	require.NoError(t, err)
+
+	assert.NoFileExists(t, filepath.Join(claudeHome.Dir, FileName))
+}
+
+func TestWithLock_RemovesLockFileOnFnError(t *testing.T) {
+	claudeHome := newTestHome(t)
+
+	boom := errors.New("boom")
+	err := WithLock(claudeHome, func() error { return boom })
+	require.ErrorIs(t, err, boom)
+
+	assert.NoFileExists(t, filepath.Join(claudeHome.Dir, FileName))
 }
 
 func TestWithLock_SucceedsWhenSessionPIDIsDead(t *testing.T) {
@@ -109,6 +126,8 @@ func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
 }
 
 func TestWithLock_SucceedsAfterPreviousReleased(t *testing.T) {
+	// The first call removes the lock file on exit, so the second call
+	// must recreate it. Load-bearing: TryLock opens with O_CREATE.
 	claudeHome := newTestHome(t)
 
 	require.NoError(t, WithLock(claudeHome, func() error { return nil }))
