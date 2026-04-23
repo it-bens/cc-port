@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/move"
 )
 
@@ -87,6 +89,10 @@ func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions mov
 		return err
 	}
 
+	if err := reportActiveSessionOnSource(claudeHome, moveOptions.OldPath); err != nil {
+		return err
+	}
+
 	fmt.Println("cc-port move (dry-run)")
 	fmt.Println()
 	fmt.Printf("  ┌ Directory Rename\n")
@@ -115,6 +121,29 @@ func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions mov
 
 	fmt.Println()
 	fmt.Println("  Run with --apply to execute.")
+	return nil
+}
+
+// reportActiveSessionOnSource prints a heads-up to stderr for every live
+// Claude Code session whose recorded cwd equals oldProjectPath. Dry-run
+// runs before lock.WithLock would fire on --apply, so surfacing the
+// witness here lets an operator close the live session before typing
+// --apply instead of discovering the block at mutation time.
+func reportActiveSessionOnSource(claudeHome *claude.Home, oldProjectPath string) error {
+	active, err := lock.FindActive(claudeHome)
+	if err != nil {
+		return fmt.Errorf("check active sessions: %w", err)
+	}
+	for _, session := range active {
+		if session.Cwd != oldProjectPath {
+			continue
+		}
+		fmt.Fprintf(
+			os.Stderr,
+			"note: Claude Code is currently running on %s (pid %d); --apply will refuse until that session exits\n",
+			session.Cwd, session.Pid,
+		)
+	}
 	return nil
 }
 

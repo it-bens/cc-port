@@ -30,15 +30,19 @@ var unlockFn = (*flock.Flock).Unlock
 // WithLock runs the live-session check before taking the lock, ensuring
 // no Claude Code session is active before fn is called.
 func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
-	activeSessions, err := findActiveSessions(claudeHome)
+	active, err := FindActive(claudeHome)
 	if err != nil {
 		return fmt.Errorf("scan active sessions: %w", err)
 	}
-	if len(activeSessions) > 0 {
+	if len(active) > 0 {
+		descriptors := make([]string, len(active))
+		for index, session := range active {
+			descriptors[index] = fmt.Sprintf("pid=%d cwd=%q", session.Pid, session.Cwd)
+		}
 		return fmt.Errorf(
 			"refusing to run: %d live Claude Code session(s) detected: [%s]",
-			len(activeSessions),
-			strings.Join(activeSessions, "; "),
+			len(active),
+			strings.Join(descriptors, "; "),
 		)
 	}
 
@@ -66,10 +70,20 @@ func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
 	return fn()
 }
 
-// findActiveSessions returns one descriptor per ~/.claude/sessions/*.json
-// file whose recorded PID is alive on the host. Each descriptor has the
-// form "pid <pid> cwd <cwd>" so the abort message is actionable.
-func findActiveSessions(claudeHome *claude.Home) ([]string, error) {
+// ActiveSession describes one live Claude Code process identified from
+// ~/.claude/sessions/<pid>.json.
+type ActiveSession struct {
+	Pid int
+	Cwd string
+}
+
+// FindActive returns one ActiveSession per ~/.claude/sessions/*.json
+// file whose recorded PID is alive on the host. An empty or missing
+// sessions directory produces a nil slice and no error so fresh
+// installations pass through cleanly. Callers that want to refuse on
+// any live session should test len(result) > 0; callers that want to
+// filter by project pass the cwd through a downstream equality check.
+func FindActive(claudeHome *claude.Home) ([]ActiveSession, error) {
 	sessionsDir := claudeHome.SessionsDir()
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
@@ -79,7 +93,7 @@ func findActiveSessions(claudeHome *claude.Home) ([]string, error) {
 		return nil, fmt.Errorf("read sessions directory: %w", err)
 	}
 
-	var active []string
+	var active []ActiveSession
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -91,7 +105,7 @@ func findActiveSessions(claudeHome *claude.Home) ([]string, error) {
 		}
 		var sessionFile claude.SessionFile
 		if err := json.Unmarshal(data, &sessionFile); err != nil {
-			// Unknown / future schema — skip rather than block.
+			// Unknown / future schema; skip rather than block.
 			continue
 		}
 		if sessionFile.Pid <= 0 {
@@ -100,7 +114,7 @@ func findActiveSessions(claudeHome *claude.Home) ([]string, error) {
 		if !processAlive(sessionFile.Pid) {
 			continue
 		}
-		active = append(active, fmt.Sprintf("pid=%d cwd=%q", sessionFile.Pid, sessionFile.Cwd))
+		active = append(active, ActiveSession{Pid: sessionFile.Pid, Cwd: sessionFile.Cwd})
 	}
 	return active, nil
 }

@@ -37,6 +37,29 @@ func writeSessionFile(t *testing.T, claudeHome *claude.Home, name string, pid in
 	require.NoError(t, os.WriteFile(filepath.Join(sessionsDir, name+".json"), data, 0o600))
 }
 
+func TestFindActive_ReportsPidAndCwdForLiveSession(t *testing.T) {
+	claudeHome := newTestHome(t)
+	writeSessionFile(t, claudeHome, "live", os.Getpid())
+
+	active, err := FindActive(claudeHome)
+
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, os.Getpid(), active[0].Pid)
+	assert.Equal(t, "/test/project", active[0].Cwd)
+}
+
+func TestFindActive_OmitsDeadSession(t *testing.T) {
+	claudeHome := newTestHome(t)
+	// A PID above every modern OS's pid_max is guaranteed dead.
+	writeSessionFile(t, claudeHome, "stale", 2_000_000_001)
+
+	active, err := FindActive(claudeHome)
+
+	require.NoError(t, err)
+	assert.Empty(t, active)
+}
+
 func TestWithLock_SucceedsWithNoSessions(t *testing.T) {
 	claudeHome := newTestHome(t)
 

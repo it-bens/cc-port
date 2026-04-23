@@ -13,10 +13,11 @@ should not reuse this package.
 ## Public API
 
 - `WithLock(claudeHome *claude.Home, fn func() error) error`: the sole
-  lock-guarded entry point. Runs the live-session check first, then acquires
-  `~/.claude/.cc-port.lock` via `gofrs/flock`, and calls `fn` with the lock
-  held. The lock is released via `defer` on every exit path, including a
-  panic inside `fn` that a caller recovers. Error precedence:
+  lock-guarded entry point. Runs the live-session check (via `FindActive`)
+  first, then acquires `~/.claude/.cc-port.lock` via `gofrs/flock`, and
+  calls `fn` with the lock held. The lock is released via `defer` on every
+  exit path, including a panic inside `fn` that a caller recovers. Error
+  precedence:
   1. Live-session check finds a running Claude Code process: returns a
      descriptive error, does not take the lock, and does not invoke `fn`.
   2. Another cc-port invocation holds the lock: returns a contention error
@@ -26,6 +27,14 @@ should not reuse this package.
      operational error takes precedence.
   4. `fn` returns nil: any deferred release error surfaces wrapped as
      `release cc-port lock: %w`.
+- `FindActive(claudeHome *claude.Home) ([]ActiveSession, error)`: returns
+  one `ActiveSession{Pid, Cwd}` per `~/.claude/sessions/*.json` file whose
+  recorded PID is alive on the host. Missing or empty `sessions/` yields a
+  nil slice and no error. Read-only callers (dry-run heads-up, inspection
+  tooling) use this without taking the flock; `WithLock` uses it
+  internally and refuses on any non-empty result.
+- `ActiveSession`: struct with `Pid int` and `Cwd string`. One instance per
+  live Claude Code process detected.
 - `FileName`: constant. The name (`.cc-port.lock`) of the advisory-lock file
   cc-port creates inside the Claude Code home directory.
 
@@ -103,8 +112,8 @@ user-visible benefit to cleaning it up.
 ## Tests
 
 Unit tests in `lock_test.go` (`package lock`, same-package access to the
-unexported `findActiveSessions`/`processAlive` and to the `unlockFn` swap
-point):
+unexported `processAlive` and the `unlockFn` swap point; `FindActive` is
+exported and exercised directly):
 
 - Acquire with no live sessions.
 - Acquire when a session PID is dead.
