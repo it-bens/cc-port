@@ -72,8 +72,8 @@ registry). Archive layout (zip prefix + import home base directory) lives in
 verified by an alignment unit test in `internal/transport`. Every per-command
 consumer (move, export, import, CLI renderers) iterates these registries
 instead of open-coding group names. Adding a new session-keyed group
-means editing both slices in the same commit plus one entry in
-`internal/move`'s `planCategories`.
+means editing both slices in the same commit; `internal/move`'s
+`planCategories` derives from `SessionKeyedGroups` and updates automatically.
 
 `~/.claude/teams/<team>/**` is intentionally NOT in this set. Team directories
 are user-wide workspaces with no inspectable per-project attribution.
