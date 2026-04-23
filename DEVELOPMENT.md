@@ -17,3 +17,11 @@ See [`docs/architecture.md`](docs/architecture.md) for the module layout, contra
 ## Commits
 
 Conventional commits; scope is a module directory name where applicable (`fix(importer): …`, `refactor!: …`).
+
+## Releases
+
+Push a tag matching `v*` (e.g. `v0.1.0`) to trigger a release. The `.github/workflows/release.yml` workflow runs goreleaser, which builds binaries for macOS and Linux on amd64 and arm64, creates a GitHub release with tarballs and checksums, and pushes a formula update to [`it-bens/homebrew-tap`](https://github.com/it-bens/homebrew-tap).
+
+Prerequisite: the `HOMEBREW_TAP_GITHUB_TOKEN` repository secret must be set to a fine-grained PAT with `contents: write` on `it-bens/homebrew-tap`. Without it, the cc-port release still succeeds but the tap push fails.
+
+Local snapshot build (no publish): `make snapshot`.
