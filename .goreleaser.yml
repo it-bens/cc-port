@@ -36,9 +36,10 @@ homebrew_casks:
     hooks:
       post:
         install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port"]
-          end
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port"] if OS.mac?
+    zap:
+      trash:
+        - "~/.claude/.cc-port.lock"
     repository:
       owner: it-bens
       name: homebrew-tap
