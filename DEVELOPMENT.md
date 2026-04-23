@@ -20,7 +20,7 @@ Conventional commits; scope is a module directory name where applicable (`fix(im
 
 ## Releases
 
-Push a tag matching `v*` (e.g. `v0.1.0`) to trigger a release. The `.github/workflows/release.yml` workflow runs goreleaser, which builds binaries for macOS and Linux on amd64 and arm64, creates a GitHub release with tarballs and checksums, and pushes a formula update to [`it-bens/homebrew-tap`](https://github.com/it-bens/homebrew-tap).
+Push a tag matching `v*` (e.g. `v0.1.0`) to trigger a release. The `.github/workflows/release.yml` workflow runs goreleaser, which builds binaries for macOS and Linux on amd64 and arm64, creates a GitHub release with tarballs and checksums, and pushes a cask update to [`it-bens/homebrew-tap`](https://github.com/it-bens/homebrew-tap). The cask is macOS-only; Linux users install via `go install` or the tarballs.
 
 Prerequisite: the `HOMEBREW_TAP_GITHUB_TOKEN` repository secret must be set to a fine-grained PAT with `contents: write` on `it-bens/homebrew-tap`. Without it, the cc-port release still succeeds but the tap push fails.
 

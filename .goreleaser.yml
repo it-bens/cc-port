@@ -14,7 +14,7 @@ builds:
       - arm64
 
 archives:
-  - format: tar.gz
+  - formats: ["tar.gz"]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
@@ -27,16 +27,18 @@ changelog:
       - "^docs:"
       - "^test:"
 
-brews:
+homebrew_casks:
   - name: cc-port
-    directory: Formula
+    binaries:
+      - cc-port
     homepage: "https://github.com/it-bens/cc-port"
     description: "Claude Code project portability tool"
-    license: MIT
-    install: |
-      bin.install "cc-port"
-    test: |
-      system "#{bin}/cc-port", "version"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port"]
+          end
     repository:
       owner: it-bens
       name: homebrew-tap

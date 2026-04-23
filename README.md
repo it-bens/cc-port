@@ -7,13 +7,13 @@
 
 ## Install
 
-Homebrew:
+Homebrew (macOS only):
 
 ```
 brew install it-bens/tap/cc-port
 ```
 
-Or with `go install`:
+Linux users, or those who prefer a source install, can use `go install`:
 
 ```
 go install github.com/it-bens/cc-port/cmd/cc-port@latest
