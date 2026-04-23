@@ -141,7 +141,7 @@ func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
 	_, err := claude.LocateProject(claudeHome, "/Users/test/Projects/my-project")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "different project")
+	assert.Contains(t, err.Error(), "refusing to rewrite")
 	assert.Contains(t, err.Error(), `"/Users/test/Projects/my project"`,
 		"error must name the witness cwd so the operator can identify the colliding project")
 }

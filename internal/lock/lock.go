@@ -36,7 +36,7 @@ func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
 	}
 	if len(activeSessions) > 0 {
 		return fmt.Errorf(
-			"refusing to run: %d live Claude Code session(s) detected — [%s]",
+			"refusing to run: %d live Claude Code session(s) detected: [%s]",
 			len(activeSessions),
 			strings.Join(activeSessions, "; "),
 		)
@@ -100,7 +100,7 @@ func findActiveSessions(claudeHome *claude.Home) ([]string, error) {
 		if !processAlive(sessionFile.Pid) {
 			continue
 		}
-		active = append(active, fmt.Sprintf("pid %d cwd %s", sessionFile.Pid, sessionFile.Cwd))
+		active = append(active, fmt.Sprintf("pid=%d cwd=%q", sessionFile.Pid, sessionFile.Cwd))
 	}
 	return active, nil
 }

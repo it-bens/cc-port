@@ -338,8 +338,10 @@ func collectTaskFiles(locations *ProjectLocations, claudeHome *Home, sessionUUID
 // one-line warning to os.Stderr and returns nil so fresh projects still
 // work.
 func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []string) error {
+	encodedDir := claudeHome.ProjectDir(projectPath)
+
 	if len(sessionUUIDs) == 0 {
-		warnIdentityCheckSkipped(projectPath)
+		warnIdentityCheckSkipped(encodedDir, projectPath)
 		return nil
 	}
 
@@ -357,12 +359,12 @@ func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []
 	}
 	if len(seenCwds) > 0 {
 		return fmt.Errorf(
-			"encoded directory %s belongs to a different project (requested %q, session cwd values seen: %s)",
-			claudeHome.ProjectDir(projectPath), projectPath, formatCwdList(seenCwds),
+			"encoded directory %s: sessions/*.json attributes it to %s, not to requested project %q; refusing to rewrite",
+			encodedDir, formatCwdList(seenCwds), projectPath,
 		)
 	}
 
-	warnIdentityCheckSkipped(projectPath)
+	warnIdentityCheckSkipped(encodedDir, projectPath)
 	return nil
 }
 
@@ -422,10 +424,10 @@ func formatCwdList(cwds []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-func warnIdentityCheckSkipped(projectPath string) {
+func warnIdentityCheckSkipped(encodedDir, projectPath string) {
 	fmt.Fprintf(os.Stderr,
-		"warning: project %s has no session files; encoded-directory identity check skipped\n",
-		projectPath,
+		"note: no witness in sessions/*.json attributes %s to project %s; identity check skipped\n",
+		encodedDir, projectPath,
 	)
 }
 

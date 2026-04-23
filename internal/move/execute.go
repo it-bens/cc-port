@@ -366,8 +366,8 @@ func warnFileHistoryPreserved(
 	}
 	_, _ = fmt.Fprintf(
 		resolveWarningWriter(moveOptions),
-		"warning: %d file-history snapshot(s) preserved as-is — contents may still reference the old project path "+
-			"(used for in-session rewinds, not persisted data)\n",
+		"note: %d file-history snapshot(s) preserved verbatim; bodies may still contain the old project path "+
+			"(Claude Code reads them by filename for in-session rewinds, not as path references)\n",
 		len(paths),
 	)
 }

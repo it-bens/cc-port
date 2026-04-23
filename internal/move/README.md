@@ -85,7 +85,7 @@ Callers: `cc-port move` command in `cmd/cc-port`.
 
 #### Handled
 
-- `Apply` leaves every snapshot under the same UUID directory untouched. The old project path may appear inside a snapshot body afterwards. The apply path prints `warning: N file-history snapshot(s) preserved as-is ...` to stderr (or to `Options.WarningWriter`). The dry-run plan reports the preserved count in the same position.
+- `Apply` leaves every snapshot under the same UUID directory untouched. The old project path may appear inside a snapshot body afterwards. The apply path prints `note: N file-history snapshot(s) preserved verbatim ...` to stderr (or to `Options.WarningWriter`). The dry-run plan reports the preserved count in the same position.
 
 #### Refused
 

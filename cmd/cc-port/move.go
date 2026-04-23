@@ -105,7 +105,8 @@ func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions mov
 	fmt.Println("  │")
 
 	fmt.Printf(
-		"  ├ File-history snapshots: %d preserved (contents not rewritten — used for in-session rewinds)\n",
+		"  ├ File-history snapshots: %d preserved verbatim "+
+			"(Claude Code reads them by filename for in-session rewinds, not as path references)\n",
 		movePlan.ReplacementsByCategory["file-history-snapshots"],
 	)
 	fmt.Println("  │")
@@ -164,7 +165,7 @@ func renderReferencesBlock(movePlan *move.Plan) {
 func renderPlanWarnings(movePlan *move.Plan) {
 	if len(movePlan.HistoryMalformedLines) > 0 {
 		fmt.Printf(
-			"  ├ Warning: history.jsonl has %d malformed line(s) at %v — preserved verbatim, not rewritten\n",
+			"  ├ Warning: history.jsonl has %d malformed line(s) at %v: preserved verbatim, not rewritten\n",
 			len(movePlan.HistoryMalformedLines), movePlan.HistoryMalformedLines,
 		)
 		fmt.Println("  │")
