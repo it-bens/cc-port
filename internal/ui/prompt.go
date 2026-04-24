@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -15,16 +16,22 @@ import (
 
 // Interactive flows can call into each other (export prompts categories
 // then may prompt placeholders); sync.Once keeps the banner to a single
-// render per process.
-var interactiveBannerOnce sync.Once
+// render per process. Addressable so withSeams can re-point it to a fresh
+// &sync.Once{} per test; value-typed Once cannot be reassigned after use
+// without tripping copylocks.
+var interactiveBannerOnce = &sync.Once{}
 
-// isTerminal is the TTY check used by requireTTY. Tests override it to
-// exercise both branches without depending on the test process's real stdin.
-var isTerminal = term.IsTerminal
+// Test seams. Production behavior is unchanged; every seam defaults to the
+// real dependency it replaces.
+var (
+	isTerminal             = term.IsTerminal
+	runForm                = (*huh.Form).Run
+	bannerWriter io.Writer = os.Stdout
+)
 
 func showInteractiveBanner() {
 	interactiveBannerOnce.Do(func() {
-		_ = logo.Render(os.Stdout)
+		_ = logo.Render(bannerWriter)
 	})
 }
 
@@ -70,7 +77,7 @@ func SelectCategories() (manifest.CategorySet, error) {
 		),
 	)
 
-	if err := form.Run(); err != nil {
+	if err := runForm(form); err != nil {
 		return manifest.CategorySet{}, fmt.Errorf("category selection canceled: %w", err)
 	}
 
@@ -110,7 +117,7 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 		),
 	)
 
-	if err := form.Run(); err != nil {
+	if err := runForm(form); err != nil {
 		return "", fmt.Errorf("resolution canceled: %w", err)
 	}
 

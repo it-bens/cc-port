@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"errors"
+	"io"
+	"sync"
 	"testing"
 
+	"charm.land/huh/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -69,20 +73,54 @@ func TestResolvePlaceholderRejectsNonInteractiveStdin(t *testing.T) {
 	assert.Contains(t, err.Error(), "export manifest")
 }
 
+func TestSelectCategoriesWrapsFormError(t *testing.T) {
+	sentinel := errors.New("test form failure")
+	withSeams(t, seamOverrides{
+		isTerminalFunc: func(uintptr) bool { return true },
+		runFormFunc:    func(*huh.Form) error { return sentinel },
+		banner:         io.Discard,
+		bannerOnce:     &sync.Once{},
+	})
+
+	_, err := SelectCategories()
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, sentinel)
+	assert.Contains(t, err.Error(), "category selection canceled")
+}
+
 // seamOverrides carries nil-or-value replacements for the package-level test
 // seams. A nil / zero field means "leave the seam alone." withSeams always
 // restores every known seam on cleanup regardless of which were overridden.
 type seamOverrides struct {
 	isTerminalFunc func(uintptr) bool
+	runFormFunc    func(*huh.Form) error
+	banner         io.Writer
+	bannerOnce     *sync.Once
 }
 
 func withSeams(t *testing.T, opts seamOverrides) {
 	t.Helper()
 	origIsTerminal := isTerminal
+	origRunForm := runForm
+	origBannerWriter := bannerWriter
+	origBannerOnce := interactiveBannerOnce
 	t.Cleanup(func() {
 		isTerminal = origIsTerminal
+		runForm = origRunForm
+		bannerWriter = origBannerWriter
+		interactiveBannerOnce = origBannerOnce
 	})
 	if opts.isTerminalFunc != nil {
 		isTerminal = opts.isTerminalFunc
+	}
+	if opts.runFormFunc != nil {
+		runForm = opts.runFormFunc
+	}
+	if opts.banner != nil {
+		bannerWriter = opts.banner
+	}
+	if opts.bannerOnce != nil {
+		interactiveBannerOnce = opts.bannerOnce
 	}
 }
