@@ -183,6 +183,48 @@ func TestExport_FileHistoryArchivesAllSnapshots(t *testing.T) {
 		"every fixture snapshot under project-relevant uuids must produce one archive entry")
 }
 
+func TestExport_FileHistoryBytesAreVerbatim(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	// Pick the lex-first project-relevant uuid dir, then the lex-first
+	// snapshot inside it. This mirrors the deterministic-pick pattern used
+	// by chmod-based tests and stays stable under fixture additions.
+	locations, err := claude.LocateProject(claudeHome, fixtureProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, locations.FileHistoryDirs)
+	sort.Strings(locations.FileHistoryDirs)
+	firstDir := locations.FileHistoryDirs[0]
+
+	dirEntries, err := os.ReadDir(firstDir)
+	require.NoError(t, err)
+	require.NotEmpty(t, dirEntries)
+	sort.Slice(dirEntries, func(i, j int) bool { return dirEntries[i].Name() < dirEntries[j].Name() })
+	snapshotName := dirEntries[0].Name()
+	snapshotPath := filepath.Join(firstDir, snapshotName)
+
+	// Body that would be redacted by applyPlaceholders if the file-history
+	// pipeline ever started running it. Includes both placeholders' Original
+	// values to make accidental redaction visible from either direction.
+	verbatimBody := []byte("see /Users/test/Projects/myproject/main.go and /Users/test/notes\n")
+	require.NoError(t, os.WriteFile(snapshotPath, verbatimBody, 0o600))
+
+	_, err = export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	uuid := filepath.Base(firstDir)
+	zipName := "file-history/" + uuid + "/" + snapshotName
+	contents := readZipContents(t, outputPath)
+	require.Contains(t, contents, zipName, "archive must contain the mutated snapshot entry")
+	assert.Equal(t, string(verbatimBody), contents[zipName],
+		"file-history bytes must be archived verbatim (no placeholder substitution)")
+}
+
 func TestExport_RedactsProjectPaths(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
