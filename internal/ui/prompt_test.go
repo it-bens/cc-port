@@ -89,6 +89,22 @@ func TestSelectCategoriesWrapsFormError(t *testing.T) {
 	assert.Contains(t, err.Error(), "category selection canceled")
 }
 
+func TestResolvePlaceholderWrapsFormError(t *testing.T) {
+	sentinel := errors.New("test placeholder failure")
+	withSeams(t, seamOverrides{
+		isTerminalFunc: func(uintptr) bool { return true },
+		runFormFunc:    func(*huh.Form) error { return sentinel },
+		banner:         io.Discard,
+		bannerOnce:     &sync.Once{},
+	})
+
+	_, err := ResolvePlaceholder("PROJECT_PATH", "/old", "/new")
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, sentinel)
+	assert.Contains(t, err.Error(), "resolution canceled")
+}
+
 // seamOverrides carries nil-or-value replacements for the package-level test
 // seams. A nil / zero field means "leave the seam alone." withSeams always
 // restores every known seam on cleanup regardless of which were overridden.
