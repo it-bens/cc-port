@@ -57,6 +57,18 @@ func TestSelectCategoriesRejectsNonInteractiveStdin(t *testing.T) {
 	assert.Contains(t, err.Error(), "--sessions")
 }
 
+func TestResolvePlaceholderRejectsNonInteractiveStdin(t *testing.T) {
+	withSeams(t, seamOverrides{
+		isTerminalFunc: func(uintptr) bool { return false },
+	})
+
+	_, err := ResolvePlaceholder("PROJECT_PATH", "/old", "/new")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PROJECT_PATH")
+	assert.Contains(t, err.Error(), "export manifest")
+}
+
 // seamOverrides carries nil-or-value replacements for the package-level test
 // seams. A nil / zero field means "leave the seam alone." withSeams always
 // restores every known seam on cleanup regardless of which were overridden.
