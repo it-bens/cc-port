@@ -12,4 +12,4 @@
 - Entry: `prompt.go:SelectCategories`, `prompt.go:ResolvePlaceholder`.
 - Preflight: `prompt.go:requireTTY`.
 - Banner: `prompt.go:showInteractiveBanner`.
-- Tests: no dedicated test; exercised via `integration_test.go` at repo root.
+- Tests: `prompt_test.go` (README §Tests).

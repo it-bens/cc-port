@@ -16,7 +16,7 @@ Not a general UI layer. The only prompts this package exposes are the two listed
 
 ### Interactive banner
 
-Both prompt entry points call `showInteractiveBanner` after `requireTTY` returns nil and before constructing the form. The banner renders `internal/logo` to `os.Stdout` behind a package-scoped `sync.Once`, so `import` flows that prompt categories and then one or more placeholders print the logo exactly once. The banner is cosmetic; `logo.Render` already suppresses itself on non-terminal writers and under `NO_COLOR`.
+Both prompt entry points call `showInteractiveBanner` after `requireTTY` returns nil and before constructing the form. The banner renders `internal/logo` through the `bannerWriter` seam (default `os.Stdout`) behind a package-scoped `sync.Once`, so `import` flows that prompt categories and then one or more placeholders print the logo exactly once. The banner is cosmetic; `logo.Render` already suppresses itself on non-terminal writers and under `NO_COLOR`.
 
 ### Interactive prompts require a TTY
 
@@ -47,4 +47,4 @@ Non-TTY stdin triggers the preflight abort with a surface-specific remediation m
 
 ## Tests
 
-No dedicated `prompt_test.go`. The `huh` forms take over `/dev/tty` and are not exercised under `go test`. The `requireTTY` preflight is exercised indirectly by `integration_test.go` at the repo root.
+`prompt_test.go` covers the TTY preflight path and the runner-error path for both `SelectCategories` and `ResolvePlaceholder`, plus every entry of `manifest.AllCategories` through `categoriesFromSelections`. Tests can override four package-level seams (`isTerminal`, `runForm`, `bannerWriter`, `interactiveBannerOnce`) to bypass the terminal requirement, the `huh` event loop, banner output on stdout, and the once-guard that would otherwise silence the banner path after the first test runs it. The path where the user submits a real selection is not exercised under `go test`; it currently runs only when the CLI is driven interactively.
