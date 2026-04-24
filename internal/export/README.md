@@ -86,7 +86,7 @@ Privacy of exported snapshots. An archive shared with someone else carries liter
 
 ## Tests
 
-Unit tests in `export_test.go` and `discover_test.go`. Coverage: all-categories export, path anonymisation (order-independence, boundary collisions), selective category export, history-inclusion rules, path discovery, prefix grouping, auto-placeholder detection.
+Unit tests in `export_test.go`, `discover_test.go`, `close_error_test.go`, and `file_history_errors_test.go`. Coverage: all-categories export, path anonymisation (order-independence, boundary collisions), selective category export, history-inclusion rules, file-history pipeline, close/write fault injection, path discovery, prefix grouping, auto-placeholder detection.
 
 `history_line_cap_test.go` drives the `MaxHistoryLine` cap through `Run`. The invariant is owned by [`internal/claude/README.md`](../claude/README.md) §History line cap.
 

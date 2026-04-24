@@ -14,4 +14,4 @@
 - Entry: `export.go:Run`.
 - Discovery: `discover.go:DiscoverPaths`, `discover.go:GroupPathPrefixes`, `discover.go:AutoDetectPlaceholders`.
 - Wire DTOs + manifest I/O: `internal/manifest`.
-- Tests: `export_test.go`, `discover_test.go`.
+- Tests: `*_test.go` in this directory.
