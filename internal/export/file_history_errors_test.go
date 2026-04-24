@@ -52,6 +52,36 @@ func TestExport_FileHistoryFailsWhenSnapshotUnreadable(t *testing.T) {
 	require.ErrorContains(t, err, snapshotPath)
 }
 
+func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based fault injection not supported on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("chmod bits bypassed when running as root")
+	}
+
+	claudeHome := testutil.SetupFixture(t)
+
+	locations, err := claude.LocateProject(claudeHome, fixtureProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, locations.FileHistoryDirs)
+	sort.Strings(locations.FileHistoryDirs)
+	firstDir := locations.FileHistoryDirs[0]
+
+	chmodScoped(t, firstDir, 0)
+
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	_, err = export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "read directory")
+}
+
 // chmodScoped sets path's mode and registers a Cleanup to restore the
 // captured pre-chmod mode. Restoration runs before t.TempDir's rm-rf so
 // fixture cleanup succeeds even if chmod 000 made the entry unreadable.
