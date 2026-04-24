@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/testutil"
@@ -107,6 +108,121 @@ func TestExport_IncludesConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Len(t, result.Config, 1, "config must produce exactly one entry")
+}
+
+func TestExport_IncludesFileHistory(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, result.FileHistory, "at least one file-history entry must be present")
+}
+
+func TestExport_FileHistorySkippedWhenDisabled(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{Sessions: true, FileHistory: false},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, result.FileHistory, "file-history must be empty when category is off")
+	assert.NotEmpty(t, result.Sessions, "sessions must still be populated as the carrier category")
+}
+
+func TestExport_FileHistoryEntriesUseUUIDPrefix(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.FileHistory)
+
+	for _, entry := range result.FileHistory {
+		assert.True(t, strings.HasPrefix(entry.ArchivePath, "file-history/"),
+			"entry %q must start with file-history/", entry.ArchivePath)
+		// After "file-history/", the next path component is a uuid, then a /
+		// before the snapshot file name. Smallest valid shape: 13 + 36 + 1 + 1 = 51 chars.
+		assert.GreaterOrEqual(t, len(entry.ArchivePath), len("file-history/")+36+1+1,
+			"entry %q must include a uuid segment and a snapshot name", entry.ArchivePath)
+	}
+}
+
+func TestExport_FileHistoryArchivesAllSnapshots(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	expectedCount := fileHistoryFixtureSnapshotCount(t, claudeHome)
+	require.Positive(t, expectedCount, "fixture must contain at least one project-relevant snapshot")
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	assert.Len(t, result.FileHistory, expectedCount,
+		"every fixture snapshot under project-relevant uuids must produce one archive entry")
+}
+
+func TestExport_FileHistoryBytesAreVerbatim(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	// Pick the lex-first project-relevant uuid dir, then the lex-first
+	// snapshot inside it. This mirrors the deterministic-pick pattern used
+	// by chmod-based tests and stays stable under fixture additions.
+	locations, err := claude.LocateProject(claudeHome, fixtureProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, locations.FileHistoryDirs)
+	sort.Strings(locations.FileHistoryDirs)
+	firstDir := locations.FileHistoryDirs[0]
+
+	dirEntries, err := os.ReadDir(firstDir)
+	require.NoError(t, err)
+	require.NotEmpty(t, dirEntries)
+	sort.Slice(dirEntries, func(i, j int) bool { return dirEntries[i].Name() < dirEntries[j].Name() })
+	snapshotName := dirEntries[0].Name()
+	snapshotPath := filepath.Join(firstDir, snapshotName)
+
+	// Body that would be redacted by applyPlaceholders if the file-history
+	// pipeline ever started running it. Includes both placeholders' Original
+	// values to make accidental redaction visible from either direction.
+	verbatimBody := []byte("see /Users/test/Projects/myproject/main.go and /Users/test/notes\n")
+	require.NoError(t, os.WriteFile(snapshotPath, verbatimBody, 0o600))
+
+	_, err = export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	uuid := filepath.Base(firstDir)
+	zipName := "file-history/" + uuid + "/" + snapshotName
+	contents := readZipContents(t, outputPath)
+	require.Contains(t, contents, zipName, "archive must contain the mutated snapshot entry")
+	assert.Equal(t, string(verbatimBody), contents[zipName],
+		"file-history bytes must be archived verbatim (no placeholder substitution)")
 }
 
 func TestExport_RedactsProjectPaths(t *testing.T) {
@@ -500,4 +616,29 @@ func sessionEntryNames(t *testing.T, contents map[string]string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// fileHistoryFixtureSnapshotCount returns the count of regular files under
+// every file-history dir LocateProject would yield for the standard fixture
+// project. Mirrors the iteration exportFileHistory itself performs, so the
+// count is definitionally correct under any future fixture rename.
+func fileHistoryFixtureSnapshotCount(t *testing.T, claudeHome *claude.Home) int {
+	t.Helper()
+	locations, err := claude.LocateProject(claudeHome, fixtureProjectPath)
+	require.NoError(t, err, "locate project")
+
+	count := 0
+	for _, dir := range locations.FileHistoryDirs {
+		walkErr := filepath.WalkDir(dir, func(_ string, entry os.DirEntry, perr error) error {
+			if perr != nil {
+				return perr
+			}
+			if !entry.IsDir() {
+				count++
+			}
+			return nil
+		})
+		require.NoError(t, walkErr, "walk file-history dir %s", dir)
+	}
+	return count
 }
