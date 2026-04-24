@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -15,12 +16,22 @@ import (
 
 // Interactive flows can call into each other (export prompts categories
 // then may prompt placeholders); sync.Once keeps the banner to a single
-// render per process.
-var interactiveBannerOnce sync.Once
+// render per process. Addressable so withSeams can re-point it to a fresh
+// &sync.Once{} per test; value-typed Once cannot be reassigned after use
+// without tripping copylocks.
+var interactiveBannerOnce = &sync.Once{}
+
+// Test seams. Production behavior is unchanged; every seam defaults to the
+// real dependency it replaces.
+var (
+	isTerminal             = term.IsTerminal
+	runForm                = (*huh.Form).Run
+	bannerWriter io.Writer = os.Stdout
+)
 
 func showInteractiveBanner() {
 	interactiveBannerOnce.Do(func() {
-		_ = logo.Render(os.Stdout)
+		_ = logo.Render(bannerWriter)
 	})
 }
 
@@ -29,7 +40,7 @@ func showInteractiveBanner() {
 // that situation is an opaque "open /dev/tty" failure after the form has
 // already taken over the terminal.
 func requireTTY(remediation string) error {
-	if term.IsTerminal(os.Stdin.Fd()) {
+	if isTerminal(os.Stdin.Fd()) {
 		return nil
 	}
 	return fmt.Errorf("interactive prompt requires a TTY: %s", remediation)
@@ -66,34 +77,15 @@ func SelectCategories() (manifest.CategorySet, error) {
 		),
 	)
 
-	if err := form.Run(); err != nil {
+	if err := runForm(form); err != nil {
 		return manifest.CategorySet{}, fmt.Errorf("category selection canceled: %w", err)
 	}
 
-	var categories manifest.CategorySet
-	for _, selection := range selectedCategories {
-		switch selection {
-		case "sessions":
-			categories.Sessions = true
-		case "memory":
-			categories.Memory = true
-		case "history":
-			categories.History = true
-		case "file-history":
-			categories.FileHistory = true
-		case "config":
-			categories.Config = true
-		case "todos":
-			categories.Todos = true
-		case "usage-data":
-			categories.UsageData = true
-		case "plugins-data":
-			categories.PluginsData = true
-		case "tasks":
-			categories.Tasks = true
-		}
+	result, err := categoriesFromSelections(selectedCategories)
+	if err != nil {
+		return manifest.CategorySet{}, fmt.Errorf("category selection: %w", err)
 	}
-	return categories, nil
+	return result, nil
 }
 
 // ResolvePlaceholder prompts for one manifest placeholder; returned value is verbatim with no validation.
@@ -125,9 +117,28 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 		),
 	)
 
-	if err := form.Run(); err != nil {
+	if err := runForm(form); err != nil {
 		return "", fmt.Errorf("resolution canceled: %w", err)
 	}
 
 	return resolvedValue, nil
+}
+
+// An unknown key means the form options literal in SelectCategories has
+// drifted out of sync with manifest.AllCategories; surface it rather than
+// silently dropping.
+func categoriesFromSelections(selections []string) (manifest.CategorySet, error) {
+	specByName := make(map[string]manifest.CategorySpec, len(manifest.AllCategories))
+	for _, spec := range manifest.AllCategories {
+		specByName[spec.Name] = spec
+	}
+	var result manifest.CategorySet
+	for _, key := range selections {
+		spec, ok := specByName[key]
+		if !ok {
+			return manifest.CategorySet{}, fmt.Errorf("unknown export category key %q", key)
+		}
+		spec.Apply(&result, true)
+	}
+	return result, nil
 }
