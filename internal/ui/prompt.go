@@ -18,6 +18,10 @@ import (
 // render per process.
 var interactiveBannerOnce sync.Once
 
+// isTerminal is the TTY check used by requireTTY. Tests override it to
+// exercise both branches without depending on the test process's real stdin.
+var isTerminal = term.IsTerminal
+
 func showInteractiveBanner() {
 	interactiveBannerOnce.Do(func() {
 		_ = logo.Render(os.Stdout)
@@ -29,7 +33,7 @@ func showInteractiveBanner() {
 // that situation is an opaque "open /dev/tty" failure after the form has
 // already taken over the terminal.
 func requireTTY(remediation string) error {
-	if term.IsTerminal(os.Stdin.Fd()) {
+	if isTerminal(os.Stdin.Fd()) {
 		return nil
 	}
 	return fmt.Errorf("interactive prompt requires a TTY: %s", remediation)

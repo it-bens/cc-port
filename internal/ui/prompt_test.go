@@ -44,3 +44,33 @@ func TestCategoriesFromSelections(t *testing.T) {
 		assert.Contains(t, err.Error(), "does-not-exist")
 	})
 }
+
+func TestSelectCategoriesRejectsNonInteractiveStdin(t *testing.T) {
+	withSeams(t, seamOverrides{
+		isTerminalFunc: func(uintptr) bool { return false },
+	})
+
+	_, err := SelectCategories()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--all")
+	assert.Contains(t, err.Error(), "--sessions")
+}
+
+// seamOverrides carries nil-or-value replacements for the package-level test
+// seams. A nil / zero field means "leave the seam alone." withSeams always
+// restores every known seam on cleanup regardless of which were overridden.
+type seamOverrides struct {
+	isTerminalFunc func(uintptr) bool
+}
+
+func withSeams(t *testing.T, opts seamOverrides) {
+	t.Helper()
+	origIsTerminal := isTerminal
+	t.Cleanup(func() {
+		isTerminal = origIsTerminal
+	})
+	if opts.isTerminalFunc != nil {
+		isTerminal = opts.isTerminalFunc
+	}
+}
