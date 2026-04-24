@@ -124,6 +124,22 @@ func TestExport_IncludesFileHistory(t *testing.T) {
 	assert.NotEmpty(t, result.FileHistory, "at least one file-history entry must be present")
 }
 
+func TestExport_FileHistorySkippedWhenDisabled(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{Sessions: true, FileHistory: false},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, result.FileHistory, "file-history must be empty when category is off")
+	assert.NotEmpty(t, result.Sessions, "sessions must still be populated as the carrier category")
+}
+
 func TestExport_RedactsProjectPaths(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
