@@ -140,6 +140,29 @@ func TestExport_FileHistorySkippedWhenDisabled(t *testing.T) {
 	assert.NotEmpty(t, result.Sessions, "sessions must still be populated as the carrier category")
 }
 
+func TestExport_FileHistoryEntriesUseUUIDPrefix(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.FileHistory)
+
+	for _, entry := range result.FileHistory {
+		assert.True(t, strings.HasPrefix(entry.ArchivePath, "file-history/"),
+			"entry %q must start with file-history/", entry.ArchivePath)
+		// After "file-history/", the next path component is a uuid, then a /
+		// before the snapshot file name. Smallest valid shape: 13 + 36 + 1 + 1 = 51 chars.
+		assert.GreaterOrEqual(t, len(entry.ArchivePath), len("file-history/")+36+1+1,
+			"entry %q must include a uuid segment and a snapshot name", entry.ArchivePath)
+	}
+}
+
 func TestExport_RedactsProjectPaths(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
