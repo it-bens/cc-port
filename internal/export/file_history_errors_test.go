@@ -1,6 +1,9 @@
 package export_test
 
 import (
+	crand "crypto/rand"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -80,6 +83,75 @@ func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "read directory")
+}
+
+func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
+	sentinel := errors.New("synthetic file-history write failure")
+
+	claudeHome := testutil.SetupFixture(t)
+
+	locations, err := claude.LocateProject(claudeHome, fixtureProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, locations.FileHistoryDirs)
+	sort.Strings(locations.FileHistoryDirs)
+	firstDir := locations.FileHistoryDirs[0]
+
+	dirEntries, err := os.ReadDir(firstDir)
+	require.NoError(t, err)
+	require.NotEmpty(t, dirEntries)
+	sort.Slice(dirEntries, func(i, j int) bool { return dirEntries[i].Name() < dirEntries[j].Name() })
+	bigSnapshotPath := filepath.Join(firstDir, dirEntries[0].Name())
+
+	// zip.Writer wraps output in a 4 KiB bufio.Writer, so a fixture whose
+	// total compressed output fits in one buffer collapses every entry's
+	// flush into archiveWriter.Close. That masks writeReaderToZip's
+	// per-entry error-wrap and surfaces failures as "finalize archive"
+	// regardless of where they occurred. Overwriting the lex-first
+	// file-history snapshot with 64 KiB of crypto/rand bytes makes the
+	// body incompressible, so deflate emits near-1:1 output and forces
+	// multiple bufio spills mid entry.Write. The sentinel then fires
+	// inside the spill and surfaces through the "write zip entry
+	// file-history/..." wrap.
+	bigBody := make([]byte, 64<<10)
+	_, err = crand.Read(bigBody)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(bigSnapshotPath, bigBody, 0o600))
+
+	siblingHome := testutil.SetupFixture(t)
+	siblingPath := filepath.Join(t.TempDir(), "sibling.zip")
+	_, err = export.Run(t.Context(), siblingHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   siblingPath,
+		Categories:   manifest.CategorySet{},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err, "sibling export for threshold discovery must succeed")
+
+	siblingInfo, err := os.Stat(siblingPath)
+	require.NoError(t, err)
+	limitBytes := int(siblingInfo.Size()) + 64
+
+	opener := func(path string) (io.WriteCloser, error) {
+		realFile, err := os.Create(path) //nolint:gosec // G304: test-controlled tempdir path
+		if err != nil {
+			return nil, err
+		}
+		return &writeLimitCloser{inner: realFile, limit: limitBytes, writeErr: sentinel}, nil
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "out.zip")
+
+	_, err = export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	}, export.WithArchiveOpener(opener))
+
+	require.Error(t, err, "Run must surface the synthetic write failure")
+	require.ErrorIs(t, err, sentinel, "the sentinel must be in the error chain")
+	require.ErrorContains(t, err, "file-history/",
+		"the failure must wrap a file-history archive entry, not metadata or another category")
 }
 
 // chmodScoped sets path's mode and registers a Cleanup to restore the
