@@ -109,6 +109,21 @@ func TestExport_IncludesConfig(t *testing.T) {
 	assert.Len(t, result.Config, 1, "config must produce exactly one entry")
 }
 
+func TestExport_IncludesFileHistory(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, result.FileHistory, "at least one file-history entry must be present")
+}
+
 func TestExport_RedactsProjectPaths(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
