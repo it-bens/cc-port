@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/testutil"
@@ -161,6 +162,25 @@ func TestExport_FileHistoryEntriesUseUUIDPrefix(t *testing.T) {
 		assert.GreaterOrEqual(t, len(entry.ArchivePath), len("file-history/")+36+1+1,
 			"entry %q must include a uuid segment and a snapshot name", entry.ArchivePath)
 	}
+}
+
+func TestExport_FileHistoryArchivesAllSnapshots(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	outputPath := filepath.Join(t.TempDir(), "export.zip")
+
+	expectedCount := fileHistoryFixtureSnapshotCount(t, claudeHome)
+	require.Greater(t, expectedCount, 0, "fixture must contain at least one project-relevant snapshot")
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		OutputPath:   outputPath,
+		Categories:   manifest.CategorySet{FileHistory: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+
+	assert.Len(t, result.FileHistory, expectedCount,
+		"every fixture snapshot under project-relevant uuids must produce one archive entry")
 }
 
 func TestExport_RedactsProjectPaths(t *testing.T) {
@@ -554,4 +574,29 @@ func sessionEntryNames(t *testing.T, contents map[string]string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// fileHistoryFixtureSnapshotCount returns the count of regular files under
+// every file-history dir LocateProject would yield for the standard fixture
+// project. Mirrors the iteration exportFileHistory itself performs, so the
+// count is definitionally correct under any future fixture rename.
+func fileHistoryFixtureSnapshotCount(t *testing.T, claudeHome *claude.Home) int {
+	t.Helper()
+	locations, err := claude.LocateProject(claudeHome, fixtureProjectPath)
+	require.NoError(t, err, "locate project")
+
+	count := 0
+	for _, dir := range locations.FileHistoryDirs {
+		walkErr := filepath.WalkDir(dir, func(_ string, entry os.DirEntry, perr error) error {
+			if perr != nil {
+				return perr
+			}
+			if !entry.IsDir() {
+				count++
+			}
+			return nil
+		})
+		require.NoError(t, walkErr, "walk file-history dir %s", dir)
+	}
+	return count
 }
