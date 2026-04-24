@@ -169,7 +169,7 @@ func TestExport_FileHistoryArchivesAllSnapshots(t *testing.T) {
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
 
 	expectedCount := fileHistoryFixtureSnapshotCount(t, claudeHome)
-	require.Greater(t, expectedCount, 0, "fixture must contain at least one project-relevant snapshot")
+	require.Positive(t, expectedCount, "fixture must contain at least one project-relevant snapshot")
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
