@@ -70,30 +70,11 @@ func SelectCategories() (manifest.CategorySet, error) {
 		return manifest.CategorySet{}, fmt.Errorf("category selection canceled: %w", err)
 	}
 
-	var categories manifest.CategorySet
-	for _, selection := range selectedCategories {
-		switch selection {
-		case "sessions":
-			categories.Sessions = true
-		case "memory":
-			categories.Memory = true
-		case "history":
-			categories.History = true
-		case "file-history":
-			categories.FileHistory = true
-		case "config":
-			categories.Config = true
-		case "todos":
-			categories.Todos = true
-		case "usage-data":
-			categories.UsageData = true
-		case "plugins-data":
-			categories.PluginsData = true
-		case "tasks":
-			categories.Tasks = true
-		}
+	result, err := categoriesFromSelections(selectedCategories)
+	if err != nil {
+		return manifest.CategorySet{}, fmt.Errorf("category selection: %w", err)
 	}
-	return categories, nil
+	return result, nil
 }
 
 // ResolvePlaceholder prompts for one manifest placeholder; returned value is verbatim with no validation.
@@ -130,4 +111,23 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 	}
 
 	return resolvedValue, nil
+}
+
+// An unknown key means the form options literal in SelectCategories has
+// drifted out of sync with manifest.AllCategories; surface it rather than
+// silently dropping.
+func categoriesFromSelections(selections []string) (manifest.CategorySet, error) {
+	specByName := make(map[string]manifest.CategorySpec, len(manifest.AllCategories))
+	for _, spec := range manifest.AllCategories {
+		specByName[spec.Name] = spec
+	}
+	var result manifest.CategorySet
+	for _, key := range selections {
+		spec, ok := specByName[key]
+		if !ok {
+			return manifest.CategorySet{}, fmt.Errorf("unknown export category key %q", key)
+		}
+		spec.Apply(&result, true)
+	}
+	return result, nil
 }
