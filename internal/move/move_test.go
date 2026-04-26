@@ -1060,3 +1060,28 @@ func assertTranscriptRewritten(t *testing.T, projectDir, oldPath, newPath string
 	}
 	assert.True(t, foundTranscript, "expected at least one transcript file in new project dir")
 }
+
+func TestPlanCategoriesReturnsCanonicalOrder(t *testing.T) {
+	got := move.PlanCategories()
+
+	require.GreaterOrEqual(t, len(got), 2)
+	assert.Equal(t, "history", got[0])
+	assert.Equal(t, "sessions", got[1])
+	assert.Equal(t, "file-history-snapshots", got[len(got)-1])
+
+	for _, target := range claude.UserWideRewriteTargets {
+		assert.Contains(t, got, target.Name, "user-wide rewrite target %q must appear", target.Name)
+	}
+	for _, group := range claude.SessionKeyedGroups {
+		assert.Contains(t, got, group.Name, "session-keyed group %q must appear", group.Name)
+	}
+}
+
+func TestPlanCategoriesReturnsFreshSlicePerCall(t *testing.T) {
+	first := move.PlanCategories()
+	first[0] = "MUTATED"
+
+	second := move.PlanCategories()
+
+	assert.Equal(t, "history", second[0])
+}
