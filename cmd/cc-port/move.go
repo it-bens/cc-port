@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -100,7 +101,7 @@ func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions mov
 	fmt.Printf("  │ -> %s\n", movePlan.NewProjectDir)
 	fmt.Println("  │")
 
-	renderReferencesBlock(movePlan)
+	renderReferencesBlock(os.Stdout, movePlan)
 	fmt.Println("  │")
 
 	if moveOptions.RewriteTranscripts {
@@ -162,7 +163,7 @@ var displayLabels = map[string]string{
 	"tasks":                      "tasks/",
 }
 
-func renderReferencesBlock(movePlan *move.Plan) {
+func renderReferencesBlock(stdout io.Writer, movePlan *move.Plan) {
 	totalChanges := 0
 	for _, key := range move.PlanCategories() {
 		if key == "file-history-snapshots" {
@@ -173,7 +174,7 @@ func renderReferencesBlock(movePlan *move.Plan) {
 	if movePlan.ConfigBlockRekey {
 		totalChanges++
 	}
-	fmt.Printf("  ├ References (%d changes)\n", totalChanges)
+	_, _ = fmt.Fprintf(stdout, "  ├ References (%d changes)\n", totalChanges)
 	for _, key := range move.PlanCategories() {
 		if key == "file-history-snapshots" {
 			continue
@@ -186,10 +187,10 @@ func renderReferencesBlock(movePlan *move.Plan) {
 		if !ok {
 			label = key
 		}
-		fmt.Printf("  │   %-32s %d replacements\n", label, count)
+		_, _ = fmt.Fprintf(stdout, "  │   %-32s %d replacements\n", label, count)
 	}
 	if movePlan.ConfigBlockRekey {
-		fmt.Printf("  │   %-32s re-key project block\n", "~/.claude.json")
+		_, _ = fmt.Fprintf(stdout, "  │   %-32s re-key project block\n", "~/.claude.json")
 	}
 }
 
