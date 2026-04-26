@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -11,6 +11,10 @@ import (
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/move"
 )
+
+// findActive is the test seam for lock.FindActive. Swapped in
+// movecmd_test.go via withMoveSeams.
+var findActive = lock.FindActive
 
 var moveApply bool
 
@@ -39,7 +43,7 @@ var moveCmd = &cobra.Command{
 		}
 
 		if !moveApply {
-			return runMoveDryRun(ctx, claudeHome, moveOptions)
+			return runMoveDryRun(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), claudeHome, moveOptions)
 		}
 		return move.Apply(ctx, claudeHome, moveOptions)
 	},
@@ -83,44 +87,50 @@ func init() {
 	rootCmd.AddCommand(moveCmd)
 }
 
-func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions move.Options) error {
+func runMoveDryRun(
+	ctx context.Context,
+	stdout, stderr io.Writer,
+	claudeHome *claude.Home,
+	moveOptions move.Options,
+) error {
 	movePlan, err := move.DryRun(ctx, claudeHome, moveOptions)
 	if err != nil {
 		return err
 	}
 
-	if err := reportActiveSessionOnSource(claudeHome, moveOptions.OldPath); err != nil {
+	if err := reportActiveSessionOnSource(stderr, claudeHome, moveOptions.OldPath); err != nil {
 		return err
 	}
 
-	fmt.Println("cc-port move (dry-run)")
-	fmt.Println()
-	fmt.Printf("  ┌ Directory Rename\n")
-	fmt.Printf("  │ %s\n", movePlan.OldProjectDir)
-	fmt.Printf("  │ -> %s\n", movePlan.NewProjectDir)
-	fmt.Println("  │")
+	_, _ = fmt.Fprintln(stdout, "cc-port move (dry-run)")
+	_, _ = fmt.Fprintln(stdout)
+	_, _ = fmt.Fprintf(stdout, "  ┌ Directory Rename\n")
+	_, _ = fmt.Fprintf(stdout, "  │ %s\n", movePlan.OldProjectDir)
+	_, _ = fmt.Fprintf(stdout, "  │ -> %s\n", movePlan.NewProjectDir)
+	_, _ = fmt.Fprintln(stdout, "  │")
 
-	renderReferencesBlock(movePlan)
-	fmt.Println("  │")
+	renderReferencesBlock(stdout, movePlan)
+	_, _ = fmt.Fprintln(stdout, "  │")
 
 	if moveOptions.RewriteTranscripts {
-		fmt.Printf("  ├ Transcripts: %d replacements\n", movePlan.TranscriptReplacements)
+		_, _ = fmt.Fprintf(stdout, "  ├ Transcripts: %d replacements\n", movePlan.TranscriptReplacements)
 	} else {
-		fmt.Printf("  ├ Transcripts (--rewrite-transcripts not set, skipping)\n")
+		_, _ = fmt.Fprintf(stdout, "  ├ Transcripts (--rewrite-transcripts not set, skipping)\n")
 	}
-	fmt.Println("  │")
+	_, _ = fmt.Fprintln(stdout, "  │")
 
-	fmt.Printf(
+	_, _ = fmt.Fprintf(
+		stdout,
 		"  ├ File-history snapshots: %d preserved verbatim "+
 			"(Claude Code reads them by filename for in-session rewinds, not as path references)\n",
 		movePlan.ReplacementsByCategory["file-history-snapshots"],
 	)
-	fmt.Println("  │")
+	_, _ = fmt.Fprintln(stdout, "  │")
 
-	renderPlanWarnings(movePlan)
+	renderPlanWarnings(stdout, movePlan)
 
-	fmt.Println()
-	fmt.Println("  Run with --apply to execute.")
+	_, _ = fmt.Fprintln(stdout)
+	_, _ = fmt.Fprintln(stdout, "  Run with --apply to execute.")
 	return nil
 }
 
@@ -129,8 +139,8 @@ func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions mov
 // runs before lock.WithLock would fire on --apply, so surfacing the
 // witness here lets an operator close the live session before typing
 // --apply instead of discovering the block at mutation time.
-func reportActiveSessionOnSource(claudeHome *claude.Home, oldProjectPath string) error {
-	active, err := lock.FindActive(claudeHome)
+func reportActiveSessionOnSource(stderr io.Writer, claudeHome *claude.Home, oldProjectPath string) error {
+	active, err := findActive(claudeHome)
 	if err != nil {
 		return fmt.Errorf("check active sessions: %w", err)
 	}
@@ -138,8 +148,8 @@ func reportActiveSessionOnSource(claudeHome *claude.Home, oldProjectPath string)
 		if session.Cwd != oldProjectPath {
 			continue
 		}
-		fmt.Fprintf(
-			os.Stderr,
+		_, _ = fmt.Fprintf(
+			stderr,
 			"note: Claude Code is currently running on %s (pid %d); --apply will refuse until that session exits\n",
 			session.Cwd, session.Pid,
 		)
@@ -162,7 +172,7 @@ var displayLabels = map[string]string{
 	"tasks":                      "tasks/",
 }
 
-func renderReferencesBlock(movePlan *move.Plan) {
+func renderReferencesBlock(stdout io.Writer, movePlan *move.Plan) {
 	totalChanges := 0
 	for _, key := range move.PlanCategories() {
 		if key == "file-history-snapshots" {
@@ -173,7 +183,7 @@ func renderReferencesBlock(movePlan *move.Plan) {
 	if movePlan.ConfigBlockRekey {
 		totalChanges++
 	}
-	fmt.Printf("  ├ References (%d changes)\n", totalChanges)
+	_, _ = fmt.Fprintf(stdout, "  ├ References (%d changes)\n", totalChanges)
 	for _, key := range move.PlanCategories() {
 		if key == "file-history-snapshots" {
 			continue
@@ -186,28 +196,29 @@ func renderReferencesBlock(movePlan *move.Plan) {
 		if !ok {
 			label = key
 		}
-		fmt.Printf("  │   %-32s %d replacements\n", label, count)
+		_, _ = fmt.Fprintf(stdout, "  │   %-32s %d replacements\n", label, count)
 	}
 	if movePlan.ConfigBlockRekey {
-		fmt.Printf("  │   %-32s re-key project block\n", "~/.claude.json")
+		_, _ = fmt.Fprintf(stdout, "  │   %-32s re-key project block\n", "~/.claude.json")
 	}
 }
 
-func renderPlanWarnings(movePlan *move.Plan) {
+func renderPlanWarnings(stdout io.Writer, movePlan *move.Plan) {
 	if len(movePlan.HistoryMalformedLines) > 0 {
-		fmt.Printf(
+		_, _ = fmt.Fprintf(
+			stdout,
 			"  ├ Warning: history.jsonl has %d malformed line(s) at %v: preserved verbatim, not rewritten\n",
 			len(movePlan.HistoryMalformedLines), movePlan.HistoryMalformedLines,
 		)
-		fmt.Println("  │")
+		_, _ = fmt.Fprintln(stdout, "  │")
 	}
 
 	if len(movePlan.RulesWarnings) > 0 {
-		fmt.Printf("  └ Warning: Rules files with matching paths:\n")
+		_, _ = fmt.Fprintf(stdout, "  └ Warning: Rules files with matching paths:\n")
 		for _, warning := range movePlan.RulesWarnings {
-			fmt.Printf("      %s (line %d)\n", warning.File, warning.Line)
+			_, _ = fmt.Fprintf(stdout, "      %s (line %d)\n", warning.File, warning.Line)
 		}
 	} else {
-		fmt.Printf("  └ No rules file warnings\n")
+		_, _ = fmt.Fprintf(stdout, "  └ No rules file warnings\n")
 	}
 }
