@@ -33,12 +33,6 @@ var importCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if importFromManifest != "" && cmd.Flags().Changed("resolution") {
-			return fmt.Errorf(
-				"--from-manifest is mutually exclusive with --resolution; pass one or the other",
-			)
-		}
-
 		archivePath := args[0]
 		targetPath, err := claude.ResolveProjectPath(args[1])
 		if err != nil {
