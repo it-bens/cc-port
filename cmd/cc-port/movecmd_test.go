@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/move"
+	"github.com/it-bens/cc-port/internal/scan"
 )
 
 func TestParseMoveOptions_ResolvesPaths(t *testing.T) {
@@ -119,4 +120,42 @@ func TestRenderReferencesBlockEmitsConfigBlockRekeyLine(t *testing.T) {
 	assert.Contains(t, output, "References (1 changes)")
 	assert.Contains(t, output, "~/.claude.json")
 	assert.Contains(t, output, "re-key project block")
+}
+
+func TestRenderPlanWarningsPrintsNoWarningsLineWhenClean(t *testing.T) {
+	plan := &move.Plan{}
+	var stdout bytes.Buffer
+
+	renderPlanWarnings(&stdout, plan)
+
+	assert.Contains(t, stdout.String(), "No rules file warnings")
+}
+
+func TestRenderPlanWarningsReportsMalformedHistoryLines(t *testing.T) {
+	plan := &move.Plan{HistoryMalformedLines: []int{4, 17}}
+	var stdout bytes.Buffer
+
+	renderPlanWarnings(&stdout, plan)
+
+	output := stdout.String()
+	assert.Contains(t, output, "2 malformed line")
+	assert.Contains(t, output, "[4 17]")
+}
+
+func TestRenderPlanWarningsReportsRulesFileMatches(t *testing.T) {
+	plan := &move.Plan{
+		RulesWarnings: []scan.Warning{
+			{File: "go-style.md", Line: 12},
+			{File: "review-checklist.md", Line: 47},
+		},
+	}
+	var stdout bytes.Buffer
+
+	renderPlanWarnings(&stdout, plan)
+
+	output := stdout.String()
+	assert.Contains(t, output, "go-style.md")
+	assert.Contains(t, output, "(line 12)")
+	assert.Contains(t, output, "review-checklist.md")
+	assert.Contains(t, output, "(line 47)")
 }

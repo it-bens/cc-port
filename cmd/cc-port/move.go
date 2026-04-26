@@ -118,7 +118,7 @@ func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions mov
 	)
 	fmt.Println("  │")
 
-	renderPlanWarnings(movePlan)
+	renderPlanWarnings(os.Stdout, movePlan)
 
 	fmt.Println()
 	fmt.Println("  Run with --apply to execute.")
@@ -194,21 +194,22 @@ func renderReferencesBlock(stdout io.Writer, movePlan *move.Plan) {
 	}
 }
 
-func renderPlanWarnings(movePlan *move.Plan) {
+func renderPlanWarnings(stdout io.Writer, movePlan *move.Plan) {
 	if len(movePlan.HistoryMalformedLines) > 0 {
-		fmt.Printf(
+		_, _ = fmt.Fprintf(
+			stdout,
 			"  ├ Warning: history.jsonl has %d malformed line(s) at %v: preserved verbatim, not rewritten\n",
 			len(movePlan.HistoryMalformedLines), movePlan.HistoryMalformedLines,
 		)
-		fmt.Println("  │")
+		_, _ = fmt.Fprintln(stdout, "  │")
 	}
 
 	if len(movePlan.RulesWarnings) > 0 {
-		fmt.Printf("  └ Warning: Rules files with matching paths:\n")
+		_, _ = fmt.Fprintf(stdout, "  └ Warning: Rules files with matching paths:\n")
 		for _, warning := range movePlan.RulesWarnings {
-			fmt.Printf("      %s (line %d)\n", warning.File, warning.Line)
+			_, _ = fmt.Fprintf(stdout, "      %s (line %d)\n", warning.File, warning.Line)
 		}
 	} else {
-		fmt.Printf("  └ No rules file warnings\n")
+		_, _ = fmt.Fprintf(stdout, "  └ No rules file warnings\n")
 	}
 }
