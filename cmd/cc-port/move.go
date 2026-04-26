@@ -13,6 +13,10 @@ import (
 	"github.com/it-bens/cc-port/internal/move"
 )
 
+// findActive is the test seam for lock.FindActive. Swapped in
+// movecmd_test.go via withMoveSeams.
+var findActive = lock.FindActive
+
 var moveApply bool
 
 var moveCmd = &cobra.Command{
@@ -90,7 +94,7 @@ func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions mov
 		return err
 	}
 
-	if err := reportActiveSessionOnSource(claudeHome, moveOptions.OldPath); err != nil {
+	if err := reportActiveSessionOnSource(os.Stderr, claudeHome, moveOptions.OldPath); err != nil {
 		return err
 	}
 
@@ -130,8 +134,8 @@ func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions mov
 // runs before lock.WithLock would fire on --apply, so surfacing the
 // witness here lets an operator close the live session before typing
 // --apply instead of discovering the block at mutation time.
-func reportActiveSessionOnSource(claudeHome *claude.Home, oldProjectPath string) error {
-	active, err := lock.FindActive(claudeHome)
+func reportActiveSessionOnSource(stderr io.Writer, claudeHome *claude.Home, oldProjectPath string) error {
+	active, err := findActive(claudeHome)
 	if err != nil {
 		return fmt.Errorf("check active sessions: %w", err)
 	}
@@ -139,8 +143,8 @@ func reportActiveSessionOnSource(claudeHome *claude.Home, oldProjectPath string)
 		if session.Cwd != oldProjectPath {
 			continue
 		}
-		fmt.Fprintf(
-			os.Stderr,
+		_, _ = fmt.Fprintf(
+			stderr,
 			"note: Claude Code is currently running on %s (pid %d); --apply will refuse until that session exits\n",
 			session.Cwd, session.Pid,
 		)

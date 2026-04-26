@@ -2,14 +2,18 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/scan"
+	"github.com/it-bens/cc-port/internal/testutil"
 )
 
 func TestParseMoveOptions_ResolvesPaths(t *testing.T) {
@@ -158,4 +162,69 @@ func TestRenderPlanWarningsReportsRulesFileMatches(t *testing.T) {
 	assert.Contains(t, output, "(line 12)")
 	assert.Contains(t, output, "review-checklist.md")
 	assert.Contains(t, output, "(line 47)")
+}
+
+func TestReportActiveSessionOnSourceSilentWhenNoneActive(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) {
+		return nil, nil
+	})
+	var stderr bytes.Buffer
+
+	err := reportActiveSessionOnSource(&stderr, home, "/Users/test/Projects/myproject")
+
+	require.NoError(t, err)
+	assert.Empty(t, stderr.String())
+}
+
+func TestReportActiveSessionOnSourceSilentWhenActiveSessionElsewhere(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) {
+		return []lock.ActiveSession{{Pid: 4242, Cwd: "/Users/test/Projects/other"}}, nil
+	})
+	var stderr bytes.Buffer
+
+	err := reportActiveSessionOnSource(&stderr, home, "/Users/test/Projects/myproject")
+
+	require.NoError(t, err)
+	assert.Empty(t, stderr.String())
+}
+
+func TestReportActiveSessionOnSourcePrintsNoteWhenActiveSessionMatches(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) {
+		return []lock.ActiveSession{{Pid: 4242, Cwd: "/Users/test/Projects/myproject"}}, nil
+	})
+	var stderr bytes.Buffer
+
+	err := reportActiveSessionOnSource(&stderr, home, "/Users/test/Projects/myproject")
+
+	require.NoError(t, err)
+	output := stderr.String()
+	assert.Contains(t, output, "pid 4242")
+	assert.Contains(t, output, "--apply will refuse")
+}
+
+func TestReportActiveSessionOnSourceWrapsLockError(t *testing.T) {
+	sentinel := errors.New("simulated FindActive failure")
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) {
+		return nil, sentinel
+	})
+	var stderr bytes.Buffer
+
+	err := reportActiveSessionOnSource(&stderr, home, "/Users/test/Projects/myproject")
+
+	require.ErrorIs(t, err, sentinel)
+	assert.Contains(t, err.Error(), "check active sessions")
+}
+
+// withMoveSeams swaps the package-level findActive seam for the duration
+// of t and restores the original via t.Cleanup. Mirrors withSeams in
+// internal/ui/prompt_test.go.
+func withMoveSeams(t *testing.T, find func(*claude.Home) ([]lock.ActiveSession, error)) {
+	t.Helper()
+	original := findActive
+	t.Cleanup(func() { findActive = original })
+	findActive = find
 }
