@@ -104,22 +104,6 @@ func TestImportManifestCmd_OverwriteGuard(t *testing.T) {
 // buildMinimalArchive writes a zip archive containing a valid metadata.xml
 // entry and returns the archive path. The zip entry name must be
 // "metadata.xml" because that is the name ReadManifestFromZip searches for.
-func TestImportCmd_FromManifestWithResolutionFlagErrors(t *testing.T) {
-	require.NoError(t, importCmd.Flags().Set("from-manifest", "/tmp/m.xml"))
-	require.NoError(t, importCmd.Flags().Set("resolution", "{{X}}=/foo"))
-	t.Cleanup(func() {
-		_ = importCmd.Flags().Set("from-manifest", "")
-		// StringArrayVar cleanup: assign to the backing var directly, Set would append.
-		importResolutionKV = nil
-	})
-
-	err := importCmd.RunE(importCmd, []string{"/tmp/does-not-matter.zip", "/Users/x/p"})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--from-manifest is mutually exclusive")
-	assert.Contains(t, err.Error(), "--resolution")
-}
-
 func buildMinimalArchive(t *testing.T) string {
 	t.Helper()
 

@@ -59,7 +59,7 @@ cc-port export manifest /Users/me/project --output /tmp/project.xml
 
 `cc-port import <archive.zip> <target-path>`
 
-Apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`. Mixing `--from-manifest` with `--resolution` is rejected. Pick one source.
+Apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`. When both are passed, `--resolution` values win per key.
 
 ```
 cc-port import /tmp/project.zip /Users/teammate/project
