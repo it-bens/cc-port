@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -44,7 +43,7 @@ var moveCmd = &cobra.Command{
 		}
 
 		if !moveApply {
-			return runMoveDryRun(ctx, claudeHome, moveOptions)
+			return runMoveDryRun(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), claudeHome, moveOptions)
 		}
 		return move.Apply(ctx, claudeHome, moveOptions)
 	},
@@ -88,44 +87,50 @@ func init() {
 	rootCmd.AddCommand(moveCmd)
 }
 
-func runMoveDryRun(ctx context.Context, claudeHome *claude.Home, moveOptions move.Options) error {
+func runMoveDryRun(
+	ctx context.Context,
+	stdout, stderr io.Writer,
+	claudeHome *claude.Home,
+	moveOptions move.Options,
+) error {
 	movePlan, err := move.DryRun(ctx, claudeHome, moveOptions)
 	if err != nil {
 		return err
 	}
 
-	if err := reportActiveSessionOnSource(os.Stderr, claudeHome, moveOptions.OldPath); err != nil {
+	if err := reportActiveSessionOnSource(stderr, claudeHome, moveOptions.OldPath); err != nil {
 		return err
 	}
 
-	fmt.Println("cc-port move (dry-run)")
-	fmt.Println()
-	fmt.Printf("  ┌ Directory Rename\n")
-	fmt.Printf("  │ %s\n", movePlan.OldProjectDir)
-	fmt.Printf("  │ -> %s\n", movePlan.NewProjectDir)
-	fmt.Println("  │")
+	_, _ = fmt.Fprintln(stdout, "cc-port move (dry-run)")
+	_, _ = fmt.Fprintln(stdout)
+	_, _ = fmt.Fprintf(stdout, "  ┌ Directory Rename\n")
+	_, _ = fmt.Fprintf(stdout, "  │ %s\n", movePlan.OldProjectDir)
+	_, _ = fmt.Fprintf(stdout, "  │ -> %s\n", movePlan.NewProjectDir)
+	_, _ = fmt.Fprintln(stdout, "  │")
 
-	renderReferencesBlock(os.Stdout, movePlan)
-	fmt.Println("  │")
+	renderReferencesBlock(stdout, movePlan)
+	_, _ = fmt.Fprintln(stdout, "  │")
 
 	if moveOptions.RewriteTranscripts {
-		fmt.Printf("  ├ Transcripts: %d replacements\n", movePlan.TranscriptReplacements)
+		_, _ = fmt.Fprintf(stdout, "  ├ Transcripts: %d replacements\n", movePlan.TranscriptReplacements)
 	} else {
-		fmt.Printf("  ├ Transcripts (--rewrite-transcripts not set, skipping)\n")
+		_, _ = fmt.Fprintf(stdout, "  ├ Transcripts (--rewrite-transcripts not set, skipping)\n")
 	}
-	fmt.Println("  │")
+	_, _ = fmt.Fprintln(stdout, "  │")
 
-	fmt.Printf(
+	_, _ = fmt.Fprintf(
+		stdout,
 		"  ├ File-history snapshots: %d preserved verbatim "+
 			"(Claude Code reads them by filename for in-session rewinds, not as path references)\n",
 		movePlan.ReplacementsByCategory["file-history-snapshots"],
 	)
-	fmt.Println("  │")
+	_, _ = fmt.Fprintln(stdout, "  │")
 
-	renderPlanWarnings(os.Stdout, movePlan)
+	renderPlanWarnings(stdout, movePlan)
 
-	fmt.Println()
-	fmt.Println("  Run with --apply to execute.")
+	_, _ = fmt.Fprintln(stdout)
+	_, _ = fmt.Fprintln(stdout, "  Run with --apply to execute.")
 	return nil
 }
 

@@ -219,6 +219,105 @@ func TestReportActiveSessionOnSourceWrapsLockError(t *testing.T) {
 	assert.Contains(t, err.Error(), "check active sessions")
 }
 
+func TestRunMoveDryRunPrintsDirectoryRename(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	var stdout, stderr bytes.Buffer
+	opts := move.Options{
+		OldPath: "/Users/test/Projects/myproject",
+		NewPath: "/Users/test/Projects/relocated",
+	}
+
+	err := runMoveDryRun(t.Context(), &stdout, &stderr, home, opts)
+
+	require.NoError(t, err)
+	output := stdout.String()
+	assert.Contains(t, output, home.ProjectDir(opts.OldPath))
+	assert.Contains(t, output, home.ProjectDir(opts.NewPath))
+}
+
+func TestRunMoveDryRunPrintsApplyHint(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	var stdout, stderr bytes.Buffer
+	opts := move.Options{
+		OldPath: "/Users/test/Projects/myproject",
+		NewPath: "/Users/test/Projects/relocated",
+	}
+
+	err := runMoveDryRun(t.Context(), &stdout, &stderr, home, opts)
+
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "Run with --apply to execute.")
+}
+
+func TestRunMoveDryRunOmitsTranscriptCountsWhenFlagOff(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	var stdout, stderr bytes.Buffer
+	opts := move.Options{
+		OldPath:            "/Users/test/Projects/myproject",
+		NewPath:            "/Users/test/Projects/relocated",
+		RewriteTranscripts: false,
+	}
+
+	err := runMoveDryRun(t.Context(), &stdout, &stderr, home, opts)
+
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "--rewrite-transcripts not set, skipping")
+}
+
+func TestRunMoveDryRunPrintsTranscriptCountsWhenFlagOn(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	var stdout, stderr bytes.Buffer
+	opts := move.Options{
+		OldPath:            "/Users/test/Projects/myproject",
+		NewPath:            "/Users/test/Projects/relocated",
+		RewriteTranscripts: true,
+	}
+
+	err := runMoveDryRun(t.Context(), &stdout, &stderr, home, opts)
+
+	require.NoError(t, err)
+	output := stdout.String()
+	assert.Contains(t, output, "Transcripts:")
+	assert.Regexp(t, `Transcripts: \d+ replacements`, output)
+	assert.NotContains(t, output, "skipping")
+}
+
+func TestRunMoveDryRunPrintsFileHistorySnapshotsLine(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	var stdout, stderr bytes.Buffer
+	opts := move.Options{
+		OldPath: "/Users/test/Projects/myproject",
+		NewPath: "/Users/test/Projects/relocated",
+	}
+
+	err := runMoveDryRun(t.Context(), &stdout, &stderr, home, opts)
+
+	require.NoError(t, err)
+	output := stdout.String()
+	assert.Contains(t, output, "File-history snapshots:")
+	assert.Contains(t, output, "preserved verbatim")
+}
+
+func TestRunMoveDryRunPropagatesActiveSessionError(t *testing.T) {
+	sentinel := errors.New("simulated FindActive failure")
+	home := testutil.SetupFixture(t)
+	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, sentinel })
+	var stdout, stderr bytes.Buffer
+	opts := move.Options{
+		OldPath: "/Users/test/Projects/myproject",
+		NewPath: "/Users/test/Projects/relocated",
+	}
+
+	err := runMoveDryRun(t.Context(), &stdout, &stderr, home, opts)
+
+	require.ErrorIs(t, err, sentinel)
+}
+
 // withMoveSeams swaps the package-level findActive seam for the duration
 // of t and restores the original via t.Cleanup. Mirrors withSeams in
 // internal/ui/prompt_test.go.
