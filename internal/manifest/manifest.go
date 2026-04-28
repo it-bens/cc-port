@@ -12,11 +12,6 @@ import (
 )
 
 // Metadata is the root element of the manifest XML file.
-//
-// SyncPushedBy and SyncPushedAt are populated only by `cc-port push` (via
-// internal/sync). Archives written by `cc-port export` omit them. Both
-// strings, not time.Time: encoding/xml does not honor omitempty for
-// time.Time's zero value.
 type Metadata struct {
 	XMLName      xml.Name      `xml:"cc-port"`
 	Export       Info          `xml:"export"`
