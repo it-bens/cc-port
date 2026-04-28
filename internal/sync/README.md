@@ -9,8 +9,8 @@ Orchestrates `cc-port push` and `cc-port pull`. Owns conflict-detection logic, p
 - `PushOptions`, `PushPlan`, `PullOptions`, `PullPlan`: option and plan structs.
 - `PlanPush(ctx, opts) (*PushPlan, error)`: reads prior remote (if any), populates plan with cross-machine state and encryption metadata.
 - `ExecutePush(ctx, opts, plan) error`: runs the export-side pipeline and uploads to the remote.
-- `PlanPull(ctx, opts) (*PullPlan, error)`: reads remote archive's manifest, populates plan with placeholder resolutions. Stub in this task; body lands in Task 7.
-- `ExecutePull(ctx, opts, plan) error`: runs the import-side pipeline and applies the archive locally. Stub in this task; body lands in Task 7.
+- `PlanPull(ctx, opts) (*PullPlan, error)`: reads remote archive's manifest, populates plan with placeholder resolutions.
+- `ExecutePull(ctx, opts, plan) error`: runs the import-side pipeline and applies the archive locally.
 - Sentinel errors: `ErrCrossMachineConflict`, `ErrRemoteNotFound`, `ErrPassphraseRequired`, `ErrUnresolvedPlaceholder`.
 
 ## Contracts
@@ -41,4 +41,4 @@ Used by `cmd/cc-port` push and pull.
 
 ## Tests
 
-`sync_test.go` covers `selfPusher` (hyphen-separated host-user on a configured machine, refuse-or-platform-fall-back from an empty `$USER`), the push-side Plan and Execute paths (no-prior, same-self, cross-machine prior, encrypted-prior-no-passphrase refusal, round-trip with sync fields), the still-stub `PlanPull`, and the sentinel errors. `PlanPull`/`ExecutePull` coverage lands with Task 7. Mem-backed remote (gocloud `mem://`) for unit tests; integration round-trips against `file://` and optionally S3.
+`sync_test.go` covers `selfPusher` (hyphen-separated host-user on a configured machine, refuse-or-platform-fall-back from an empty `$USER`), the push-side Plan and Execute paths (no-prior, same-self, cross-machine prior, encrypted-prior-no-passphrase refusal, round-trip with sync fields), the pull-side Plan paths (not-found, encrypted-no-passphrase, plaintext-with-passphrase, declared-placeholder discovery, resolution coverage by `--resolution` and by sender Resolve), a push-pull round-trip via `mem://`, and the sentinel errors. Mem-backed remote (gocloud `mem://`) for unit tests; integration round-trips against `file://` and optionally S3.

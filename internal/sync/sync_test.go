@@ -5,10 +5,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
@@ -178,10 +182,136 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	}
 }
 
-func TestPlanPull_Stub(t *testing.T) {
-	_, err := PlanPull(context.Background(), PullOptions{})
-	if err == nil {
-		t.Fatal("expected stub to return error")
+func TestPlanPull_NotFoundReturnsErrRemoteNotFound(t *testing.T) {
+	r := newMemRemote(t)
+	home, _ := buildTestHomeAndProject(t)
+	_, err := PlanPull(context.Background(), PullOptions{
+		ClaudeHome: home, Remote: r, Name: "missing", TargetPath: t.TempDir(),
+	})
+	if !errors.Is(err, ErrRemoteNotFound) {
+		t.Fatalf("err = %v, want ErrRemoteNotFound", err)
+	}
+}
+
+func TestPlanPull_EncryptedNoPassphraseReturnsErrPassphraseRequired(t *testing.T) {
+	r := newMemRemote(t)
+	injectEncryptedArchive(t, r, "k", testPass, "host-user", time.Now().UTC())
+	home, _ := buildTestHomeAndProject(t)
+	_, err := PlanPull(context.Background(), PullOptions{
+		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
+		// Passphrase deliberately empty
+	})
+	if !errors.Is(err, ErrPassphraseRequired) {
+		t.Fatalf("err = %v, want ErrPassphraseRequired", err)
+	}
+}
+
+func TestPlanPull_PlaintextWithPassphraseReturnsErrUnencryptedInput(t *testing.T) {
+	r := newMemRemote(t)
+	injectArchiveWithPusher(t, r, "k", "host-user", time.Now().UTC())
+	home, _ := buildTestHomeAndProject(t)
+	_, err := PlanPull(context.Background(), PullOptions{
+		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
+		Passphrase: testPass,
+	})
+	if !errors.Is(err, encrypt.ErrUnencryptedInput) {
+		t.Fatalf("err = %v, want encrypt.ErrUnencryptedInput", err)
+	}
+}
+
+func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
+	r := newMemRemote(t)
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	home, _ := buildTestHomeAndProject(t)
+
+	plan, err := PlanPull(context.Background(), PullOptions{
+		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
+		// no Resolutions
+	})
+	if err != nil {
+		t.Fatalf("PlanPull: %v", err)
+	}
+	if len(plan.UnresolvedPlaceholders) != 1 || plan.UnresolvedPlaceholders[0] != "{{HOME}}" {
+		t.Fatalf("UnresolvedPlaceholders = %v, want [{{HOME}}]", plan.UnresolvedPlaceholders)
+	}
+}
+
+func TestPlanPull_ResolutionMapClearsUnresolved(t *testing.T) {
+	r := newMemRemote(t)
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	home, _ := buildTestHomeAndProject(t)
+	plan, err := PlanPull(context.Background(), PullOptions{
+		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
+		Resolutions: map[string]string{"{{HOME}}": "/Users/me"},
+	})
+	if err != nil {
+		t.Fatalf("PlanPull: %v", err)
+	}
+	if len(plan.UnresolvedPlaceholders) != 0 {
+		t.Fatalf("UnresolvedPlaceholders = %v, want empty", plan.UnresolvedPlaceholders)
+	}
+}
+
+func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
+	// A placeholder whose archive manifest carries a non-empty Resolve
+	// counts as covered, matching cc-port import's
+	// promptImportResolutions behavior. No --resolution or
+	// --from-manifest is supplied here.
+	r := newMemRemote(t)
+	injectArchiveWithSenderResolve(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	home, _ := buildTestHomeAndProject(t)
+	plan, err := PlanPull(context.Background(), PullOptions{
+		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("PlanPull: %v", err)
+	}
+	if len(plan.UnresolvedPlaceholders) != 0 {
+		t.Fatalf("UnresolvedPlaceholders = %v, want empty (sender Resolve covers)", plan.UnresolvedPlaceholders)
+	}
+}
+
+func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
+	r := newMemRemote(t)
+	homeA, projectPathA := buildTestHomeAndProject(t)
+
+	planA, err := PlanPush(context.Background(), PushOptions{
+		ClaudeHome: homeA, ProjectPath: projectPathA, Remote: r, Name: "k",
+		Categories: allCategoriesSet(),
+	})
+	if err != nil {
+		t.Fatalf("PlanPush: %v", err)
+	}
+	if err := ExecutePush(context.Background(), PushOptions{
+		ClaudeHome: homeA, ProjectPath: projectPathA, Remote: r, Name: "k",
+		Categories: allCategoriesSet(),
+	}, planA); err != nil {
+		t.Fatalf("ExecutePush: %v", err)
+	}
+
+	homeB := buildTestHomeBlank(t)
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+
+	planB, err := PlanPull(context.Background(), PullOptions{
+		ClaudeHome: homeB, Remote: r, Name: "k", TargetPath: targetPath,
+		Resolutions: defaultResolutionsForTest(t),
+	})
+	if err != nil {
+		t.Fatalf("PlanPull: %v", err)
+	}
+	if len(planB.UnresolvedPlaceholders) != 0 {
+		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders)
+	}
+	if err := ExecutePull(context.Background(), PullOptions{
+		ClaudeHome: homeB, Remote: r, Name: "k", TargetPath: targetPath,
+		Resolutions: defaultResolutionsForTest(t),
+	}, planB); err != nil {
+		t.Fatalf("ExecutePull: %v", err)
+	}
+
+	encodedDir := claude.EncodePath(targetPath)
+	if _, err := os.Stat(filepath.Join(homeB.Dir, "projects", encodedDir)); err != nil {
+		t.Fatalf("encoded project dir missing after pull: %v", err)
 	}
 }
 

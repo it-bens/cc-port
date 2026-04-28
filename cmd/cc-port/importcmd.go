@@ -253,15 +253,26 @@ func promptImportResolutions(
 	return resolutions, nil
 }
 
+// resolutionsFromManifest copies pre-filled placeholder Resolve values
+// into the resolutions map, then forces {{PROJECT_PATH}} to targetPath.
+// A sender-supplied {{PROJECT_PATH}} is dropped because importer.Run
+// injects it from the import target; a sender resolve would point at
+// the sender's disk and silently misroute references in the pulled
+// bodies. Same refusal as parseResolutionFlags. Empty Resolve values
+// are skipped so importer.ValidateResolutions does not see phantom
+// entries for keys the operator never resolved.
 func resolutionsFromManifest(metadata *manifest.Metadata, targetPath string) map[string]string {
-	resolutions := make(map[string]string)
+	resolutions := make(map[string]string, len(metadata.Placeholders))
 	for _, placeholder := range metadata.Placeholders {
 		if placeholder.Key == importer.ProjectPathKey {
-			resolutions[placeholder.Key] = targetPath
+			continue
+		}
+		if placeholder.Resolve == "" {
 			continue
 		}
 		resolutions[placeholder.Key] = placeholder.Resolve
 	}
+	resolutions[importer.ProjectPathKey] = targetPath
 	return resolutions
 }
 

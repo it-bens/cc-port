@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"sort"
 	"time"
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
@@ -191,19 +193,198 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan) (err err
 }
 
 // PlanPull reads the remote archive's manifest and returns a PullPlan
-// describing what ExecutePull would do.
+// describing what ExecutePull would do. Composes the strict read
+// pipeline so an encrypted-no-pass or plaintext-with-pass mismatch
+// surfaces before the manifest is parsed.
 //
-//nolint:gocritic // hugeParam: by-value PullOptions matches the spec signature; bodies land in Task 7.
-func PlanPull(_ context.Context, _ PullOptions) (*PullPlan, error) {
-	return nil, errors.New("sync.PlanPull: not implemented")
+//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
+func PlanPull(ctx context.Context, opts PullOptions) (plan *PullPlan, err error) {
+	if opts.Remote == nil {
+		return nil, errors.New("sync.PlanPull: Remote is nil")
+	}
+	if opts.Name == "" {
+		return nil, errors.New("sync.PlanPull: Name is empty")
+	}
+
+	source, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
+		&remote.Source{Remote: opts.Remote, Key: opts.Name},
+		&encrypt.ReaderStage{Pass: opts.Passphrase, Mode: encrypt.Strict},
+	})
+	if errors.Is(err, remote.ErrNotFound) {
+		return nil, ErrRemoteNotFound
+	}
+	if errors.Is(err, encrypt.ErrPassphraseRequired) {
+		return nil, ErrPassphraseRequired
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sync.PlanPull: open remote source: %w", err)
+	}
+	defer func() {
+		if cerr := source.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("sync.PlanPull: close remote source: %w", cerr))
+		}
+	}()
+
+	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
+	if err != nil {
+		return nil, fmt.Errorf("sync.PlanPull: read manifest: %w", err)
+	}
+
+	categories, err := manifest.ApplyCategoryEntries(metadata.Export.Categories)
+	if err != nil {
+		return nil, fmt.Errorf("sync.PlanPull: parse categories: %w", err)
+	}
+
+	plan = &PullPlan{
+		Name:                 opts.Name,
+		RemotePushedBy:       metadata.SyncPushedBy,
+		RemoteEncrypted:      opts.Passphrase != "",
+		RemoteSize:           source.Size,
+		Categories:           categories,
+		DeclaredPlaceholders: metadata.Placeholders,
+	}
+	if metadata.SyncPushedAt != "" {
+		parsed, err := time.Parse(time.RFC3339, metadata.SyncPushedAt)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"sync.PlanPull: parse SyncPushedAt %q: %w",
+				metadata.SyncPushedAt, err,
+			)
+		}
+		plan.RemotePushedAt = parsed
+	}
+
+	plan.UnresolvedPlaceholders = computeUnresolved(
+		metadata.Placeholders, opts.Resolutions, opts.FromManifest, opts.TargetPath,
+	)
+
+	return plan, nil
+}
+
+// computeUnresolved diffs the archive's declared placeholders against
+// every available source of resolution: the caller's --resolution map,
+// the optional --from-manifest metadata, and the sender's own pre-filled
+// Resolve values inside the archive's manifest. The implicit
+// {{PROJECT_PATH}} (importer.ProjectPathKey) is always treated as
+// resolved because importer.Run injects it from TargetPath. Returns the
+// list of declared keys that have no resolution, in alphabetical order.
+//
+// Honoring the sender's Resolve mirrors cc-port import's non-interactive
+// behavior (cmd/cc-port/importcmd.go:promptImportResolutions uses
+// placeholder.Resolve when no flag overrides it). An operator can still
+// override per key via --resolution.
+func computeUnresolved(
+	declared []manifest.Placeholder,
+	resolutions map[string]string,
+	fromManifest *manifest.Metadata,
+	_ string,
+) []string {
+	covered := make(map[string]bool, len(declared))
+	for _, placeholder := range declared {
+		if placeholder.Resolve != "" {
+			covered[placeholder.Key] = true
+		}
+	}
+	for key, value := range resolutions {
+		if value != "" {
+			covered[key] = true
+		}
+	}
+	if fromManifest != nil {
+		for _, placeholder := range fromManifest.Placeholders {
+			if placeholder.Resolve != "" {
+				covered[placeholder.Key] = true
+			}
+		}
+	}
+	covered[importer.ProjectPathKey] = true
+
+	var missing []string
+	for _, placeholder := range declared {
+		if placeholder.Resolvable != nil && !*placeholder.Resolvable {
+			continue
+		}
+		if !covered[placeholder.Key] {
+			missing = append(missing, placeholder.Key)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // ExecutePull runs the import-side pipeline and applies the archive
-// locally. Caller passes the plan returned by PlanPull.
+// locally. Caller passes the plan returned by PlanPull. The deferred
+// source.Close error capture is load-bearing: the read pipeline owns a
+// 0600 tempfile whose removal must surface to the caller.
 //
-//nolint:gocritic // hugeParam: by-value PullOptions matches the spec signature; bodies land in Task 7.
-func ExecutePull(_ context.Context, _ PullOptions, _ *PullPlan) error {
-	return errors.New("sync.ExecutePull: not implemented")
+//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
+func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan) (err error) {
+	if opts.Remote == nil {
+		return errors.New("sync.ExecutePull: Remote is nil")
+	}
+	if plan == nil {
+		return errors.New("sync.ExecutePull: plan is nil")
+	}
+
+	source, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
+		&remote.Source{Remote: opts.Remote, Key: opts.Name},
+		&encrypt.ReaderStage{Pass: opts.Passphrase, Mode: encrypt.Strict},
+	})
+	if errors.Is(err, remote.ErrNotFound) {
+		return ErrRemoteNotFound
+	}
+	if errors.Is(err, encrypt.ErrPassphraseRequired) {
+		return ErrPassphraseRequired
+	}
+	if err != nil {
+		return fmt.Errorf("sync.ExecutePull: open remote source: %w", err)
+	}
+	defer func() {
+		if cerr := source.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("sync.ExecutePull: close remote source: %w", cerr))
+		}
+	}()
+
+	merged := mergeResolutions(opts.FromManifest, opts.Resolutions)
+
+	if err := importer.Run(ctx, opts.ClaudeHome, importer.Options{
+		Source:      source.ReaderAt,
+		Size:        source.Size,
+		TargetPath:  opts.TargetPath,
+		Resolutions: merged,
+	}); err != nil {
+		return fmt.Errorf("sync.ExecutePull: import: %w", err)
+	}
+	return nil
+}
+
+// mergeResolutions builds the resolutions map ExecutePull hands to
+// importer.Run. The sender-supplied {{PROJECT_PATH}} is dropped because
+// importer.Run injects it from TargetPath; a sender resolve would point
+// at the sender's disk and silently misroute every reference in the
+// pulled bodies. Same refusal as cmd/cc-port/parseResolutionFlags.
+// Empty Resolve values are skipped so importer.ValidateResolutions does
+// not see a phantom empty entry for a key the operator never resolved.
+// Flag values overlay manifest values per key.
+func mergeResolutions(fromManifest *manifest.Metadata, flagResolutions map[string]string) map[string]string {
+	merged := make(map[string]string)
+	if fromManifest != nil {
+		for _, placeholder := range fromManifest.Placeholders {
+			if placeholder.Key == importer.ProjectPathKey {
+				continue
+			}
+			if placeholder.Resolve == "" {
+				continue
+			}
+			merged[placeholder.Key] = placeholder.Resolve
+		}
+	}
+	for key, value := range flagResolutions {
+		if value != "" {
+			merged[key] = value
+		}
+	}
+	return merged
 }
 
 // Sentinel errors surfaced by Plan and Execute. See README §Plan-and-execute split.
