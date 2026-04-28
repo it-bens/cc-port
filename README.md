@@ -41,6 +41,8 @@ cc-port move /Users/me/old-project /Users/me/new-project --apply
 
 Produce a portable archive of one project. Use `--all` or individual category flags (`--sessions`, `--memory`, `--history`, `--file-history`, `--config`, `--todos`, `--usage-data`, `--plugins-data`, `--tasks`). Omit all flags for an interactive picker.
 
+Optional passphrase encryption via `--passphrase-env` or `--passphrase-file` (mutually exclusive). Plaintext stays the default. The read side detects encryption from the archive's magic bytes.
+
 ```
 cc-port export /Users/me/project --output /tmp/project.zip --all
 ```
@@ -61,6 +63,8 @@ cc-port export manifest /Users/me/project --output /tmp/project.xml
 
 Apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`. When both are passed, `--resolution` values win per key.
 
+Optional passphrase decryption via `--passphrase-env` or `--passphrase-file` (mutually exclusive). Plaintext stays the default. The read side detects encryption from the archive's magic bytes.
+
 ```
 cc-port import /tmp/project.zip /Users/teammate/project
 ```
@@ -70,6 +74,8 @@ cc-port import /tmp/project.zip /Users/teammate/project
 `cc-port import manifest <archive.zip> [-o|--output <manifest.xml>]`
 
 Read the metadata from an archive and write a manifest XML with empty resolve attributes for hand-editing. Feed it back via `--from-manifest` on a subsequent `import`. Refuses to overwrite an existing output path.
+
+Optional passphrase decryption via `--passphrase-env` or `--passphrase-file` (mutually exclusive). Plaintext stays the default. The read side detects encryption from the archive's magic bytes.
 
 ```
 cc-port import manifest /tmp/project.zip --output /tmp/project.xml
