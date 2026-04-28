@@ -101,6 +101,13 @@ func TestImportManifestCmd_OverwriteGuard(t *testing.T) {
 	assert.Contains(t, err.Error(), "already exists")
 }
 
+func TestImportCmd_PassphraseFlagsRegistered(t *testing.T) {
+	require.NotNil(t, importCmd.Flags().Lookup("passphrase-env"),
+		"--passphrase-env should be registered on import")
+	require.NotNil(t, importCmd.Flags().Lookup("passphrase-file"),
+		"--passphrase-file should be registered on import")
+}
+
 // buildMinimalArchive writes a zip archive containing a valid metadata.xml
 // entry and returns the archive path. The zip entry name must be
 // "metadata.xml" because that is the name ReadManifestFromZip searches for.
