@@ -2,7 +2,6 @@ package export_test
 
 import (
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,24 +13,11 @@ import (
 	"github.com/it-bens/cc-port/internal/testutil"
 )
 
-// closeErroringCloser wraps a real *os.File: writes pass through unchanged,
-// Close closes the real handle to release the fd and returns a synthetic
-// error. Used to prove deferred Close errors propagate out of Run.
-type closeErroringCloser struct {
-	io.Writer
-	realFile io.Closer
-	closeErr error
-}
-
-func (c *closeErroringCloser) Close() error {
-	_ = c.realFile.Close()
-	return c.closeErr
-}
-
 // writeLimitCloser passes the first limit bytes through to inner then fails
 // every subsequent Write. Close closes the inner handle. Used to force
 // zip.Writer.Close (which writes the central directory) to error while the
-// underlying file close still succeeds.
+// underlying file close still succeeds. The writer also serves as the
+// per-entry write-fault driver for file-history tests.
 type writeLimitCloser struct {
 	inner    *os.File
 	limit    int
@@ -61,12 +47,13 @@ func (w *writeLimitCloser) Close() error {
 	return w.inner.Close()
 }
 
-// closeErrorOptions builds export.Options for the close-error tests.
-// fixtureProjectPath is declared in export_test.go (same package).
-func closeErrorOptions(outputPath string) *export.Options {
+// closeErrorOptions builds export.Options for the writer-close fault test.
+// The Output field is left nil; callers populate it with the fault writer
+// before calling export.Run. fixtureProjectPath is declared in
+// export_test.go (same package).
+func closeErrorOptions() *export.Options {
 	return &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
 		Categories: manifest.CategorySet{
 			Sessions: true,
 			Memory:   true,
@@ -78,45 +65,25 @@ func closeErrorOptions(outputPath string) *export.Options {
 	}
 }
 
-func TestRun_ArchiveFileCloseError(t *testing.T) {
-	sentinel := errors.New("synthetic archive-file close failure")
-	opener := func(path string) (io.WriteCloser, error) {
-		realFile, err := os.Create(path) //nolint:gosec // G304: test-controlled tempdir path
-		if err != nil {
-			return nil, err
-		}
-		return &closeErroringCloser{Writer: realFile, realFile: realFile, closeErr: sentinel}, nil
-	}
-
-	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
-
-	_, err := export.Run(t.Context(), claudeHome, closeErrorOptions(outputPath), export.WithArchiveOpener(opener))
-
-	require.Error(t, err, "Run must surface the deferred archive-file close error")
-	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
-	require.ErrorContains(t, err, "close archive file")
-}
-
+// TestRun_ArchiveWriterCloseError proves that an error returned by
+// zip.Writer.Close (the central-directory flush) propagates out of Run
+// wrapped as "finalize archive". The fault writer accepts the first 4 KiB
+// — generous headroom for headers and bodies from the minimal fixture —
+// and fails every subsequent write, which is the deflate that
+// zip.Writer.Close issues.
 func TestRun_ArchiveWriterCloseError(t *testing.T) {
 	sentinel := errors.New("synthetic archive-writer close failure")
-	opener := func(path string) (io.WriteCloser, error) {
-		realFile, err := os.Create(path) //nolint:gosec // G304: test-controlled tempdir path
-		if err != nil {
-			return nil, err
-		}
-		// Let the zip writer emit local file headers and compressed bodies,
-		// then fail before zip.Writer.Close can write the central directory.
-		// 4 KiB is generous headroom for header-only output from a minimal
-		// fixture; zip.Writer.Close always writes at least a few hundred
-		// bytes of central-directory records.
-		return &writeLimitCloser{inner: realFile, limit: 4096, writeErr: sentinel}, nil
-	}
+	realFile, err := os.Create(filepath.Join(t.TempDir(), "underlying.zip"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = realFile.Close() })
+
+	faultWriter := &writeLimitCloser{inner: realFile, limit: 4096, writeErr: sentinel}
 
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	options := closeErrorOptions()
+	options.Output = faultWriter
 
-	_, err := export.Run(t.Context(), claudeHome, closeErrorOptions(outputPath), export.WithArchiveOpener(opener))
+	_, err = export.Run(t.Context(), claudeHome, options)
 
 	require.Error(t, err, "Run must surface the deferred archive-writer close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")

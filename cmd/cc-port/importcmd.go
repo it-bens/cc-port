@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -10,8 +11,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/file"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/ui"
 )
@@ -49,6 +52,14 @@ var importCmd = &cobra.Command{
 			return err
 		}
 
+		source, err := pipeline.RunReader(cmd.Context(), []pipeline.ReaderStage{
+			&file.Source{Path: archivePath},
+		})
+		if err != nil {
+			return fmt.Errorf("open archive source: %w", err)
+		}
+		defer func() { _ = source.Close() }()
+
 		var resolutions map[string]string
 		if importFromManifest != "" {
 			metadata, err := manifest.ReadManifest(importFromManifest)
@@ -60,14 +71,15 @@ var importCmd = &cobra.Command{
 				resolutions[key] = value
 			}
 		} else {
-			resolutions, err = promptImportResolutions(archivePath, targetPath, flagResolutions)
+			resolutions, err = promptImportResolutions(source.ReaderAt, source.Size, targetPath, flagResolutions)
 			if err != nil {
 				return err
 			}
 		}
 
 		importOptions := importer.Options{
-			ArchivePath: archivePath,
+			Source:      source.ReaderAt,
+			Size:        source.Size,
 			TargetPath:  targetPath,
 			Resolutions: resolutions,
 		}
@@ -101,7 +113,7 @@ var importManifestCmd = &cobra.Command{
 // tests can drive it without re-wiring the whole cobra tree. Refuses to
 // overwrite an existing output file; the user deletes it or picks a
 // different path with --output.
-func runImportManifest(_ *cobra.Command, args []string) error {
+func runImportManifest(cmd *cobra.Command, args []string) error {
 	archivePath := args[0]
 
 	if _, err := os.Stat(importManifestOutput); err == nil {
@@ -110,7 +122,15 @@ func runImportManifest(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("stat %s: %w", importManifestOutput, err)
 	}
 
-	metadata, err := manifest.ReadManifestFromZip(archivePath)
+	source, err := pipeline.RunReader(cmd.Context(), []pipeline.ReaderStage{
+		&file.Source{Path: archivePath},
+	})
+	if err != nil {
+		return fmt.Errorf("open archive source: %w", err)
+	}
+	defer func() { _ = source.Close() }()
+
+	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
 	if err != nil {
 		return fmt.Errorf("read manifest from zip: %w", err)
 	}
@@ -148,10 +168,12 @@ func init() {
 }
 
 func promptImportResolutions(
-	archivePath, targetPath string,
+	archiveSource io.ReaderAt,
+	archiveSize int64,
+	targetPath string,
 	preResolved map[string]string,
 ) (map[string]string, error) {
-	metadata, err := manifest.ReadManifestFromZip(archivePath)
+	metadata, err := manifest.ReadManifestFromZip(archiveSource, archiveSize)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest from zip: %w", err)
 	}

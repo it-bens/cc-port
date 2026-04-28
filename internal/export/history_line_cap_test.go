@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,10 +39,10 @@ func TestExport_AcceptsLargeHistoryLine(t *testing.T) {
 	line := makeHistoryLine(1<<20, fixtureProjectPath)
 	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), line, 0o600))
 
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
+		Output:      &buf,
 		Categories:  manifest.CategorySet{History: true},
 	})
 
@@ -61,10 +60,10 @@ func TestExport_RejectsHistoryLineOverLimit(t *testing.T) {
 	huge := bytes.Repeat([]byte("a"), 17<<20)
 	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), huge, 0o600))
 
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
+		Output:      &buf,
 		Categories:  manifest.CategorySet{History: true},
 	})
 

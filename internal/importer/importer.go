@@ -110,9 +110,13 @@ func checkStagingFilesystems(claudeHome *claude.Home, encodedProjectDir string) 
 	return fmt.Errorf("staging filesystem check: %s", strings.Join(errs, "; "))
 }
 
-// Options configures an import operation.
+// Options configures an import operation. Source/Size let the importer
+// accept any random-access bytes (file, decrypted tempfile, in-memory)
+// without owning archive lifecycle: callers open the source, hand it to
+// Run, and close it after Run returns.
 type Options struct {
-	ArchivePath string
+	Source      io.ReaderAt
+	Size        int64
 	TargetPath  string
 	Resolutions map[string]string
 
@@ -157,7 +161,7 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) er
 			return err
 		}
 
-		metadata, err := manifest.ReadManifestFromZip(importOptions.ArchivePath)
+		metadata, err := manifest.ReadManifestFromZip(importOptions.Source, importOptions.Size)
 		if err != nil {
 			return fmt.Errorf("read metadata from archive: %w", err)
 		}
@@ -165,7 +169,7 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) er
 			return fmt.Errorf("manifest categories: %w", err)
 		}
 
-		classification, err := classifyArchive(ctx, importOptions.ArchivePath, metadata)
+		classification, err := classifyArchive(ctx, importOptions.Source, importOptions.Size, metadata)
 		if err != nil {
 			return err
 		}
@@ -177,7 +181,8 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) er
 		}
 
 		plan, err := buildImportPlan(
-			ctx, claudeHome, importOptions.ArchivePath, importOptions.TargetPath, encodedProjectDir, resolutions,
+			ctx, claudeHome, importOptions.Source, importOptions.Size,
+			importOptions.TargetPath, encodedProjectDir, resolutions,
 		)
 		if err != nil {
 			// Clean up whatever temp paths the plan managed to create before
@@ -194,13 +199,14 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) er
 	})
 }
 
-// classifyArchive is pass one of the two-pass archive read. It opens the
-// archive, walks each non-metadata entry, and builds an archiveClassification
-// (which declared keys appear, which undeclared upper-snake tokens appear)
-// without retaining any entry body. Enforces both the per-entry cap
-// (maxZipEntryBytes) and the aggregate cap (maxArchiveUncompressedBytes).
+// classifyArchive is pass one of the two-pass archive read. It walks each
+// non-metadata entry on the supplied zip reader and builds an
+// archiveClassification (which declared keys appear, which undeclared
+// upper-snake tokens appear) without retaining any entry body. Enforces both
+// the per-entry cap (maxZipEntryBytes) and the aggregate cap
+// (maxArchiveUncompressedBytes).
 func classifyArchive(
-	ctx context.Context, archivePath string, metadata *manifest.Metadata,
+	ctx context.Context, src io.ReaderAt, size int64, metadata *manifest.Metadata,
 ) (archiveClassification, error) {
 	classification := archiveClassification{
 		presentDeclaredKeys: make(map[string]struct{}),
@@ -211,11 +217,10 @@ func classifyArchive(
 		declaredByKey[placeholder.Key] = struct{}{}
 	}
 
-	zipReader, err := zip.OpenReader(archivePath)
+	zipReader, err := zip.NewReader(src, size)
 	if err != nil {
 		return classification, fmt.Errorf("open archive: %w", err)
 	}
-	defer func() { _ = zipReader.Close() }()
 
 	var aggregate int64
 	for _, zipFile := range zipReader.File {
@@ -455,14 +460,14 @@ func stageArchiveEntries(
 	ctx context.Context,
 	claudeHome *claude.Home,
 	plan *importPlan,
-	archivePath string,
+	src io.ReaderAt,
+	size int64,
 	resolutions map[string]string,
 ) (historyAppends [][]byte, configBlock []byte, err error) {
-	zipReader, err := zip.OpenReader(archivePath)
+	zipReader, err := zip.NewReader(src, size)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open archive: %w", err)
 	}
-	defer func() { _ = zipReader.Close() }()
 
 	var aggregate int64
 	for _, zipFile := range zipReader.File {
@@ -565,7 +570,8 @@ func dispatchSessionKeyed(
 func buildImportPlan(
 	ctx context.Context,
 	claudeHome *claude.Home,
-	archivePath string,
+	src io.ReaderAt,
+	size int64,
 	targetPath string,
 	encodedProjectDir string,
 	resolutions map[string]string,
@@ -580,7 +586,7 @@ func buildImportPlan(
 	}
 	plan.projectDirCreated = true
 
-	historyAppends, configBlock, err := stageArchiveEntries(ctx, claudeHome, plan, archivePath, resolutions)
+	historyAppends, configBlock, err := stageArchiveEntries(ctx, claudeHome, plan, src, size, resolutions)
 	if err != nil {
 		return plan, err
 	}

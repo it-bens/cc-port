@@ -26,10 +26,11 @@ import (
 // Options holds all parameters for an export operation. FromManifest is
 // a CLI-layer carrier only: when non-empty the CLI loads categories and
 // placeholders from that file instead of discovering them. Run ignores
-// this field and behaves solely on Categories and Placeholders.
+// this field and behaves solely on Categories and Placeholders. Output
+// receives the archive bytes; the caller owns its lifecycle.
 type Options struct {
 	ProjectPath  string
-	OutputPath   string
+	Output       io.Writer
 	Categories   manifest.CategorySet
 	Placeholders []manifest.Placeholder
 	FromManifest string
@@ -90,51 +91,21 @@ func categoryEntriesByName(result *Result, name string) (*[]ArchiveEntry, error)
 	}
 }
 
-// RunOption configures one call to Run.
-type RunOption func(*runConfig)
-
-type runConfig struct {
-	archiveOpener func(string) (io.WriteCloser, error)
-}
-
-// defaultRunConfig returns a runConfig seeded with the production opener
-// (os.Create). Callers override via WithArchiveOpener.
-func defaultRunConfig() runConfig {
-	return runConfig{
-		archiveOpener: func(path string) (io.WriteCloser, error) {
-			return os.Create(path) //nolint:gosec // G304: output path supplied by the CLI caller
-		},
-	}
-}
-
-// WithArchiveOpener substitutes the function Run uses to create the output
-// archive file. Intended for tests that inject close-time or mid-write
-// failures; production callers omit this option and receive the default
-// os.Create-based opener.
-func WithArchiveOpener(opener func(string) (io.WriteCloser, error)) RunOption {
-	return func(config *runConfig) { config.archiveOpener = opener }
-}
-
-// Run executes the export: locates project data, creates a ZIP archive at
-// Options.OutputPath, and writes the requested categories with path
-// anonymization. File-history snapshots are archived verbatim — their
-// contents are treated as opaque user-file bytes and are not scanned or
-// rewritten. The returned Result carries one ArchiveEntry per file written,
-// grouped per category; callers surface a warning when result.FileHistory
-// is non-empty.
+// Run executes the export: locates project data and writes the requested
+// categories into Options.Output with path anonymization. File-history
+// snapshots are archived verbatim — their contents are treated as opaque
+// user-file bytes and are not scanned or rewritten. The returned Result
+// carries one ArchiveEntry per file written, grouped per category;
+// callers surface a warning when result.FileHistory is non-empty. The
+// caller owns Options.Output and its lifecycle; Run does not close it.
 func Run(
-	ctx context.Context, claudeHome *claude.Home, exportOptions *Options, runOptions ...RunOption,
+	ctx context.Context, claudeHome *claude.Home, exportOptions *Options,
 ) (result Result, err error) {
-	// Check ctx before any file creation so a cancel-before-start leaves no
-	// output archive on disk. The test contract (TestRun_CancelsWhenContext
-	// Canceled) requires require.NoFileExists on the output path.
+	// Check ctx before any work so a cancel-before-start writes no bytes
+	// to Options.Output. Pre-existing test contract: cmd-layer guarantees
+	// require.NoFileExists when no bytes were written before the cancel.
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("canceled: %w", err)
-	}
-
-	config := defaultRunConfig()
-	for _, option := range runOptions {
-		option(&config)
 	}
 
 	locations, err := claude.LocateProject(claudeHome, exportOptions.ProjectPath)
@@ -142,17 +113,7 @@ func Run(
 		return result, fmt.Errorf("locate project: %w", err)
 	}
 
-	zipFile, err := config.archiveOpener(exportOptions.OutputPath)
-	if err != nil {
-		return result, fmt.Errorf("create output file: %w", err)
-	}
-	defer func() {
-		if cerr := zipFile.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("close archive file: %w", cerr))
-		}
-	}()
-
-	archiveWriter := zip.NewWriter(zipFile)
+	archiveWriter := zip.NewWriter(exportOptions.Output)
 	defer func() {
 		if cerr := archiveWriter.Close(); cerr != nil {
 			err = errors.Join(err, fmt.Errorf("finalize archive: %w", cerr))

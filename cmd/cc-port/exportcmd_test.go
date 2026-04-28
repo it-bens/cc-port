@@ -15,7 +15,7 @@ func TestParseExportOptions_FromManifestWithCategoryFlagErrors(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("from-manifest", "/tmp/m.xml"))
 	require.NoError(t, cmd.Flags().Set("sessions", "true"))
 
-	_, err := parseExportOptions(cmd, []string{"/Users/test/Projects/myproject"})
+	_, _, err := parseExportOptions(cmd, []string{"/Users/test/Projects/myproject"})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--from-manifest is mutually exclusive")
@@ -27,11 +27,11 @@ func TestParseExportOptions_CategoryFlagsAloneAccepted(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("output", "/tmp/o.zip"))
 	require.NoError(t, cmd.Flags().Set("sessions", "true"))
 
-	opts, err := parseExportOptions(cmd, []string{"/Users/test/Projects/myproject"})
+	opts, outputPath, err := parseExportOptions(cmd, []string{"/Users/test/Projects/myproject"})
 
 	require.NoError(t, err)
 	assert.True(t, opts.Categories.Sessions)
-	assert.Equal(t, "/tmp/o.zip", opts.OutputPath)
+	assert.Equal(t, "/tmp/o.zip", outputPath)
 }
 
 func TestParseExportOptions_FromManifestAloneAccepted(t *testing.T) {
@@ -39,11 +39,11 @@ func TestParseExportOptions_FromManifestAloneAccepted(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("output", "/tmp/o.zip"))
 	require.NoError(t, cmd.Flags().Set("from-manifest", "/tmp/m.xml"))
 
-	opts, err := parseExportOptions(cmd, []string{"/Users/test/Projects/myproject"})
+	opts, outputPath, err := parseExportOptions(cmd, []string{"/Users/test/Projects/myproject"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "/tmp/m.xml", opts.FromManifest)
-	assert.Equal(t, "/tmp/o.zip", opts.OutputPath)
+	assert.Equal(t, "/tmp/o.zip", outputPath)
 }
 
 func TestExportManifestCmd_HasOutputFlag(t *testing.T) {

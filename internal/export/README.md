@@ -8,11 +8,11 @@ This module's unit is one project, not the file system at large. The wire format
 
 ## Public API
 
-- `Run(claudeHome *claude.Home, exportOptions Options) (Result, error)`: full export, controlled by `Options`.
+- `Run(ctx context.Context, claudeHome *claude.Home, exportOptions *Options) (Result, error)`: full export, controlled by `Options`. Writes the archive bytes into `Options.Output`. The caller owns the writer's lifecycle; `Run` does not open or close any file.
 - `DiscoverPaths(content []byte) []string`: find path-like tokens inside a body.
 - `GroupPathPrefixes(paths []string) []string`: collapse overlapping prefixes.
 - `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion`: propose `{{PROJECT_PATH}}`, `{{HOME}}`, and `{{UNRESOLVED_N}}` mappings for all discovered prefixes.
-- `Options`, `Result`, `PlaceholderSuggestion`: export configuration and outputs. `Options.Categories` is a `manifest.CategorySet`.
+- `Options`, `Result`, `PlaceholderSuggestion`: export configuration and outputs. `Options.Output` is the `io.Writer` archive bytes are written into; `Options.Categories` is a `manifest.CategorySet`.
 
 ## Contracts
 
@@ -86,7 +86,7 @@ Privacy of exported snapshots. An archive shared with someone else carries liter
 
 ## Tests
 
-Unit tests in `export_test.go`, `discover_test.go`, `close_error_test.go`, and `file_history_errors_test.go`. Coverage: all-categories export, path anonymisation (order-independence, boundary collisions), selective category export, history-inclusion rules, file-history pipeline, close/write fault injection, path discovery, prefix grouping, auto-placeholder detection.
+Unit tests in `export_test.go`, `discover_test.go`, `close_error_test.go`, and `file_history_errors_test.go`. Coverage: all-categories export, path anonymisation (order-independence, boundary collisions), selective category export, history-inclusion rules, file-history pipeline, zip-finalize and per-entry write fault injection via the caller-supplied `Options.Output`, path discovery, prefix grouping, auto-placeholder detection.
 
 `history_line_cap_test.go` drives the `MaxHistoryLine` cap through `Run`. The invariant is owned by [`internal/claude/README.md`](../claude/README.md) §History line cap.
 
