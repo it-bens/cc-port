@@ -45,6 +45,8 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Mutating commands lock + refuse during live sessions    | [`internal/lock/README.md`](../internal/lock/README.md)                          |
 | Session-keyed user-wide directories follow the project  | [`internal/claude/README.md`](../internal/claude/README.md) §Project enumeration |
 | User-wide files are rewritten via a polymorphic registry | [`internal/claude/README.md`](../internal/claude/README.md) §User-wide registry |
+| Sync conflict-detection metadata stays inside the archive | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
+| Cross-machine push refuses without `--force`              | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
 
 ## Session-UUID-keyed user-wide data (cross-cutting)
 
@@ -115,6 +117,7 @@ Stages live in their owning packages:
 |---|---|---|
 | `file.Source`, `file.Sink` | `internal/file` | Local filesystem endpoints |
 | `encrypt.WriterStage`, `encrypt.ReaderStage` | `internal/encrypt` | Age encrypt / decrypt filters (self-skipping) |
+| `remote.Source`, `remote.Sink` | `internal/remote` | gocloud.dev-backed remote endpoints (file://, s3://) |
 
 `cmd/cc-port` owns ordering and any policy decisions (which stages to
 include per invocation). The runner is policy-free.
@@ -123,8 +126,9 @@ Per-command pipelines:
 
 - [`cmd/cc-port/export.go`](../cmd/cc-port/export.go) write path uses `[encrypt.WriterStage{Pass}, file.Sink]`. The encrypt stage self-skips when `Pass` is empty.
 - [`cmd/cc-port/importcmd.go`](../cmd/cc-port/importcmd.go) read path uses `[file.Source, encrypt.ReaderStage{Pass, Mode: Strict}]`. The reader stage owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch internally. `import manifest` reuses the same stage list.
+- [`cmd/cc-port/pushcmd.go`](../cmd/cc-port/pushcmd.go) write path uses `[encrypt.WriterStage{Pass}, remote.Sink]`. The encrypt stage self-skips when `Pass` is empty.
+- [`cmd/cc-port/pullcmd.go`](../cmd/cc-port/pullcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Strict}]`. The reader stage owns the encrypted-vs-plaintext dispatch internally.
 
-Future filters (sync source/sink, compression, signing) plug in by
-adding new stage types and including them in a command's stage list.
-The runner does not change. The sync spec adds remote source and sink
-stages on top of these file and encrypt stages.
+Future filters (compression, signing) plug in by adding new stage
+types and including them in a command's stage list. The runner does
+not change. Sync stages live in `internal/remote`.
