@@ -121,8 +121,8 @@ include per invocation). The runner is policy-free.
 
 Per-command pipelines:
 
-- [`cmd/cc-port/export.go`](../cmd/cc-port/export.go): write path; `[encrypt.WriterStage{Pass}, file.Sink]`. The encrypt stage self-skips when `Pass` is empty.
-- [`cmd/cc-port/importcmd.go`](../cmd/cc-port/importcmd.go): read path; `[file.Source, encrypt.ReaderStage{Pass, Mode: Strict}]`. The reader stage owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch internally. `import manifest` reuses the same stage list.
+- [`cmd/cc-port/export.go`](../cmd/cc-port/export.go) write path uses `[encrypt.WriterStage{Pass}, file.Sink]`. The encrypt stage self-skips when `Pass` is empty.
+- [`cmd/cc-port/importcmd.go`](../cmd/cc-port/importcmd.go) read path uses `[file.Source, encrypt.ReaderStage{Pass, Mode: Strict}]`. The reader stage owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch internally. `import manifest` reuses the same stage list.
 
 Future filters (sync source/sink, compression, signing) plug in by
 adding new stage types and including them in a command's stage list.

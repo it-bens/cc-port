@@ -46,17 +46,10 @@ func TestWriterStage_RoundTripViaRunWriter(t *testing.T) {
 
 func TestReaderStage_RoundTrip(t *testing.T) {
 	plaintext := []byte("reader stage round trip")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, stagePass)
-	require.NoError(t, err)
-	_, err = w.Write(plaintext)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
-	cipherBytes := cipher.Bytes()
+	cipher := encryptBytes(t, stagePass, plaintext)
 	upstream := pipeline.Source{
-		ReaderAt: bytes.NewReader(cipherBytes),
-		Size:     int64(len(cipherBytes)),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return nil },
 	}
 	src, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), upstream)
@@ -74,18 +67,10 @@ func TestReaderStage_CloseRemovesTempfileIdempotent(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("tempdir semantics differ on Windows")
 	}
-	plaintext := []byte("close idempotency test")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, stagePass)
-	require.NoError(t, err)
-	_, err = w.Write(plaintext)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
-	cipherBytes := cipher.Bytes()
+	cipher := encryptBytes(t, stagePass, []byte("close idempotency test"))
 	src, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.Source{
-		ReaderAt: bytes.NewReader(cipherBytes),
-		Size:     int64(len(cipherBytes)),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
@@ -105,18 +90,10 @@ func TestReaderStage_TempfileMode0600(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("0600 mode semantics differ on Windows")
 	}
-	plaintext := []byte("mode test")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, stagePass)
-	require.NoError(t, err)
-	_, err = w.Write(plaintext)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
-	cipherBytes := cipher.Bytes()
+	cipher := encryptBytes(t, stagePass, []byte("mode test"))
 	src, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.Source{
-		ReaderAt: bytes.NewReader(cipherBytes),
-		Size:     int64(len(cipherBytes)),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
@@ -165,13 +142,24 @@ func makePlaintextSource(t *testing.T, body []byte) pipeline.Source {
 
 func makeEncryptedSource(t *testing.T, body []byte) pipeline.Source {
 	t.Helper()
+	return makePlaintextSource(t, encryptBytes(t, dispatchPass, body))
+}
+
+// encryptBytes runs body through encrypt.EncryptingWriter under passphrase
+// and returns the cipher bytes. Centralizes the encrypt-and-buffer pattern
+// so test bodies that need cipher bytes for a custom upstream Source or
+// for byte-mutation cases stay focused on the behavior they exercise.
+func encryptBytes(t *testing.T, passphrase string, body []byte) []byte {
+	t.Helper()
 	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
+	w, err := encrypt.EncryptingWriter(&cipher, passphrase)
 	require.NoError(t, err)
-	_, err = w.Write(body)
-	require.NoError(t, err)
+	if len(body) > 0 {
+		_, err = w.Write(body)
+		require.NoError(t, err)
+	}
 	require.NoError(t, w.Close())
-	return makePlaintextSource(t, cipher.Bytes())
+	return cipher.Bytes()
 }
 
 func TestReaderStage_StrictPlaintextEmptyPassPassthrough(t *testing.T) {
@@ -230,18 +218,11 @@ func TestReaderStage_PermissiveEncryptedEmptyPassReturnsErrPassphraseRequired(t 
 }
 
 func TestReaderStage_DecryptCloseChainsToUpstream(t *testing.T) {
-	body := []byte("close cascade body")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
-	require.NoError(t, err)
-	_, err = w.Write(body)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
+	cipher := encryptBytes(t, dispatchPass, []byte("close cascade body"))
 	upstreamClosed := false
 	upstream := pipeline.Source{
-		ReaderAt: bytes.NewReader(cipher.Bytes()),
-		Size:     int64(cipher.Len()),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { upstreamClosed = true; return nil },
 	}
 	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
@@ -258,17 +239,9 @@ func TestReaderStage_DecryptCloseChainsToUpstream(t *testing.T) {
 // decrypt failure); the runner's own tests cover the per-stage cascade
 // shape.
 func TestReaderStage_RunReaderClosesUpstreamOnceOnError(t *testing.T) {
-	cipherBytes := func() []byte {
-		var cipher bytes.Buffer
-		w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
-		require.NoError(t, err)
-		require.NoError(t, w.Close())
-		return cipher.Bytes()
-	}()
-
 	closeCount := 0
 	source := &countingSourceStage{
-		bytes:    cipherBytes,
+		bytes:    encryptBytes(t, dispatchPass, nil),
 		closeOut: &closeCount,
 	}
 
@@ -428,24 +401,16 @@ func TestWriterStage_EncryptCloseNoCloserDownstream(t *testing.T) {
 // the body decryption fails inside ReaderStage.decrypt's io.Copy. Keeps
 // the io.Copy error branch covered in the dispatch path.
 func TestReaderStage_DecryptIOCopyFailureSurfacesErrPassphrase(t *testing.T) {
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
-	require.NoError(t, err)
-	_, err = w.Write([]byte("a payload that needs to be long enough to be split into a body chunk"))
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
-	cipherBytes := cipher.Bytes()
-	require.Greater(t, len(cipherBytes), 200)
-	cipherBytes[len(cipherBytes)-1] ^= 0xFF
+	cipher := encryptBytes(t, dispatchPass, []byte("a payload that needs to be long enough to be split into a body chunk"))
+	require.Greater(t, len(cipher), 200)
+	cipher[len(cipher)-1] ^= 0xFF
 
 	upstream := pipeline.Source{
-		ReaderAt: bytes.NewReader(cipherBytes),
-		Size:     int64(len(cipherBytes)),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return nil },
 	}
-	_, err = (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
-	require.Error(t, err)
+	_, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.ErrorIs(t, err, encrypt.ErrPassphrase)
 }
 
@@ -455,17 +420,10 @@ func TestReaderStage_CloseSilentOnExternallyRemovedTempfile(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("tempdir semantics differ on Windows")
 	}
-	body := []byte("external-remove body")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
-	require.NoError(t, err)
-	_, err = w.Write(body)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
+	cipher := encryptBytes(t, dispatchPass, []byte("external-remove body"))
 	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.Source{
-		ReaderAt: bytes.NewReader(cipher.Bytes()),
-		Size:     int64(cipher.Len()),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
@@ -485,22 +443,15 @@ func TestReaderStage_DecryptTempfileCreateFailureSurfaces(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("TMPDIR semantics differ on Windows")
 	}
-	body := []byte("tempfile create body")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
-	require.NoError(t, err)
-	_, err = w.Write(body)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
+	cipher := encryptBytes(t, dispatchPass, []byte("tempfile create body"))
 	t.Setenv("TMPDIR", "/this/path/does/not/exist/cc-port-test")
 
 	upstream := pipeline.Source{
-		ReaderAt: bytes.NewReader(cipher.Bytes()),
-		Size:     int64(cipher.Len()),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return nil },
 	}
-	_, err = (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
+	_, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "create tempfile")
 }
@@ -511,17 +462,10 @@ func TestReaderStage_DecryptCloseSurfacesTempCloseError(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("tempdir semantics differ on Windows")
 	}
-	body := []byte("temp close err body")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
-	require.NoError(t, err)
-	_, err = w.Write(body)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
+	cipher := encryptBytes(t, dispatchPass, []byte("temp close err body"))
 	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.Source{
-		ReaderAt: bytes.NewReader(cipher.Bytes()),
-		Size:     int64(cipher.Len()),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
@@ -561,17 +505,10 @@ func TestReaderStage_DecryptCloseSurfacesRemoveError(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMPDIR", dir)
 
-	body := []byte("remove err body")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
-	require.NoError(t, err)
-	_, err = w.Write(body)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
+	cipher := encryptBytes(t, dispatchPass, []byte("remove err body"))
 	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.Source{
-		ReaderAt: bytes.NewReader(cipher.Bytes()),
-		Size:     int64(cipher.Len()),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
@@ -593,17 +530,10 @@ func TestReaderStage_DecryptCloseSurfacesUpstreamCloseError(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("tempdir semantics differ on Windows")
 	}
-	body := []byte("close upstream err")
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, dispatchPass)
-	require.NoError(t, err)
-	_, err = w.Write(body)
-	require.NoError(t, err)
-	require.NoError(t, w.Close())
-
+	cipher := encryptBytes(t, dispatchPass, []byte("close upstream err"))
 	upstream := pipeline.Source{
-		ReaderAt: bytes.NewReader(cipher.Bytes()),
-		Size:     int64(cipher.Len()),
+		ReaderAt: bytes.NewReader(cipher),
+		Size:     int64(len(cipher)),
 		Close:    func() error { return errUpstreamCloseSentinel },
 	}
 	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)

@@ -97,8 +97,8 @@ var exportCmd = &cobra.Command{
 		if snapshotCount := len(result.FileHistory); snapshotCount > 0 {
 			fmt.Fprintf(
 				os.Stderr,
-				"Warning: %d file-history snapshot(s) archived as-is — "+
-					"contents may still reference the original project path "+
+				"Warning: %d file-history snapshot(s) archived as-is. "+
+					"Contents may still reference the original project path "+
 					"(used for in-session rewinds, not persisted data)\n",
 				snapshotCount,
 			)
