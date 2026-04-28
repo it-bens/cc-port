@@ -1,7 +1,6 @@
 package file_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -11,6 +10,9 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/it-bens/cc-port/internal/file"
 	"github.com/it-bens/cc-port/internal/pipeline"
 )
@@ -19,36 +21,29 @@ func TestSource_OpenExisting(t *testing.T) {
 	tempDir := t.TempDir()
 	path := filepath.Join(tempDir, "in.txt")
 	want := []byte("hello world")
-	if err := os.WriteFile(path, want, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, want, 0o600), "WriteFile")
+
 	src, err := (&file.Source{Path: path}).Open(context.Background(), pipeline.Source{})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer func() { _ = src.Close() }()
-	if src.Size != int64(len(want)) {
-		t.Fatalf("Size = %d, want %d", src.Size, len(want))
-	}
+	require.NoError(t, err, "Open")
+	t.Cleanup(func() { _ = src.Close() })
+
 	got := make([]byte, len(want))
 	if _, err := src.ReaderAt.ReadAt(got, 0); err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("ReadAt: %v", err)
 	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("ReadAt = %q, want %q", string(got), string(want))
-	}
+
+	assert.Equal(t, int64(len(want)), src.Size)
+	assert.Equal(t, want, got)
 }
 
 func TestSource_OpenMissingWrapsError(t *testing.T) {
 	tempDir := t.TempDir()
 	path := filepath.Join(tempDir, "missing.txt")
+
 	_, err := (&file.Source{Path: path}).Open(context.Background(), pipeline.Source{})
-	if err == nil {
-		t.Fatal("expected error on missing file")
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("expected not-exist error, got %v", err)
-	}
+
+	require.Error(t, err, "expected error on missing file")
+	require.ErrorIs(t, err, fs.ErrNotExist)
 }
 
 func TestSink_CreateNewFileMode0600(t *testing.T) {
@@ -57,53 +52,34 @@ func TestSink_CreateNewFileMode0600(t *testing.T) {
 	}
 	tempDir := t.TempDir()
 	path := filepath.Join(tempDir, "out.txt")
+
 	w, err := (&file.Sink{Path: path}).Open(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if _, err := w.Write([]byte("data")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	require.NoError(t, err, "Open")
+	_, err = w.Write([]byte("data"))
+	require.NoError(t, err, "Write")
+	require.NoError(t, w.Close(), "Close")
+
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("Stat: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %o, want 0o600", info.Mode().Perm())
-	}
+	require.NoError(t, err, "Stat")
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
 	got, err := os.ReadFile(path) //nolint:gosec // G304: path from t.TempDir
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if string(got) != "data" {
-		t.Fatalf("contents = %q, want data", string(got))
-	}
+	require.NoError(t, err, "ReadFile")
+	assert.Equal(t, []byte("data"), got)
 }
 
 func TestSink_OverwritesExistingFile(t *testing.T) {
 	tempDir := t.TempDir()
 	path := filepath.Join(tempDir, "out.txt")
-	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("old"), 0o600), "WriteFile")
+
 	w, err := (&file.Sink{Path: path}).Open(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if _, err := w.Write([]byte("new")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	require.NoError(t, err, "Open")
+	_, err = w.Write([]byte("new"))
+	require.NoError(t, err, "Write")
+	require.NoError(t, w.Close(), "Close")
+
 	got, err := os.ReadFile(path) //nolint:gosec // G304: path from t.TempDir
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if string(got) != "new" {
-		t.Fatalf("contents = %q, want new", string(got))
-	}
+	require.NoError(t, err, "ReadFile")
+	assert.Equal(t, []byte("new"), got)
 }

@@ -8,11 +8,14 @@ cc-port/
 ├── internal/
 │   ├── claude/             Claude Code data layout: path encoding, locations, schemas
 │   ├── export/             Export orchestration: ZIP, manifest, path anonymisation
+│   ├── file/               Pipeline source/sink stages for local filesystem I/O
 │   ├── fsutil/             Shared filesystem helpers: directory copy, path-ancestor resolution
 │   ├── importer/           Import orchestration: placeholder validation, atomic staging
 │   ├── lock/               Advisory lock + live-session refusal
+│   ├── logo/               ASCII banner rendered on interactive prompts
 │   ├── manifest/           metadata.xml wire DTOs + category enum table
 │   ├── move/               Move plan, dry-run, apply with copy-verify-delete
+│   ├── pipeline/           WriterStage/ReaderStage interfaces + composing runners
 │   ├── rewrite/            Byte-level rewrite primitives + SafeRenamePromoter
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
 │   ├── testutil/           Test fixture helper

@@ -1,4 +1,4 @@
-# internal/file -- agent notes
+# internal/file — agent notes
 
 ## Before editing
 

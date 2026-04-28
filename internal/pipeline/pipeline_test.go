@@ -7,6 +7,9 @@ import (
 	"io"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/it-bens/cc-port/internal/pipeline"
 )
 
@@ -72,75 +75,52 @@ func (s *errorStage) Open(_ context.Context, _ io.Writer) (io.WriteCloser, error
 func (s *errorStage) Name() string { return s.name }
 
 func TestRunWriter_RejectsEmptyStages(t *testing.T) {
-	if _, err := pipeline.RunWriter(context.Background(), nil); err == nil {
-		t.Fatal("expected error on empty stage list")
-	}
+	_, err := pipeline.RunWriter(context.Background(), nil)
+	require.Error(t, err, "expected error on empty stage list")
 }
 
 func TestRunWriter_SingleSinkRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	var log []string
+
 	w, err := pipeline.RunWriter(context.Background(), []pipeline.WriterStage{
 		&trackedSink{name: "sink", buf: &buf, log: &log},
 	})
-	if err != nil {
-		t.Fatalf("RunWriter: %v", err)
-	}
-	if _, err := w.Write([]byte("hello")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if got := buf.String(); got != "hello" {
-		t.Fatalf("buf = %q, want %q", got, "hello")
-	}
-	if len(log) != 1 || log[0] != "close:sink" {
-		t.Fatalf("log = %v, want [close:sink]", log)
-	}
+	require.NoError(t, err, "RunWriter")
+	_, err = w.Write([]byte("hello"))
+	require.NoError(t, err, "Write")
+	require.NoError(t, w.Close(), "Close")
+
+	assert.Equal(t, "hello", buf.String())
+	assert.Equal(t, []string{"close:sink"}, log)
 }
 
 func TestRunWriter_FilterThenSinkClosesInOrder(t *testing.T) {
 	var buf bytes.Buffer
 	var log []string
+
 	w, err := pipeline.RunWriter(context.Background(), []pipeline.WriterStage{
 		&trackedFilter{name: "filter", log: &log},
 		&trackedSink{name: "sink", buf: &buf, log: &log},
 	})
-	if err != nil {
-		t.Fatalf("RunWriter: %v", err)
-	}
-	if _, err := w.Write([]byte("payload")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if buf.String() != "payload" {
-		t.Fatalf("buf = %q, want %q", buf.String(), "payload")
-	}
-	wantLog := []string{"open:filter", "close:filter", "close:sink"}
-	if len(log) != len(wantLog) {
-		t.Fatalf("log = %v, want %v", log, wantLog)
-	}
-	for i := range wantLog {
-		if log[i] != wantLog[i] {
-			t.Fatalf("log[%d] = %q, want %q (full: %v)", i, log[i], wantLog[i], log)
-		}
-	}
+	require.NoError(t, err, "RunWriter")
+	_, err = w.Write([]byte("payload"))
+	require.NoError(t, err, "Write")
+	require.NoError(t, w.Close(), "Close")
+
+	assert.Equal(t, "payload", buf.String())
+	assert.Equal(t, []string{"open:filter", "close:filter", "close:sink"}, log)
 }
 
 func TestRunWriter_ErrorWrapsStageNameAndPosition(t *testing.T) {
 	sentinel := errors.New("boom")
+
 	_, err := pipeline.RunWriter(context.Background(), []pipeline.WriterStage{
 		&errorStage{name: "broken", err: sentinel},
 	})
-	if !errors.Is(err, sentinel) {
-		t.Fatalf("err = %v, want wrap of sentinel", err)
-	}
-	if !contains(err.Error(), "broken") {
-		t.Fatalf("err = %q, want substring %q", err.Error(), "broken")
-	}
+
+	require.ErrorIs(t, err, sentinel)
+	require.ErrorContains(t, err, "broken")
 }
 
 // --- Reader stage tests ---
@@ -192,69 +172,50 @@ func (s *errorReaderStage) Open(_ context.Context, _ pipeline.Source) (pipeline.
 func (s *errorReaderStage) Name() string { return s.name }
 
 func TestRunReader_RejectsEmptyStages(t *testing.T) {
-	if _, err := pipeline.RunReader(context.Background(), nil); err == nil {
-		t.Fatal("expected error on empty stage list")
-	}
+	_, err := pipeline.RunReader(context.Background(), nil)
+	require.Error(t, err, "expected error on empty stage list")
 }
 
 func TestRunReader_SourceRoundTrip(t *testing.T) {
 	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
 		&byteSource{name: "byte", data: []byte("abcdef")},
 	})
-	if err != nil {
-		t.Fatalf("RunReader: %v", err)
-	}
-	defer func() { _ = src.Close() }()
-	if src.Size != 6 {
-		t.Fatalf("Size = %d, want 6", src.Size)
-	}
+	require.NoError(t, err, "RunReader")
+	t.Cleanup(func() { _ = src.Close() })
+
 	buf := make([]byte, 6)
 	n, err := src.ReaderAt.ReadAt(buf, 0)
 	if err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("ReadAt: %v", err)
 	}
-	if n != 6 || string(buf) != "abcdef" {
-		t.Fatalf("ReadAt = %q (n=%d), want abcdef", string(buf[:n]), n)
-	}
+
+	assert.Equal(t, int64(6), src.Size)
+	assert.Equal(t, 6, n)
+	assert.Equal(t, "abcdef", string(buf))
 }
 
 func TestRunReader_SourceThenFilterClosesInReverseChainOrder(t *testing.T) {
 	var log []string
+
 	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
 		&byteSource{name: "byte", data: []byte("x")},
 		&trackingReaderFilter{name: "filter", log: &log},
 	})
-	if err != nil {
-		t.Fatalf("RunReader: %v", err)
-	}
-	if err := src.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	wantLog := []string{"open:filter", "close:filter"}
-	if len(log) != len(wantLog) {
-		t.Fatalf("log = %v, want %v", log, wantLog)
-	}
-	for i := range wantLog {
-		if log[i] != wantLog[i] {
-			t.Fatalf("log[%d] = %q, want %q", i, log[i], wantLog[i])
-		}
-	}
+	require.NoError(t, err, "RunReader")
+	require.NoError(t, src.Close(), "Close")
+
+	assert.Equal(t, []string{"open:filter", "close:filter"}, log)
 }
 
 func TestRunReader_ErrorWrapsStageNameAndPosition(t *testing.T) {
 	sentinel := errors.New("nope")
+
 	_, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
 		&byteSource{name: "byte", data: []byte("x")},
 		&errorReaderStage{name: "broken", err: sentinel},
 	})
-	if !errors.Is(err, sentinel) {
-		t.Fatalf("err = %v, want wrap of sentinel", err)
-	}
-	if !contains(err.Error(), "broken") || !contains(err.Error(), "position 1") {
-		t.Fatalf("err = %q, want substrings %q and %q", err.Error(), "broken", "position 1")
-	}
-}
 
-func contains(haystack, needle string) bool {
-	return bytes.Contains([]byte(haystack), []byte(needle))
+	require.ErrorIs(t, err, sentinel)
+	require.ErrorContains(t, err, "broken")
+	require.ErrorContains(t, err, "position 1")
 }

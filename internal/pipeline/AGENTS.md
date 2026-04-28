@@ -1,4 +1,4 @@
-# internal/pipeline -- agent notes
+# internal/pipeline — agent notes
 
 ## Before editing
 
