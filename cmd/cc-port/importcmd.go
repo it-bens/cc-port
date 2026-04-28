@@ -21,11 +21,13 @@ import (
 )
 
 var (
-	importFromManifest   string
-	importResolutionKV   []string
-	importManifestOutput string
-	importPassphraseEnv  string
-	importPassphraseFile string
+	importFromManifest           string
+	importResolutionKV           []string
+	importManifestOutput         string
+	importPassphraseEnv          string
+	importPassphraseFile         string
+	importManifestPassphraseEnv  string
+	importManifestPassphraseFile string
 )
 
 var importCmd = &cobra.Command{
@@ -126,7 +128,7 @@ var importManifestCmd = &cobra.Command{
 // tests can drive it without re-wiring the whole cobra tree. Refuses to
 // overwrite an existing output file; the user deletes it or picks a
 // different path with --output.
-func runImportManifest(cmd *cobra.Command, args []string) error {
+func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 	archivePath := args[0]
 
 	if _, err := os.Stat(importManifestOutput); err == nil {
@@ -135,13 +137,23 @@ func runImportManifest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("stat %s: %w", importManifestOutput, err)
 	}
 
+	passphrase, err := resolvePassphrase(importManifestPassphraseEnv, importManifestPassphraseFile)
+	if err != nil {
+		return err
+	}
+
 	source, err := pipeline.RunReader(cmd.Context(), []pipeline.ReaderStage{
 		&file.Source{Path: archivePath},
+		&encrypt.ReaderStage{Pass: passphrase, Mode: encrypt.Strict},
 	})
 	if err != nil {
 		return fmt.Errorf("open archive source: %w", err)
 	}
-	defer func() { _ = source.Close() }()
+	defer func() {
+		if cerr := source.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("close archive source: %w", cerr))
+		}
+	}()
 
 	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
 	if err != nil {
@@ -187,6 +199,17 @@ func init() {
 		&importManifestOutput, "output", "o", "manifest.xml",
 		"path to write the manifest XML",
 	)
+	importManifestCmd.Flags().StringVar(
+		&importManifestPassphraseEnv, "passphrase-env", "",
+		"name of the environment variable holding the passphrase "+
+			"(mutually exclusive with --passphrase-file)",
+	)
+	importManifestCmd.Flags().StringVar(
+		&importManifestPassphraseFile, "passphrase-file", "",
+		"path to a file holding the passphrase, trailing newlines trimmed "+
+			"(mutually exclusive with --passphrase-env)",
+	)
+	importManifestCmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
 	importCmd.AddCommand(importManifestCmd)
 	rootCmd.AddCommand(importCmd)
 }

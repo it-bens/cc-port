@@ -108,6 +108,13 @@ func TestImportCmd_PassphraseFlagsRegistered(t *testing.T) {
 		"--passphrase-file should be registered on import")
 }
 
+func TestImportManifestCmd_PassphraseFlagsRegistered(t *testing.T) {
+	require.NotNil(t, importManifestCmd.Flags().Lookup("passphrase-env"),
+		"--passphrase-env should be registered on import manifest")
+	require.NotNil(t, importManifestCmd.Flags().Lookup("passphrase-file"),
+		"--passphrase-file should be registered on import manifest")
+}
+
 // buildMinimalArchive writes a zip archive containing a valid metadata.xml
 // entry and returns the archive path. The zip entry name must be
 // "metadata.xml" because that is the name ReadManifestFromZip searches for.
