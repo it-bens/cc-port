@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/encrypt"
+	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
 )
 
@@ -70,19 +73,121 @@ type PullPlan struct {
 }
 
 // PlanPush reads prior remote state and returns a PushPlan describing
-// what ExecutePush would do.
+// what ExecutePush would do. Composes a permissive read pipeline so a
+// plaintext prior is silently accepted even when the operator's
+// passphrase targets the new archive being written.
 //
-//nolint:gocritic // hugeParam: by-value PushOptions matches the spec signature; bodies land in Task 6.
-func PlanPush(_ context.Context, _ PushOptions) (*PushPlan, error) {
-	return nil, errors.New("sync.PlanPush: not implemented")
+//nolint:gocritic // hugeParam: by-value PushOptions matches the public Plan/Execute contract.
+func PlanPush(ctx context.Context, opts PushOptions) (*PushPlan, error) {
+	if opts.Remote == nil {
+		return nil, errors.New("sync.PlanPush: Remote is nil")
+	}
+	if opts.Name == "" {
+		return nil, errors.New("sync.PlanPush: Name is empty")
+	}
+
+	pusher, err := selfPusher()
+	if err != nil && !opts.Force {
+		return nil, fmt.Errorf("sync.PlanPush: derive self identity: %w", err)
+	}
+	// Force suppresses the selfPusher error: the new archive's
+	// <sync-pushed-by> is left empty (omitempty drops the element)
+	// and the cross-machine check below trivially passes.
+	plan := &PushPlan{
+		Name:              opts.Name,
+		SelfPusher:        pusher,
+		Categories:        opts.Categories,
+		EncryptionEnabled: opts.Passphrase != "",
+	}
+
+	priorReadStage := &encrypt.ReaderStage{Pass: opts.Passphrase, Mode: encrypt.Permissive}
+	source, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
+		&remote.Source{Remote: opts.Remote, Key: opts.Name},
+		priorReadStage,
+	})
+	if errors.Is(err, remote.ErrNotFound) {
+		return plan, nil
+	}
+	if errors.Is(err, encrypt.ErrPassphraseRequired) {
+		if opts.Force {
+			// No prior-read possible without the passphrase. Plan
+			// records nothing about the prior; cmd-layer overwrites
+			// on apply. Operator accepted the trade-off via --force.
+			return plan, nil
+		}
+		return nil, fmt.Errorf(
+			"sync.PlanPush: prior remote is encrypted, passphrase required for conflict detection (or use --force): %w",
+			ErrPassphraseRequired,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sync.PlanPush: read prior remote: %w", err)
+	}
+	defer func() { _ = source.Close() }()
+
+	plan.PriorSize = source.Size
+	plan.PriorEncrypted = priorReadStage.WasEncrypted()
+
+	priorMetadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
+	if err != nil {
+		return nil, fmt.Errorf("sync.PlanPush: read prior manifest: %w", err)
+	}
+	plan.PriorPushedBy = priorMetadata.SyncPushedBy
+	if priorMetadata.SyncPushedAt != "" {
+		parsed, err := time.Parse(time.RFC3339, priorMetadata.SyncPushedAt)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"sync.PlanPush: parse prior SyncPushedAt %q: %w",
+				priorMetadata.SyncPushedAt, err,
+			)
+		}
+		plan.PriorPushedAt = parsed
+	}
+	plan.CrossMachine = plan.PriorPushedBy != "" && plan.PriorPushedBy != plan.SelfPusher
+
+	return plan, nil
 }
 
 // ExecutePush runs the export-side pipeline and uploads the archive to
-// the remote. Caller passes the plan returned by PlanPush.
+// the remote. Caller passes the plan returned by PlanPush. The deferred
+// out.Close error capture is load-bearing: remote.Sink commits the
+// upload inside Close, so a failed commit must surface as a returned
+// error.
 //
-//nolint:gocritic // hugeParam: by-value PushOptions matches the spec signature; bodies land in Task 6.
-func ExecutePush(_ context.Context, _ PushOptions, _ *PushPlan) error {
-	return errors.New("sync.ExecutePush: not implemented")
+//nolint:gocritic // hugeParam: by-value PushOptions matches the public Plan/Execute contract.
+func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan) (err error) {
+	if opts.Remote == nil {
+		return errors.New("sync.ExecutePush: Remote is nil")
+	}
+	if plan == nil {
+		return errors.New("sync.ExecutePush: plan is nil")
+	}
+
+	out, err := pipeline.RunWriter(ctx, []pipeline.WriterStage{
+		&encrypt.WriterStage{Pass: opts.Passphrase},
+		&remote.Sink{Remote: opts.Remote, Key: opts.Name},
+	})
+	if err != nil {
+		return fmt.Errorf("sync.ExecutePush: build output pipeline: %w", err)
+	}
+	defer func() {
+		if cerr := out.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("sync.ExecutePush: close output pipeline: %w", cerr))
+		}
+	}()
+
+	exportOptions := export.Options{
+		ProjectPath:  opts.ProjectPath,
+		Output:       out,
+		Categories:   opts.Categories,
+		Placeholders: opts.Placeholders,
+		SyncPushedBy: plan.SelfPusher,
+		SyncPushedAt: time.Now().UTC(),
+	}
+	if _, err := export.Run(ctx, opts.ClaudeHome, &exportOptions); err != nil {
+		return fmt.Errorf("sync.ExecutePush: export: %w", err)
+	}
+	return nil
 }
 
 // PlanPull reads the remote archive's manifest and returns a PullPlan

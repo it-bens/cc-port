@@ -7,8 +7,8 @@ Orchestrates `cc-port push` and `cc-port pull`. Owns conflict-detection logic, p
 ## Public API
 
 - `PushOptions`, `PushPlan`, `PullOptions`, `PullPlan`: option and plan structs.
-- `PlanPush(ctx, opts) (*PushPlan, error)`: reads prior remote (if any), populates plan with cross-machine state and encryption metadata. Stub in this task; body lands in Task 6.
-- `ExecutePush(ctx, opts, plan) error`: runs the export-side pipeline and uploads to the remote. Stub in this task; body lands in Task 6.
+- `PlanPush(ctx, opts) (*PushPlan, error)`: reads prior remote (if any), populates plan with cross-machine state and encryption metadata.
+- `ExecutePush(ctx, opts, plan) error`: runs the export-side pipeline and uploads to the remote.
 - `PlanPull(ctx, opts) (*PullPlan, error)`: reads remote archive's manifest, populates plan with placeholder resolutions. Stub in this task; body lands in Task 7.
 - `ExecutePull(ctx, opts, plan) error`: runs the import-side pipeline and applies the archive locally. Stub in this task; body lands in Task 7.
 - Sentinel errors: `ErrCrossMachineConflict`, `ErrRemoteNotFound`, `ErrPassphraseRequired`, `ErrUnresolvedPlaceholder`.
@@ -41,4 +41,4 @@ Used by `cmd/cc-port` push and pull.
 
 ## Tests
 
-`sync_test.go` covers the visible scaffold surface: `selfPusher` returns a hyphen-separated host-user on a configured machine, refuses (or platform-falls-back from) an empty `$USER`, the four Plan/Execute stubs return errors, and the sentinel errors are non-nil. Real Plan/Execute coverage lands with Tasks 6 and 7. Mem-backed remote (gocloud `mem://`) for unit tests; integration round-trips against `file://` and optionally S3.
+`sync_test.go` covers `selfPusher` (hyphen-separated host-user on a configured machine, refuse-or-platform-fall-back from an empty `$USER`), the push-side Plan and Execute paths (no-prior, same-self, cross-machine prior, encrypted-prior-no-passphrase refusal, round-trip with sync fields), the still-stub `PlanPull`, and the sentinel errors. `PlanPull`/`ExecutePull` coverage lands with Task 7. Mem-backed remote (gocloud `mem://`) for unit tests; integration round-trips against `file://` and optionally S3.
