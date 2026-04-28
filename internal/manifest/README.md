@@ -10,7 +10,7 @@ command modules agree on the wire contract through a neutral third party.
 ## Public API
 
 - **Wire types**
-  - `Metadata`: root XML element (`<cc-port>`) wrapping `Info` and placeholders.
+  - `Metadata`: root XML element (`<cc-port>`) wrapping `Info`, placeholders, and the optional `SyncPushedBy` / `SyncPushedAt` sync fields. The two sync fields are written only by `cc-port push` (via `internal/sync`); `cc-port export` archives omit them. `SyncPushedAt` is RFC3339-formatted. Both are strings because `encoding/xml` does not honor `omitempty` for `time.Time`'s zero value.
   - `Info`: export timestamp plus the per-category include list.
   - `Category`: one `<category name="..." included="..."/>` entry.
   - `Placeholder`: one `<placeholder key="..." original="..." [resolvable="..."] [resolve="..."]/>` entry. `resolvable` and `resolve` are omitted from the XML when unset (`*bool` nil / empty string).
