@@ -66,6 +66,13 @@ func TestExportManifestCmd_OverwriteGuard(t *testing.T) {
 	assert.Contains(t, err.Error(), "already exists")
 }
 
+func TestExportCmd_PassphraseFlagsRegistered(t *testing.T) {
+	require.NotNil(t, exportCmd.Flags().Lookup("passphrase-env"),
+		"--passphrase-env should be registered on export")
+	require.NotNil(t, exportCmd.Flags().Lookup("passphrase-file"),
+		"--passphrase-file should be registered on export")
+}
+
 // newExportCmdForTest returns a cobra command with every export flag
 // registered. Keeps flag names in one place so the tests track the real
 // command surface.

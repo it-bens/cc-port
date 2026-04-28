@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/file"
 	"github.com/it-bens/cc-port/internal/manifest"
@@ -23,6 +24,8 @@ var (
 	exportOutput         string
 	exportFromManifest   string
 	exportManifestOutput string
+	exportPassphraseEnv  string
+	exportPassphraseFile string
 )
 
 // categoryFlags are the per-category booleans the export command
@@ -75,9 +78,17 @@ var exportCmd = &cobra.Command{
 
 		printExportRulesWarnings(claudeHome, exportOptions.ProjectPath)
 
+		passphrase, err := resolvePassphrase(exportPassphraseEnv, exportPassphraseFile)
+		if err != nil {
+			return err
+		}
+
 		result, err := runExportWithStages(
 			cmd.Context(), claudeHome, &exportOptions,
-			[]pipeline.WriterStage{&file.Sink{Path: outputPath}},
+			[]pipeline.WriterStage{
+				&encrypt.WriterStage{Pass: passphrase},
+				&file.Sink{Path: outputPath},
+			},
 		)
 		if err != nil {
 			return err
@@ -206,6 +217,17 @@ func init() {
 	exportCmd.Flags().Bool("usage-data", false, "export usage-data (session-meta + facets)")
 	exportCmd.Flags().Bool("plugins-data", false, "export plugins/data")
 	exportCmd.Flags().Bool("tasks", false, "export tasks")
+	exportCmd.Flags().StringVar(
+		&exportPassphraseEnv, "passphrase-env", "",
+		"name of the environment variable holding the passphrase "+
+			"(mutually exclusive with --passphrase-file)",
+	)
+	exportCmd.Flags().StringVar(
+		&exportPassphraseFile, "passphrase-file", "",
+		"path to a file holding the passphrase, trailing newlines trimmed "+
+			"(mutually exclusive with --passphrase-env)",
+	)
+	exportCmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
 	// MarkFlagRequired errors only when the flag name doesn't exist; "output" was registered above.
 	_ = exportCmd.MarkFlagRequired("output")
 
