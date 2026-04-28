@@ -11,6 +11,7 @@ Orchestrates `cc-port push` and `cc-port pull`. Owns conflict-detection logic, p
 - `ExecutePush(ctx, opts, plan) error`: runs the export-side pipeline and uploads to the remote.
 - `PlanPull(ctx, opts) (*PullPlan, error)`: reads remote archive's manifest, populates plan with placeholder resolutions.
 - `ExecutePull(ctx, opts, plan) error`: runs the import-side pipeline and applies the archive locally.
+- `(*PushPlan).Render(io.Writer) error`, `(*PullPlan).Render(io.Writer) error`: write the dry-run preview.
 - Sentinel errors: `ErrCrossMachineConflict`, `ErrRemoteNotFound`, `ErrPassphraseRequired`, `ErrUnresolvedPlaceholder`.
 
 ## Contracts
@@ -25,6 +26,8 @@ Used by `cmd/cc-port` push and pull.
 - Execute commits the upload (push) or import (pull). Failures during Execute leave partial state on the remote (push) or local (pull) per gocloud and importer semantics; sync surfaces the error.
 - The cross-machine refusal triggers when `plan.PriorPushedBy != "" && != plan.SelfPusher`. cmd layer enforces; sync sets the field.
 - Conflict-detection metadata (`SyncPushedBy`, `SyncPushedAt`, encrypted flag, size) lives inside `metadata.xml` inside the archive. Bucket-level custom metadata is not used; the archive is the single source of truth.
+- `PushPlan.Render` writes the dry-run preview ending after the cross-machine warning (or its absence). The trailing `(no changes; pass --apply to commit)` line is the cmd layer's responsibility, not Render's. The Prior remote section omits when `PriorPushedBy` is empty; the cross-machine warning fires only when `CrossMachine` is true.
+- `PullPlan.Render` writes the pull dry-run preview. The Required resolutions block lists every declared placeholder, marking each as `(resolved)` or `MISSING`; the trailing `! N placeholder unresolved` warning fires only when `len(UnresolvedPlaceholders) > 0`. Categories print via `categoriesSummary`, which collapses to `all` when every `manifest.AllCategories` entry is set.
 
 #### Refused
 
@@ -41,4 +44,4 @@ Used by `cmd/cc-port` push and pull.
 
 ## Tests
 
-`sync_test.go` covers `selfPusher` (hyphen-separated host-user on a configured machine, refuse-or-platform-fall-back from an empty `$USER`), the push-side Plan and Execute paths (no-prior, same-self, cross-machine prior, encrypted-prior-no-passphrase refusal, round-trip with sync fields), the pull-side Plan paths (not-found, encrypted-no-passphrase, plaintext-with-passphrase, declared-placeholder discovery, resolution coverage by `--resolution` and by sender Resolve), a push-pull round-trip via `mem://`, and the sentinel errors. Mem-backed remote (gocloud `mem://`) for unit tests; integration round-trips against `file://` and optionally S3.
+`sync_test.go` covers `selfPusher` (hyphen-separated host-user on a configured machine, refuse-or-platform-fall-back from an empty `$USER`), the push-side Plan and Execute paths (no-prior, same-self, cross-machine prior, encrypted-prior-no-passphrase refusal, round-trip with sync fields), the pull-side Plan paths (not-found, encrypted-no-passphrase, plaintext-with-passphrase, declared-placeholder discovery, resolution coverage by `--resolution` and by sender Resolve), a push-pull round-trip via `mem://`, and the sentinel errors. `render_test.go` covers Render output via substring assertions on push (no-prior plaintext, encrypted with prior and cross-machine), pull (with unresolved placeholders, encrypted clean), plus `humanizeBytes` boundary cases. Mem-backed remote (gocloud `mem://`) for unit tests; integration round-trips against `file://` and optionally S3.
