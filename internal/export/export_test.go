@@ -2,6 +2,7 @@ package export_test
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -28,6 +29,18 @@ func defaultPlaceholders() []manifest.Placeholder {
 	}
 }
 
+// createArchiveFile opens path with O_CREATE|O_TRUNC and registers a
+// Cleanup that closes it. Returns the file so callers can pass it as
+// export.Options.Output and re-open path for assertion-time reads after
+// export.Run finalizes the zip.
+func createArchiveFile(t *testing.T, path string) *os.File {
+	t.Helper()
+	file, err := os.Create(path) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err, "create archive file %s", path)
+	t.Cleanup(func() { _ = file.Close() })
+	return file
+}
+
 // readZipContents opens the ZIP at zipPath and returns a map of filename → content.
 func readZipContents(t *testing.T, zipPath string) map[string]string {
 	t.Helper()
@@ -50,11 +63,11 @@ func readZipContents(t *testing.T, zipPath string) map[string]string {
 
 func TestExport_IncludesSessions(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{Sessions: true},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -65,11 +78,11 @@ func TestExport_IncludesSessions(t *testing.T) {
 
 func TestExport_IncludesMemory(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{Memory: true},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -81,14 +94,16 @@ func TestExport_IncludesMemory(t *testing.T) {
 func TestExport_IncludesHistory(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	output := createArchiveFile(t, outputPath)
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       output,
 		Categories:   manifest.CategorySet{History: true},
 		Placeholders: defaultPlaceholders(),
 	})
 	require.NoError(t, err)
+	require.NoError(t, output.Close())
 
 	require.Len(t, result.History, 1, "history must produce exactly one entry")
 	contents := readZipContents(t, outputPath)
@@ -97,11 +112,11 @@ func TestExport_IncludesHistory(t *testing.T) {
 
 func TestExport_IncludesConfig(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{Config: true},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -112,11 +127,11 @@ func TestExport_IncludesConfig(t *testing.T) {
 
 func TestExport_IncludesFileHistory(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{FileHistory: true},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -127,11 +142,11 @@ func TestExport_IncludesFileHistory(t *testing.T) {
 
 func TestExport_FileHistorySkippedWhenDisabled(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{Sessions: true, FileHistory: false},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -143,11 +158,11 @@ func TestExport_FileHistorySkippedWhenDisabled(t *testing.T) {
 
 func TestExport_FileHistoryEntriesUseUUIDPrefix(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{FileHistory: true},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -166,14 +181,14 @@ func TestExport_FileHistoryEntriesUseUUIDPrefix(t *testing.T) {
 
 func TestExport_FileHistoryArchivesAllSnapshots(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 
 	expectedCount := fileHistoryFixtureSnapshotCount(t, claudeHome)
 	require.Positive(t, expectedCount, "fixture must contain at least one project-relevant snapshot")
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{FileHistory: true},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -186,6 +201,7 @@ func TestExport_FileHistoryArchivesAllSnapshots(t *testing.T) {
 func TestExport_FileHistoryBytesAreVerbatim(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	output := createArchiveFile(t, outputPath)
 
 	// Pick the lex-first project-relevant uuid dir, then the lex-first
 	// snapshot inside it. This mirrors the deterministic-pick pattern used
@@ -211,11 +227,12 @@ func TestExport_FileHistoryBytesAreVerbatim(t *testing.T) {
 
 	_, err = export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       output,
 		Categories:   manifest.CategorySet{FileHistory: true},
 		Placeholders: defaultPlaceholders(),
 	})
 	require.NoError(t, err)
+	require.NoError(t, output.Close())
 
 	uuid := filepath.Base(firstDir)
 	zipName := "file-history/" + uuid + "/" + snapshotName
@@ -228,16 +245,18 @@ func TestExport_FileHistoryBytesAreVerbatim(t *testing.T) {
 func TestExport_RedactsProjectPaths(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	output := createArchiveFile(t, outputPath)
 
 	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
+		Output:      output,
 		Categories: manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, Config: true,
 		},
 		Placeholders: defaultPlaceholders(),
 	})
 	require.NoError(t, err)
+	require.NoError(t, output.Close())
 
 	contents := readZipContents(t, outputPath)
 	for name, content := range contents {
@@ -254,16 +273,18 @@ func TestExport_RedactsProjectPaths(t *testing.T) {
 func TestExport_AddsPlaceholderForProjectPath(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	output := createArchiveFile(t, outputPath)
 
 	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
+		Output:      output,
 		Categories: manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, Config: true,
 		},
 		Placeholders: defaultPlaceholders(),
 	})
 	require.NoError(t, err)
+	require.NoError(t, output.Close())
 
 	contents := readZipContents(t, outputPath)
 	found := false
@@ -279,11 +300,11 @@ func TestExport_AddsPlaceholderForProjectPath(t *testing.T) {
 
 func TestExport_SelectiveCategories(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 
 	options := export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
+		Output:      &buf,
 		Categories: manifest.CategorySet{
 			Sessions:    false,
 			Memory:      true,
@@ -313,27 +334,31 @@ func TestExport_PathAnonymization_OrderIndependent(t *testing.T) {
 	// byte-for-byte equality.
 	claudeHome1 := testutil.SetupFixture(t)
 	out1 := filepath.Join(t.TempDir(), "export-longer-first.zip")
+	output1 := createArchiveFile(t, out1)
 	_, err := export.Run(t.Context(), claudeHome1, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   out1,
+		Output:       output1,
 		Categories:   manifest.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
 		Placeholders: defaultPlaceholders(),
 	})
 	require.NoError(t, err)
+	require.NoError(t, output1.Close())
 
 	claudeHome2 := testutil.SetupFixture(t)
 	out2 := filepath.Join(t.TempDir(), "export-shorter-first.zip")
+	output2 := createArchiveFile(t, out2)
 	reversed := []manifest.Placeholder{
 		{Key: "{{HOME}}", Original: "/Users/test"},
 		{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
 	}
 	_, err = export.Run(t.Context(), claudeHome2, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   out2,
+		Output:       output2,
 		Categories:   manifest.CategorySet{Sessions: true, Memory: true, History: true, Config: true},
 		Placeholders: reversed,
 	})
 	require.NoError(t, err)
+	require.NoError(t, output2.Close())
 
 	// Every non-metadata entry must be byte-identical between the two orderings.
 	// metadata.xml is excluded because it encodes a `created` timestamp.
@@ -417,12 +442,14 @@ func historyExportWithLines(t *testing.T, lines []string) string {
 	require.NoError(t, os.WriteFile(claudeHome.HistoryFile(), historyData, 0o600))
 
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	output := createArchiveFile(t, outputPath)
 	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
+		Output:      output,
 		Categories:  manifest.CategorySet{History: true},
 	})
 	require.NoError(t, err)
+	require.NoError(t, output.Close())
 
 	contents := readZipContents(t, outputPath)
 	return contents["history/history.jsonl"]
@@ -430,11 +457,11 @@ func historyExportWithLines(t *testing.T, lines []string) string {
 
 func TestExport_IncludesTodos(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "out.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
-		OutputPath:  archivePath,
+		Output:      &buf,
 		Categories:  manifest.CategorySet{Todos: true},
 	})
 	require.NoError(t, err)
@@ -444,11 +471,11 @@ func TestExport_IncludesTodos(t *testing.T) {
 
 func TestExport_IncludesUsageData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "out.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
-		OutputPath:  archivePath,
+		Output:      &buf,
 		Categories:  manifest.CategorySet{UsageData: true},
 	})
 	require.NoError(t, err)
@@ -458,11 +485,11 @@ func TestExport_IncludesUsageData(t *testing.T) {
 
 func TestExport_IncludesPluginsData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "out.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
-		OutputPath:  archivePath,
+		Output:      &buf,
 		Categories:  manifest.CategorySet{PluginsData: true},
 	})
 	require.NoError(t, err)
@@ -474,11 +501,11 @@ func TestExport_IncludesPluginsData(t *testing.T) {
 
 func TestExport_IncludesTasks_SkipsSidecars(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "out.zip")
+	var buf bytes.Buffer
 
 	result, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
-		OutputPath:  archivePath,
+		Output:      &buf,
 		Categories:  manifest.CategorySet{Tasks: true},
 	})
 	require.NoError(t, err)
@@ -496,13 +523,15 @@ func TestExport_ManifestDeclaresAllNineCategories(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "out.zip")
+	output := createArchiveFile(t, archivePath)
 
 	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: "/Users/test/Projects/myproject",
-		OutputPath:  archivePath,
+		Output:      output,
 		Categories:  manifest.CategorySet{Sessions: true},
 	})
 	require.NoError(t, err)
+	require.NoError(t, output.Close())
 
 	zipFile, err := os.Open(archivePath) //nolint:gosec // G304: test-controlled temp path
 	require.NoError(t, err, "open archive")
@@ -531,16 +560,18 @@ func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {
 	// the PROJECT_PATH token.
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	output := createArchiveFile(t, outputPath)
 
 	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
+		Output:      output,
 		Categories: manifest.CategorySet{
 			Memory: true, Sessions: true, History: true, Config: true,
 		},
 		Placeholders: defaultPlaceholders(),
 	})
 	require.NoError(t, err)
+	require.NoError(t, output.Close())
 
 	contents := readZipContents(t, outputPath)
 	memory := contents["memory/project_notes.md"]
@@ -558,19 +589,20 @@ func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {
 
 func TestRun_CancelsWhenContextCancelled(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
-	outputPath := filepath.Join(t.TempDir(), "out.zip")
+	var buf bytes.Buffer
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err := export.Run(ctx, claudeHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  outputPath,
+		Output:      &buf,
 		Categories:  manifest.CategorySet{Sessions: true, History: true},
 	})
 
 	require.ErrorIs(t, err, context.Canceled)
-	require.NoFileExists(t, outputPath)
+	assert.Zero(t, buf.Len(),
+		"cancel-before-start must not write any bytes to the output writer")
 }
 
 // TestRun_SessionTranscriptsMatchAppliedPlaceholders is a byte-identity
@@ -581,15 +613,17 @@ func TestRun_CancelsWhenContextCancelled(t *testing.T) {
 func TestRun_SessionTranscriptsMatchAppliedPlaceholders(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	outputPath := filepath.Join(t.TempDir(), "out.zip")
+	output := createArchiveFile(t, outputPath)
 	placeholders := defaultPlaceholders()
 
 	_, err := export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       output,
 		Categories:   manifest.CategorySet{Sessions: true},
 		Placeholders: placeholders,
 	})
 	require.NoError(t, err)
+	require.NoError(t, output.Close())
 
 	encodedProjectDir := claudeHome.ProjectDir(fixtureProjectPath)
 	contents := readZipContents(t, outputPath)

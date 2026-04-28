@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/file"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/ui"
 )
@@ -40,8 +43,8 @@ var exportCmd = &cobra.Command{
 		}
 		return nil
 	},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		exportOptions, err := parseExportOptions(cmd, args)
+	RunE: func(cmd *cobra.Command, args []string) (err error) {
+		exportOptions, outputPath, err := parseExportOptions(cmd, args)
 		if err != nil {
 			return err
 		}
@@ -72,9 +75,12 @@ var exportCmd = &cobra.Command{
 
 		printExportRulesWarnings(claudeHome, exportOptions.ProjectPath)
 
-		result, err := export.Run(cmd.Context(), claudeHome, &exportOptions)
+		result, err := runExportWithStages(
+			cmd.Context(), claudeHome, &exportOptions,
+			[]pipeline.WriterStage{&file.Sink{Path: outputPath}},
+		)
 		if err != nil {
-			return fmt.Errorf("export: %w", err)
+			return err
 		}
 
 		if snapshotCount := len(result.FileHistory); snapshotCount > 0 {
@@ -87,9 +93,37 @@ var exportCmd = &cobra.Command{
 			)
 		}
 
-		fmt.Printf("Exported to %s\n", exportOptions.OutputPath)
+		fmt.Printf("Exported to %s\n", outputPath)
 		return nil
 	},
+}
+
+// runExportWithStages composes a writer pipeline from stages, hands it to
+// export.Run via Options.Output, and surfaces any close-time error on the
+// pipeline writer through a "close output pipeline" wrap. Extracted so a
+// test can drive the close-error path with a stage that fails on Close
+// without re-running the whole cobra command.
+func runExportWithStages(
+	ctx context.Context, claudeHome *claude.Home,
+	exportOptions *export.Options, stages []pipeline.WriterStage,
+) (result export.Result, err error) {
+	writer, err := pipeline.RunWriter(ctx, stages)
+	if err != nil {
+		return export.Result{}, fmt.Errorf("build output pipeline: %w", err)
+	}
+	defer func() {
+		if cerr := writer.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("close output pipeline: %w", cerr))
+		}
+	}()
+
+	exportOptions.Output = writer
+
+	result, err = export.Run(ctx, claudeHome, exportOptions)
+	if err != nil {
+		return result, fmt.Errorf("export: %w", err)
+	}
+	return result, nil
 }
 
 var exportManifestCmd = &cobra.Command{
@@ -142,7 +176,6 @@ func runExportManifest(cmd *cobra.Command, args []string) error {
 
 	exportOptions := export.Options{
 		ProjectPath:  projectPath,
-		OutputPath:   exportManifestOutput,
 		Categories:   categories,
 		Placeholders: placeholders,
 	}
@@ -196,13 +229,14 @@ func init() {
 }
 
 // parseExportOptions turns the cobra command + positional args into an
-// export.Options. Pure — does not load manifests or discover
+// export.Options and the destination path the cmd-layer uses to compose
+// the output pipeline. Pure: does not load manifests or discover
 // placeholders. Callers handle those side effects based on the returned
 // FromManifest value.
-func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, error) {
+func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, string, error) {
 	projectPath, err := claude.ResolveProjectPath(args[0])
 	if err != nil {
-		return export.Options{}, fmt.Errorf("resolve project path: %w", err)
+		return export.Options{}, "", fmt.Errorf("resolve project path: %w", err)
 	}
 	output, _ := cmd.Flags().GetString("output")
 	fromManifest, _ := cmd.Flags().GetString("from-manifest")
@@ -215,7 +249,7 @@ func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, erro
 			}
 		}
 		if len(conflicts) > 0 {
-			return export.Options{}, fmt.Errorf(
+			return export.Options{}, "", fmt.Errorf(
 				"--from-manifest is mutually exclusive with %s; pass one or the other",
 				strings.Join(conflicts, ", "),
 			)
@@ -226,15 +260,14 @@ func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, erro
 	if fromManifest == "" {
 		categories, err = resolveExportCategories(cmd)
 		if err != nil {
-			return export.Options{}, err
+			return export.Options{}, "", err
 		}
 	}
 	return export.Options{
 		ProjectPath:  projectPath,
-		OutputPath:   output,
 		Categories:   categories,
 		FromManifest: fromManifest,
-	}, nil
+	}, output, nil
 }
 
 func resolveExportCategories(cmd *cobra.Command) (manifest.CategorySet, error) {

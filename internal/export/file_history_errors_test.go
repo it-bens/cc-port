@@ -5,7 +5,6 @@ import (
 	"context"
 	crand "crypto/rand"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -44,10 +43,10 @@ func TestExport_FileHistoryFailsWhenSnapshotUnreadable(t *testing.T) {
 
 	chmodScoped(t, snapshotPath, 0)
 
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 	_, err = export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{FileHistory: true},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -75,10 +74,10 @@ func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
 
 	chmodScoped(t, firstDir, 0)
 
-	outputPath := filepath.Join(t.TempDir(), "export.zip")
+	var buf bytes.Buffer
 	_, err = export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       &buf,
 		Categories:   manifest.CategorySet{FileHistory: true},
 		Placeholders: defaultPlaceholders(),
 	})
@@ -120,35 +119,28 @@ func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
 	require.NoError(t, os.WriteFile(bigSnapshotPath, bigBody, 0o600))
 
 	siblingHome := testutil.SetupFixture(t)
-	siblingPath := filepath.Join(t.TempDir(), "sibling.zip")
+	var siblingBuf bytes.Buffer
 	_, err = export.Run(t.Context(), siblingHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   siblingPath,
+		Output:       &siblingBuf,
 		Categories:   manifest.CategorySet{},
 		Placeholders: defaultPlaceholders(),
 	})
 	require.NoError(t, err, "sibling export for threshold discovery must succeed")
 
-	siblingInfo, err := os.Stat(siblingPath)
+	limitBytes := siblingBuf.Len() + 64
+
+	realFile, err := os.Create(filepath.Join(t.TempDir(), "out.zip"))
 	require.NoError(t, err)
-	limitBytes := int(siblingInfo.Size()) + 64
-
-	opener := func(path string) (io.WriteCloser, error) {
-		realFile, err := os.Create(path) //nolint:gosec // G304: test-controlled tempdir path
-		if err != nil {
-			return nil, err
-		}
-		return &writeLimitCloser{inner: realFile, limit: limitBytes, writeErr: sentinel}, nil
-	}
-
-	outputPath := filepath.Join(t.TempDir(), "out.zip")
+	t.Cleanup(func() { _ = realFile.Close() })
+	faultWriter := &writeLimitCloser{inner: realFile, limit: limitBytes, writeErr: sentinel}
 
 	_, err = export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       faultWriter,
 		Categories:   manifest.CategorySet{FileHistory: true},
 		Placeholders: defaultPlaceholders(),
-	}, export.WithArchiveOpener(opener))
+	})
 
 	require.Error(t, err, "Run must surface the synthetic write failure")
 	require.ErrorIs(t, err, sentinel, "the sentinel must be in the error chain")
@@ -187,25 +179,21 @@ func TestExport_FileHistoryHonorsContextCancelMidWalk(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
-	outputPath := filepath.Join(t.TempDir(), "out.zip")
-	opener := func(path string) (io.WriteCloser, error) {
-		realFile, err := os.Create(path) //nolint:gosec // G304: test-controlled tempdir path
-		if err != nil {
-			return nil, err
-		}
-		return &cancelOnMarkerCloser{
-			inner:  realFile,
-			marker: []byte("file-history/"),
-			cancel: cancel,
-		}, nil
+	realFile, err := os.Create(filepath.Join(t.TempDir(), "out.zip"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = realFile.Close() })
+	faultWriter := &cancelOnMarkerCloser{
+		inner:  realFile,
+		marker: []byte("file-history/"),
+		cancel: cancel,
 	}
 
 	_, err = export.Run(ctx, claudeHome, &export.Options{
 		ProjectPath:  fixtureProjectPath,
-		OutputPath:   outputPath,
+		Output:       faultWriter,
 		Categories:   manifest.CategorySet{FileHistory: true},
 		Placeholders: defaultPlaceholders(),
-	}, export.WithArchiveOpener(opener))
+	})
 
 	require.Error(t, err, "Run must surface the ctx cancel triggered after the first file-history write")
 	require.ErrorIs(t, err, context.Canceled, "context.Canceled must be in the error chain")

@@ -111,10 +111,13 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 func runExportRoundTrip(t *testing.T, sourceHome *claude.Home, archivePath string) {
 	t.Helper()
 
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err, "create archive file")
+
 	trueVal := true
 	exportOptions := export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  archivePath,
+		Output:      archiveFile,
 		Categories: manifest.CategorySet{
 			Sessions:    true,
 			Memory:      true,
@@ -128,8 +131,9 @@ func runExportRoundTrip(t *testing.T, sourceHome *claude.Home, archivePath strin
 		},
 	}
 
-	_, err := export.Run(t.Context(), sourceHome, &exportOptions)
+	_, err = export.Run(t.Context(), sourceHome, &exportOptions)
 	require.NoError(t, err, "export should succeed")
+	require.NoError(t, archiveFile.Close(), "close archive after export")
 	assert.FileExists(t, archivePath, "archive file should exist after export")
 
 	verifyNoOriginalPathsInZip(t, archivePath)
@@ -235,11 +239,14 @@ func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
 
 	archivePath := filepath.Join(t.TempDir(), "export-unresolvable.zip")
 
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err, "create archive file")
+
 	trueVal := true
 	falseVal := false
 	exportOptions := export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  archivePath,
+		Output:      archiveFile,
 		Categories: manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, FileHistory: true, Config: true,
 		},
@@ -256,8 +263,9 @@ func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	_, err := export.Run(t.Context(), sourceHome, &exportOptions)
+	_, err = export.Run(t.Context(), sourceHome, &exportOptions)
 	require.NoError(t, err)
+	require.NoError(t, archiveFile.Close(), "close archive after export")
 
 	// Inject a literal {{EXTERNAL_TOOL}} into one of the archive's memory
 	// bodies so the pre-flight gate sees it.
@@ -374,10 +382,13 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	sourceHome := testutil.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "export-all-categories.zip")
 
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err, "create archive file")
+
 	trueVal := true
-	_, err := export.Run(t.Context(), sourceHome, &export.Options{
+	_, err = export.Run(t.Context(), sourceHome, &export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  archivePath,
+		Output:      archiveFile,
 		Categories: manifest.CategorySet{
 			Sessions:    true,
 			Memory:      true,
@@ -395,6 +406,7 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 		},
 	})
 	require.NoError(t, err, "export with all categories should succeed")
+	require.NoError(t, archiveFile.Close(), "close archive after export")
 
 	assertArchiveHasAllCategoryPrefixes(t, archivePath)
 
@@ -479,10 +491,13 @@ func TestIntegration_ImportConflict(t *testing.T) {
 
 	archivePath := filepath.Join(t.TempDir(), "export-conflict.zip")
 
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err, "create archive file")
+
 	trueVal := true
 	exportOptions := export.Options{
 		ProjectPath: fixtureProjectPath,
-		OutputPath:  archivePath,
+		Output:      archiveFile,
 		Categories: manifest.CategorySet{
 			Sessions: true,
 			Memory:   true,
@@ -495,8 +510,9 @@ func TestIntegration_ImportConflict(t *testing.T) {
 		},
 	}
 
-	_, err := export.Run(t.Context(), sourceHome, &exportOptions)
+	_, err = export.Run(t.Context(), sourceHome, &exportOptions)
 	require.NoError(t, err, "export should succeed")
+	require.NoError(t, archiveFile.Close(), "close archive after export")
 
 	// Try to import back to the same ClaudeHome at the same project path.
 	source, size := openArchive(t, archivePath)

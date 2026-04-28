@@ -768,15 +768,18 @@ func TestImport_RoundTrip_NewCategories(t *testing.T) {
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "out.zip")
 
-	_, err := export.Run(t.Context(), claudeHome, &export.Options{
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err)
+	_, err = export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureSourceProjectPath,
-		OutputPath:  archivePath,
+		Output:      archiveFile,
 		Categories: manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, Config: true,
 			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
 		},
 	})
 	require.NoError(t, err)
+	require.NoError(t, archiveFile.Close())
 
 	freshHome := testutil.SetupFixture(t)
 	require.NoError(t, os.RemoveAll(freshHome.TodosDir()))
@@ -807,15 +810,18 @@ func TestImport_LandsSessionKeyedFileAt0644(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "out.zip")
 
-	_, err := export.Run(t.Context(), claudeHome, &export.Options{
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err)
+	_, err = export.Run(t.Context(), claudeHome, &export.Options{
 		ProjectPath: fixtureSourceProjectPath,
-		OutputPath:  archivePath,
+		Output:      archiveFile,
 		Categories: manifest.CategorySet{
 			Sessions: true, Memory: true, History: true, Config: true,
 			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
 		},
 	})
 	require.NoError(t, err)
+	require.NoError(t, archiveFile.Close())
 
 	freshHome := testutil.SetupFixture(t)
 	require.NoError(t, os.RemoveAll(freshHome.TodosDir()))
