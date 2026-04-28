@@ -15,10 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/file"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
+	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
 
@@ -530,4 +533,75 @@ func TestIntegration_ImportConflict(t *testing.T) {
 	require.Error(t, err, "import to existing project should fail with a conflict error")
 	assert.Contains(t, err.Error(), "already exists",
 		"conflict error message should mention 'already exists'")
+}
+
+func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
+	const passphrase = "round-trip-passphrase"
+	sourceHome := testutil.SetupFixture(t)
+
+	archivePath := filepath.Join(t.TempDir(), "export.zip.age")
+
+	// Build an encrypted archive via pipeline composition.
+	writeStages := []pipeline.WriterStage{
+		&encrypt.WriterStage{Pass: passphrase},
+		&file.Sink{Path: archivePath},
+	}
+	writer, err := pipeline.RunWriter(t.Context(), writeStages)
+	require.NoError(t, err)
+
+	trueVal := true
+	exportOptions := export.Options{
+		ProjectPath: fixtureProjectPath,
+		Output:      writer,
+		Categories: manifest.CategorySet{
+			Sessions:    true,
+			Memory:      true,
+			History:     true,
+			FileHistory: true,
+			Config:      true,
+		},
+		Placeholders: []manifest.Placeholder{
+			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath, Resolvable: &trueVal},
+			{Key: "{{HOME}}", Original: fixtureHomeDir, Resolvable: &trueVal},
+		},
+	}
+	_, err = export.Run(t.Context(), sourceHome, &exportOptions)
+	require.NoError(t, err, "encrypted export should succeed")
+	require.NoError(t, writer.Close(), "writer Close should flush age trailer and close file sink")
+
+	// Output begins with age magic bytes.
+	headerBytes, err := os.ReadFile(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err)
+	require.True(t, encrypt.IsEncrypted(headerBytes), "encrypted archive should match age magic-byte prefix")
+
+	// Read without passphrase rejects via the stage's Strict matrix.
+	_, dispatchErr := pipeline.RunReader(t.Context(), []pipeline.ReaderStage{
+		&file.Source{Path: archivePath},
+		&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict},
+	})
+	require.ErrorIs(t, dispatchErr, encrypt.ErrPassphraseRequired)
+	// ReaderStage closed the file source on the mismatch path.
+
+	// Read with passphrase round-trips through importer.Run.
+	source, err := pipeline.RunReader(t.Context(), []pipeline.ReaderStage{
+		&file.Source{Path: archivePath},
+		&encrypt.ReaderStage{Pass: passphrase, Mode: encrypt.Strict},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = source.Close() })
+
+	destinationHome := setupDestinationHome(t)
+	importOptions := importer.Options{
+		Source:     source.ReaderAt,
+		Size:       source.Size,
+		TargetPath: destinationProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destinationProjectPath,
+			"{{HOME}}":         destinationHomeDir,
+		},
+	}
+	require.NoError(t, importer.Run(t.Context(), destinationHome, importOptions),
+		"import from decrypted source should succeed")
+
+	verifyImportedProject(t, destinationHome, destinationProjectPath)
 }
