@@ -8,7 +8,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 
 ## Public API
 
-- `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) error`: import an archive end-to-end. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure.
+- `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) error`: import an archive end-to-end. Reads the archive via `zip.NewReader` on `Options.Source`. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure.
 - `ClassifyPlaceholders(bodies [][]byte, declared []manifest.Placeholder, resolutions map[string]string) (missing, undeclared []string)`: diff the archive's declared placeholders against the caller's resolutions and the bodies' embedded tokens. Returns alphabetically sorted slices of missing declared keys and undeclared upper-snake tokens.
 - `ResolvePlaceholders(content []byte, resolutions map[string]string) []byte`: substitute every declared `{{KEY}}` in a body. Used by the in-memory merge paths (history appends, config block).
 - `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`: same substitution semantics as `ResolvePlaceholders` but reader-to-writer. Peak memory is bounded by the longest placeholder key, not by the body size. Used by the staging paths that write directly to a sibling temp (sessions, memory, session-keyed categories).
@@ -16,7 +16,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `CheckConflict(encodedProjectDir string) error`: refuse the import if the encoded target directory already exists. Also refuse when existence cannot be determined (e.g. a permission error on an intermediate component). Only a clean "does not exist" returns `nil`.
 - `BuildHistoryBytes(existing []byte, appends [][]byte) []byte`: pure byte concatenation used by staging to compute the merged history bytes before atomic promote. No I/O, no lock.
 - `MergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error)`: splice a project block into an existing `.claude.json` body. Preserves key order, indent, and trailing newlines via `sjson`. `configPath` is used only in error messages.
-- `Options`: import configuration: `ArchivePath`, `TargetPath`, `Resolutions`. Carries an unexported `renameHook` used by tests.
+- `Options`: import configuration. `Source io.ReaderAt` and `Size int64` describe the archive bytes; the importer constructs `*zip.Reader` directly and never opens files. `TargetPath`, `Resolutions`, and the unexported `renameHook` test seam stay as before.
 
 ## Contracts
 

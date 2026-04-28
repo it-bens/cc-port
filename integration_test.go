@@ -30,6 +30,18 @@ const (
 	destinationHomeDir     = "/home/newuser"
 )
 
+// openArchive opens archivePath for the duration of the test and returns
+// it as the (Source, Size) pair the importer's Options expects.
+func openArchive(t *testing.T, archivePath string) (source io.ReaderAt, size int64) {
+	t.Helper()
+	zipFile, err := os.Open(archivePath) //nolint:gosec // G304: test-controlled archive path
+	require.NoError(t, err, "open archive")
+	t.Cleanup(func() { _ = zipFile.Close() })
+	zipInfo, err := zipFile.Stat()
+	require.NoError(t, err, "stat archive")
+	return zipFile, zipInfo.Size()
+}
+
 // TestIntegration_MoveRoundTrip verifies a full dry-run + apply move cycle using real packages.
 func TestIntegration_MoveRoundTrip(t *testing.T) {
 	sourceHome := testutil.SetupFixture(t)
@@ -79,9 +91,11 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 
 	destinationHome := setupDestinationHome(t)
 
+	source, size := openArchive(t, archivePath)
 	importOptions := importer.Options{
-		ArchivePath: archivePath,
-		TargetPath:  destinationProjectPath,
+		Source:     source,
+		Size:       size,
+		TargetPath: destinationProjectPath,
 		Resolutions: map[string]string{
 			"{{PROJECT_PATH}}": destinationProjectPath,
 			"{{HOME}}":         destinationHomeDir,
@@ -254,9 +268,11 @@ func TestIntegration_ExportImport_ResolvableFalseRoundTrip(t *testing.T) {
 	// Supply ONLY PROJECT_PATH and HOME resolutions. EXTERNAL_TOOL is
 	// deliberately omitted; the Resolvable: false manifest flag must be
 	// what allows the import through.
+	source, size := openArchive(t, archivePath)
 	importOptions := importer.Options{
-		ArchivePath: archivePath,
-		TargetPath:  destinationProjectPath,
+		Source:     source,
+		Size:       size,
+		TargetPath: destinationProjectPath,
 		Resolutions: map[string]string{
 			"{{PROJECT_PATH}}": destinationProjectPath,
 			"{{HOME}}":         destinationHomeDir,
@@ -384,9 +400,11 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 
 	destinationHome := setupDestinationHome(t)
 
+	source, size := openArchive(t, archivePath)
 	err = importer.Run(t.Context(), destinationHome, importer.Options{
-		ArchivePath: archivePath,
-		TargetPath:  destinationProjectPath,
+		Source:     source,
+		Size:       size,
+		TargetPath: destinationProjectPath,
 		Resolutions: map[string]string{
 			"{{PROJECT_PATH}}": destinationProjectPath,
 			"{{HOME}}":         destinationHomeDir,
@@ -481,9 +499,11 @@ func TestIntegration_ImportConflict(t *testing.T) {
 	require.NoError(t, err, "export should succeed")
 
 	// Try to import back to the same ClaudeHome at the same project path.
+	source, size := openArchive(t, archivePath)
 	importOptions := importer.Options{
-		ArchivePath: archivePath,
-		TargetPath:  fixtureProjectPath,
+		Source:     source,
+		Size:       size,
+		TargetPath: fixtureProjectPath,
 		Resolutions: map[string]string{
 			"{{PROJECT_PATH}}": fixtureProjectPath,
 			"{{HOME}}":         fixtureHomeDir,

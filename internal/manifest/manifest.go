@@ -85,15 +85,15 @@ func ReadManifest(path string) (*Metadata, error) {
 	return &metadata, nil
 }
 
-// ReadManifestFromZip opens a ZIP archive, locates the top-level metadata.xml,
-// and unmarshals the content into a Metadata value.
+// ReadManifestFromZip parses metadata.xml from a ZIP exposed as random-access
+// bytes. Callers open the source (file, decrypted tempfile, in-memory bytes)
+// and pass it through; the manifest package never touches paths.
 // Rejects entries whose decoded size exceeds maxManifestBytes.
-func ReadManifestFromZip(archivePath string) (*Metadata, error) {
-	reader, err := zip.OpenReader(archivePath)
+func ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error) {
+	reader, err := zip.NewReader(src, size)
 	if err != nil {
 		return nil, fmt.Errorf("open zip archive: %w", err)
 	}
-	defer func() { _ = reader.Close() }()
 
 	for _, file := range reader.File {
 		if file.Name != "metadata.xml" {

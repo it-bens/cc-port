@@ -23,9 +23,11 @@ func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "bomb.zip")
 	buildArchiveWithSingleEntry(t, archivePath, "sessions/bomb.json", 600<<20)
 
+	source, size := openArchive(t, archivePath)
 	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
-		ArchivePath: archivePath,
-		TargetPath:  filepath.Join(t.TempDir(), "project"),
+		Source:     source,
+		Size:       size,
+		TargetPath: filepath.Join(t.TempDir(), "project"),
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds")
@@ -40,8 +42,10 @@ func TestRun_RefusesArchiveExceedingAggregateUncompressedCap(t *testing.T) {
 	archivePath := buildArchiveWithAggregateSize(t, importer.MaxArchiveBytes()+1, 500<<20)
 	destClaudeHome := buildEmptyDestClaudeHome(t)
 
+	source, size := openArchive(t, archivePath)
 	err := importer.Run(t.Context(), destClaudeHome, importer.Options{
-		ArchivePath: archivePath,
+		Source:      source,
+		Size:        size,
 		TargetPath:  filepath.Join(t.TempDir(), "project"),
 		Resolutions: map[string]string{},
 	})

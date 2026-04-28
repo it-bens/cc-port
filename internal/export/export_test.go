@@ -504,7 +504,12 @@ func TestExport_ManifestDeclaresAllNineCategories(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	metadata, err := manifest.ReadManifestFromZip(archivePath)
+	zipFile, err := os.Open(archivePath) //nolint:gosec // G304: test-controlled temp path
+	require.NoError(t, err, "open archive")
+	t.Cleanup(func() { _ = zipFile.Close() })
+	zipInfo, err := zipFile.Stat()
+	require.NoError(t, err, "stat archive")
+	metadata, err := manifest.ReadManifestFromZip(zipFile, zipInfo.Size())
 	require.NoError(t, err)
 
 	expected := []string{"sessions", "memory", "history", "file-history", "config",

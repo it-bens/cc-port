@@ -210,7 +210,13 @@ func assertZIPRoundTrip(t *testing.T, original *manifest.Metadata, temporaryDire
 		t.Fatalf("createTestZip: %v", err)
 	}
 
-	fromZip, err := manifest.ReadManifestFromZip(zipPath)
+	zipFile, err := os.Open(zipPath) //nolint:gosec // G304: test-controlled temp path
+	require.NoError(t, err, "open zip")
+	t.Cleanup(func() { _ = zipFile.Close() })
+	zipInfo, err := zipFile.Stat()
+	require.NoError(t, err, "stat zip")
+
+	fromZip, err := manifest.ReadManifestFromZip(zipFile, zipInfo.Size())
 	if err != nil {
 		t.Fatalf("ReadManifestFromZip: %v", err)
 	}
@@ -256,7 +262,13 @@ func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
 	require.NoError(t, zipWriter.Close())
 	require.NoError(t, archiveFile.Close())
 
-	_, err = manifest.ReadManifestFromZip(archivePath)
+	zipFile, err := os.Open(archivePath) //nolint:gosec // G304: test-controlled temp path
+	require.NoError(t, err, "open zip")
+	t.Cleanup(func() { _ = zipFile.Close() })
+	zipInfo, err := zipFile.Stat()
+	require.NoError(t, err, "stat zip")
+
+	_, err = manifest.ReadManifestFromZip(zipFile, zipInfo.Size())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds")
 }
