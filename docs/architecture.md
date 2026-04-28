@@ -95,3 +95,33 @@ Per-command handling:
 - [`internal/move/README.md`](../internal/move/README.md) §File-history handling (move): copy-verbatim, stderr warning, stale-path-strings residual risk.
 - [`internal/export/README.md`](../internal/export/README.md) §File-history handling (export): archive-verbatim, stderr warning, privacy-of-exported-snapshots residual risk and the `--file-history=false` opt-out.
 - [`internal/importer/README.md`](../internal/importer/README.md) §File-history handling (import): write-verbatim, `ResolvePlaceholders` no-op detail on current archives.
+
+## Pipeline composition (cross-cutting)
+
+cc-port's read and write paths compose through a uniform `WriterStage`
+and `ReaderStage` interface owned by `internal/pipeline`. Every step on
+either path satisfies one of the two interfaces. Source and sink stages
+are degenerate cases of the same shapes (their upstream / downstream
+parameter is the zero value). The runners `RunWriter` and `RunReader`
+chain stages in a list, returning the outermost writer or final
+`Source` to the consumer.
+
+Stages live in their owning packages:
+
+| Stage | Package | Role |
+|---|---|---|
+| `file.Source`, `file.Sink` | `internal/file` | Local filesystem endpoints |
+
+`cmd/cc-port` owns ordering and any policy decisions (which stages to
+include per invocation). The runner is policy-free.
+
+Per-command pipelines:
+
+- [`cmd/cc-port/export.go`](../cmd/cc-port/export.go): write path; `file.Sink` as the single sink.
+- [`cmd/cc-port/importcmd.go`](../cmd/cc-port/importcmd.go): read path; `file.Source` as the single source. `import manifest` reuses the same stage list.
+
+Future filters (encryption, sync source/sink, compression, signing) plug in by
+adding new stage types and including them in a command's stage list.
+The runner does not change. The encryption spec adds optional encrypt
+stages on top of these file stages; the sync spec adds remote source
+and sink stages.
