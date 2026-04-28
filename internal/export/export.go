@@ -28,12 +28,19 @@ import (
 // placeholders from that file instead of discovering them. Run ignores
 // this field and behaves solely on Categories and Placeholders. Output
 // receives the archive bytes; the caller owns its lifecycle.
+//
+// SyncPushedBy and SyncPushedAt are optional fields populated only by
+// cc-port push (via internal/sync); cc-port export callers leave them at
+// the zero value, in which case buildMetadata omits the corresponding
+// elements from metadata.xml.
 type Options struct {
 	ProjectPath  string
 	Output       io.Writer
 	Categories   manifest.CategorySet
 	Placeholders []manifest.Placeholder
 	FromManifest string
+	SyncPushedBy string
+	SyncPushedAt time.Time
 }
 
 // ArchiveEntry names one file inside the produced archive. Bodies are not
@@ -729,13 +736,20 @@ func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
 }
 
 func buildMetadata(exportOptions *Options) *manifest.Metadata {
-	return &manifest.Metadata{
+	metadata := &manifest.Metadata{
 		Export: manifest.Info{
 			Created:    time.Now(),
 			Categories: manifest.BuildCategoryEntries(&exportOptions.Categories),
 		},
 		Placeholders: exportOptions.Placeholders,
 	}
+	if exportOptions.SyncPushedBy != "" {
+		metadata.SyncPushedBy = exportOptions.SyncPushedBy
+	}
+	if !exportOptions.SyncPushedAt.IsZero() {
+		metadata.SyncPushedAt = exportOptions.SyncPushedAt.UTC().Format(time.RFC3339)
+	}
+	return metadata
 }
 
 func buildMetadataXML(metadata *manifest.Metadata) ([]byte, error) {
