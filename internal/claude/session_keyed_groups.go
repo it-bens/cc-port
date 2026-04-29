@@ -7,11 +7,11 @@ import (
 
 // SessionKeyedGroup describes one of the ~/.claude/ data groups keyed by
 // session UUID. Consumers rely on the Name as the stable machine key and
-// display label, on Files to enumerate a group's absolute paths from a
-// ProjectLocations, on SidecarFilter to exclude runtime-only basenames
-// (when non-nil, SidecarFilter(basename) returning true means "skip this
-// file"), and on Category to gate the group against a manifest.AllCategories
-// entry.
+// display label, on Category to gate the group against a
+// manifest.AllCategories entry, on Files to enumerate a group's absolute
+// paths from a ProjectLocations, and on SidecarFilter to exclude
+// runtime-only basenames (when non-nil, SidecarFilter(basename) returning
+// true means "skip this file").
 type SessionKeyedGroup struct {
 	Name          string
 	Category      string

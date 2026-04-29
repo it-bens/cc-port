@@ -81,8 +81,7 @@ var AllCategories = []CategorySpec{
 	},
 }
 
-// SpecByName returns the CategorySpec whose Name matches name. ok is false
-// when name is not a known category.
+// SpecByName returns the CategorySpec for name, or ok=false when name is not in AllCategories.
 func SpecByName(name string) (CategorySpec, bool) {
 	for _, spec := range AllCategories {
 		if spec.Name == name {

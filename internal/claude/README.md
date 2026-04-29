@@ -34,8 +34,8 @@ Not a rewriting package. The module produces locations and types.
   - `ProjectLocations`: struct holding the set.
 - **Session-keyed registry**
   - `SessionKeyedGroup`: descriptor struct with `Name` (stable machine key
-    and display label), `Category` (the controlling
-    `manifest.AllCategories.Name` for export filtering),
+    and display label), `Category` (the controlling `manifest.AllCategories`
+    entry name for export filtering),
     `Files func(*ProjectLocations) []string`, and
     `SidecarFilter func(name string) bool`.
   - `SessionKeyedGroups`: ordered slice that is the registry. Slice order
