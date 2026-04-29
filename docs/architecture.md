@@ -7,6 +7,7 @@ cc-port/
 ├── cmd/cc-port/            CLI entry point (flag parsing, dispatch, exit codes)
 ├── internal/
 │   ├── claude/             Claude Code data layout: path encoding, locations, schemas
+│   ├── encrypt/            Age encrypt and decrypt stages for the pipeline runner
 │   ├── export/             Export orchestration: ZIP, manifest, path anonymisation
 │   ├── file/               Pipeline source/sink stages for local filesystem I/O
 │   ├── fsutil/             Shared filesystem helpers: directory copy, path-ancestor resolution
@@ -16,8 +17,10 @@ cc-port/
 │   ├── manifest/           metadata.xml wire DTOs + category enum table
 │   ├── move/               Move plan, dry-run, apply with copy-verify-delete
 │   ├── pipeline/           WriterStage/ReaderStage interfaces + composing runners
+│   ├── remote/             gocloud.dev-backed remote source and sink stages
 │   ├── rewrite/            Byte-level rewrite primitives + SafeRenamePromoter
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
+│   ├── sync/               Push and pull orchestration: plan, execute, dry-run rendering
 │   ├── testutil/           Test fixture helper
 │   ├── transport/          ZIP layout registry for session-keyed groups
 │   └── ui/                 Interactive prompts (charm.land/huh v2)
@@ -127,8 +130,9 @@ Per-command pipelines:
 - [`cmd/cc-port/export.go`](../cmd/cc-port/export.go) write path uses `[encrypt.WriterStage{Pass}, file.Sink]`. The encrypt stage self-skips when `Pass` is empty.
 - [`cmd/cc-port/importcmd.go`](../cmd/cc-port/importcmd.go) read path uses `[file.Source, encrypt.ReaderStage{Pass, Mode: Strict}]`. The reader stage owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch internally. `import manifest` reuses the same stage list.
 - [`cmd/cc-port/pushcmd.go`](../cmd/cc-port/pushcmd.go) write path uses `[encrypt.WriterStage{Pass}, remote.Sink]`. The encrypt stage self-skips when `Pass` is empty.
+- [`cmd/cc-port/pushcmd.go`](../cmd/cc-port/pushcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Permissive}]` for the cross-machine probe. Permissive admits a plaintext prior; Strict is on pull.
 - [`cmd/cc-port/pullcmd.go`](../cmd/cc-port/pullcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Strict}]`. The reader stage owns the encrypted-vs-plaintext dispatch internally.
 
 Future filters (compression, signing) plug in by adding new stage
 types and including them in a command's stage list. The runner does
-not change. Sync stages live in `internal/remote`.
+not change.
