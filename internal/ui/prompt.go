@@ -46,6 +46,25 @@ func requireTTY(remediation string) error {
 	return fmt.Errorf("interactive prompt requires a TTY: %s", remediation)
 }
 
+// optionMeta carries UI-specific metadata for one export-category option.
+// Keyed by manifest.AllCategories.Name in categoryOptionMeta.
+type optionMeta struct {
+	Description string
+	Selected    bool
+}
+
+var categoryOptionMeta = map[string]optionMeta{
+	"sessions":     {Description: "Sessions (transcripts & subagent data)", Selected: true},
+	"memory":       {Description: "Memory (project-scoped auto-memory)", Selected: true},
+	"history":      {Description: "History (command history entries)", Selected: true},
+	"file-history": {Description: "File history (file version snapshots)"},
+	"config":       {Description: "Config (project config from ~/.claude.json)", Selected: true},
+	"todos":        {Description: "Todos (in-progress TodoWrite task lists)"},
+	"usage-data":   {Description: "Usage data (session metadata + token facets)"},
+	"plugins-data": {Description: "Plugin data (per-session plugin state)"},
+	"tasks":        {Description: "Tasks (numbered agent-task lists)"},
+}
+
 // SelectCategories presents an interactive multi-select for export categories.
 func SelectCategories() (manifest.CategorySet, error) {
 	if err := requireTTY(
@@ -56,23 +75,26 @@ func SelectCategories() (manifest.CategorySet, error) {
 		return manifest.CategorySet{}, err
 	}
 	showInteractiveBanner()
-	var selectedCategories []string
 
+	options := make([]huh.Option[string], 0, len(manifest.AllCategories))
+	for _, spec := range manifest.AllCategories {
+		meta, ok := categoryOptionMeta[spec.Name]
+		if !ok {
+			return manifest.CategorySet{}, fmt.Errorf("category %q has no UI option metadata", spec.Name)
+		}
+		opt := huh.NewOption(meta.Description, spec.Name)
+		if meta.Selected {
+			opt = opt.Selected(true)
+		}
+		options = append(options, opt)
+	}
+
+	var selectedCategories []string
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title("Select categories to export").
-				Options(
-					huh.NewOption("Sessions (transcripts & subagent data)", "sessions").Selected(true),
-					huh.NewOption("Memory (project-scoped auto-memory)", "memory").Selected(true),
-					huh.NewOption("History (command history entries)", "history").Selected(true),
-					huh.NewOption("File history (file version snapshots)", "file-history"),
-					huh.NewOption("Config (project config from ~/.claude.json)", "config").Selected(true),
-					huh.NewOption("Todos (in-progress TodoWrite task lists)", "todos"),
-					huh.NewOption("Usage data (session metadata + token facets)", "usage-data"),
-					huh.NewOption("Plugin data (per-session plugin state)", "plugins-data"),
-					huh.NewOption("Tasks (numbered agent-task lists)", "tasks"),
-				).
+				Options(options...).
 				Value(&selectedCategories),
 		),
 	)

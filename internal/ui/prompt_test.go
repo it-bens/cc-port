@@ -105,6 +105,19 @@ func TestResolvePlaceholderWrapsFormError(t *testing.T) {
 	assert.Contains(t, err.Error(), "resolution canceled")
 }
 
+// TestCategoryOptionMeta_CoversAllManifestCategories asserts every entry
+// of manifest.AllCategories has UI option metadata. Adding a new category
+// to the manifest registry without metadata for the interactive picker
+// must fail this test. Internal package test by necessity:
+// categoryOptionMeta is unexported and the coverage is the invariant
+// under test.
+func TestCategoryOptionMeta_CoversAllManifestCategories(t *testing.T) {
+	for _, spec := range manifest.AllCategories {
+		_, ok := categoryOptionMeta[spec.Name]
+		assert.True(t, ok, "category %q has no UI option metadata", spec.Name)
+	}
+}
+
 // seamOverrides carries nil-or-value replacements for the package-level test
 // seams. A nil / zero field means "leave the seam alone." withSeams always
 // restores every known seam on cleanup regardless of which were overridden.
