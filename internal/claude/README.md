@@ -34,7 +34,9 @@ Not a rewriting package. The module produces locations and types.
   - `ProjectLocations`: struct holding the set.
 - **Session-keyed registry**
   - `SessionKeyedGroup`: descriptor struct with `Name` (stable machine key
-    and display label), `Files func(*ProjectLocations) []string`, and
+    and display label), `Category` (the controlling
+    `manifest.AllCategories.Name` for export filtering),
+    `Files func(*ProjectLocations) []string`, and
     `SidecarFilter func(name string) bool`.
   - `SessionKeyedGroups`: ordered slice that is the registry. Slice order
     is the display and iteration order used by every downstream consumer.
@@ -189,6 +191,12 @@ registry rather than open-coding group names. Adding a new group requires
 one entry in `SessionKeyedGroups` and one index-aligned entry in
 `transport.SessionKeyedTargets`. The alignment test in `internal/transport`
 catches drift between those two slices.
+
+Each group's `Category` field names the `manifest.AllCategories` entry
+that gates its export. The two `usage-data/*` groups both carry
+`"usage-data"`, so a single category flag covers both subgroups.
+A drift-guard test in `internal/claude/session_keyed_groups_drift_test.go`
+fails when a group ships with a Category outside `manifest.AllCategories`.
 
 #### Handled
 
