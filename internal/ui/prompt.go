@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"charm.land/huh/v2"
@@ -65,13 +66,17 @@ var categoryOptionMeta = map[string]optionMeta{
 	"tasks":        {Description: "Tasks (numbered agent-task lists)"},
 }
 
+func categoryFlagsHelpText() string {
+	flags := make([]string, 0, len(manifest.AllCategories))
+	for _, spec := range manifest.AllCategories {
+		flags = append(flags, "--"+spec.Name)
+	}
+	return "rerun with --all or explicit category flags (" + strings.Join(flags, ", ") + ")"
+}
+
 // SelectCategories presents an interactive multi-select for export categories.
 func SelectCategories() (manifest.CategorySet, error) {
-	if err := requireTTY(
-		"rerun with --all or explicit category flags " +
-			"(--sessions, --memory, --history, --file-history, --config, " +
-			"--todos, --usage-data, --plugins-data, --tasks)",
-	); err != nil {
+	if err := requireTTY(categoryFlagsHelpText()); err != nil {
 		return manifest.CategorySet{}, err
 	}
 	showInteractiveBanner()
