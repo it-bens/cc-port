@@ -134,7 +134,17 @@ func (e *encryptingWriteCloser) Close() error {
 type ReaderStage struct {
 	Pass string
 	Mode Mode
+
+	// wasEncrypted records the IsEncrypted peek decision from the most
+	// recent successful Open. Stale after a failed Open; callers must
+	// not read it on the error path.
+	wasEncrypted bool
 }
+
+// WasEncrypted reports whether the most recent Open dispatched the
+// encrypted branch (encrypted upstream + non-empty Pass). Read after a
+// successful Open only.
+func (r *ReaderStage) WasEncrypted() bool { return r.wasEncrypted }
 
 // Open peeks the upstream's first 32 bytes and dispatches the
 // encrypted-vs-plaintext × pass-vs-no-pass matrix per the package
@@ -151,6 +161,7 @@ func (r *ReaderStage) Open(ctx context.Context, upstream pipeline.Source) (pipel
 		return pipeline.Source{}, fmt.Errorf("peek archive header: %w", err)
 	}
 	encrypted := IsEncrypted(header[:n])
+	r.wasEncrypted = encrypted
 
 	switch {
 	case encrypted && r.Pass == "":

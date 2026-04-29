@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -548,6 +549,58 @@ func TestExport_ManifestDeclaresAllNineCategories(t *testing.T) {
 		got = append(got, c.Name)
 	}
 	assert.ElementsMatch(t, expected, got, "every export must declare all 9 category names")
+}
+
+func TestExport_IncludesSyncFieldsWhenSet(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "out.zip")
+	output := createArchiveFile(t, archivePath)
+	pushedAt := time.Date(2026, 4, 25, 14, 32, 18, 0, time.UTC)
+
+	_, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		Output:       output,
+		Categories:   manifest.CategorySet{Sessions: true},
+		Placeholders: defaultPlaceholders(),
+		SyncPushedBy: "laptop1-alice",
+		SyncPushedAt: pushedAt,
+	})
+	require.NoError(t, err)
+	require.NoError(t, output.Close())
+
+	zipFile, err := os.Open(archivePath) //nolint:gosec // G304: test-controlled temp path
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = zipFile.Close() })
+	zipInfo, err := zipFile.Stat()
+	require.NoError(t, err)
+	metadata, err := manifest.ReadManifestFromZip(zipFile, zipInfo.Size())
+	require.NoError(t, err)
+
+	assert.Equal(t, "laptop1-alice", metadata.SyncPushedBy)
+	assert.Equal(t, "2026-04-25T14:32:18Z", metadata.SyncPushedAt)
+}
+
+func TestExport_OmitsSyncFieldsWhenZero(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "out.zip")
+	output := createArchiveFile(t, archivePath)
+
+	_, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		Output:       output,
+		Categories:   manifest.CategorySet{Sessions: true},
+		Placeholders: defaultPlaceholders(),
+	})
+	require.NoError(t, err)
+	require.NoError(t, output.Close())
+
+	contents := readZipContents(t, archivePath)
+	metadataXML, ok := contents["metadata.xml"]
+	require.True(t, ok, "archive must contain metadata.xml")
+	assert.NotContains(t, metadataXML, "<sync-pushed-by",
+		"sync-pushed-by element must be absent when SyncPushedBy is zero")
+	assert.NotContains(t, metadataXML, "<sync-pushed-at",
+		"sync-pushed-at element must be absent when SyncPushedAt is zero")
 }
 
 func TestExport_PathAnonymization_BoundaryCollision(t *testing.T) {

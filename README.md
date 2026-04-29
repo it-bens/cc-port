@@ -81,6 +81,26 @@ Optional passphrase decryption via `--passphrase-env` or `--passphrase-file` (mu
 cc-port import manifest /tmp/project.zip --output /tmp/project.xml
 ```
 
+### `cc-port push`
+
+`cc-port push <project-path> --as <name> --remote <url> [--apply] [--force] [--passphrase-env <NAME> | --passphrase-file <PATH>] [--from-manifest <path>] [--all | <category flags>]`
+
+Push the project at `<project-path>` to the remote at `<url>` under the stable name `<name>`. Dry-run by default. `--apply` commits the upload. `--force` overrides the cross-machine conflict refusal. Categories and placeholders mirror `cc-port export`: `--from-manifest` loads both from a manifest file; otherwise category flags select what to include and the export prompts for missing placeholders on a TTY. Pre-build a manifest via `cc-port export manifest` for non-interactive use.
+
+```
+cc-port push /Users/me/project --as project --remote s3://bucket?region=us-east-1 --apply
+```
+
+### `cc-port pull`
+
+`cc-port pull <name> --to <target-path> --remote <url> [--apply] [--passphrase-env <NAME> | --passphrase-file <PATH>] [--resolution KEY=VALUE ...] [--from-manifest <path>]`
+
+Pull the archive named `<name>` from `<url>` and apply it to `<target-path>`. Dry-run by default. `--apply` commits the import. `--resolution` and `--from-manifest` follow the same contract as `cc-port import`.
+
+```
+cc-port pull project --to /Users/me/teammate-project --remote s3://bucket?region=us-east-1 --apply --resolution HOME=/Users/me
+```
+
 ## Development
 
 Contributing or modifying cc-port? See [`DEVELOPMENT.md`](DEVELOPMENT.md) for architecture, tests, lint, and commit conventions.

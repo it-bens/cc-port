@@ -28,14 +28,6 @@ var (
 	exportPassphraseFile string
 )
 
-// categoryFlags are the per-category booleans the export command
-// accepts. Defined once so parseExportOptions and the conflict check
-// share the list.
-var categoryFlags = []string{
-	"all", "sessions", "memory", "history", "file-history",
-	"config", "todos", "usage-data", "plugins-data", "tasks",
-}
-
 var exportCmd = &cobra.Command{
 	Use:   "export <project-path>",
 	Short: "Export a project to a portable ZIP archive",
@@ -173,9 +165,22 @@ func runExportManifest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	categories, err := resolveExportCategories(cmd)
+	categories, err := resolveCategoriesFromCmd(cmd)
 	if err != nil {
 		return err
+	}
+	anySet := false
+	for _, spec := range manifest.AllCategories {
+		if spec.Value(&categories) {
+			anySet = true
+			break
+		}
+	}
+	if !anySet {
+		categories, err = ui.SelectCategories()
+		if err != nil {
+			return err
+		}
 	}
 
 	placeholders, err := discoverAndPromptPlaceholders(claudeHome, projectPath)
@@ -203,20 +208,11 @@ func runExportManifest(cmd *cobra.Command, args []string) error {
 
 func init() {
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "output file path (required for export)")
-	exportCmd.Flags().Bool("all", false, "export all categories")
-	exportCmd.Flags().Bool("sessions", false, "export sessions")
-	exportCmd.Flags().Bool("memory", false, "export memory")
-	exportCmd.Flags().Bool("history", false, "export history")
-	exportCmd.Flags().Bool("file-history", false, "export file history")
-	exportCmd.Flags().Bool("config", false, "export config")
+	registerCategoryFlags(exportCmd, "export")
 	exportCmd.Flags().StringVar(
 		&exportFromManifest, "from-manifest", "",
 		"path to a manifest XML file to read categories and placeholders from",
 	)
-	exportCmd.Flags().Bool("todos", false, "export todos")
-	exportCmd.Flags().Bool("usage-data", false, "export usage-data (session-meta + facets)")
-	exportCmd.Flags().Bool("plugins-data", false, "export plugins/data")
-	exportCmd.Flags().Bool("tasks", false, "export tasks")
 	exportCmd.Flags().StringVar(
 		&exportPassphraseEnv, "passphrase-env", "",
 		"name of the environment variable holding the passphrase "+
@@ -235,16 +231,7 @@ func init() {
 		&exportManifestOutput, "output", "o", "manifest.xml",
 		"path to write the manifest XML",
 	)
-	exportManifestCmd.Flags().Bool("all", false, "include all categories")
-	exportManifestCmd.Flags().Bool("sessions", false, "include sessions")
-	exportManifestCmd.Flags().Bool("memory", false, "include memory")
-	exportManifestCmd.Flags().Bool("history", false, "include history")
-	exportManifestCmd.Flags().Bool("file-history", false, "include file history")
-	exportManifestCmd.Flags().Bool("config", false, "include config")
-	exportManifestCmd.Flags().Bool("todos", false, "include todos")
-	exportManifestCmd.Flags().Bool("usage-data", false, "include usage-data")
-	exportManifestCmd.Flags().Bool("plugins-data", false, "include plugins/data")
-	exportManifestCmd.Flags().Bool("tasks", false, "include tasks")
+	registerCategoryFlags(exportManifestCmd, "include")
 
 	exportCmd.AddCommand(exportManifestCmd)
 	rootCmd.AddCommand(exportCmd)
@@ -265,9 +252,12 @@ func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, stri
 
 	if fromManifest != "" {
 		var conflicts []string
-		for _, name := range categoryFlags {
-			if cmd.Flags().Changed(name) {
-				conflicts = append(conflicts, "--"+name)
+		if cmd.Flags().Changed("all") {
+			conflicts = append(conflicts, "--all")
+		}
+		for _, spec := range manifest.AllCategories {
+			if cmd.Flags().Changed(spec.Name) {
+				conflicts = append(conflicts, "--"+spec.Name)
 			}
 		}
 		if len(conflicts) > 0 {
@@ -280,9 +270,22 @@ func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, stri
 
 	var categories manifest.CategorySet
 	if fromManifest == "" {
-		categories, err = resolveExportCategories(cmd)
+		categories, err = resolveCategoriesFromCmd(cmd)
 		if err != nil {
 			return export.Options{}, "", err
+		}
+		anySet := false
+		for _, spec := range manifest.AllCategories {
+			if spec.Value(&categories) {
+				anySet = true
+				break
+			}
+		}
+		if !anySet {
+			categories, err = ui.SelectCategories()
+			if err != nil {
+				return export.Options{}, "", err
+			}
 		}
 	}
 	return export.Options{
@@ -290,44 +293,6 @@ func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, stri
 		Categories:   categories,
 		FromManifest: fromManifest,
 	}, output, nil
-}
-
-func resolveExportCategories(cmd *cobra.Command) (manifest.CategorySet, error) {
-	all, _ := cmd.Flags().GetBool("all")
-	if all {
-		return manifest.CategorySet{
-			Sessions: true, Memory: true, History: true, FileHistory: true, Config: true,
-			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
-		}, nil
-	}
-
-	sessions, _ := cmd.Flags().GetBool("sessions")
-	memory, _ := cmd.Flags().GetBool("memory")
-	history, _ := cmd.Flags().GetBool("history")
-	fileHistory, _ := cmd.Flags().GetBool("file-history")
-	config, _ := cmd.Flags().GetBool("config")
-	todos, _ := cmd.Flags().GetBool("todos")
-	usageData, _ := cmd.Flags().GetBool("usage-data")
-	pluginsData, _ := cmd.Flags().GetBool("plugins-data")
-	tasks, _ := cmd.Flags().GetBool("tasks")
-
-	anyExplicit := sessions || memory || history || fileHistory || config ||
-		todos || usageData || pluginsData || tasks
-	if anyExplicit {
-		return manifest.CategorySet{
-			Sessions:    sessions,
-			Memory:      memory,
-			History:     history,
-			FileHistory: fileHistory,
-			Config:      config,
-			Todos:       todos,
-			UsageData:   usageData,
-			PluginsData: pluginsData,
-			Tasks:       tasks,
-		}, nil
-	}
-
-	return ui.SelectCategories()
 }
 
 func discoverAndPromptPlaceholders(claudeHome *claude.Home, projectPath string) ([]manifest.Placeholder, error) {

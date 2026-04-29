@@ -273,6 +273,50 @@ func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds")
 }
 
+func TestMetadata_SyncFieldsRoundTrip(t *testing.T) {
+	created := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
+
+	original := &manifest.Metadata{
+		Export: manifest.Info{
+			Created:    created,
+			Categories: []manifest.Category{},
+		},
+		SyncPushedBy: "alice@example.com",
+		SyncPushedAt: "2026-04-25T14:32:11Z",
+	}
+
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+
+	require.NoError(t, manifest.WriteManifest(path, original))
+	roundTripped, err := manifest.ReadManifest(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, "alice@example.com", roundTripped.SyncPushedBy)
+	assert.Equal(t, "2026-04-25T14:32:11Z", roundTripped.SyncPushedAt)
+}
+
+func TestMetadata_OmitsSyncFieldsWhenEmpty(t *testing.T) {
+	created := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	metadata := &manifest.Metadata{
+		Export: manifest.Info{
+			Created:    created,
+			Categories: []manifest.Category{},
+		},
+	}
+
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+
+	require.NoError(t, manifest.WriteManifest(path, metadata))
+
+	data, err := os.ReadFile(path) //nolint:gosec // G304: test-controlled temp path
+	require.NoError(t, err)
+	content := string(data)
+
+	assert.NotContains(t, content, "<sync-pushed-by")
+	assert.NotContains(t, content, "<sync-pushed-at")
+}
+
 // createTestZip creates a ZIP archive at zipPath containing the file at
 // sourcePath stored as metadata.xml.
 func createTestZip(zipPath, sourcePath string) error {

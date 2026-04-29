@@ -526,6 +526,41 @@ func TestReaderStage_DecryptCloseSurfacesRemoveError(t *testing.T) {
 	_ = os.Remove(tempPath)
 }
 
+func TestReaderStage_WasEncryptedReportsDispatchBranch(t *testing.T) {
+	t.Run("encrypted upstream with matching pass dispatches encrypted branch", func(t *testing.T) {
+		stage := &encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}
+		upstream := makeEncryptedSource(t, []byte("encrypted body"))
+
+		src, err := stage.Open(context.Background(), upstream)
+
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = src.Close() })
+		require.True(t, stage.WasEncrypted(), "encrypted+pass must record encrypted branch")
+	})
+
+	t.Run("plaintext upstream with empty pass dispatches plaintext branch", func(t *testing.T) {
+		stage := &encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict}
+		upstream := makePlaintextSource(t, []byte("plaintext body"))
+
+		src, err := stage.Open(context.Background(), upstream)
+
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = src.Close() })
+		require.False(t, stage.WasEncrypted(), "plaintext+empty-pass must record plaintext branch")
+	})
+
+	t.Run("plaintext upstream with non-empty pass under Permissive dispatches plaintext branch", func(t *testing.T) {
+		stage := &encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Permissive}
+		upstream := makePlaintextSource(t, []byte("plaintext body"))
+
+		src, err := stage.Open(context.Background(), upstream)
+
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = src.Close() })
+		require.False(t, stage.WasEncrypted(), "plaintext+pass under Permissive must record plaintext branch")
+	})
+}
+
 func TestReaderStage_DecryptCloseSurfacesUpstreamCloseError(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("tempdir semantics differ on Windows")

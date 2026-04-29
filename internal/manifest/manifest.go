@@ -16,6 +16,8 @@ type Metadata struct {
 	XMLName      xml.Name      `xml:"cc-port"`
 	Export       Info          `xml:"export"`
 	Placeholders []Placeholder `xml:"placeholders>placeholder"`
+	SyncPushedBy string        `xml:"sync-pushed-by,omitempty"`
+	SyncPushedAt string        `xml:"sync-pushed-at,omitempty"` // RFC3339
 }
 
 // Info contains information about the export, including when it was created
