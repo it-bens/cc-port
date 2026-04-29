@@ -81,6 +81,17 @@ var AllCategories = []CategorySpec{
 	},
 }
 
+// SpecByName returns the CategorySpec whose Name matches name. ok is false
+// when name is not a known category.
+func SpecByName(name string) (CategorySpec, bool) {
+	for _, spec := range AllCategories {
+		if spec.Name == name {
+			return spec, true
+		}
+	}
+	return CategorySpec{}, false
+}
+
 // BuildCategoryEntries produces a []Category in AllCategories order for writing
 // into metadata.xml. Every AllCategories.Name appears exactly once.
 func BuildCategoryEntries(set *CategorySet) []Category {
@@ -94,17 +105,12 @@ func BuildCategoryEntries(set *CategorySet) []Category {
 // ApplyCategoryEntries validates a manifest's category list and returns the
 // matching CategorySet. Missing and unknown names are aggregated via errors.Join.
 func ApplyCategoryEntries(entries []Category) (CategorySet, error) {
-	specByName := make(map[string]CategorySpec, len(AllCategories))
-	for _, spec := range AllCategories {
-		specByName[spec.Name] = spec
-	}
-
 	var set CategorySet
 	seen := make(map[string]bool, len(entries))
 	var errs []error
 
 	for _, entry := range entries {
-		spec, known := specByName[entry.Name]
+		spec, known := SpecByName(entry.Name)
 		if !known {
 			errs = append(errs, fmt.Errorf("unknown manifest category name: %q", entry.Name))
 			continue

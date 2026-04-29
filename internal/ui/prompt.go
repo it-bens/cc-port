@@ -128,13 +128,9 @@ func ResolvePlaceholder(key, original, autoValue string) (string, error) {
 // drifted out of sync with manifest.AllCategories; surface it rather than
 // silently dropping.
 func categoriesFromSelections(selections []string) (manifest.CategorySet, error) {
-	specByName := make(map[string]manifest.CategorySpec, len(manifest.AllCategories))
-	for _, spec := range manifest.AllCategories {
-		specByName[spec.Name] = spec
-	}
 	var result manifest.CategorySet
 	for _, key := range selections {
-		spec, ok := specByName[key]
+		spec, ok := manifest.SpecByName(key)
 		if !ok {
 			return manifest.CategorySet{}, fmt.Errorf("unknown export category key %q", key)
 		}
