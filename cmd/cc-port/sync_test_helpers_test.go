@@ -37,6 +37,14 @@ func injectArchiveWithPusherAtURL(t *testing.T, url, name, pusher string) {
 	writeAtURL(t, url, name, body)
 }
 
+// injectEncryptedArchiveAtURL writes an age-encrypted archive to the file://
+// URL at the given name with SyncPushedBy = pusher.
+func injectEncryptedArchiveAtURL(t *testing.T, url, name, pass, pusher string) {
+	t.Helper()
+	body := buildCmdArchiveBytes(t, pusher, pass, nil)
+	writeAtURL(t, url, name, body)
+}
+
 // injectArchiveWithDeclaredPlaceholderAtURL writes an archive that
 // declares one placeholder to the file:// URL.
 func injectArchiveWithDeclaredPlaceholderAtURL(t *testing.T, url, name, key, original, pusher string) {

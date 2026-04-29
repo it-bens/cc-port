@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,7 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
 )
 
@@ -125,6 +128,62 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 
 	if !errors.Is(err, syncc.ErrUnresolvedPlaceholder) {
 		t.Fatalf("err = %v, want ErrUnresolvedPlaceholder", err)
+	}
+}
+
+func TestOpenArchiveSource_MissingObjectReturnsErrRemoteNotFound(t *testing.T) {
+	url := "file://" + t.TempDir()
+	r, err := remote.New(context.Background(), url)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	_, err = openArchiveSource(context.Background(), r, "missing", "")
+
+	if !errors.Is(err, syncc.ErrRemoteNotFound) {
+		t.Fatalf("err = %v, want syncc.ErrRemoteNotFound", err)
+	}
+}
+
+func TestOpenArchiveSource_EncryptedNoPassphraseReturnsErrPassphraseRequired(t *testing.T) {
+	url := "file://" + t.TempDir()
+	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
+	r, err := remote.New(context.Background(), url)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	_, err = openArchiveSource(context.Background(), r, "k", "")
+
+	if !errors.Is(err, syncc.ErrPassphraseRequired) {
+		t.Fatalf("err = %v, want syncc.ErrPassphraseRequired", err)
+	}
+}
+
+func TestOpenArchiveSource_PlaintextWithPassphraseReturnsErrUnencryptedInput(t *testing.T) {
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "k", "host-user")
+	r, err := remote.New(context.Background(), url)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	_, err = openArchiveSource(context.Background(), r, "k", "any-pass")
+
+	if !errors.Is(err, encrypt.ErrUnencryptedInput) {
+		t.Fatalf("err = %v, want encrypt.ErrUnencryptedInput", err)
+	}
+}
+
+func TestOpenArchiveSource_PlaintextNoPassphraseSucceeds(t *testing.T) {
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "k", "host-user")
+	r, err := remote.New(context.Background(), url)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	src, err := openArchiveSource(context.Background(), r, "k", "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = src.Close() })
+	if src.Size <= 0 {
+		t.Fatalf("src.Size = %d, want > 0", src.Size)
 	}
 }
 

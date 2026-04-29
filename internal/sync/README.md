@@ -2,17 +2,18 @@
 
 ## Purpose
 
-Orchestrates `cc-port push` and `cc-port pull`. Owns conflict-detection logic, plan-vs-execute split, and dry-run rendering. Composes around the pipeline runner in `internal/pipeline` plus stages from `internal/remote`, `internal/encrypt`, and `internal/file`.
+Orchestrates `cc-port push` and `cc-port pull`. Owns conflict-detection logic, plan-vs-execute split, and dry-run rendering.
 
 ## Public API
 
-- `PushOptions`, `PushPlan`, `PullOptions`, `PullPlan`: option and plan structs.
-- `PlanPush(ctx, opts) (*PushPlan, error)`: reads prior remote (if any), populates plan with cross-machine state and encryption metadata.
-- `ExecutePush(ctx, opts, plan) error`: runs the export-side pipeline and uploads to the remote.
-- `PlanPull(ctx, opts) (*PullPlan, error)`: reads remote archive's manifest, populates plan with placeholder resolutions.
-- `ExecutePull(ctx, opts, plan) error`: runs the import-side pipeline and applies the archive locally.
+- `PushOptions`, `PushPlan`, `PullOptions`, `PullPlan`: option and plan structs. Options carry no `Remote` or `Passphrase` field; cmd opens the pipelines.
+- `PriorRead`: bundles a pre-opened `pipeline.Source` plus the encrypted-or-not observation cmd reads off the encrypt stage. nil means no prior.
+- `PlanPush(ctx, opts, prior) (*PushPlan, error)`: reads prior remote (when prior is non-nil), populates plan with cross-machine state and encryption metadata.
+- `ExecutePush(ctx, opts, plan, output io.Writer) error`: runs the export-side pipeline against the writer cmd opened.
+- `PlanPull(ctx, opts, source) (*PullPlan, error)`: reads remote archive's manifest from the pre-opened source, populates plan with placeholder resolutions.
+- `ExecutePull(ctx, opts, plan, source) error`: runs importer.Run against the source.
 - `(*PushPlan).Render(io.Writer) error`, `(*PullPlan).Render(io.Writer) error`: write the dry-run preview.
-- Sentinel errors: `ErrCrossMachineConflict`, `ErrRemoteNotFound`, `ErrPassphraseRequired`, `ErrUnresolvedPlaceholder`.
+- Sentinel errors: `ErrCrossMachineConflict`, `ErrRemoteNotFound`, `ErrPassphraseRequired`, `ErrUnresolvedPlaceholder`. cmd translates raw `remote.ErrNotFound` and `encrypt.ErrPassphraseRequired` into the matching sentinel at pipeline-open time.
 
 ## Contracts
 
@@ -31,9 +32,9 @@ Used by `cmd/cc-port` push and pull.
 
 #### Refused
 
-- PlanPush returns `ErrPassphraseRequired` when the prior remote is encrypted and no passphrase is provided. `--force` overrides this at the cmd layer.
-- PlanPull returns `ErrRemoteNotFound` when the archive is missing on the remote.
-- PlanPull returns `ErrPassphraseRequired` for an encrypted remote without a passphrase, or `encrypt.ErrUnencryptedInput` for a plaintext remote with a passphrase.
+- When the prior remote is encrypted and the passphrase is missing, cmd's `openPriorRead` returns `ErrPassphraseRequired` (or returns nil if `--force` is set). PlanPush itself sees only the dispatched outcome.
+- When the archive is missing on the remote, cmd's `openArchiveSource` returns `ErrRemoteNotFound`. PlanPull is not called.
+- `openArchiveSource` translates encrypted-no-passphrase to `ErrPassphraseRequired`. The `encrypt.ErrUnencryptedInput` sentinel for plaintext-with-passphrase propagates wrapped without translation.
 - ExecutePull (via `importer.Run`'s `CheckConflict`) refuses when the encoded project directory already exists at TargetPath.
 
 #### Not covered
@@ -44,4 +45,4 @@ Used by `cmd/cc-port` push and pull.
 
 ## Tests
 
-`sync_test.go` covers `selfPusher` (hyphen-separated host-user on a configured machine, refuse-or-platform-fall-back from an empty `$USER`), the push-side Plan and Execute paths (no-prior, same-self, cross-machine prior, encrypted-prior-no-passphrase refusal, round-trip with sync fields), the pull-side Plan paths (not-found, encrypted-no-passphrase, plaintext-with-passphrase, declared-placeholder discovery, resolution coverage by `--resolution` and by sender Resolve), a push-pull round-trip via `mem://`, and the sentinel errors. `render_test.go` covers Render output via substring assertions on push (no-prior plaintext, encrypted with prior and cross-machine), pull (with unresolved placeholders, encrypted clean), plus `humanizeBytes` boundary cases. Mem-backed remote (gocloud `mem://`) for unit tests; integration round-trips against `file://` and optionally S3.
+`sync_test.go` covers `selfPusher` (hyphen-separated host-user on a configured machine, refuse-or-platform-fall-back from an empty `$USER`), the push-side Plan and Execute paths (no-prior, same-self, cross-machine prior, round-trip with sync fields), the pull-side Plan paths (declared-placeholder discovery, resolution coverage by `--resolution` and by sender Resolve), a push-pull round-trip via `mem://`, and the sentinel errors. Pipeline-open dispatch tests (remote-not-found, encrypted-no-passphrase, plaintext-with-passphrase) live in `cmd/cc-port/pushcmd_test.go` and `cmd/cc-port/pullcmd_test.go` because cmd owns the dispatch after the refactor. `render_test.go` covers Render output via substring assertions on push (no-prior plaintext, encrypted with prior and cross-machine), pull (with unresolved placeholders, encrypted clean), plus `humanizeBytes` boundary cases. Mem-backed remote (gocloud `mem://`) for unit tests; integration round-trips against `file://` and optionally S3.

@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
 	"github.com/it-bens/cc-port/internal/ui"
@@ -38,9 +41,38 @@ var pushCmd = &cobra.Command{
 	RunE: runPushCmd,
 }
 
+// openPriorRead opens the prior reader pipeline for the cross-machine check.
+// Returns nil for the two no-prior cases (object absent, or encrypted-with-
+// --force suppression) so PlanPush leaves prior fields zero. Other errors
+// translate to sync sentinels at the cmd boundary.
+func openPriorRead(
+	ctx context.Context,
+	r *remote.Remote,
+	name, pass string,
+	force bool,
+) (*syncc.PriorRead, error) {
+	stage := &encrypt.ReaderStage{Pass: pass, Mode: encrypt.Permissive}
+	src, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
+		&remote.Source{Remote: r, Key: name},
+		stage,
+	})
+	switch {
+	case errors.Is(err, remote.ErrNotFound):
+		return nil, nil
+	case errors.Is(err, encrypt.ErrPassphraseRequired):
+		if force {
+			return nil, nil
+		}
+		return nil, syncc.ErrPassphraseRequired
+	case err != nil:
+		return nil, fmt.Errorf("open prior: %w", err)
+	}
+	return &syncc.PriorRead{Source: src, WasEncrypted: stage.WasEncrypted()}, nil
+}
+
 // runPushCmd is the push subcommand body. The named return + deferred
-// remote close pattern is load-bearing: remote.Sink commits the upload
-// on Close, so a failed close must surface to the caller.
+// closes pattern is load-bearing: prior.Source.Close releases the
+// decrypt-tempfile, and writer.Close commits the upload via remote.Sink.
 func runPushCmd(cmd *cobra.Command, args []string) (err error) {
 	if pushAsName == "" {
 		return &usageError{err: errors.New("--as <name> is required")}
@@ -81,17 +113,28 @@ func runPushCmd(cmd *cobra.Command, args []string) (err error) {
 	}()
 
 	opts := syncc.PushOptions{
-		ClaudeHome:   claudeHome,
-		ProjectPath:  projectPath,
-		Remote:       r,
-		Name:         pushAsName,
-		Categories:   categories,
-		Placeholders: placeholders,
-		Passphrase:   passphrase,
-		Force:        pushForce,
+		ClaudeHome:        claudeHome,
+		ProjectPath:       projectPath,
+		Name:              pushAsName,
+		Categories:        categories,
+		Placeholders:      placeholders,
+		Force:             pushForce,
+		EncryptionEnabled: passphrase != "",
 	}
 
-	plan, err := syncc.PlanPush(ctx, opts)
+	prior, err := openPriorRead(ctx, r, pushAsName, passphrase, pushForce)
+	if err != nil {
+		return err
+	}
+	if prior != nil {
+		defer func() {
+			if cerr := prior.Source.Close(); cerr != nil {
+				err = errors.Join(err, fmt.Errorf("close prior: %w", cerr))
+			}
+		}()
+	}
+
+	plan, err := syncc.PlanPush(ctx, opts, prior)
 	if err != nil {
 		return err
 	}
@@ -106,7 +149,25 @@ func runPushCmd(cmd *cobra.Command, args []string) (err error) {
 		return nil
 	}
 
-	if plan.CrossMachine && !pushForce {
+	return applyPush(ctx, cmd, r, opts, plan, passphrase)
+}
+
+// applyPush runs the cross-machine guard, opens the writer pipeline, calls
+// ExecutePush, and prints the confirmation. Lives outside runPushCmd so the
+// writer's deferred Close has its own named-return scope: the upload commits
+// inside Close, so a failed Close must surface to runPushCmd via the
+// returned error.
+//
+//nolint:gocritic // hugeParam: by-value PushOptions mirrors the public Plan/Execute contract.
+func applyPush(
+	ctx context.Context,
+	cmd *cobra.Command,
+	r *remote.Remote,
+	opts syncc.PushOptions,
+	plan *syncc.PushPlan,
+	passphrase string,
+) (err error) {
+	if plan.CrossMachine && !opts.Force {
 		return fmt.Errorf(
 			"%w: prior pushed by %s at %s",
 			syncc.ErrCrossMachineConflict,
@@ -115,11 +176,24 @@ func runPushCmd(cmd *cobra.Command, args []string) (err error) {
 		)
 	}
 
-	if err := syncc.ExecutePush(ctx, opts, plan); err != nil {
+	writer, err := pipeline.RunWriter(ctx, []pipeline.WriterStage{
+		&encrypt.WriterStage{Pass: passphrase},
+		&remote.Sink{Remote: r, Key: opts.Name},
+	})
+	if err != nil {
+		return fmt.Errorf("build writer pipeline: %w", err)
+	}
+	defer func() {
+		if cerr := writer.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("close writer: %w", cerr))
+		}
+	}()
+
+	if err := syncc.ExecutePush(ctx, opts, plan, writer); err != nil {
 		return err
 	}
 
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Pushed: %s/%s\n", r.URL(), pushAsName); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Pushed: %s/%s\n", r.URL(), opts.Name); err != nil {
 		return fmt.Errorf("write push confirmation: %w", err)
 	}
 	return nil

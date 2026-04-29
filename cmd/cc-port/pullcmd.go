@@ -9,7 +9,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
 	"github.com/it-bens/cc-port/internal/ui"
@@ -41,31 +43,67 @@ var pullCmd = &cobra.Command{
 	RunE: runPullCmd,
 }
 
+// openArchiveSource opens the strict reader pipeline for pull. Translates
+// remote.ErrNotFound and encrypt.ErrPassphraseRequired into sync sentinels;
+// other errors propagate wrapped.
+func openArchiveSource(
+	ctx context.Context,
+	r *remote.Remote,
+	name, pass string,
+) (pipeline.Source, error) {
+	src, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
+		&remote.Source{Remote: r, Key: name},
+		&encrypt.ReaderStage{Pass: pass, Mode: encrypt.Strict},
+	})
+	switch {
+	case errors.Is(err, remote.ErrNotFound):
+		return pipeline.Source{}, syncc.ErrRemoteNotFound
+	case errors.Is(err, encrypt.ErrPassphraseRequired):
+		return pipeline.Source{}, syncc.ErrPassphraseRequired
+	case err != nil:
+		return pipeline.Source{}, fmt.Errorf("open archive: %w", err)
+	}
+	return src, nil
+}
+
 // runPullCmd is the pull subcommand body. The named return + deferred
-// remote close pattern is load-bearing: remote.Remote owns a gocloud
-// bucket whose Close error must surface to the caller.
+// closes pattern is load-bearing: remote.Remote owns a gocloud bucket
+// whose Close error must surface, and source.Close releases the
+// decrypt-tempfile.
 func runPullCmd(cmd *cobra.Command, args []string) (err error) {
-	opts, err := buildPullOptions(cmd, args[0])
+	opts, r, passphrase, err := buildPullOptions(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if cerr := opts.Remote.Close(); cerr != nil {
+		if cerr := r.Close(); cerr != nil {
 			err = errors.Join(err, fmt.Errorf("close remote: %w", cerr))
 		}
 	}()
 
 	ctx := cmd.Context()
-	plan, err := syncc.PlanPull(ctx, opts)
+	source, err := openArchiveSource(ctx, r, opts.Name, passphrase)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := source.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("close source: %w", cerr))
+		}
+	}()
+
+	plan, err := syncc.PlanPull(ctx, opts, source)
 	if err != nil {
 		return err
 	}
 
 	// Without --from-manifest, the operator can resolve missing keys
-	// interactively. Re-plan after prompting so plan.Render and the
-	// apply-time refusal both reflect what the operator just supplied.
+	// interactively. Re-plan with the same source after prompting so
+	// plan.Render and the apply-time refusal both reflect what the
+	// operator just supplied. pipeline.Source.ReaderAt is safely
+	// re-readable; one decrypt tempfile services every phase.
 	if pullFromManifest == "" && len(plan.UnresolvedPlaceholders) > 0 {
-		plan, err = resolveAndReplan(ctx, &opts, plan)
+		plan, err = resolveAndReplan(ctx, &opts, plan, source)
 		if err != nil {
 			return err
 		}
@@ -90,7 +128,7 @@ func runPullCmd(cmd *cobra.Command, args []string) (err error) {
 		)
 	}
 
-	if err := syncc.ExecutePull(ctx, opts, plan); err != nil {
+	if err := syncc.ExecutePull(ctx, opts, plan, source); err != nil {
 		return err
 	}
 
@@ -102,66 +140,67 @@ func runPullCmd(cmd *cobra.Command, args []string) (err error) {
 
 // buildPullOptions validates flags, resolves the target path, opens the
 // remote, and assembles syncc.PullOptions. The caller owns the returned
-// remote handle and must Close it.
-func buildPullOptions(cmd *cobra.Command, name string) (syncc.PullOptions, error) {
+// remote handle and the passphrase value; opts no longer carries them.
+func buildPullOptions(cmd *cobra.Command, name string,
+) (syncc.PullOptions, *remote.Remote, string, error) {
 	if pullToPath == "" {
-		return syncc.PullOptions{}, &usageError{err: errors.New("--to <target-path> is required")}
+		return syncc.PullOptions{}, nil, "", &usageError{err: errors.New("--to <target-path> is required")}
 	}
 	if pullRemoteURL == "" {
-		return syncc.PullOptions{}, &usageError{err: errors.New("--remote <url> is required")}
+		return syncc.PullOptions{}, nil, "", &usageError{err: errors.New("--remote <url> is required")}
 	}
 
 	passphrase, err := resolvePassphrase(pullPassphraseEnv, pullPassphraseFile)
 	if err != nil {
-		return syncc.PullOptions{}, err
+		return syncc.PullOptions{}, nil, "", err
 	}
 
 	targetPath, err := claude.ResolveProjectPath(pullToPath)
 	if err != nil {
-		return syncc.PullOptions{}, fmt.Errorf("resolve target path: %w", err)
+		return syncc.PullOptions{}, nil, "", fmt.Errorf("resolve target path: %w", err)
 	}
 
 	claudeHome, err := claude.NewHome(claudeDir)
 	if err != nil {
-		return syncc.PullOptions{}, err
+		return syncc.PullOptions{}, nil, "", err
 	}
 
 	flagResolutions, err := parseResolutionFlags(pullResolutionKV)
 	if err != nil {
-		return syncc.PullOptions{}, err
+		return syncc.PullOptions{}, nil, "", err
 	}
 
 	var fromManifest *manifest.Metadata
 	if pullFromManifest != "" {
 		fromManifest, err = manifest.ReadManifest(pullFromManifest)
 		if err != nil {
-			return syncc.PullOptions{}, fmt.Errorf("read manifest: %w", err)
+			return syncc.PullOptions{}, nil, "", fmt.Errorf("read manifest: %w", err)
 		}
 	}
 
 	r, err := remote.New(cmd.Context(), pullRemoteURL)
 	if err != nil {
-		return syncc.PullOptions{}, err
+		return syncc.PullOptions{}, nil, "", err
 	}
 
-	return syncc.PullOptions{
-		ClaudeHome:   claudeHome,
-		Remote:       r,
-		Name:         name,
-		TargetPath:   targetPath,
-		Resolutions:  flagResolutions,
-		FromManifest: fromManifest,
-		Passphrase:   passphrase,
-	}, nil
+	opts := syncc.PullOptions{
+		ClaudeHome:        claudeHome,
+		Name:              name,
+		TargetPath:        targetPath,
+		Resolutions:       flagResolutions,
+		FromManifest:      fromManifest,
+		EncryptionEnabled: passphrase != "",
+	}
+	return opts, r, passphrase, nil
 }
 
 // resolveAndReplan prompts for every unresolved placeholder, merges the
-// answers into opts.Resolutions, and recomputes the plan. The second
-// PlanPull call is load-bearing: render and the apply-time guard both
-// read plan.UnresolvedPlaceholders, so they must reflect the prompted
-// resolutions.
+// answers into opts.Resolutions, and recomputes the plan against the same
+// source. The second PlanPull call is load-bearing: render and the
+// apply-time guard both read plan.UnresolvedPlaceholders, so they must
+// reflect the prompted resolutions.
 func resolveAndReplan(
-	ctx context.Context, opts *syncc.PullOptions, plan *syncc.PullPlan,
+	ctx context.Context, opts *syncc.PullOptions, plan *syncc.PullPlan, source pipeline.Source,
 ) (*syncc.PullPlan, error) {
 	prompted, err := promptPullResolutions(plan, opts.Resolutions)
 	if err != nil {
@@ -170,7 +209,7 @@ func resolveAndReplan(
 	for key, value := range prompted {
 		opts.Resolutions[key] = value
 	}
-	refreshed, err := syncc.PlanPull(ctx, *opts)
+	refreshed, err := syncc.PlanPull(ctx, *opts, source)
 	if err != nil {
 		return nil, err
 	}

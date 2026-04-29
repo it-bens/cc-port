@@ -179,6 +179,68 @@ func TestPush_ForceOverridesCrossMachineRefusal(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestOpenPriorRead_NoObjectReturnsNil(t *testing.T) {
+	url := "file://" + t.TempDir()
+	r, err := remote.New(context.Background(), url)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	prior, err := openPriorRead(context.Background(), r, "missing", "", false)
+
+	require.NoError(t, err)
+	if prior != nil {
+		t.Fatalf("prior = %v, want nil for missing object", prior)
+	}
+}
+
+func TestOpenPriorRead_EncryptedNoPassphraseNoForceReturnsErrPassphraseRequired(t *testing.T) {
+	url := "file://" + t.TempDir()
+	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
+	r, err := remote.New(context.Background(), url)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	_, err = openPriorRead(context.Background(), r, "k", "", false)
+
+	if !errors.Is(err, syncc.ErrPassphraseRequired) {
+		t.Fatalf("err = %v, want syncc.ErrPassphraseRequired", err)
+	}
+}
+
+func TestOpenPriorRead_EncryptedNoPassphraseWithForceReturnsNil(t *testing.T) {
+	url := "file://" + t.TempDir()
+	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
+	r, err := remote.New(context.Background(), url)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	prior, err := openPriorRead(context.Background(), r, "k", "", true)
+
+	require.NoError(t, err)
+	if prior != nil {
+		t.Fatalf("prior = %v, want nil under --force suppression", prior)
+	}
+}
+
+func TestOpenPriorRead_PlaintextReturnsPriorReadWithoutEncryptedFlag(t *testing.T) {
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "k", "host-user")
+	r, err := remote.New(context.Background(), url)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+
+	prior, err := openPriorRead(context.Background(), r, "k", "", false)
+
+	require.NoError(t, err)
+	if prior == nil {
+		t.Fatal("prior = nil, want non-nil for readable plaintext archive")
+	}
+	t.Cleanup(func() { _ = prior.Source.Close() })
+	if prior.WasEncrypted {
+		t.Fatal("WasEncrypted = true, want false for plaintext archive")
+	}
+}
+
 // resetPushFlags zeros every package-level cobra flag var the push
 // command binds, plus the rootCmd persistent --claude-dir, and clears
 // every category boolean registered through registerCategoryFlags.

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/it-bens/cc-port/internal/claude"
-	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
@@ -50,13 +49,13 @@ func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
 	r := newMemRemote(t)
 	home, projectPath := buildTestHomeAndProject(t)
 
+	prior := openPriorForTest(t, r, "fresh-name", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
 		ClaudeHome:  home,
 		ProjectPath: projectPath,
-		Remote:      r,
 		Name:        "fresh-name",
 		Categories:  allCategoriesSet(),
-	})
+	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
 	}
@@ -72,24 +71,30 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 	r := newMemRemote(t)
 	home, projectPath := buildTestHomeAndProject(t)
 
+	priorA := openPriorForTest(t, r, "k", "")
 	planA, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Remote: r, Name: "k",
+		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
 		Categories: allCategoriesSet(),
-	})
+	}, priorA)
 	if err != nil {
 		t.Fatalf("PlanPush A: %v", err)
 	}
+	writerA := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Remote: r, Name: "k",
+		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
 		Categories: allCategoriesSet(),
-	}, planA); err != nil {
+	}, planA, writerA); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
+	if err := writerA.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
 
+	priorB := openPriorForTest(t, r, "k", "")
 	planB, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Remote: r, Name: "k",
+		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
 		Categories: allCategoriesSet(),
-	})
+	}, priorB)
 	if err != nil {
 		t.Fatalf("PlanPush B: %v", err)
 	}
@@ -106,10 +111,11 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 	injectArchiveWithPusher(t, r, "k", "different-host-different-user", time.Now().UTC().Add(-1*time.Hour))
 
 	home, projectPath := buildTestHomeAndProject(t)
+	prior := openPriorForTest(t, r, "k", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Remote: r, Name: "k",
+		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
 		Categories: allCategoriesSet(),
-	})
+	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
 	}
@@ -119,38 +125,28 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 	}
 }
 
-func TestPlanPush_PriorEncryptedNoPassphraseReturnsErrPassphraseRequired(t *testing.T) {
-	r := newMemRemote(t)
-	injectEncryptedArchive(t, r, "k", testPass, "other-host-other-user", time.Now().UTC())
-
-	home, projectPath := buildTestHomeAndProject(t)
-	_, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Remote: r, Name: "k",
-		Categories: allCategoriesSet(),
-		// Passphrase deliberately empty
-	})
-	if !errors.Is(err, ErrPassphraseRequired) {
-		t.Fatalf("err = %v, want sync.ErrPassphraseRequired wrap", err)
-	}
-}
-
 func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	r := newMemRemote(t)
 	home, projectPath := buildTestHomeAndProject(t)
 
+	prior := openPriorForTest(t, r, "k", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Remote: r, Name: "k",
+		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
 		Categories: allCategoriesSet(),
-	})
+	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
 	}
 	before := time.Now().UTC()
+	writer := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Remote: r, Name: "k",
+		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
 		Categories: allCategoriesSet(),
-	}, plan); err != nil {
+	}, plan, writer); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
 	}
 	after := time.Now().UTC()
 
@@ -182,52 +178,15 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	}
 }
 
-func TestPlanPull_NotFoundReturnsErrRemoteNotFound(t *testing.T) {
-	r := newMemRemote(t)
-	home, _ := buildTestHomeAndProject(t)
-	_, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Remote: r, Name: "missing", TargetPath: t.TempDir(),
-	})
-	if !errors.Is(err, ErrRemoteNotFound) {
-		t.Fatalf("err = %v, want ErrRemoteNotFound", err)
-	}
-}
-
-func TestPlanPull_EncryptedNoPassphraseReturnsErrPassphraseRequired(t *testing.T) {
-	r := newMemRemote(t)
-	injectEncryptedArchive(t, r, "k", testPass, "host-user", time.Now().UTC())
-	home, _ := buildTestHomeAndProject(t)
-	_, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
-		// Passphrase deliberately empty
-	})
-	if !errors.Is(err, ErrPassphraseRequired) {
-		t.Fatalf("err = %v, want ErrPassphraseRequired", err)
-	}
-}
-
-func TestPlanPull_PlaintextWithPassphraseReturnsErrUnencryptedInput(t *testing.T) {
-	r := newMemRemote(t)
-	injectArchiveWithPusher(t, r, "k", "host-user", time.Now().UTC())
-	home, _ := buildTestHomeAndProject(t)
-	_, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
-		Passphrase: testPass,
-	})
-	if !errors.Is(err, encrypt.ErrUnencryptedInput) {
-		t.Fatalf("err = %v, want encrypt.ErrUnencryptedInput", err)
-	}
-}
-
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	r := newMemRemote(t)
 	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
 
+	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
-		// no Resolutions
-	})
+		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
+	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
@@ -240,10 +199,11 @@ func TestPlanPull_ResolutionMapClearsUnresolved(t *testing.T) {
 	r := newMemRemote(t)
 	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
+	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
+		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
 		Resolutions: map[string]string{"{{HOME}}": "/Users/me"},
-	})
+	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
@@ -253,16 +213,13 @@ func TestPlanPull_ResolutionMapClearsUnresolved(t *testing.T) {
 }
 
 func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
-	// A placeholder whose archive manifest carries a non-empty Resolve
-	// counts as covered, matching cc-port import's
-	// promptImportResolutions behavior. No --resolution or
-	// --from-manifest is supplied here.
 	r := newMemRemote(t)
 	injectArchiveWithSenderResolve(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
+	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Remote: r, Name: "k", TargetPath: t.TempDir(),
-	})
+		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
+	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
@@ -275,27 +232,33 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 	r := newMemRemote(t)
 	homeA, projectPathA := buildTestHomeAndProject(t)
 
+	priorA := openPriorForTest(t, r, "k", "")
 	planA, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: homeA, ProjectPath: projectPathA, Remote: r, Name: "k",
+		ClaudeHome: homeA, ProjectPath: projectPathA, Name: "k",
 		Categories: allCategoriesSet(),
-	})
+	}, priorA)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
 	}
+	writerA := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: homeA, ProjectPath: projectPathA, Remote: r, Name: "k",
+		ClaudeHome: homeA, ProjectPath: projectPathA, Name: "k",
 		Categories: allCategoriesSet(),
-	}, planA); err != nil {
+	}, planA, writerA); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
+	}
+	if err := writerA.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
 	}
 
 	homeB := buildTestHomeBlank(t)
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
+	source := openSourceForTest(t, r, "k", "")
 	planB, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: homeB, Remote: r, Name: "k", TargetPath: targetPath,
+		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
 		Resolutions: defaultResolutionsForTest(t),
-	})
+	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
@@ -303,9 +266,9 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders)
 	}
 	if err := ExecutePull(context.Background(), PullOptions{
-		ClaudeHome: homeB, Remote: r, Name: "k", TargetPath: targetPath,
+		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
 		Resolutions: defaultResolutionsForTest(t),
-	}, planB); err != nil {
+	}, planB, source); err != nil {
 		t.Fatalf("ExecutePull: %v", err)
 	}
 

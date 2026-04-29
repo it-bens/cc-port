@@ -16,7 +16,7 @@ command modules agree on the wire contract through a neutral third party.
   - `Placeholder`: one `<placeholder key="..." original="..." [resolvable="..."] [resolve="..."]/>` entry. `resolvable` and `resolve` are omitted from the XML when unset (`*bool` nil / empty string).
 - **Category enum table**
   - `CategorySet`: in-memory bool struct (one field per category) used by callers and by `Options.Categories` in `internal/export`.
-  - `CategorySpec`: one entry in the enum table: wire name plus `Get`/`Set` accessors onto the matching `CategorySet` field.
+  - `CategorySpec`: one entry in the enum table: wire name plus `Value func(*CategorySet) bool` and `Apply func(*CategorySet, bool)` hooks onto the matching `CategorySet` field.
   - `AllCategories []CategorySpec`: the ordered source of truth for categories. Slice order is the canonical display and wire order.
   - `BuildCategoryEntries(*CategorySet) []Category`: produces the `<categories>` list in canonical order for `metadata.xml`.
   - `ApplyCategoryEntries([]Category) (CategorySet, error)`: validates a read manifest's category list and returns the matching `CategorySet`. Aggregates every missing and every unknown name into one `errors.Join` error.
@@ -63,7 +63,7 @@ Called by `internal/export` (producer via `BuildCategoryEntries`) and
   (see [`internal/claude/README.md`](../claude/README.md)
   §Session-keyed registry).
 - Archive zip layout for those groups lives in `transport.SessionKeyedTargets`
-  (see [`internal/transport/README.md`](../transport/README.md)).
+  (see [`internal/transport/README.md`](../transport/README.md) §Archive-layout registry).
 - File-history snapshot handling is a cross-cutting policy (see
   [`docs/architecture.md`](../../docs/architecture.md)
   §File-history policy (cross-cutting)).

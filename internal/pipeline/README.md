@@ -15,7 +15,7 @@ Composes write-side `io.Writer` chains and read-side `Source` chains for cc-port
 
 ### Stage composition
 
-Used by `cmd/cc-port` and `internal/sync` (future) to assemble per-command pipelines.
+Used by `cmd/cc-port` to assemble per-command pipelines.
 
 #### Handled
 

@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,8 +23,6 @@ import (
 	// declare s3:// and file:// in internal/remote/remote.go.
 	_ "gocloud.dev/blob/memblob"
 )
-
-const testPass = "correct horse battery staple"
 
 func newMemRemote(t *testing.T) *remote.Remote {
 	t.Helper()
@@ -76,14 +75,6 @@ func injectArchiveWithPusher(t *testing.T, r *remote.Remote, name, pusher string
 	t.Helper()
 	home, projectPath := buildTestHomeAndProject(t)
 	body := buildArchiveBytes(t, home, projectPath, pusher, at, "", nil, "")
-	uploadBytes(t, r, name, body)
-}
-
-// injectEncryptedArchive writes an age-encrypted archive under pass.
-func injectEncryptedArchive(t *testing.T, r *remote.Remote, name, pass, pusher string, at time.Time) {
-	t.Helper()
-	home, projectPath := buildTestHomeAndProject(t)
-	body := buildArchiveBytes(t, home, projectPath, pusher, at, pass, nil, "")
 	uploadBytes(t, r, name, body)
 }
 
@@ -181,3 +172,64 @@ type bufferSinkCloser struct{ buf *bytes.Buffer }
 
 func (b *bufferSinkCloser) Write(p []byte) (int, error) { return b.buf.Write(p) }
 func (b *bufferSinkCloser) Close() error                { return nil }
+
+// openPriorForTest opens the prior reader pipeline for sync_test.go. Mirrors
+// cmd's openPriorRead success path: returns *PriorRead on a readable prior,
+// returns nil on remote.ErrNotFound, t.Fatalf on any other error. t.Cleanup
+// registers Source.Close so individual tests do not need to defer it.
+// Plaintext-prior happy path only; encrypted-prior dispatch tests live in
+// cmd/cc-port and call openPriorRead directly.
+//
+//nolint:unparam // pass mirrors openPriorRead; reserved for a future encrypted-prior test.
+func openPriorForTest(t *testing.T, r *remote.Remote, name, pass string) *PriorRead {
+	t.Helper()
+	stage := &encrypt.ReaderStage{Pass: pass, Mode: encrypt.Permissive}
+	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
+		&remote.Source{Remote: r, Key: name},
+		stage,
+	})
+	if errors.Is(err, remote.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("openPriorForTest: %v", err)
+	}
+	t.Cleanup(func() { _ = src.Close() })
+	return &PriorRead{Source: src, WasEncrypted: stage.WasEncrypted()}
+}
+
+// openSourceForTest opens the strict reader pipeline for pull tests. Returns
+// the opened pipeline.Source; t.Cleanup registers Close. t.Fatalf on any
+// error so test bodies stay flat.
+//
+//nolint:unparam // name and pass mirror openArchiveSource; reserved for future tests with varied names or passphrases.
+func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeline.Source {
+	t.Helper()
+	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
+		&remote.Source{Remote: r, Key: name},
+		&encrypt.ReaderStage{Pass: pass, Mode: encrypt.Strict},
+	})
+	if err != nil {
+		t.Fatalf("openSourceForTest: %v", err)
+	}
+	t.Cleanup(func() { _ = src.Close() })
+	return src
+}
+
+// openWriterForTest opens the writer pipeline for ExecutePush tests.
+// Returns the outermost io.WriteCloser; the caller owns Close. No
+// t.Cleanup safety net: encrypt.encryptingWriteCloser, encrypt.passthroughWriteCloser,
+// and gocloud's *blob.Writer are all non-idempotent on Close, and the
+// upload commits inside that explicit Close, so a missed Close is a
+// test bug the caller must surface.
+func openWriterForTest(t *testing.T, r *remote.Remote, name, pass string) io.WriteCloser {
+	t.Helper()
+	w, err := pipeline.RunWriter(context.Background(), []pipeline.WriterStage{
+		&encrypt.WriterStage{Pass: pass},
+		&remote.Sink{Remote: r, Key: name},
+	})
+	if err != nil {
+		t.Fatalf("openWriterForTest: %v", err)
+	}
+	return w
+}
