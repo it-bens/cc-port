@@ -280,36 +280,15 @@ func exportMemory(
 	return nil
 }
 
-// groupToCategoryName returns the manifest category name for a
-// transport.SessionKeyedTarget Group. The two usage-data subgroups
-// collapse onto the single "usage-data" category; every other group
-// name passes through unchanged.
-func groupToCategoryName(groupName string) string {
-	switch groupName {
-	case "usage-data/session-meta", "usage-data/facets":
-		return "usage-data"
-	default:
-		return groupName
-	}
-}
-
-// exportSessionKeyed drives the zip layout for the five session-keyed groups
+// exportSessionKeyed drives the zip layout for the session-keyed groups
 // from the transport registry, iterating locations.AllFlatFiles() once and
-// skipping groups whose category flag is off.
+// skipping groups whose controlling category is off.
 func exportSessionKeyed(
 	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result, claudeHome *claude.Home,
 	locations *claude.ProjectLocations, categories manifest.CategorySet,
 	placeholders []manifest.Placeholder,
 ) error {
-	included := map[string]bool{
-		"todos":                   categories.Todos,
-		"usage-data/session-meta": categories.UsageData,
-		"usage-data/facets":       categories.UsageData,
-		"plugins-data":            categories.PluginsData,
-		"tasks":                   categories.Tasks,
-	}
-
 	baseByGroup := make(map[string]string, len(transport.SessionKeyedTargets))
 	prefixByGroup := make(map[string]string, len(transport.SessionKeyedTargets))
 	for _, target := range transport.SessionKeyedTargets {
@@ -321,7 +300,11 @@ func exportSessionKeyed(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if !included[group.Name] {
+		spec, ok := manifest.SpecByName(group.Category)
+		if !ok {
+			return fmt.Errorf("session-keyed group %q has unknown category %q", group.Name, group.Category)
+		}
+		if !spec.Value(&categories) {
 			continue
 		}
 		relative, err := filepath.Rel(baseByGroup[group.Name], path)
@@ -329,11 +312,10 @@ func exportSessionKeyed(
 			return fmt.Errorf("compute relative path for %s: %w", path, err)
 		}
 		zipName := prefixByGroup[group.Name] + filepath.ToSlash(relative)
-		category := groupToCategoryName(group.Name)
 		// Session-keyed bodies are small JSON or JSONL. streamJSONLEntry
 		// applies placeholders per line; since paths never straddle '\n',
 		// the output matches a whole-file transform byte-for-byte.
-		if err := streamJSONLEntry(ctx, archiveWriter, result, category, zipName, path, placeholders); err != nil {
+		if err := streamJSONLEntry(ctx, archiveWriter, result, group.Category, zipName, path, placeholders); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
 	}
