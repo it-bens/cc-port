@@ -8,31 +8,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"sort"
 	"time"
 
 	"github.com/it-bens/cc-port/internal/claude"
-	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
-	"github.com/it-bens/cc-port/internal/remote"
 )
 
 // PushOptions carries the inputs cmd/cc-port push hands to PlanPush and
-// ExecutePush.
+// ExecutePush. Cmd opens the prior reader pipeline (passed as *PriorRead to
+// PlanPush) and the writer pipeline (passed as io.Writer to ExecutePush).
 type PushOptions struct {
-	ClaudeHome   *claude.Home
-	ProjectPath  string
-	Remote       *remote.Remote
-	Name         string
-	Categories   manifest.CategorySet
-	Placeholders []manifest.Placeholder
-	Passphrase   string
-	Force        bool
+	ClaudeHome        *claude.Home
+	ProjectPath       string
+	Name              string
+	Categories        manifest.CategorySet
+	Placeholders      []manifest.Placeholder
+	Force             bool
+	EncryptionEnabled bool
 }
 
 // PushPlan is the read-only result of PlanPush. Render writes it for
@@ -50,15 +49,15 @@ type PushPlan struct {
 }
 
 // PullOptions carries the inputs cmd/cc-port pull hands to PlanPull and
-// ExecutePull.
+// ExecutePull. Cmd opens the reader pipeline once and passes the
+// pipeline.Source to both Plan and Execute.
 type PullOptions struct {
-	ClaudeHome   *claude.Home
-	Remote       *remote.Remote
-	Name         string
-	TargetPath   string
-	Resolutions  map[string]string
-	FromManifest *manifest.Metadata
-	Passphrase   string
+	ClaudeHome        *claude.Home
+	Name              string
+	TargetPath        string
+	Resolutions       map[string]string
+	FromManifest      *manifest.Metadata
+	EncryptionEnabled bool
 }
 
 // PullPlan is the read-only result of PlanPull. Render writes it for
@@ -74,16 +73,25 @@ type PullPlan struct {
 	UnresolvedPlaceholders []string
 }
 
-// PlanPush reads prior remote state and returns a PushPlan describing
-// what ExecutePush would do. Composes a permissive read pipeline so a
-// plaintext prior is silently accepted even when the operator's
-// passphrase targets the new archive being written.
+// PriorRead bundles the pre-opened prior pipeline plus the encrypted-or-not
+// observation cmd reads off the encrypt stage. nil signals no prior: either
+// the remote object did not exist, or --force suppressed the passphrase
+// requirement.
+type PriorRead struct {
+	Source       pipeline.Source
+	WasEncrypted bool
+}
+
+// PlanPush reads prior remote state from the pre-opened prior pipeline and
+// returns a PushPlan describing what ExecutePush would do. Caller (cmd) opens
+// the prior reader, dispatches remote.ErrNotFound and encrypt.ErrPassphraseRequired
+// before calling, and passes nil prior when no prior is readable (object
+// missing, or --force suppressed the passphrase requirement). The
+// context.Context parameter is unused today but kept on the public API to
+// mirror ExecutePush and reserve a cancellation seam for future readers.
 //
 //nolint:gocritic // hugeParam: by-value PushOptions matches the public Plan/Execute contract.
-func PlanPush(ctx context.Context, opts PushOptions) (*PushPlan, error) {
-	if opts.Remote == nil {
-		return nil, errors.New("sync.PlanPush: Remote is nil")
-	}
+func PlanPush(_ context.Context, opts PushOptions, prior *PriorRead) (*PushPlan, error) {
 	if opts.Name == "" {
 		return nil, errors.New("sync.PlanPush: Name is empty")
 	}
@@ -99,38 +107,17 @@ func PlanPush(ctx context.Context, opts PushOptions) (*PushPlan, error) {
 		Name:              opts.Name,
 		SelfPusher:        pusher,
 		Categories:        opts.Categories,
-		EncryptionEnabled: opts.Passphrase != "",
+		EncryptionEnabled: opts.EncryptionEnabled,
 	}
 
-	priorReadStage := &encrypt.ReaderStage{Pass: opts.Passphrase, Mode: encrypt.Permissive}
-	source, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
-		&remote.Source{Remote: opts.Remote, Key: opts.Name},
-		priorReadStage,
-	})
-	if errors.Is(err, remote.ErrNotFound) {
+	if prior == nil {
 		return plan, nil
 	}
-	if errors.Is(err, encrypt.ErrPassphraseRequired) {
-		if opts.Force {
-			// No prior-read possible without the passphrase. Plan
-			// records nothing about the prior; cmd-layer overwrites
-			// on apply. Operator accepted the trade-off via --force.
-			return plan, nil
-		}
-		return nil, fmt.Errorf(
-			"sync.PlanPush: prior remote is encrypted, passphrase required for conflict detection (or use --force): %w",
-			ErrPassphraseRequired,
-		)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("sync.PlanPush: read prior remote: %w", err)
-	}
-	defer func() { _ = source.Close() }()
 
-	plan.PriorSize = source.Size
-	plan.PriorEncrypted = priorReadStage.WasEncrypted()
+	plan.PriorSize = prior.Source.Size
+	plan.PriorEncrypted = prior.WasEncrypted
 
-	priorMetadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
+	priorMetadata, err := manifest.ReadManifestFromZip(prior.Source.ReaderAt, prior.Source.Size)
 	if err != nil {
 		return nil, fmt.Errorf("sync.PlanPush: read prior manifest: %w", err)
 	}
@@ -150,37 +137,23 @@ func PlanPush(ctx context.Context, opts PushOptions) (*PushPlan, error) {
 	return plan, nil
 }
 
-// ExecutePush runs the export-side pipeline and uploads the archive to
-// the remote. Caller passes the plan returned by PlanPush. The deferred
-// out.Close error capture is load-bearing: remote.Sink commits the
-// upload inside Close, so a failed commit must surface as a returned
-// error.
+// ExecutePush runs the export-side pipeline. Caller (cmd) opens the writer
+// pipeline (encrypt.WriterStage + remote.Sink) and passes the outermost
+// writer here. The deferred Close on that writer is owned by cmd and is
+// load-bearing: remote.Sink commits the upload on Close.
 //
 //nolint:gocritic // hugeParam: by-value PushOptions matches the public Plan/Execute contract.
-func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan) (err error) {
-	if opts.Remote == nil {
-		return errors.New("sync.ExecutePush: Remote is nil")
-	}
+func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output io.Writer) error {
 	if plan == nil {
 		return errors.New("sync.ExecutePush: plan is nil")
 	}
-
-	out, err := pipeline.RunWriter(ctx, []pipeline.WriterStage{
-		&encrypt.WriterStage{Pass: opts.Passphrase},
-		&remote.Sink{Remote: opts.Remote, Key: opts.Name},
-	})
-	if err != nil {
-		return fmt.Errorf("sync.ExecutePush: build output pipeline: %w", err)
+	if output == nil {
+		return errors.New("sync.ExecutePush: output is nil")
 	}
-	defer func() {
-		if cerr := out.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("sync.ExecutePush: close output pipeline: %w", cerr))
-		}
-	}()
 
 	exportOptions := export.Options{
 		ProjectPath:  opts.ProjectPath,
-		Output:       out,
+		Output:       output,
 		Categories:   opts.Categories,
 		Placeholders: opts.Placeholders,
 		SyncPushedBy: plan.SelfPusher,
@@ -192,38 +165,16 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan) (err err
 	return nil
 }
 
-// PlanPull reads the remote archive's manifest and returns a PullPlan
-// describing what ExecutePull would do. Composes the strict read
-// pipeline so an encrypted-no-pass or plaintext-with-pass mismatch
-// surfaces before the manifest is parsed.
-//
-//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
-func PlanPull(ctx context.Context, opts PullOptions) (plan *PullPlan, err error) {
-	if opts.Remote == nil {
-		return nil, errors.New("sync.PlanPull: Remote is nil")
-	}
+// PlanPull reads the remote archive's manifest from the pre-opened source
+// and returns a PullPlan describing what ExecutePull would do. Caller (cmd)
+// opens the source, dispatches remote.ErrNotFound and encrypt.ErrPassphraseRequired
+// before calling, and owns the defer Close. The context.Context parameter is
+// unused today but kept on the public API to mirror ExecutePull and reserve
+// a cancellation seam for future readers.
+func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*PullPlan, error) {
 	if opts.Name == "" {
 		return nil, errors.New("sync.PlanPull: Name is empty")
 	}
-
-	source, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
-		&remote.Source{Remote: opts.Remote, Key: opts.Name},
-		&encrypt.ReaderStage{Pass: opts.Passphrase, Mode: encrypt.Strict},
-	})
-	if errors.Is(err, remote.ErrNotFound) {
-		return nil, ErrRemoteNotFound
-	}
-	if errors.Is(err, encrypt.ErrPassphraseRequired) {
-		return nil, ErrPassphraseRequired
-	}
-	if err != nil {
-		return nil, fmt.Errorf("sync.PlanPull: open remote source: %w", err)
-	}
-	defer func() {
-		if cerr := source.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("sync.PlanPull: close remote source: %w", cerr))
-		}
-	}()
 
 	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
 	if err != nil {
@@ -235,10 +186,10 @@ func PlanPull(ctx context.Context, opts PullOptions) (plan *PullPlan, err error)
 		return nil, fmt.Errorf("sync.PlanPull: parse categories: %w", err)
 	}
 
-	plan = &PullPlan{
+	plan := &PullPlan{
 		Name:                 opts.Name,
 		RemotePushedBy:       metadata.SyncPushedBy,
-		RemoteEncrypted:      opts.Passphrase != "",
+		RemoteEncrypted:      opts.EncryptionEnabled,
 		RemoteSize:           source.Size,
 		Categories:           categories,
 		DeclaredPlaceholders: metadata.Placeholders,
@@ -312,38 +263,15 @@ func computeUnresolved(
 	return missing
 }
 
-// ExecutePull runs the import-side pipeline and applies the archive
-// locally. Caller passes the plan returned by PlanPull. The deferred
-// source.Close error capture is load-bearing: the read pipeline owns a
-// 0600 tempfile whose removal must surface to the caller.
-//
-//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
-func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan) (err error) {
-	if opts.Remote == nil {
-		return errors.New("sync.ExecutePull: Remote is nil")
-	}
+// ExecutePull runs importer.Run against the pre-opened source. Caller (cmd)
+// opens the source and owns the defer Close. The same source instance is
+// passed to PlanPull and ExecutePull; pipeline.Source.ReaderAt supports
+// repeated reads, so manifest reads in Plan and body reads in importer.Run
+// share one materialized tempfile.
+func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source pipeline.Source) error {
 	if plan == nil {
 		return errors.New("sync.ExecutePull: plan is nil")
 	}
-
-	source, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
-		&remote.Source{Remote: opts.Remote, Key: opts.Name},
-		&encrypt.ReaderStage{Pass: opts.Passphrase, Mode: encrypt.Strict},
-	})
-	if errors.Is(err, remote.ErrNotFound) {
-		return ErrRemoteNotFound
-	}
-	if errors.Is(err, encrypt.ErrPassphraseRequired) {
-		return ErrPassphraseRequired
-	}
-	if err != nil {
-		return fmt.Errorf("sync.ExecutePull: open remote source: %w", err)
-	}
-	defer func() {
-		if cerr := source.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("sync.ExecutePull: close remote source: %w", cerr))
-		}
-	}()
 
 	merged := mergeResolutions(opts.FromManifest, opts.Resolutions)
 
