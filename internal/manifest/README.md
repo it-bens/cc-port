@@ -20,6 +20,10 @@ command modules agree on the wire contract through a neutral third party.
   - `AllCategories []CategorySpec`: the ordered source of truth for categories. Slice order is the canonical display and wire order.
   - `BuildCategoryEntries(*CategorySet) []Category`: produces the `<categories>` list in canonical order for `metadata.xml`.
   - `ApplyCategoryEntries([]Category) (CategorySet, error)`: validates a read manifest's category list and returns the matching `CategorySet`. Aggregates every missing and every unknown name into one `errors.Join` error.
+  - `SpecByName(name string) (CategorySpec, bool)`: lookup helper for one
+    category by wire name. Returns `false` when the name is not in
+    `AllCategories`. Used by `ApplyCategoryEntries`, `internal/ui`, and
+    `internal/export` to avoid rebuilding a name-keyed map at each call site.
 - **Manifest I/O**
   - `WriteManifest(path string, metadata *Metadata) error`
   - `ReadManifest(path string) (*Metadata, error)`
@@ -98,6 +102,7 @@ Unit tests in `categories_test.go` and `manifest_test.go`:
   XML format stability.
 - Oversize-rejection tests for both `ReadManifest` and `ReadManifestFromZip`
   asserting the 4 MiB cap.
+- `SpecByName` hit and miss paths.
 
 ## References
 

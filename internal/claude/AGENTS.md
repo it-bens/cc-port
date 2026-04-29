@@ -10,7 +10,8 @@
 - Return empty (not an error) from new session-keyed location collectors
   when the parent directory is absent (README §Project enumeration).
 - When adding a session-keyed group, append one entry to
-  `SessionKeyedGroups` and one index-aligned entry to
+  `SessionKeyedGroups` (with `Category` set to one of the
+  `manifest.AllCategories` names) and one index-aligned entry to
   `transport.SessionKeyedTargets` (README §Session-keyed registry).
 - When adding a user-wide file whose content references the moved project
   path, append one entry to `UserWideRewriteTargets` and one `Home`

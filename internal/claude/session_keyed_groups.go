@@ -5,13 +5,16 @@ import (
 	"path/filepath"
 )
 
-// SessionKeyedGroup describes one of the five ~/.claude/ data groups keyed by
+// SessionKeyedGroup describes one of the ~/.claude/ data groups keyed by
 // session UUID. Consumers rely on the Name as the stable machine key and
-// display label, on Files to enumerate a group's absolute paths from a
-// ProjectLocations, and on SidecarFilter to exclude runtime-only basenames:
-// when non-nil, SidecarFilter(basename) returning true means "skip this file".
+// display label, on Category to gate the group against a
+// manifest.AllCategories entry, on Files to enumerate a group's absolute
+// paths from a ProjectLocations, and on SidecarFilter to exclude
+// runtime-only basenames (when non-nil, SidecarFilter(basename) returning
+// true means "skip this file").
 type SessionKeyedGroup struct {
 	Name          string
+	Category      string
 	Files         func(*ProjectLocations) []string
 	SidecarFilter func(name string) bool
 }
@@ -20,23 +23,28 @@ type SessionKeyedGroup struct {
 // groups.
 var SessionKeyedGroups = []SessionKeyedGroup{
 	{
-		Name:  "todos",
-		Files: func(l *ProjectLocations) []string { return l.TodoFiles },
+		Name:     "todos",
+		Category: "todos",
+		Files:    func(l *ProjectLocations) []string { return l.TodoFiles },
 	},
 	{
-		Name:  "usage-data/session-meta",
-		Files: func(l *ProjectLocations) []string { return l.UsageDataSessionMeta },
+		Name:     "usage-data/session-meta",
+		Category: "usage-data",
+		Files:    func(l *ProjectLocations) []string { return l.UsageDataSessionMeta },
 	},
 	{
-		Name:  "usage-data/facets",
-		Files: func(l *ProjectLocations) []string { return l.UsageDataFacets },
+		Name:     "usage-data/facets",
+		Category: "usage-data",
+		Files:    func(l *ProjectLocations) []string { return l.UsageDataFacets },
 	},
 	{
-		Name:  "plugins-data",
-		Files: func(l *ProjectLocations) []string { return l.PluginsDataFiles },
+		Name:     "plugins-data",
+		Category: "plugins-data",
+		Files:    func(l *ProjectLocations) []string { return l.PluginsDataFiles },
 	},
 	{
 		Name:          "tasks",
+		Category:      "tasks",
 		Files:         func(l *ProjectLocations) []string { return l.TaskFiles },
 		SidecarFilter: isTaskSidecar,
 	},

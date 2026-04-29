@@ -111,3 +111,14 @@ func TestBuildApplyBuild_IsStable(t *testing.T) {
 	entries2 := manifest.BuildCategoryEntries(&applied)
 	assert.Equal(t, entries1, entries2)
 }
+
+func TestSpecByName_ReturnsKnownCategory(t *testing.T) {
+	spec, ok := manifest.SpecByName("sessions")
+	require.True(t, ok)
+	assert.Equal(t, "sessions", spec.Name)
+}
+
+func TestSpecByName_RejectsUnknownCategory(t *testing.T) {
+	_, ok := manifest.SpecByName("does-not-exist")
+	assert.False(t, ok)
+}
