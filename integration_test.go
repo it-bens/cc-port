@@ -580,7 +580,7 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 		&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict},
 	})
 	require.ErrorIs(t, dispatchErr, encrypt.ErrPassphraseRequired)
-	// ReaderStage closed the file source on the mismatch path.
+	// RunReader closed the accumulated file-source closer on the mismatch path.
 
 	// Read with passphrase round-trips through importer.Run.
 	source, err := pipeline.RunReader(t.Context(), []pipeline.ReaderStage{

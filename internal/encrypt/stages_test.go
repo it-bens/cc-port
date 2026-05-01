@@ -47,41 +47,37 @@ func TestWriterStage_RoundTripViaRunWriter(t *testing.T) {
 func TestReaderStage_RoundTrip(t *testing.T) {
 	plaintext := []byte("reader stage round trip")
 	cipher := encryptBytes(t, stagePass, plaintext)
-	upstream := pipeline.Source{
+	upstream := pipeline.View{
 		ReaderAt: bytes.NewReader(cipher),
 		Size:     int64(len(cipher)),
-		Close:    func() error { return nil },
 	}
-	src, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), upstream)
+	view, closer, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), upstream)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = src.Close() })
+	t.Cleanup(func() { _ = closer.Close() })
 
-	require.Equal(t, int64(len(plaintext)), src.Size)
-	got := make([]byte, src.Size)
-	_, err = src.ReaderAt.ReadAt(got, 0)
+	require.Equal(t, int64(len(plaintext)), view.Size)
+	got := make([]byte, view.Size)
+	_, err = view.ReaderAt.ReadAt(got, 0)
 	require.NoError(t, err)
 	require.Equal(t, plaintext, got)
 }
 
-func TestReaderStage_CloseRemovesTempfileIdempotent(t *testing.T) {
+func TestReaderStage_CloseRemovesTempfile(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("tempdir semantics differ on Windows")
 	}
-	cipher := encryptBytes(t, stagePass, []byte("close idempotency test"))
-	src, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.Source{
+	cipher := encryptBytes(t, stagePass, []byte("close removes tempfile test"))
+	view, closer, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.View{
 		ReaderAt: bytes.NewReader(cipher),
 		Size:     int64(len(cipher)),
-		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
 
-	tempfile, ok := src.ReaderAt.(*os.File)
+	tempfile, ok := view.ReaderAt.(*os.File)
 	require.True(t, ok)
 	tempPath := tempfile.Name()
 
-	require.NoError(t, src.Close())
-	require.NoError(t, src.Close(), "second Close should return nil")
-
+	require.NoError(t, closer.Close())
 	_, statErr := os.Stat(tempPath)
 	require.True(t, os.IsNotExist(statErr), "tempfile should be removed: %v", statErr)
 }
@@ -91,15 +87,14 @@ func TestReaderStage_TempfileMode0600(t *testing.T) {
 		t.Skip("0600 mode semantics differ on Windows")
 	}
 	cipher := encryptBytes(t, stagePass, []byte("mode test"))
-	src, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.Source{
+	view, closer, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.View{
 		ReaderAt: bytes.NewReader(cipher),
 		Size:     int64(len(cipher)),
-		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = src.Close() })
+	t.Cleanup(func() { _ = closer.Close() })
 
-	tempfile, ok := src.ReaderAt.(*os.File)
+	tempfile, ok := view.ReaderAt.(*os.File)
 	require.True(t, ok)
 	info, err := os.Stat(tempfile.Name())
 	require.NoError(t, err)
@@ -131,23 +126,19 @@ func TestWriterStage_PassthroughWhenPassEmpty(t *testing.T) {
 
 const dispatchPass = "dispatch-passphrase"
 
-func makePlaintextSource(t *testing.T, body []byte) pipeline.Source {
+func makePlaintextSource(t *testing.T, body []byte) pipeline.View {
 	t.Helper()
-	return pipeline.Source{
-		ReaderAt: bytes.NewReader(body),
-		Size:     int64(len(body)),
-		Close:    func() error { return nil },
-	}
+	return pipeline.View{ReaderAt: bytes.NewReader(body), Size: int64(len(body))}
 }
 
-func makeEncryptedSource(t *testing.T, body []byte) pipeline.Source {
+func makeEncryptedSource(t *testing.T, body []byte) pipeline.View {
 	t.Helper()
 	return makePlaintextSource(t, encryptBytes(t, dispatchPass, body))
 }
 
 // encryptBytes runs body through encrypt.EncryptingWriter under passphrase
 // and returns the cipher bytes. Centralizes the encrypt-and-buffer pattern
-// so test bodies that need cipher bytes for a custom upstream Source or
+// so test bodies that need cipher bytes for a custom upstream View or
 // for byte-mutation cases stay focused on the behavior they exercise.
 func encryptBytes(t *testing.T, passphrase string, body []byte) []byte {
 	t.Helper()
@@ -165,39 +156,39 @@ func encryptBytes(t *testing.T, passphrase string, body []byte) []byte {
 func TestReaderStage_StrictPlaintextEmptyPassPassthrough(t *testing.T) {
 	body := []byte("plaintext archive bytes")
 	upstream := makePlaintextSource(t, body)
-	src, err := (&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict}).Open(context.Background(), upstream)
+	view, closer, err := (&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = src.Close() })
-	require.Equal(t, upstream.ReaderAt, src.ReaderAt, "plaintext+empty-pass must return upstream unchanged")
+	require.Nil(t, closer, "plaintext+empty-pass passthrough must report nil closer")
+	require.Equal(t, upstream.ReaderAt, view.ReaderAt, "plaintext+empty-pass must return upstream unchanged")
 }
 
 func TestReaderStage_StrictPlaintextWithPassReturnsErrUnencryptedInput(t *testing.T) {
 	upstream := makePlaintextSource(t, []byte("plaintext bytes"))
-	_, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
+	_, _, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.ErrorIs(t, err, encrypt.ErrUnencryptedInput)
 }
 
 func TestReaderStage_StrictEncryptedEmptyPassReturnsErrPassphraseRequired(t *testing.T) {
 	upstream := makeEncryptedSource(t, []byte("body"))
-	_, err := (&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict}).Open(context.Background(), upstream)
+	_, _, err := (&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.ErrorIs(t, err, encrypt.ErrPassphraseRequired)
 }
 
 func TestReaderStage_StrictEncryptedWithPassDecrypts(t *testing.T) {
 	body := []byte("decrypted body roundtrip")
 	upstream := makeEncryptedSource(t, body)
-	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
+	view, closer, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = src.Close() })
-	got := make([]byte, src.Size)
-	_, err = src.ReaderAt.ReadAt(got, 0)
+	t.Cleanup(func() { _ = closer.Close() })
+	got := make([]byte, view.Size)
+	_, err = view.ReaderAt.ReadAt(got, 0)
 	require.NoError(t, err)
 	require.Equal(t, body, got)
 }
 
 func TestReaderStage_StrictEncryptedWrongPassReturnsErrPassphrase(t *testing.T) {
 	upstream := makeEncryptedSource(t, []byte("body"))
-	_, err := (&encrypt.ReaderStage{Pass: "wrong-passphrase", Mode: encrypt.Strict}).Open(context.Background(), upstream)
+	_, _, err := (&encrypt.ReaderStage{Pass: "wrong-passphrase", Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.Error(t, err)
 	require.ErrorIs(t, err, encrypt.ErrPassphrase)
 }
@@ -205,30 +196,16 @@ func TestReaderStage_StrictEncryptedWrongPassReturnsErrPassphrase(t *testing.T) 
 func TestReaderStage_PermissivePlaintextWithPassPassthrough(t *testing.T) {
 	body := []byte("plaintext archive bytes")
 	upstream := makePlaintextSource(t, body)
-	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Permissive}).Open(context.Background(), upstream)
+	view, closer, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Permissive}).Open(context.Background(), upstream)
 	require.NoError(t, err, "Permissive must not refuse plaintext-with-pass")
-	t.Cleanup(func() { _ = src.Close() })
-	require.Equal(t, upstream.ReaderAt, src.ReaderAt, "plaintext-with-pass under Permissive must return upstream unchanged")
+	require.Nil(t, closer, "plaintext+pass under Permissive passthrough must report nil closer")
+	require.Equal(t, upstream.ReaderAt, view.ReaderAt, "plaintext-with-pass under Permissive must return upstream unchanged")
 }
 
 func TestReaderStage_PermissiveEncryptedEmptyPassReturnsErrPassphraseRequired(t *testing.T) {
 	upstream := makeEncryptedSource(t, []byte("body"))
-	_, err := (&encrypt.ReaderStage{Pass: "", Mode: encrypt.Permissive}).Open(context.Background(), upstream)
+	_, _, err := (&encrypt.ReaderStage{Pass: "", Mode: encrypt.Permissive}).Open(context.Background(), upstream)
 	require.ErrorIs(t, err, encrypt.ErrPassphraseRequired)
-}
-
-func TestReaderStage_DecryptCloseChainsToUpstream(t *testing.T) {
-	cipher := encryptBytes(t, dispatchPass, []byte("close cascade body"))
-	upstreamClosed := false
-	upstream := pipeline.Source{
-		ReaderAt: bytes.NewReader(cipher),
-		Size:     int64(len(cipher)),
-		Close:    func() error { upstreamClosed = true; return nil },
-	}
-	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
-	require.NoError(t, err)
-	require.NoError(t, src.Close())
-	require.True(t, upstreamClosed, "decrypt Source.Close should cascade to upstream.Close")
 }
 
 // TestReaderStage_RunReaderClosesUpstreamOnceOnError pins the contract
@@ -253,22 +230,24 @@ func TestReaderStage_RunReaderClosesUpstreamOnceOnError(t *testing.T) {
 	require.Equal(t, 1, closeCount, "runner must close upstream exactly once on stage error")
 }
 
-// countingSourceStage emits the supplied bytes as a pipeline.Source and
-// increments closeOut each time Source.Close is called. Used by the
+// countingSourceStage emits the supplied bytes as a pipeline.View and
+// increments closeOut each time the runner closes it. Used by the
 // close-once test above.
 type countingSourceStage struct {
 	bytes    []byte
 	closeOut *int
 }
 
-func (s *countingSourceStage) Open(_ context.Context, _ pipeline.Source) (pipeline.Source, error) {
-	return pipeline.Source{
-		ReaderAt: bytes.NewReader(s.bytes),
-		Size:     int64(len(s.bytes)),
-		Close:    func() error { *s.closeOut++; return nil },
-	}, nil
+func (s *countingSourceStage) Open(_ context.Context, _ pipeline.View) (pipeline.View, io.Closer, error) {
+	return pipeline.View{ReaderAt: bytes.NewReader(s.bytes), Size: int64(len(s.bytes))},
+		&countingCloser{count: s.closeOut},
+		nil
 }
 func (s *countingSourceStage) Name() string { return "counting-source" }
+
+type countingCloser struct{ count *int }
+
+func (c *countingCloser) Close() error { *c.count++; return nil }
 
 func TestWriterStage_NameAndReaderStageName(t *testing.T) {
 	require.Equal(t, "encrypt", (&encrypt.WriterStage{Pass: "x"}).Name())
@@ -284,15 +263,14 @@ type bufferSinkStage struct {
 	closed bool
 }
 
-func (s *bufferSinkStage) Open(_ context.Context, _ io.Writer) (io.WriteCloser, error) {
-	return &bufferSinkWriter{stage: s}, nil
+func (s *bufferSinkStage) Open(_ context.Context, _ io.Writer) (io.Writer, io.Closer, error) {
+	return s.buf, &bufferSinkCloser{stage: s}, nil
 }
 func (s *bufferSinkStage) Name() string { return "buffer-sink" }
 
-type bufferSinkWriter struct{ stage *bufferSinkStage }
+type bufferSinkCloser struct{ stage *bufferSinkStage }
 
-func (w *bufferSinkWriter) Write(p []byte) (int, error) { return w.stage.buf.Write(p) }
-func (w *bufferSinkWriter) Close() error                { w.stage.closed = true; return nil }
+func (c *bufferSinkCloser) Close() error { c.stage.closed = true; return nil }
 
 // guard against bytes.Reader/io.SectionReader interface drift.
 var _ io.ReaderAt = (*bytes.Reader)(nil)
@@ -308,12 +286,12 @@ func TestDecryptingReader_RejectsEmptyPassphrase(t *testing.T) {
 }
 
 func TestWriterStage_RejectsNilDownstream(t *testing.T) {
-	_, err := (&encrypt.WriterStage{Pass: stagePass}).Open(context.Background(), nil)
+	_, _, err := (&encrypt.WriterStage{Pass: stagePass}).Open(context.Background(), nil)
 	require.Error(t, err)
 }
 
 func TestReaderStage_RejectsEmptyUpstream(t *testing.T) {
-	_, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.Source{})
+	_, _, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.View{})
 	require.Error(t, err)
 }
 
@@ -325,76 +303,12 @@ func (failingReaderAt) ReadAt(_ []byte, _ int64) (int, error) {
 }
 
 func TestReaderStage_PeekErrorSurfaces(t *testing.T) {
-	_, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.Source{
+	_, _, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.View{
 		ReaderAt: failingReaderAt{},
 		Size:     1024,
-		Close:    func() error { return nil },
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "peek archive header")
-}
-
-// passthroughCloseChainsToCloserWriter is a writer that doubles as an
-// io.Closer; it lets the WriterStage passthrough path's downstream-is-
-// Closer branch get exercised separately from the generic non-Closer
-// io.Writer branch covered by bytes.Buffer.
-type writerWithClose struct {
-	buf    *bytes.Buffer
-	closed bool
-}
-
-func (w *writerWithClose) Write(p []byte) (int, error) { return w.buf.Write(p) }
-func (w *writerWithClose) Close() error                { w.closed = true; return nil }
-
-func TestWriterStage_PassthroughCloseChainsToInnerCloser(t *testing.T) {
-	var buf bytes.Buffer
-	dst := &writerWithClose{buf: &buf}
-	wc, err := (&encrypt.WriterStage{Pass: ""}).Open(context.Background(), dst)
-	require.NoError(t, err)
-	_, err = wc.Write([]byte("ok"))
-	require.NoError(t, err)
-	require.NoError(t, wc.Close())
-	require.True(t, dst.closed, "passthrough Close must chain to inner Closer")
-}
-
-func TestWriterStage_PassthroughCloseNoCloser(t *testing.T) {
-	var buf bytes.Buffer
-	wc, err := (&encrypt.WriterStage{Pass: ""}).Open(context.Background(), &buf)
-	require.NoError(t, err)
-	_, err = wc.Write([]byte("ok"))
-	require.NoError(t, err)
-	require.NoError(t, wc.Close(), "passthrough Close on non-Closer downstream returns nil")
-}
-
-// errClosingWriter is a writer whose Close returns a sentinel error.
-// Used to assert encryptingWriteCloser.Close joins the cascade error.
-type errClosingWriter struct {
-	buf bytes.Buffer
-}
-
-var errSinkClose = errors.New("synthetic sink close failure")
-
-func (e *errClosingWriter) Write(p []byte) (int, error) { return e.buf.Write(p) }
-func (e *errClosingWriter) Close() error                { return errSinkClose }
-
-func TestWriterStage_EncryptCloseJoinsDownstreamCloseError(t *testing.T) {
-	dst := &errClosingWriter{}
-	wc, err := (&encrypt.WriterStage{Pass: stagePass}).Open(context.Background(), dst)
-	require.NoError(t, err)
-	_, err = wc.Write([]byte("payload"))
-	require.NoError(t, err)
-	closeErr := wc.Close()
-	require.Error(t, closeErr)
-	require.ErrorIs(t, closeErr, errSinkClose)
-}
-
-func TestWriterStage_EncryptCloseNoCloserDownstream(t *testing.T) {
-	var buf bytes.Buffer
-	wc, err := (&encrypt.WriterStage{Pass: stagePass}).Open(context.Background(), &buf)
-	require.NoError(t, err)
-	_, err = wc.Write([]byte("payload"))
-	require.NoError(t, err)
-	require.NoError(t, wc.Close())
 }
 
 // Tamper after the age header so the magic-byte peek still matches but
@@ -405,12 +319,11 @@ func TestReaderStage_DecryptIOCopyFailureSurfacesErrPassphrase(t *testing.T) {
 	require.Greater(t, len(cipher), 200)
 	cipher[len(cipher)-1] ^= 0xFF
 
-	upstream := pipeline.Source{
+	upstream := pipeline.View{
 		ReaderAt: bytes.NewReader(cipher),
 		Size:     int64(len(cipher)),
-		Close:    func() error { return nil },
 	}
-	_, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
+	_, _, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.ErrorIs(t, err, encrypt.ErrPassphrase)
 }
 
@@ -421,23 +334,18 @@ func TestReaderStage_CloseSilentOnExternallyRemovedTempfile(t *testing.T) {
 		t.Skip("tempdir semantics differ on Windows")
 	}
 	cipher := encryptBytes(t, dispatchPass, []byte("external-remove body"))
-	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.Source{
+	view, closer, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.View{
 		ReaderAt: bytes.NewReader(cipher),
 		Size:     int64(len(cipher)),
-		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
 
-	tempfile, ok := src.ReaderAt.(*os.File)
+	tempfile, ok := view.ReaderAt.(*os.File)
 	require.True(t, ok)
 	require.NoError(t, os.Remove(tempfile.Name()), "external removal succeeds")
 
-	require.NoError(t, src.Close(), "Close must treat IsNotExist remove as success")
+	require.NoError(t, closer.Close(), "Close must treat IsNotExist remove as success")
 }
-
-// Close cascading upstream Close error: the decrypt Close should
-// surface upstream.Close's error when temp close+remove succeed.
-var errUpstreamCloseSentinel = errors.New("synthetic upstream close failure")
 
 func TestReaderStage_DecryptTempfileCreateFailureSurfaces(t *testing.T) {
 	if runtime.GOOS == osWindows {
@@ -446,35 +354,33 @@ func TestReaderStage_DecryptTempfileCreateFailureSurfaces(t *testing.T) {
 	cipher := encryptBytes(t, dispatchPass, []byte("tempfile create body"))
 	t.Setenv("TMPDIR", "/this/path/does/not/exist/cc-port-test")
 
-	upstream := pipeline.Source{
+	upstream := pipeline.View{
 		ReaderAt: bytes.NewReader(cipher),
 		Size:     int64(len(cipher)),
-		Close:    func() error { return nil },
 	}
-	_, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
+	_, _, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "create tempfile")
 }
 
-// Pre-close the inner *os.File before invoking Source.Close to surface
-// the temp.Close() error branch in the decrypt close func.
+// Pre-close the inner *os.File before invoking Close to surface
+// the temp.Close() error branch in the decrypt closer.
 func TestReaderStage_DecryptCloseSurfacesTempCloseError(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("tempdir semantics differ on Windows")
 	}
 	cipher := encryptBytes(t, dispatchPass, []byte("temp close err body"))
-	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.Source{
+	view, closer, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.View{
 		ReaderAt: bytes.NewReader(cipher),
 		Size:     int64(len(cipher)),
-		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
 
-	tempfile := src.ReaderAt.(*os.File)
+	tempfile := view.ReaderAt.(*os.File)
 	require.NoError(t, tempfile.Close(), "close tempfile out from under decrypt")
 	t.Cleanup(func() { _ = os.Remove(tempfile.Name()) })
 
-	closeErr := src.Close()
+	closeErr := closer.Close()
 	require.Error(t, closeErr, "second temp.Close should surface as os.ErrClosed")
 }
 
@@ -488,13 +394,13 @@ var errSyntheticHeaderWrite = errors.New("synthetic header write failure")
 func (failingWriter) Write(_ []byte) (int, error) { return 0, errSyntheticHeaderWrite }
 
 func TestWriterStage_EncryptOpenSurfacesAgeEncryptError(t *testing.T) {
-	_, err := (&encrypt.WriterStage{Pass: stagePass}).Open(context.Background(), failingWriter{})
+	_, _, err := (&encrypt.WriterStage{Pass: stagePass}).Open(context.Background(), failingWriter{})
 	require.Error(t, err)
 }
 
 // Make the tempdir non-writable after the tempfile is created so that
-// os.Remove inside the decrypt Close func returns a non-IsNotExist
-// error, exercising that switch arm.
+// os.Remove inside the decrypt closer returns a non-IsNotExist error,
+// exercising that switch arm.
 func TestReaderStage_DecryptCloseSurfacesRemoveError(t *testing.T) {
 	if runtime.GOOS == osWindows {
 		t.Skip("posix permission semantics required")
@@ -506,20 +412,19 @@ func TestReaderStage_DecryptCloseSurfacesRemoveError(t *testing.T) {
 	t.Setenv("TMPDIR", dir)
 
 	cipher := encryptBytes(t, dispatchPass, []byte("remove err body"))
-	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.Source{
+	view, closer, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), pipeline.View{
 		ReaderAt: bytes.NewReader(cipher),
 		Size:     int64(len(cipher)),
-		Close:    func() error { return nil },
 	})
 	require.NoError(t, err)
 
-	tempfile := src.ReaderAt.(*os.File)
+	tempfile := view.ReaderAt.(*os.File)
 	tempPath := tempfile.Name()
 
 	require.NoError(t, os.Chmod(dir, 0o500), "drop write perm on tempdir") //nolint:gosec // G302: directory permissions, test-only
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })                         //nolint:gosec // G302: directory permissions, test-only
 
-	closeErr := src.Close()
+	closeErr := closer.Close()
 	require.Error(t, closeErr, "remove on read-only parent dir should surface")
 
 	require.NoError(t, os.Chmod(dir, 0o700)) //nolint:gosec // G302: directory permissions, test-only
@@ -531,10 +436,14 @@ func TestReaderStage_WasEncryptedReportsDispatchBranch(t *testing.T) {
 		stage := &encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}
 		upstream := makeEncryptedSource(t, []byte("encrypted body"))
 
-		src, err := stage.Open(context.Background(), upstream)
+		_, closer, err := stage.Open(context.Background(), upstream)
 
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = src.Close() })
+		t.Cleanup(func() {
+			if closer != nil {
+				_ = closer.Close()
+			}
+		})
 		require.True(t, stage.WasEncrypted(), "encrypted+pass must record encrypted branch")
 	})
 
@@ -542,10 +451,10 @@ func TestReaderStage_WasEncryptedReportsDispatchBranch(t *testing.T) {
 		stage := &encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict}
 		upstream := makePlaintextSource(t, []byte("plaintext body"))
 
-		src, err := stage.Open(context.Background(), upstream)
+		_, closer, err := stage.Open(context.Background(), upstream)
 
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = src.Close() })
+		require.Nil(t, closer, "plaintext+empty-pass passthrough must report nil closer")
 		require.False(t, stage.WasEncrypted(), "plaintext+empty-pass must record plaintext branch")
 	})
 
@@ -553,27 +462,10 @@ func TestReaderStage_WasEncryptedReportsDispatchBranch(t *testing.T) {
 		stage := &encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Permissive}
 		upstream := makePlaintextSource(t, []byte("plaintext body"))
 
-		src, err := stage.Open(context.Background(), upstream)
+		_, closer, err := stage.Open(context.Background(), upstream)
 
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = src.Close() })
+		require.Nil(t, closer, "plaintext+pass under Permissive passthrough must report nil closer")
 		require.False(t, stage.WasEncrypted(), "plaintext+pass under Permissive must record plaintext branch")
 	})
-}
-
-func TestReaderStage_DecryptCloseSurfacesUpstreamCloseError(t *testing.T) {
-	if runtime.GOOS == osWindows {
-		t.Skip("tempdir semantics differ on Windows")
-	}
-	cipher := encryptBytes(t, dispatchPass, []byte("close upstream err"))
-	upstream := pipeline.Source{
-		ReaderAt: bytes.NewReader(cipher),
-		Size:     int64(len(cipher)),
-		Close:    func() error { return errUpstreamCloseSentinel },
-	}
-	src, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
-	require.NoError(t, err)
-
-	closeErr := src.Close()
-	require.ErrorIs(t, closeErr, errUpstreamCloseSentinel)
 }

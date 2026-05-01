@@ -18,23 +18,20 @@ type Source struct {
 	Path string
 }
 
-// Open opens Path and returns it as a pipeline.Source carrying the
-// underlying *os.File as ReaderAt.
-func (s *Source) Open(_ context.Context, _ pipeline.Source) (pipeline.Source, error) {
+// Open opens Path and returns it as a pipeline.View carrying the
+// underlying *os.File as ReaderAt. The returned io.Closer is the same
+// *os.File; the runner closes it.
+func (s *Source) Open(_ context.Context, _ pipeline.View) (pipeline.View, io.Closer, error) {
 	f, err := os.Open(s.Path)
 	if err != nil {
-		return pipeline.Source{}, fmt.Errorf("file source: open %s: %w", s.Path, err)
+		return pipeline.View{}, nil, fmt.Errorf("file source: open %s: %w", s.Path, err)
 	}
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return pipeline.Source{}, fmt.Errorf("file source: stat %s: %w", s.Path, err)
+		return pipeline.View{}, nil, fmt.Errorf("file source: stat %s: %w", s.Path, err)
 	}
-	return pipeline.Source{
-		ReaderAt: f,
-		Size:     info.Size(),
-		Close:    f.Close,
-	}, nil
+	return pipeline.View{ReaderAt: f, Size: info.Size()}, f, nil
 }
 
 // Name returns the stage name used in pipeline error wrapping.
@@ -46,14 +43,14 @@ type Sink struct {
 	Path string
 }
 
-// Open creates or truncates Path with mode 0600 and returns it as the
-// stage's writer. The downstream parameter is ignored: Sink is the leaf.
-func (s *Sink) Open(_ context.Context, _ io.Writer) (io.WriteCloser, error) {
+// Open creates or truncates Path with mode 0600 and returns it as both
+// the stage's writer and its closer; the runner closes it.
+func (s *Sink) Open(_ context.Context, _ io.Writer) (io.Writer, io.Closer, error) {
 	f, err := os.OpenFile(s.Path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("file sink: open %s: %w", s.Path, err)
+		return nil, nil, fmt.Errorf("file sink: open %s: %w", s.Path, err)
 	}
-	return f, nil
+	return f, f, nil
 }
 
 // Name returns the stage name used in pipeline error wrapping.

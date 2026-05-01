@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,26 +12,27 @@ import (
 
 // Source is a pipeline.ReaderStage that reads the archive at Key from
 // Remote, drains the bytes into a 0600 tempfile, and returns the
-// tempfile as the new Source's ReaderAt. Source.Close removes the
-// tempfile.
+// tempfile as the new View. The runner removes the tempfile via the
+// returned io.Closer.
 type Source struct {
 	Remote *Remote
 	Key    string
 }
 
 // Open downloads the archive at Key from Remote, drains it into a 0600
-// tempfile, and returns the tempfile as the new pipeline.Source. The
-// returned Source.Close removes the tempfile.
-func (s *Source) Open(ctx context.Context, _ pipeline.Source) (pipeline.Source, error) {
+// tempfile, and returns it as the View. The returned io.Closer closes
+// the tempfile and removes it (joining errors via errors.Join). The
+// runner owns idempotency.
+func (s *Source) Open(ctx context.Context, _ pipeline.View) (pipeline.View, io.Closer, error) {
 	if s.Remote == nil {
-		return pipeline.Source{}, fmt.Errorf("remote.Source: Remote is nil")
+		return pipeline.View{}, nil, fmt.Errorf("remote.Source: Remote is nil")
 	}
 	if s.Key == "" {
-		return pipeline.Source{}, fmt.Errorf("remote.Source: Key is empty")
+		return pipeline.View{}, nil, fmt.Errorf("remote.Source: Key is empty")
 	}
 	rc, err := s.Remote.Open(ctx, s.Key)
 	if err != nil {
-		return pipeline.Source{}, err
+		return pipeline.View{}, nil, err
 	}
 	defer func() { _ = rc.Close() }()
 	return drainToTempfile(rc)
@@ -40,73 +42,75 @@ func (s *Source) Open(ctx context.Context, _ pipeline.Source) (pipeline.Source, 
 func (s *Source) Name() string { return "remote source" }
 
 // Sink is a pipeline.WriterStage that writes its bytes to Remote at
-// Key. The returned WriteCloser is the bucket writer directly; closing
+// Key. The returned writer is the bucket writer directly; closing it
 // commits the upload.
 type Sink struct {
 	Remote *Remote
 	Key    string
 }
 
-// Open returns the bucket writer for Key. Closing the returned
-// WriteCloser commits the upload; failure to close means no archive is
-// visible on the remote.
-func (s *Sink) Open(ctx context.Context, _ io.Writer) (io.WriteCloser, error) {
+// Open returns the bucket writer for Key as both the writer and the
+// closer. Closing the writer commits the upload; failure to close means
+// no archive is visible on the remote.
+func (s *Sink) Open(ctx context.Context, _ io.Writer) (io.Writer, io.Closer, error) {
 	if s.Remote == nil {
-		return nil, fmt.Errorf("remote.Sink: Remote is nil")
+		return nil, nil, fmt.Errorf("remote.Sink: Remote is nil")
 	}
 	if s.Key == "" {
-		return nil, fmt.Errorf("remote.Sink: Key is empty")
+		return nil, nil, fmt.Errorf("remote.Sink: Key is empty")
 	}
-	return s.Remote.Create(ctx, s.Key)
+	w, err := s.Remote.Create(ctx, s.Key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return w, w, nil
 }
 
 // Name identifies this stage in pipeline error messages.
 func (s *Sink) Name() string { return "remote sink" }
 
-// drainToTempfile copies r into a 0600 tempfile and returns a
-// pipeline.Source whose ReaderAt is the tempfile, Size is from Stat,
-// and Close removes the tempfile (idempotent).
-func drainToTempfile(r io.Reader) (pipeline.Source, error) {
+// drainToTempfile copies r into a 0600 tempfile and returns the
+// tempfile as a View plus an io.Closer that closes the file and removes
+// it. Close errors are joined via errors.Join; os.IsNotExist on Remove
+// is filtered to nil.
+func drainToTempfile(r io.Reader) (pipeline.View, io.Closer, error) {
 	temp, err := os.CreateTemp("", "cc-port-remote-*.zip")
 	if err != nil {
-		return pipeline.Source{}, fmt.Errorf("remote: create tempfile: %w", err)
+		return pipeline.View{}, nil, fmt.Errorf("remote: create tempfile: %w", err)
 	}
 	if err := os.Chmod(temp.Name(), 0o600); err != nil {
 		_ = temp.Close()
 		_ = os.Remove(temp.Name())
-		return pipeline.Source{}, fmt.Errorf("remote: chmod tempfile: %w", err)
+		return pipeline.View{}, nil, fmt.Errorf("remote: chmod tempfile: %w", err)
 	}
 	if _, err := io.Copy(temp, r); err != nil {
 		_ = temp.Close()
 		_ = os.Remove(temp.Name())
-		return pipeline.Source{}, fmt.Errorf("remote: drain bytes: %w", err)
+		return pipeline.View{}, nil, fmt.Errorf("remote: drain bytes: %w", err)
 	}
 	info, err := temp.Stat()
 	if err != nil {
 		_ = temp.Close()
 		_ = os.Remove(temp.Name())
-		return pipeline.Source{}, fmt.Errorf("remote: stat tempfile: %w", err)
+		return pipeline.View{}, nil, fmt.Errorf("remote: stat tempfile: %w", err)
 	}
-	tempPath := temp.Name()
-	closed := false
-	return pipeline.Source{
-		ReaderAt: temp,
-		Size:     info.Size(),
-		Close: func() error {
-			if closed {
-				return nil
-			}
-			closed = true
-			closeErr := temp.Close()
-			removeErr := os.Remove(tempPath)
-			switch {
-			case closeErr != nil:
-				return closeErr
-			case removeErr != nil && !os.IsNotExist(removeErr):
-				return removeErr
-			default:
-				return nil
-			}
-		},
-	}, nil
+	return pipeline.View{ReaderAt: temp, Size: info.Size()},
+		&tempfileCloser{file: temp, path: temp.Name()},
+		nil
+}
+
+// tempfileCloser closes the tempfile and removes it. errors.Join
+// surfaces both failures; os.IsNotExist on Remove is treated as nil.
+type tempfileCloser struct {
+	file *os.File
+	path string
+}
+
+func (c *tempfileCloser) Close() error {
+	closeErr := c.file.Close()
+	removeErr := os.Remove(c.path)
+	if removeErr != nil && os.IsNotExist(removeErr) {
+		removeErr = nil
+	}
+	return errors.Join(closeErr, removeErr)
 }
