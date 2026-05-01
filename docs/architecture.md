@@ -115,6 +115,8 @@ parameter is the zero value). The runners `RunWriter` and `RunReader`
 chain stages in a list, returning the outermost writer or final
 `Source` to the consumer.
 
+Each stage's `Open` returns a data half (`io.Writer` for writers, `pipeline.View` for readers) plus an optional `io.Closer` for the stage's own resources. The runner accumulates non-nil closers and walks them on outer Close in chain order (writer) or reverse chain order (reader) with `errors.Join`. Outer Close is idempotent. Stages do not chain to upstream or downstream Close.
+
 Stages live in their owning packages:
 
 | Stage | Package | Role |

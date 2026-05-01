@@ -6,8 +6,8 @@ Pipeline source and sink stages for local filesystem I/O. Wraps `os.Open` and `o
 
 ## Public API
 
-- `Source{Path}`: ReaderStage. Opens Path for reading; returns the `*os.File` as `pipeline.Source.ReaderAt`.
-- `Sink{Path}`: WriterStage. Creates Path with mode 0600, `O_CREATE|O_WRONLY|O_TRUNC`. Existing files are truncated.
+- `Source{Path}`: ReaderStage. Opens Path for reading; returns the `*os.File` as the View's `ReaderAt` plus an `io.Closer` that closes the file.
+- `Sink{Path}`: WriterStage. Creates Path with mode 0600, `O_CREATE|O_WRONLY|O_TRUNC`. Returns the `*os.File` as both writer and closer. Existing files are truncated.
 
 ## Contracts
 

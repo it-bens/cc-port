@@ -14,8 +14,8 @@ Wraps `gocloud.dev/blob` with a narrow consumer-defined surface. Exposes a `Remo
 - `(*Remote).URL() string`: returns the URL the Remote was opened with.
 - `Attributes`: struct with Size and ModTime.
 - `ErrNotFound`: sentinel for missing keys (translated from `gcerrors.NotFound`).
-- `Source{Remote, Key}`: pipeline.ReaderStage. Drains bytes into a 0600 tempfile.
-- `Sink{Remote, Key}`: pipeline.WriterStage. Returns the bucket writer directly.
+- `Source{Remote, Key}`: pipeline.ReaderStage. Drains bytes into a 0600 tempfile and reports it as the View; the returned io.Closer closes the file and removes it.
+- `Sink{Remote, Key}`: pipeline.WriterStage. Returns the bucket writer as both writer and closer; closing commits the upload.
 
 ## Contracts
 
@@ -27,7 +27,7 @@ Used by `internal/sync` and `cmd/cc-port` push and pull.
 
 - URL parsing and bucket construction via `blob.OpenBucket`.
 - `gcerrors.NotFound` translation to the package's `ErrNotFound` sentinel on Open and Stat.
-- Tempfile lifecycle for Source: `0600` mode, removed on `Source.Close`.
+- Tempfile lifecycle for Source: `0600` mode, removed by the `io.Closer` returned alongside the View; the runner owns idempotency.
 
 #### Refused
 
@@ -42,7 +42,7 @@ Used by `internal/sync` and `cmd/cc-port` push and pull.
 
 `Sink` returns the gocloud bucket writer directly without wrapping. Closing that writer commits the upload; closing failure means the archive is not visible. Pipeline runner closes follow chain order so the upload commits after any upstream filter (encryption) flushes.
 
-`Source` always materializes to a tempfile because gocloud's reader is `io.ReadCloser`, not `io.ReaderAt`. The pipeline's import-side cores need random access. The tempfile is cheap for personal-use archives; range-reader optimization is a follow-up.
+`Source` always materializes to a tempfile because gocloud's reader is `io.ReadCloser`, not `io.ReaderAt`. The pipeline's import-side cores need random access. The tempfile is cheap for personal-use archives; range-reader optimization is a follow-up. The closer joins `temp.Close()` and `os.Remove(tempPath)` errors with `errors.Join`; missing-file removal is treated as nil.
 
 ## Tests
 

@@ -3,10 +3,11 @@
 ## Before editing
 
 - Keep the runner free of policy. Ordering correctness is the cmd-layer's responsibility (README §Stage composition).
-- Source.Close is a function field, not an interface method. Stages chain their close to upstream's close inside the closure (README §Public API).
-- Leaf stages receive zero `Source` or nil `io.Writer`. Do not add a separate leaf interface (README §Quirks).
+- The runner owns the close cascade. Stages return their own io.Closer, or nil for passthrough; never call upstream's or downstream's Close from a stage (README §Close cascade).
+- Source.Close is built by the runner. Do not reintroduce per-stage `closed bool` flags or close-cascade wrappers (README §Close cascade).
+- Leaf stages receive a zero `View` or nil `io.Writer`. Do not add a separate leaf interface (README §Quirks).
 
 ## Navigation
 
-- Entry: `pipeline.go` (`RunWriter`, `RunReader`, `Source`, `WriterStage`, `ReaderStage`).
+- Entry: `pipeline.go` (`View`, `Source`, `WriterStage`, `ReaderStage`, `RunWriter`, `RunReader`).
 - Tests: `pipeline_test.go`.
