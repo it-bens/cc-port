@@ -1,13 +1,11 @@
-package importer_test
+package importer
 
 import (
 	"bytes"
 	"testing"
-
-	"github.com/it-bens/cc-port/internal/importer"
 )
 
-// FuzzResolvePlaceholders exercises ResolvePlaceholders against arbitrary
+// FuzzApplyResolutions exercises applyResolutions against arbitrary
 // byte bodies and single-key resolution maps, asserting three invariants:
 //   - empty resolutions is an identity transform
 //   - a key absent from data is an identity transform
@@ -22,7 +20,7 @@ import (
 //
 // The function must never panic — a crash on unexpected bytes would abort the
 // import stage-and-swap after the archive had been extracted to disk.
-func FuzzResolvePlaceholders(f *testing.F) {
+func FuzzApplyResolutions(f *testing.F) {
 	f.Add([]byte("carries {{PROJECT_PATH}} in body"), "{{PROJECT_PATH}}", "/new/path")
 	f.Add([]byte(""), "{{HOME}}", "/home/newuser")
 	f.Add([]byte("no tokens here"), "{{NOPE}}", "/absent")
@@ -33,13 +31,13 @@ func FuzzResolvePlaceholders(f *testing.F) {
 			t.Skip()
 		}
 
-		emptyResolutionOutput := importer.ResolvePlaceholders(data, map[string]string{})
+		emptyResolutionOutput := applyResolutions(data, map[string]string{})
 		if !bytes.Equal(emptyResolutionOutput, data) {
 			t.Fatalf("empty resolutions modified input: got %q", emptyResolutionOutput)
 		}
 
 		if !bytes.Contains(data, []byte(key)) {
-			absentKeyOutput := importer.ResolvePlaceholders(
+			absentKeyOutput := applyResolutions(
 				data, map[string]string{key: value},
 			)
 			if !bytes.Equal(absentKeyOutput, data) {
@@ -49,7 +47,7 @@ func FuzzResolvePlaceholders(f *testing.F) {
 		}
 
 		occurrenceCount := bytes.Count(data, []byte(key))
-		presentKeyOutput := importer.ResolvePlaceholders(
+		presentKeyOutput := applyResolutions(
 			data, map[string]string{key: value},
 		)
 		expectedLength := len(data) + occurrenceCount*(len(value)-len(key))

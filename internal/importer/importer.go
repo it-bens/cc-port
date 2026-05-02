@@ -298,8 +298,8 @@ func withProjectPath(resolutions map[string]string, targetPath string) map[strin
 	for key, value := range resolutions {
 		result[key] = value
 	}
-	if _, hasProjectPath := result[ProjectPathKey]; !hasProjectPath {
-		result[ProjectPathKey] = targetPath
+	if _, hasProjectPath := result[projectPathKey]; !hasProjectPath {
+		result[projectPathKey] = targetPath
 	}
 	return result
 }
@@ -346,7 +346,7 @@ func classifyMissingResolutions(
 		if _, isResolved := resolutions[placeholder.Key]; isResolved {
 			continue
 		}
-		if placeholder.Key == ProjectPathKey {
+		if placeholder.Key == projectPathKey {
 			continue
 		}
 		if _, present := classification.presentDeclaredKeys[placeholder.Key]; !present {
@@ -876,7 +876,7 @@ func (r *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// readAndResolve reads one zip entry whole and applies ResolvePlaceholders.
+// readAndResolve reads one zip entry whole and applies applyResolutions.
 // Used for history appends and the config block, both of which feed into
 // in-memory merge logic. Enforces the per-entry cap in-stream.
 func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved []byte, bytesRead int64, err error) {
@@ -903,7 +903,7 @@ func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved 
 			zipFile.Name, maxZipEntryBytes,
 		)
 	}
-	return ResolvePlaceholders(data, resolutions), int64(len(data)), nil
+	return applyResolutions(data, resolutions), int64(len(data)), nil
 }
 
 func stageHistoryIfNeeded(plan *importPlan, appends [][]byte) error {

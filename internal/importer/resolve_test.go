@@ -16,28 +16,6 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
-func TestResolvePlaceholders(t *testing.T) {
-	content := []byte("path is __PROJECT_PATH__ and again __PROJECT_PATH__")
-	resolutions := map[string]string{
-		"__PROJECT_PATH__": "/home/user/myproject",
-	}
-
-	result := importer.ResolvePlaceholders(content, resolutions)
-
-	assert.Equal(t, []byte("path is /home/user/myproject and again /home/user/myproject"), result)
-}
-
-func TestResolvePlaceholders_UnresolvedLeft(t *testing.T) {
-	content := []byte("known: __KNOWN__ unknown: __UNKNOWN__")
-	resolutions := map[string]string{
-		"__KNOWN__": "/home/user/known",
-	}
-
-	result := importer.ResolvePlaceholders(content, resolutions)
-
-	assert.Equal(t, []byte("known: /home/user/known unknown: __UNKNOWN__"), result)
-}
-
 func TestResolvePlaceholdersStream_PassesThroughWhenNoResolutions(t *testing.T) {
 	src := bytes.NewReader([]byte("hello {{UNKNOWN}} world"))
 	var dst bytes.Buffer
@@ -152,9 +130,8 @@ func TestResolvePlaceholdersStream_HandlesTokenStraddlingReadBoundary(t *testing
 		&chunkReader{data: body, chunk: 1}, &streamed, resolutions,
 	))
 
-	whole := importer.ResolvePlaceholders(body, resolutions)
-	assert.Equal(t, string(whole), streamed.String(),
-		"streaming output must equal whole-body ResolvePlaceholders output")
+	assert.Equal(t, "abcRESOLVEDxyz and tail RESOLVED end", streamed.String(),
+		"streaming output must equal whole-body substitution output")
 }
 
 func TestValidateResolutions(t *testing.T) {

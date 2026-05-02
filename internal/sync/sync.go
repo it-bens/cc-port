@@ -215,15 +215,15 @@ func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*Pul
 // computeUnresolved diffs the archive's declared placeholders against
 // every available source of resolution: the caller's --resolution map,
 // the optional --from-manifest metadata, and the sender's own pre-filled
-// Resolve values inside the archive's manifest. The implicit
-// {{PROJECT_PATH}} (importer.ProjectPathKey) is always treated as
-// resolved because importer.Run injects it from TargetPath. Returns the
-// list of declared keys that have no resolution, in alphabetical order.
+// Resolve values inside the archive's manifest. Implicit keys (see
+// importer.IsImplicitKey) are always treated as resolved because
+// importer.Run supplies them. Returns the list of declared keys that have
+// no resolution, in alphabetical order.
 //
 // Honoring the sender's Resolve mirrors cc-port import's non-interactive
-// behavior (cmd/cc-port/importcmd.go:promptImportResolutions uses
-// placeholder.Resolve when no flag overrides it). An operator can still
-// override per key via --resolution.
+// behavior: cmd/cc-port hands the same placeholder.Resolve into the
+// importer.ResolvePlaceholders prompter closure when no flag overrides it.
+// An operator can still override per key via --resolution.
 func computeUnresolved(
 	declared []manifest.Placeholder,
 	resolutions map[string]string,
@@ -233,6 +233,9 @@ func computeUnresolved(
 	covered := make(map[string]bool, len(declared))
 	for _, placeholder := range declared {
 		if placeholder.Resolve != "" {
+			covered[placeholder.Key] = true
+		}
+		if importer.IsImplicitKey(placeholder.Key) {
 			covered[placeholder.Key] = true
 		}
 	}
@@ -248,7 +251,6 @@ func computeUnresolved(
 			}
 		}
 	}
-	covered[importer.ProjectPathKey] = true
 
 	var missing []string
 	for _, placeholder := range declared {
@@ -274,7 +276,30 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 		return nil, errors.New("sync.ExecutePull: plan is nil")
 	}
 
-	merged := mergeResolutions(opts.FromManifest, opts.Resolutions)
+	// Pure merge of manifest-derived defaults and the caller-supplied
+	// opts.Resolutions; flag/prompted values overlay manifest values per key.
+	// importer.ResolvePlaceholders is the wrong tool here: it does not know
+	// about opts.Resolutions and would error on keys covered only by --resolution
+	// (no --from-manifest) when no prompter is supplied. computeUnresolved
+	// already enforced that every declared key is covered for --apply.
+	merged := make(map[string]string)
+	if opts.FromManifest != nil {
+		for _, placeholder := range opts.FromManifest.Placeholders {
+			if importer.IsImplicitKey(placeholder.Key) {
+				continue
+			}
+			if placeholder.Resolve == "" {
+				continue
+			}
+			merged[placeholder.Key] = placeholder.Resolve
+		}
+	}
+	for key, value := range opts.Resolutions {
+		if value == "" {
+			continue
+		}
+		merged[key] = value
+	}
 
 	result, err := importer.Run(ctx, opts.ClaudeHome, importer.Options{
 		Source:      source.ReaderAt,
@@ -286,35 +311,6 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 		return nil, fmt.Errorf("sync.ExecutePull: import: %w", err)
 	}
 	return result, nil
-}
-
-// mergeResolutions builds the resolutions map ExecutePull hands to
-// importer.Run. The sender-supplied {{PROJECT_PATH}} is dropped because
-// importer.Run injects it from TargetPath; a sender resolve would point
-// at the sender's disk and silently misroute every reference in the
-// pulled bodies. Same refusal as cmd/cc-port/parseResolutionFlags.
-// Empty Resolve values are skipped so importer.ValidateResolutions does
-// not see a phantom empty entry for a key the operator never resolved.
-// Flag values overlay manifest values per key.
-func mergeResolutions(fromManifest *manifest.Metadata, flagResolutions map[string]string) map[string]string {
-	merged := make(map[string]string)
-	if fromManifest != nil {
-		for _, placeholder := range fromManifest.Placeholders {
-			if placeholder.Key == importer.ProjectPathKey {
-				continue
-			}
-			if placeholder.Resolve == "" {
-				continue
-			}
-			merged[placeholder.Key] = placeholder.Resolve
-		}
-	}
-	for key, value := range flagResolutions {
-		if value != "" {
-			merged[key] = value
-		}
-	}
-	return merged
 }
 
 // Sentinel errors surfaced by Plan and Execute. See README §Plan-and-execute split.

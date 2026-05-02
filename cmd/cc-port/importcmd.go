@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -75,21 +74,9 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				}
 			}()
 
-			var resolutions map[string]string
-			if fromManifest != "" {
-				metadata, err := manifest.ReadManifest(fromManifest)
-				if err != nil {
-					return fmt.Errorf("read manifest: %w", err)
-				}
-				resolutions = resolutionsFromManifest(metadata, targetPath)
-				for key, value := range flagResolutions {
-					resolutions[key] = value
-				}
-			} else {
-				resolutions, err = promptImportResolutions(source.ReaderAt, source.Size, targetPath, flagResolutions)
-				if err != nil {
-					return err
-				}
+			resolutions, err := composeImportResolutions(source, fromManifest, flagResolutions)
+			if err != nil {
+				return err
 			}
 
 			importOptions := importer.Options{
@@ -223,68 +210,6 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 	return nil
 }
 
-func promptImportResolutions(
-	archiveSource io.ReaderAt,
-	archiveSize int64,
-	targetPath string,
-	preResolved map[string]string,
-) (map[string]string, error) {
-	metadata, err := manifest.ReadManifestFromZip(archiveSource, archiveSize)
-	if err != nil {
-		return nil, fmt.Errorf("read manifest from zip: %w", err)
-	}
-
-	resolutions := make(map[string]string, len(metadata.Placeholders))
-
-	for _, placeholder := range metadata.Placeholders {
-		if placeholder.Key == importer.ProjectPathKey {
-			resolutions[placeholder.Key] = targetPath
-			continue
-		}
-
-		if value, ok := preResolved[placeholder.Key]; ok {
-			resolutions[placeholder.Key] = value
-			continue
-		}
-
-		if placeholder.Resolve != "" {
-			resolutions[placeholder.Key] = placeholder.Resolve
-			continue
-		}
-
-		resolved, err := ui.ResolvePlaceholder(placeholder.Key, placeholder.Original, "")
-		if err != nil {
-			return nil, err
-		}
-		resolutions[placeholder.Key] = resolved
-	}
-
-	return resolutions, nil
-}
-
-// resolutionsFromManifest copies pre-filled placeholder Resolve values
-// into the resolutions map, then forces {{PROJECT_PATH}} to targetPath.
-// A sender-supplied {{PROJECT_PATH}} is dropped because importer.Run
-// injects it from the import target; a sender resolve would point at
-// the sender's disk and silently misroute references in the pulled
-// bodies. Same refusal as parseResolutionFlags. Empty Resolve values
-// are skipped so importer.ValidateResolutions does not see phantom
-// entries for keys the operator never resolved.
-func resolutionsFromManifest(metadata *manifest.Metadata, targetPath string) map[string]string {
-	resolutions := make(map[string]string, len(metadata.Placeholders))
-	for _, placeholder := range metadata.Placeholders {
-		if placeholder.Key == importer.ProjectPathKey {
-			continue
-		}
-		if placeholder.Resolve == "" {
-			continue
-		}
-		resolutions[placeholder.Key] = placeholder.Resolve
-	}
-	resolutions[importer.ProjectPathKey] = targetPath
-	return resolutions
-}
-
 // parseResolutionFlags parses --resolution flag values into a map. {{PROJECT_PATH}} is
 // refused because importer.Run injects it unconditionally from the target
 // argument; a flag override would desync the two.
@@ -308,11 +233,11 @@ func parseResolutionFlags(raw []string) (map[string]string, error) {
 				entry,
 			)
 		}
-		if key == importer.ProjectPathKey {
+		if importer.IsImplicitKey(key) {
 			return nil, fmt.Errorf(
 				"--resolution %s is not allowed: "+
 					"the import target argument supplies this key",
-				importer.ProjectPathKey,
+				key,
 			)
 		}
 		if _, duplicate := parsed[key]; duplicate {
@@ -321,4 +246,64 @@ func parseResolutionFlags(raw []string) (map[string]string, error) {
 		parsed[key] = value
 	}
 	return parsed, nil
+}
+
+// composeImportResolutions reads the archive's manifest, optionally loads a
+// --from-manifest override, builds a Prompter that prefers --resolution flags
+// and manifest-declared defaults before falling back to ui.ResolvePlaceholder,
+// and delegates the merge to importer.ResolvePlaceholders. Flag values overlay
+// the orchestrator's output so they win for keys the manifest had populated.
+func composeImportResolutions(
+	source pipeline.Source, fromManifest string, flagResolutions map[string]string,
+) (map[string]string, error) {
+	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
+	if err != nil {
+		return nil, fmt.Errorf("read manifest from zip: %w", err)
+	}
+
+	var fromManifestMeta *manifest.Metadata
+	if fromManifest != "" {
+		fromManifestMeta, err = manifest.ReadManifest(fromManifest)
+		if err != nil {
+			return nil, fmt.Errorf("read manifest: %w", err)
+		}
+	}
+
+	unresolved := make([]string, 0, len(metadata.Placeholders))
+	declaredByKey := make(map[string]manifest.Placeholder, len(metadata.Placeholders))
+	for _, placeholder := range metadata.Placeholders {
+		unresolved = append(unresolved, placeholder.Key)
+		declaredByKey[placeholder.Key] = placeholder
+	}
+
+	prompter := func(stillUnresolved []string) (map[string]string, error) {
+		out := make(map[string]string, len(stillUnresolved))
+		for _, key := range stillUnresolved {
+			if value, ok := flagResolutions[key]; ok {
+				out[key] = value
+				continue
+			}
+			declared := declaredByKey[key]
+			if declared.Resolve != "" {
+				out[key] = declared.Resolve
+				continue
+			}
+			resolved, err := ui.ResolvePlaceholder(key, declared.Original, "")
+			if err != nil {
+				return nil, err
+			}
+			out[key] = resolved
+		}
+		return out, nil
+	}
+
+	resolutions, err := importer.ResolvePlaceholders(unresolved, fromManifestMeta, prompter)
+	if err != nil {
+		return nil, err
+	}
+	// Flag values overlay manifest-derived values per key.
+	for key, value := range flagResolutions {
+		resolutions[key] = value
+	}
+	return resolutions, nil
 }

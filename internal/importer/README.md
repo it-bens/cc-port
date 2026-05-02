@@ -9,9 +9,11 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 ## Public API
 
 - `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) error`: import an archive end-to-end. Reads the archive via `zip.NewReader` on `Options.Source`. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure.
+- `ResolvePlaceholders(unresolved []string, fromManifest *manifest.Metadata, prompter Prompter) (map[string]string, error)`: compose a resolution map from the plan's unresolved keys, optional `--from-manifest` metadata, and a caller-supplied `Prompter`. Filters implicit keys, merges manifest-known non-empty values, and delegates remaining keys to the prompter. The byte-level token substitution helper used inside `Run` is unexported.
+- `IsImplicitKey(key string) bool`: predicate exposing the implicit-key set without leaking the constant. Callers refuse user-supplied resolutions for these keys and treat them as already-resolved when computing unresolved sets.
+- `Prompter`: function type `func(unresolved []string) (map[string]string, error)` the orchestrator calls when keys remain after the manifest merge. cmd constructs one that delegates to `internal/ui`.
 - `ClassifyPlaceholders(bodies [][]byte, declared []manifest.Placeholder, resolutions map[string]string) (missing, undeclared []string)`: diff the archive's declared placeholders against the caller's resolutions and the bodies' embedded tokens. Returns alphabetically sorted slices of missing declared keys and undeclared upper-snake tokens.
-- `ResolvePlaceholders(content []byte, resolutions map[string]string) []byte`: substitute every declared `{{KEY}}` in a body. Used by the in-memory merge paths (history appends, config block).
-- `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`: same substitution semantics as `ResolvePlaceholders` but reader-to-writer. Peak memory is bounded by the longest placeholder key, not by the body size. Used by the staging paths that write directly to a sibling temp (sessions, memory, session-keyed categories).
+- `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`: reader-to-writer placeholder substitution. Peak memory is bounded by the longest placeholder key, not by the body size. Used by the staging paths that write directly to a sibling temp (sessions, memory, session-keyed categories).
 - `ValidateResolutions(resolutions map[string]string) error`: syntactic validation of caller-supplied resolutions (non-empty, absolute paths only).
 - `CheckConflict(encodedProjectDir string) error`: refuse the import if the encoded target directory already exists. Also refuse when existence cannot be determined (e.g. a permission error on an intermediate component). Only a clean "does not exist" returns `nil`.
 - `BuildHistoryBytes(existing []byte, appends [][]byte) []byte`: pure byte concatenation used by staging to compute the merged history bytes before atomic promote. No I/O, no lock.
@@ -193,7 +195,7 @@ Unit tests in `importer_test.go` and `resolve_test.go`. Coverage:
 - aggregate-size rejection (4 GiB aggregate cap) with the same small-override plus `-tags large` sibling split.
 - streaming placeholder replacer: passthrough when resolutions are empty, single and boundary positions, longest-match across prefix keys, and token straddling a buffered-reader fill boundary (chunk-reader wrapper).
 
-Fuzz target in `resolve_fuzz_test.go`. `FuzzResolvePlaceholders` asserts no-panic, empty-map identity, absent-key identity, and the length-accounting invariant `len(out) == len(in) + count*(len(value)-len(key))`.
+Fuzz target in `resolve_fuzz_test.go`. `FuzzApplyResolutions` asserts no-panic, empty-map identity, absent-key identity, and the length-accounting invariant `len(out) == len(in) + count*(len(value)-len(key))`.
 
 The stronger "key bytes never survive" claim is not asserted. Under adversarial inputs `bytes.ReplaceAll` can reconstruct a key at a substitution boundary. That cannot happen under the production `{{UPPER_SNAKE}}` grammar where values are absolute filesystem paths.
 

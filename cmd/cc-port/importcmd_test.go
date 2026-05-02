@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
@@ -79,36 +78,6 @@ func TestParseResolutionFlags_SuggestsManifestWorkflow(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no '=' found")
 	assert.Contains(t, err.Error(), "cc-port import manifest")
-}
-
-func TestResolutionsFromManifest_DropsSenderProjectPath(t *testing.T) {
-	targetPath := "/Users/me/Projects/local"
-	metadata := &manifest.Metadata{
-		Placeholders: []manifest.Placeholder{
-			{Key: importer.ProjectPathKey, Original: "/Users/sender/Projects/sender-project", Resolve: "/Users/sender/Projects/sender-project"},
-			{Key: "{{HOME}}", Original: "/Users/sender", Resolve: "/Users/me"},
-		},
-	}
-
-	resolutions := resolutionsFromManifest(metadata, targetPath)
-
-	assert.Equal(t, targetPath, resolutions[importer.ProjectPathKey])
-	assert.Equal(t, "/Users/me", resolutions["{{HOME}}"])
-}
-
-func TestResolutionsFromManifest_SkipsEmptyResolveValues(t *testing.T) {
-	targetPath := "/Users/me/Projects/local"
-	metadata := &manifest.Metadata{
-		Placeholders: []manifest.Placeholder{
-			{Key: "{{HOME}}", Original: "/Users/sender"}, // Resolve empty
-		},
-	}
-
-	resolutions := resolutionsFromManifest(metadata, targetPath)
-
-	_, present := resolutions["{{HOME}}"]
-	assert.False(t, present, "empty Resolve values must not be written into the map")
-	assert.Equal(t, targetPath, resolutions[importer.ProjectPathKey])
 }
 
 func TestImportManifestCmd_HasOutputFlag(t *testing.T) {

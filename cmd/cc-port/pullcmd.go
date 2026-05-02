@@ -10,6 +10,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/encrypt"
+	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
@@ -230,52 +231,48 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 	return opts, r, passphrase, nil
 }
 
-// resolveAndReplan prompts for every unresolved placeholder, merges the
-// answers into opts.Resolutions, and recomputes the plan against the same
-// source. The second PlanPull call is load-bearing: render and the
-// apply-time guard both read plan.UnresolvedPlaceholders, so they must
-// reflect the prompted resolutions.
+// resolveAndReplan composes resolutions for every unresolved placeholder
+// via importer.ResolvePlaceholders, merges the result into opts.Resolutions,
+// and recomputes the plan against the same source. The second PlanPull call
+// is load-bearing: render and the apply-time guard both read
+// plan.UnresolvedPlaceholders, so they must reflect the prompted resolutions.
 func resolveAndReplan(
 	ctx context.Context, opts *syncc.PullOptions, plan *syncc.PullPlan, source pipeline.Source,
 ) (*syncc.PullPlan, error) {
-	prompted, err := promptPullResolutions(plan, opts.Resolutions)
+	declaredByKey := make(map[string]manifest.Placeholder, len(plan.DeclaredPlaceholders))
+	for _, placeholder := range plan.DeclaredPlaceholders {
+		declaredByKey[placeholder.Key] = placeholder
+	}
+	prompter := func(stillUnresolved []string) (map[string]string, error) {
+		out := make(map[string]string, len(stillUnresolved))
+		for _, key := range stillUnresolved {
+			declared, ok := declaredByKey[key]
+			if !ok {
+				return nil, fmt.Errorf("placeholder %s reported unresolved but not declared in archive", key)
+			}
+			resolved, err := ui.ResolvePlaceholder(key, declared.Original, "")
+			if err != nil {
+				return nil, err
+			}
+			out[key] = resolved
+		}
+		return out, nil
+	}
+
+	resolutions, err := importer.ResolvePlaceholders(plan.UnresolvedPlaceholders, opts.FromManifest, prompter)
 	if err != nil {
 		return nil, err
 	}
-	for key, value := range prompted {
+	for key, value := range resolutions {
+		if value == "" {
+			continue
+		}
 		opts.Resolutions[key] = value
 	}
+
 	refreshed, err := syncc.PlanPull(ctx, *opts, source)
 	if err != nil {
 		return nil, err
 	}
 	return refreshed, nil
-}
-
-// promptPullResolutions prompts for each unresolved placeholder via
-// ui.ResolvePlaceholder. Mirrors cmd/cc-port/importcmd.go:promptImportResolutions:
-// the original value is shown verbatim, the entered value is taken with
-// no validation. The returned map only contains the prompted-for keys;
-// callers merge it into the existing flag map.
-func promptPullResolutions(plan *syncc.PullPlan, flagResolutions map[string]string) (map[string]string, error) {
-	declaredByKey := make(map[string]manifest.Placeholder, len(plan.DeclaredPlaceholders))
-	for _, placeholder := range plan.DeclaredPlaceholders {
-		declaredByKey[placeholder.Key] = placeholder
-	}
-	prompted := make(map[string]string, len(plan.UnresolvedPlaceholders))
-	for _, key := range plan.UnresolvedPlaceholders {
-		if _, alreadyResolved := flagResolutions[key]; alreadyResolved {
-			continue
-		}
-		declared, ok := declaredByKey[key]
-		if !ok {
-			return nil, fmt.Errorf("placeholder %s reported unresolved but not declared in archive", key)
-		}
-		resolved, err := ui.ResolvePlaceholder(key, declared.Original, "")
-		if err != nil {
-			return nil, err
-		}
-		prompted[key] = resolved
-	}
-	return prompted, nil
 }
