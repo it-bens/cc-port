@@ -20,16 +20,15 @@ import (
 // lived inside internal/export as "close archive file".
 type closeFailingSinkStage struct{}
 
-func (s *closeFailingSinkStage) Open(_ context.Context, _ io.Writer) (io.WriteCloser, error) {
-	return &closeFailingWriter{}, nil
+func (s *closeFailingSinkStage) Open(_ context.Context, _ io.Writer) (io.Writer, io.Closer, error) {
+	return io.Discard, &closeFailingCloser{}, nil
 }
 
 func (s *closeFailingSinkStage) Name() string { return "close-failing-sink" }
 
-type closeFailingWriter struct{}
+type closeFailingCloser struct{}
 
-func (w *closeFailingWriter) Write(p []byte) (int, error) { return len(p), nil }
-func (w *closeFailingWriter) Close() error {
+func (c *closeFailingCloser) Close() error {
 	return errors.New("synthetic sink close failure")
 }
 

@@ -113,15 +113,14 @@ func allCategoriesCmdSet() manifest.CategorySet {
 
 type cmdBytesSink struct{ buf *bytes.Buffer }
 
-func (s *cmdBytesSink) Open(_ context.Context, _ io.Writer) (io.WriteCloser, error) {
-	return &cmdBytesSinkCloser{buf: s.buf}, nil
+func (s *cmdBytesSink) Open(_ context.Context, _ io.Writer) (io.Writer, io.Closer, error) {
+	return s.buf, &cmdBytesSinkCloser{}, nil
 }
 func (s *cmdBytesSink) Name() string { return "bytes sink" }
 
-type cmdBytesSinkCloser struct{ buf *bytes.Buffer }
+type cmdBytesSinkCloser struct{}
 
-func (b *cmdBytesSinkCloser) Write(p []byte) (int, error) { return b.buf.Write(p) }
-func (b *cmdBytesSinkCloser) Close() error                { return nil }
+func (b *cmdBytesSinkCloser) Close() error { return nil }
 
 // TestSyncCmdHelpersSmoke wires every helper at least once. Tasks 9 and
 // 10 add the behavior-driven tests; this smoke test exists today so the

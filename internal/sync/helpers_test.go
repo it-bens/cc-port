@@ -163,15 +163,14 @@ func uploadBytes(t *testing.T, r *remote.Remote, name string, body []byte) {
 // flush guarantees.
 type bufferSink struct{ buf *bytes.Buffer }
 
-func (s *bufferSink) Open(_ context.Context, _ io.Writer) (io.WriteCloser, error) {
-	return &bufferSinkCloser{buf: s.buf}, nil
+func (s *bufferSink) Open(_ context.Context, _ io.Writer) (io.Writer, io.Closer, error) {
+	return s.buf, &bufferSinkCloser{}, nil
 }
 func (s *bufferSink) Name() string { return "buffer sink" }
 
-type bufferSinkCloser struct{ buf *bytes.Buffer }
+type bufferSinkCloser struct{}
 
-func (b *bufferSinkCloser) Write(p []byte) (int, error) { return b.buf.Write(p) }
-func (b *bufferSinkCloser) Close() error                { return nil }
+func (b *bufferSinkCloser) Close() error { return nil }
 
 // openPriorForTest opens the prior reader pipeline for sync_test.go. Mirrors
 // cmd's openPriorRead success path: returns *PriorRead on a readable prior,
@@ -218,10 +217,10 @@ func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeli
 
 // openWriterForTest opens the writer pipeline for ExecutePush tests.
 // Returns the outermost io.WriteCloser; the caller owns Close. No
-// t.Cleanup safety net: encrypt.encryptingWriteCloser, encrypt.passthroughWriteCloser,
-// and gocloud's *blob.Writer are all non-idempotent on Close, and the
-// upload commits inside that explicit Close, so a missed Close is a
-// test bug the caller must surface.
+// t.Cleanup safety net: pipeline.RunWriter wraps the chain in an
+// idempotent close that delegates to the bucket writer, but the upload
+// commits inside that explicit Close, so a missed Close is a test bug
+// the caller must surface.
 func openWriterForTest(t *testing.T, r *remote.Remote, name, pass string) io.WriteCloser {
 	t.Helper()
 	w, err := pipeline.RunWriter(context.Background(), []pipeline.WriterStage{

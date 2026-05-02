@@ -8,7 +8,7 @@
 - `Mode = Strict` is the default for read-side import paths; `Mode = Permissive` is reserved for sync push prior-read. Never use Permissive on import paths (README §Stage dispatch).
 - `WriterStage` self-skips on empty `Pass` via a passthrough writer; the cmd layer always includes the stage. Never make inclusion conditional in callers (README §Passphrase mode only).
 - `ReaderStage` materializes plaintext into a `0600` tempfile in `os.TempDir()`. Never widen perms or relocate (README §Tempfile lifecycle).
-- `Source.Close` MUST stay idempotent and chain to upstream.Close. Cleanup failures return; never panic (README §Tempfile lifecycle).
+- ReaderStage's returned io.Closer closes the tempfile and removes it. Idempotency lives in the runner; never add a `closed` flag to the stage (README §Tempfile lifecycle).
 - Add asymmetric (X25519) support as a separate spec, never as a flag on the existing functions (README §Passphrase mode only).
 
 ## Navigation

@@ -10,8 +10,8 @@ Streaming wrappers around `filippo.io/age` for cc-port archives plus self-skippi
 - `DecryptingReader(src, passphrase) (io.Reader, error)`: yields plaintext from `src`. Auth failures surface on `Read` as `ErrPassphrase`.
 - `IsEncrypted(header) bool`: reports whether `header` begins with the age v1 binary-format prefix. Buffers shorter than `MinPeekLen` return false.
 - `MinPeekLen`: minimum buffer length `IsEncrypted` accepts.
-- `WriterStage{Pass}`: `pipeline.WriterStage`. Encrypts plaintext into `downstream` when `Pass` is non-empty and returns a passthrough writer when `Pass` is empty. Both paths cascade `Close` to `downstream` so the leaf sink (typically `file.Sink`'s `*os.File`) closes when the caller closes the outermost writer. The cmd layer always includes this stage in its writer pipeline.
-- `ReaderStage{Pass, Mode}`: `pipeline.ReaderStage` that owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch matrix. Peeks the upstream's first 32 bytes and decrypts, passes through, or returns a sentinel error per the matrix below. `Mode` selects between `Strict` (default) and `Permissive`. Decryption materializes plaintext into a `0600` tempfile, and `Source.Close` removes it and chains to upstream.
+- `WriterStage{Pass}`: `pipeline.WriterStage`. Encrypts plaintext into `downstream` when `Pass` is non-empty (returns the age writer as both writer and closer); returns `downstream` unchanged with a nil closer when `Pass` is empty (passthrough). The cmd layer always includes this stage in its writer pipeline.
+- `ReaderStage{Pass, Mode}`: `pipeline.ReaderStage` that owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch matrix. Peeks the upstream's first 32 bytes and decrypts (returning the tempfile as the new View plus an io.Closer that removes it), passes through (returning upstream with a nil closer), or returns a sentinel error per the matrix below. `Mode` selects between `Strict` (default) and `Permissive`. Decryption materializes plaintext into a `0600` tempfile; the runner walks the close cascade.
 - `(*ReaderStage).WasEncrypted() bool`: reports whether the most recent `Open` dispatched the encrypted branch. Read after a successful `Open`; stale after a failed `Open`. Used by `internal/sync` push prior-read to populate `PushPlan.PriorEncrypted` truthfully.
 - `Mode`: enum with `Strict` and `Permissive`. `Strict` refuses plaintext-with-pass with `ErrUnencryptedInput`. `Permissive` accepts plaintext-with-pass silently. Cmd-layer read paths (`import`, `import manifest`, sync `pull`) compose with `Strict`. Sync `push` prior-read composes with `Permissive`. `Strict` is the zero value, so an unset `Mode` field means `Strict`.
 - `ErrPassphrase`: wrong passphrase, tamper, or truncation. age conflates these by design.
@@ -61,7 +61,7 @@ Distinguishing wrong-passphrase from tampered-file at the API surface. age confl
 | no  | non-empty | `ErrUnencryptedInput`    | passthrough              |
 | no  | empty     | passthrough              | passthrough              |
 
-Mismatch cells (`ErrPassphraseRequired`, `ErrUnencryptedInput`) and decrypt-failure paths return the sentinel without closing upstream. `pipeline.RunReader` closes the upstream Source on stage error. Tempfile cleanup (close + remove) on the decrypt-failure path stays inside the stage because the tempfile is the stage's own resource.
+Mismatch cells (`ErrPassphraseRequired`, `ErrUnencryptedInput`) and decrypt-failure paths return `(pipeline.View{}, nil, sentinel)`. `pipeline.RunReader` closes any closers accumulated so far. Tempfile cleanup (close + remove) on the decrypt-failure path stays inside the stage because the tempfile is the stage's own resource.
 
 #### Refused
 
@@ -75,7 +75,7 @@ Bytes that match the age magic prefix but are not actual age archives. The decry
 
 #### Handled
 
-`ReaderStage.Open` materializes plaintext into `os.TempDir()` with mode `0600`. The returned `Source.Close` removes the tempfile and chains to upstream, and a second call returns nil.
+`ReaderStage.Open` materializes plaintext into `os.TempDir()` with mode `0600`. `ReaderStage.Open` returns an `io.Closer` that closes the file and removes the tempfile, joining errors via `errors.Join`. The runner owns idempotency.
 
 #### Refused
 
@@ -87,6 +87,6 @@ SIGKILL between `ReaderStage.Open` and `Source.Close` leaves a tempfile in `os.T
 
 ## Tests
 
-`encrypt_test.go` covers round-trip on sizes 0/1/1 MiB, wrong-passphrase rejection, tamper rejection, truncation rejection, and magic-byte detection. `stages_test.go` covers `WriterStage` round-trip via `RunWriter`, the empty-Pass passthrough, the full `ReaderStage` matrix under `Strict` and the differing cell under `Permissive`, tempfile cleanup with idempotent Close, mode `0600` verification, decrypt close cascade, and stage `Name()` reporting.
+`encrypt_test.go` covers round-trip on sizes 0/1/1 MiB, wrong-passphrase rejection, tamper rejection, truncation rejection, and magic-byte detection. `stages_test.go` covers `WriterStage` round-trip via `RunWriter`, the empty-Pass passthrough, the full `ReaderStage` matrix under `Strict` and the differing cell under `Permissive`, tempfile cleanup, mode `0600` verification, and stage `Name()` reporting. The runner-level cascade and idempotency contracts live in `internal/pipeline/pipeline_test.go`.
 
 Coverage target: 90% or above.
