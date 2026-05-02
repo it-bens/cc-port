@@ -112,9 +112,10 @@ func TestResolutionsFromManifest_SkipsEmptyResolveValues(t *testing.T) {
 }
 
 func TestImportManifestCmd_HasOutputFlag(t *testing.T) {
-	flag := importManifestCmd.Flags().Lookup("output")
+	cmd := newImportManifestCmd()
+	flag := cmd.Flags().Lookup("output")
 	require.NotNil(t, flag, "import manifest --output must be registered")
-	short := importManifestCmd.Flags().ShorthandLookup("o")
+	short := cmd.Flags().ShorthandLookup("o")
 	require.NotNil(t, short, "import manifest -o must be registered")
 	assert.Equal(t, "manifest.xml", flag.DefValue)
 }
@@ -122,27 +123,30 @@ func TestImportManifestCmd_HasOutputFlag(t *testing.T) {
 func TestImportManifestCmd_OverwriteGuard(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "pre-existing.xml")
 	require.NoError(t, os.WriteFile(outPath, []byte("x"), 0o600))
-	require.NoError(t, importManifestCmd.Flags().Set("output", outPath))
-	t.Cleanup(func() { _ = importManifestCmd.Flags().Set("output", "manifest.xml") })
+	cmd := newImportManifestCmd()
+	require.NoError(t, cmd.Flags().Set("output", outPath))
 	archivePath := buildMinimalArchive(t)
 
-	err := runImportManifest(importManifestCmd, []string{archivePath})
+	err := runImportManifest(cmd, []string{archivePath})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
 }
 
 func TestImportCmd_PassphraseFlagsRegistered(t *testing.T) {
-	require.NotNil(t, importCmd.Flags().Lookup("passphrase-env"),
+	var claudeDir string
+	cmd := newImportCmd(&claudeDir)
+	require.NotNil(t, cmd.Flags().Lookup("passphrase-env"),
 		"--passphrase-env should be registered on import")
-	require.NotNil(t, importCmd.Flags().Lookup("passphrase-file"),
+	require.NotNil(t, cmd.Flags().Lookup("passphrase-file"),
 		"--passphrase-file should be registered on import")
 }
 
 func TestImportManifestCmd_PassphraseFlagsRegistered(t *testing.T) {
-	require.NotNil(t, importManifestCmd.Flags().Lookup("passphrase-env"),
+	cmd := newImportManifestCmd()
+	require.NotNil(t, cmd.Flags().Lookup("passphrase-env"),
 		"--passphrase-env should be registered on import manifest")
-	require.NotNil(t, importManifestCmd.Flags().Lookup("passphrase-file"),
+	require.NotNil(t, cmd.Flags().Lookup("passphrase-file"),
 		"--passphrase-file should be registered on import manifest")
 }
 

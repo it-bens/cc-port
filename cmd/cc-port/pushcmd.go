@@ -16,29 +16,56 @@ import (
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
-var (
-	pushAsName         string
-	pushRemoteURL      string
-	pushApply          bool
-	pushForce          bool
-	pushPassphraseEnv  string
-	pushPassphraseFile string
-	pushFromManifest   string
-)
-
-var pushCmd = &cobra.Command{
-	Use:   "push <project-path>",
-	Short: "Push a project archive to a remote",
-	Long: "Pushes a cc-port export of <project-path> to a remote storage backend " +
-		"(file:// or s3://). Dry-run by default; pass --apply to commit. " +
-		"Refuses cross-machine conflicts without --force.",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
-			return &usageError{err: err}
-		}
-		return nil
-	},
-	RunE: runPushCmd,
+// newPushCmd returns the push subcommand with closure-scoped flag locals.
+// claudeDir points at the persistent root flag's local; runPushCmd reads
+// it via *claudeDir at call time. resolvePushCategoriesAndPlaceholders
+// reads --from-manifest via cmd.Flags() so a future caller can drive the
+// helper without sharing closure state.
+func newPushCmd(claudeDir *string) *cobra.Command {
+	var (
+		asName         string
+		remoteURL      string
+		apply          bool
+		force          bool
+		passphraseEnv  string
+		passphraseFile string
+		fromManifest   string
+	)
+	cmd := &cobra.Command{
+		Use:   "push <project-path>",
+		Short: "Push a project archive to a remote",
+		Long: "Pushes a cc-port export of <project-path> to a remote storage backend " +
+			"(file:// or s3://). Dry-run by default; pass --apply to commit. " +
+			"Refuses cross-machine conflicts without --force.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return &usageError{err: err}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPushCmd(cmd, args, *claudeDir)
+		},
+	}
+	cmd.Flags().StringVar(&asName, "as", "",
+		"stable name for the archive on the remote")
+	cmd.Flags().StringVar(&remoteURL, "remote", "",
+		"remote URL (file://path or s3://bucket?region=...)")
+	cmd.Flags().BoolVar(&apply, "apply", false,
+		"commit the upload (default is dry-run)")
+	cmd.Flags().BoolVar(&force, "force", false,
+		"override cross-machine conflict refusal")
+	cmd.Flags().StringVar(&passphraseEnv, "passphrase-env", "",
+		"name of env var containing the encryption passphrase "+
+			"(mutually exclusive with --passphrase-file)")
+	cmd.Flags().StringVar(&passphraseFile, "passphrase-file", "",
+		"path to a file containing the encryption passphrase "+
+			"(mutually exclusive with --passphrase-env)")
+	cmd.Flags().StringVar(&fromManifest, "from-manifest", "",
+		"path to a manifest XML with categories and placeholder declarations")
+	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
+	registerCategoryFlags(cmd, "push")
+	return cmd
 }
 
 // openPriorRead opens the prior reader pipeline for the cross-machine check.
@@ -73,15 +100,22 @@ func openPriorRead(
 // runPushCmd is the push subcommand body. The named return + deferred
 // closes pattern is load-bearing: prior.Source.Close releases the
 // decrypt-tempfile, and writer.Close commits the upload via remote.Sink.
-func runPushCmd(cmd *cobra.Command, args []string) (err error) {
-	if pushAsName == "" {
+func runPushCmd(cmd *cobra.Command, args []string, claudeDir string) (err error) {
+	asName, _ := cmd.Flags().GetString("as")
+	remoteURL, _ := cmd.Flags().GetString("remote")
+	apply, _ := cmd.Flags().GetBool("apply")
+	force, _ := cmd.Flags().GetBool("force")
+	passphraseEnv, _ := cmd.Flags().GetString("passphrase-env")
+	passphraseFile, _ := cmd.Flags().GetString("passphrase-file")
+
+	if asName == "" {
 		return &usageError{err: errors.New("--as <name> is required")}
 	}
-	if pushRemoteURL == "" {
+	if remoteURL == "" {
 		return &usageError{err: errors.New("--remote <url> is required")}
 	}
 
-	passphrase, err := resolvePassphrase(pushPassphraseEnv, pushPassphraseFile)
+	passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)
 	if err != nil {
 		return err
 	}
@@ -102,7 +136,7 @@ func runPushCmd(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	ctx := cmd.Context()
-	r, err := remote.New(ctx, pushRemoteURL)
+	r, err := remote.New(ctx, remoteURL)
 	if err != nil {
 		return err
 	}
@@ -115,14 +149,14 @@ func runPushCmd(cmd *cobra.Command, args []string) (err error) {
 	opts := syncc.PushOptions{
 		ClaudeHome:        claudeHome,
 		ProjectPath:       projectPath,
-		Name:              pushAsName,
+		Name:              asName,
 		Categories:        categories,
 		Placeholders:      placeholders,
-		Force:             pushForce,
+		Force:             force,
 		EncryptionEnabled: passphrase != "",
 	}
 
-	prior, err := openPriorRead(ctx, r, pushAsName, passphrase, pushForce)
+	prior, err := openPriorRead(ctx, r, asName, passphrase, force)
 	if err != nil {
 		return err
 	}
@@ -142,7 +176,7 @@ func runPushCmd(cmd *cobra.Command, args []string) (err error) {
 		return fmt.Errorf("render plan: %w", err)
 	}
 
-	if !pushApply {
+	if !apply {
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); err != nil {
 			return fmt.Errorf("write apply hint: %w", err)
 		}
@@ -207,8 +241,9 @@ func applyPush(
 func resolvePushCategoriesAndPlaceholders(
 	cmd *cobra.Command, claudeHome *claude.Home, projectPath string,
 ) (manifest.CategorySet, []manifest.Placeholder, error) {
-	if pushFromManifest != "" {
-		metadata, err := manifest.ReadManifest(pushFromManifest)
+	fromManifest, _ := cmd.Flags().GetString("from-manifest")
+	if fromManifest != "" {
+		metadata, err := manifest.ReadManifest(fromManifest)
 		if err != nil {
 			return manifest.CategorySet{}, nil, fmt.Errorf("read manifest: %w", err)
 		}
@@ -241,26 +276,4 @@ func resolvePushCategoriesAndPlaceholders(
 		return manifest.CategorySet{}, nil, err
 	}
 	return categories, placeholders, nil
-}
-
-func init() {
-	pushCmd.Flags().StringVar(&pushAsName, "as", "",
-		"stable name for the archive on the remote")
-	pushCmd.Flags().StringVar(&pushRemoteURL, "remote", "",
-		"remote URL (file://path or s3://bucket?region=...)")
-	pushCmd.Flags().BoolVar(&pushApply, "apply", false,
-		"commit the upload (default is dry-run)")
-	pushCmd.Flags().BoolVar(&pushForce, "force", false,
-		"override cross-machine conflict refusal")
-	pushCmd.Flags().StringVar(&pushPassphraseEnv, "passphrase-env", "",
-		"name of env var containing the encryption passphrase "+
-			"(mutually exclusive with --passphrase-file)")
-	pushCmd.Flags().StringVar(&pushPassphraseFile, "passphrase-file", "",
-		"path to a file containing the encryption passphrase "+
-			"(mutually exclusive with --passphrase-env)")
-	pushCmd.Flags().StringVar(&pushFromManifest, "from-manifest", "",
-		"path to a manifest XML with categories and placeholder declarations")
-	pushCmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
-	registerCategoryFlags(pushCmd, "push")
-	rootCmd.AddCommand(pushCmd)
 }

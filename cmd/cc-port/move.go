@@ -16,37 +16,51 @@ import (
 // movecmd_test.go via withMoveSeams.
 var findActive = lock.FindActive
 
-var moveApply bool
+// newMoveCmd returns the move subcommand with closure-scoped flag locals.
+// claudeDir points at the persistent root flag's local; cobra populates
+// it on flag parse, so the RunE closure must dereference at call time.
+func newMoveCmd(claudeDir *string) *cobra.Command {
+	var apply bool
+	cmd := &cobra.Command{
+		Use:   "move <old-path> <new-path>",
+		Short: "Move a project and update Claude Code references",
+		Long: "Renames a project directory and rewrites all Claude Code references.\n" +
+			"Default is dry-run — use --apply to execute.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+				return &usageError{err: err}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 
-var moveCmd = &cobra.Command{
-	Use:   "move <old-path> <new-path>",
-	Short: "Move a project and update Claude Code references",
-	Long: "Renames a project directory and rewrites all Claude Code references.\n" +
-		"Default is dry-run — use --apply to execute.",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(2)(cmd, args); err != nil {
-			return &usageError{err: err}
-		}
-		return nil
-	},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
+			moveOptions, err := parseMoveOptions(cmd, args)
+			if err != nil {
+				return err
+			}
 
-		moveOptions, err := parseMoveOptions(cmd, args)
-		if err != nil {
-			return err
-		}
+			claudeHome, err := claude.NewHome(*claudeDir)
+			if err != nil {
+				return err
+			}
 
-		claudeHome, err := claude.NewHome(claudeDir)
-		if err != nil {
-			return err
-		}
-
-		if !moveApply {
-			return runMoveDryRun(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), claudeHome, moveOptions)
-		}
-		return move.Apply(ctx, claudeHome, moveOptions)
-	},
+			if !apply {
+				return runMoveDryRun(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), claudeHome, moveOptions)
+			}
+			return move.Apply(ctx, claudeHome, moveOptions)
+		},
+	}
+	cmd.Flags().BoolVar(&apply, "apply", false, "execute the move (default is dry-run)")
+	cmd.Flags().Bool(
+		"refs-only", false,
+		"update references only, do not move project directory on disk",
+	)
+	cmd.Flags().Bool(
+		"rewrite-transcripts", false,
+		"also rewrite paths in session transcripts",
+	)
+	return cmd
 }
 
 // parseMoveOptions turns the cobra command + positional args into a
@@ -72,19 +86,6 @@ func parseMoveOptions(cmd *cobra.Command, args []string) (move.Options, error) {
 		RefsOnly:           refsOnly,
 		RewriteTranscripts: rewriteTranscripts,
 	}, nil
-}
-
-func init() {
-	moveCmd.Flags().BoolVar(&moveApply, "apply", false, "execute the move (default is dry-run)")
-	moveCmd.Flags().Bool(
-		"refs-only", false,
-		"update references only, do not move project directory on disk",
-	)
-	moveCmd.Flags().Bool(
-		"rewrite-transcripts", false,
-		"also rewrite paths in session transcripts",
-	)
-	rootCmd.AddCommand(moveCmd)
 }
 
 func runMoveDryRun(

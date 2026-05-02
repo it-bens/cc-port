@@ -20,108 +20,154 @@ import (
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
-var (
-	importFromManifest           string
-	importResolutionKV           []string
-	importManifestOutput         string
-	importPassphraseEnv          string
-	importPassphraseFile         string
-	importManifestPassphraseEnv  string
-	importManifestPassphraseFile string
-)
-
-var importCmd = &cobra.Command{
-	Use:   "import <archive.zip> <target-path>",
-	Short: "Import a project from a cc-port ZIP archive",
-	Long:  "Imports Claude Code project data from a ZIP archive into the given target path.",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(2)(cmd, args); err != nil {
-			return &usageError{err: err}
-		}
-		return nil
-	},
-	RunE: func(cmd *cobra.Command, args []string) (err error) {
-		archivePath := args[0]
-		targetPath, err := claude.ResolveProjectPath(args[1])
-		if err != nil {
-			return fmt.Errorf("resolve target path: %w", err)
-		}
-
-		claudeHome, err := claude.NewHome(claudeDir)
-		if err != nil {
-			return err
-		}
-
-		flagResolutions, err := parseResolutionFlags(importResolutionKV)
-		if err != nil {
-			return err
-		}
-
-		passphrase, err := resolvePassphrase(importPassphraseEnv, importPassphraseFile)
-		if err != nil {
-			return err
-		}
-
-		source, err := pipeline.RunReader(cmd.Context(), []pipeline.ReaderStage{
-			&file.Source{Path: archivePath},
-			&encrypt.ReaderStage{Pass: passphrase, Mode: encrypt.Strict},
-		})
-		if err != nil {
-			return fmt.Errorf("open archive source: %w", err)
-		}
-		defer func() {
-			if cerr := source.Close(); cerr != nil {
-				err = errors.Join(err, fmt.Errorf("close archive source: %w", cerr))
+// newImportCmd returns the import subcommand with closure-scoped flag
+// locals. claudeDir points at the persistent root flag's local; cobra
+// populates it on flag parse, so the RunE closure must dereference at
+// call time.
+func newImportCmd(claudeDir *string) *cobra.Command {
+	var (
+		fromManifest   string
+		resolutionKV   []string
+		passphraseEnv  string
+		passphraseFile string
+	)
+	cmd := &cobra.Command{
+		Use:   "import <archive.zip> <target-path>",
+		Short: "Import a project from a cc-port ZIP archive",
+		Long:  "Imports Claude Code project data from a ZIP archive into the given target path.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+				return &usageError{err: err}
 			}
-		}()
-
-		var resolutions map[string]string
-		if importFromManifest != "" {
-			metadata, err := manifest.ReadManifest(importFromManifest)
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			archivePath := args[0]
+			targetPath, err := claude.ResolveProjectPath(args[1])
 			if err != nil {
-				return fmt.Errorf("read manifest: %w", err)
+				return fmt.Errorf("resolve target path: %w", err)
 			}
-			resolutions = resolutionsFromManifest(metadata, targetPath)
-			for key, value := range flagResolutions {
-				resolutions[key] = value
-			}
-		} else {
-			resolutions, err = promptImportResolutions(source.ReaderAt, source.Size, targetPath, flagResolutions)
+
+			claudeHome, err := claude.NewHome(*claudeDir)
 			if err != nil {
 				return err
 			}
-		}
 
-		importOptions := importer.Options{
-			Source:      source.ReaderAt,
-			Size:        source.Size,
-			TargetPath:  targetPath,
-			Resolutions: resolutions,
-		}
+			flagResolutions, err := parseResolutionFlags(resolutionKV)
+			if err != nil {
+				return err
+			}
 
-		if err := importer.Run(cmd.Context(), claudeHome, importOptions); err != nil {
-			return fmt.Errorf("import: %w", err)
-		}
+			passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)
+			if err != nil {
+				return err
+			}
 
-		fmt.Printf("Imported to %s\n", targetPath)
+			source, err := pipeline.RunReader(cmd.Context(), []pipeline.ReaderStage{
+				&file.Source{Path: archivePath},
+				&encrypt.ReaderStage{Pass: passphrase, Mode: encrypt.Strict},
+			})
+			if err != nil {
+				return fmt.Errorf("open archive source: %w", err)
+			}
+			defer func() {
+				if cerr := source.Close(); cerr != nil {
+					err = errors.Join(err, fmt.Errorf("close archive source: %w", cerr))
+				}
+			}()
 
-		printImportRulesWarnings(claudeHome, targetPath)
+			var resolutions map[string]string
+			if fromManifest != "" {
+				metadata, err := manifest.ReadManifest(fromManifest)
+				if err != nil {
+					return fmt.Errorf("read manifest: %w", err)
+				}
+				resolutions = resolutionsFromManifest(metadata, targetPath)
+				for key, value := range flagResolutions {
+					resolutions[key] = value
+				}
+			} else {
+				resolutions, err = promptImportResolutions(source.ReaderAt, source.Size, targetPath, flagResolutions)
+				if err != nil {
+					return err
+				}
+			}
 
-		return nil
-	},
+			importOptions := importer.Options{
+				Source:      source.ReaderAt,
+				Size:        source.Size,
+				TargetPath:  targetPath,
+				Resolutions: resolutions,
+			}
+
+			if err := importer.Run(cmd.Context(), claudeHome, importOptions); err != nil {
+				return fmt.Errorf("import: %w", err)
+			}
+
+			fmt.Printf("Imported to %s\n", targetPath)
+
+			printImportRulesWarnings(claudeHome, targetPath)
+
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(
+		&fromManifest, "from-manifest", "",
+		"path to a manifest XML file with pre-filled resolutions",
+	)
+	cmd.Flags().StringArrayVar(
+		&resolutionKV, "resolution", nil,
+		"resolve a placeholder non-interactively (repeatable; KEY=VALUE, "+
+			"e.g. --resolution '{{HOME}}=/Users/me'). When combined with "+
+			"--from-manifest, flag values win per key.",
+	)
+	cmd.Flags().StringVar(
+		&passphraseEnv, "passphrase-env", "",
+		"name of the environment variable holding the passphrase "+
+			"(mutually exclusive with --passphrase-file)",
+	)
+	cmd.Flags().StringVar(
+		&passphraseFile, "passphrase-file", "",
+		"path to a file holding the passphrase, trailing newlines trimmed "+
+			"(mutually exclusive with --passphrase-env)",
+	)
+	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
+
+	cmd.AddCommand(newImportManifestCmd())
+	return cmd
 }
 
-var importManifestCmd = &cobra.Command{
-	Use:   "manifest <archive.zip>",
-	Short: "Write a manifest XML from a ZIP archive for manual editing",
-	Long:  "Reads the metadata from a ZIP archive and writes a manifest XML with empty resolve fields for hand-editing.",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
-			return &usageError{err: err}
-		}
-		return nil
-	},
-	RunE: runImportManifest,
+// newImportManifestCmd returns the `import manifest` subcommand. Output
+// and passphrase flag values live as closure-scoped locals on the cmd;
+// runImportManifest reads them via cmd.Flags().GetString.
+func newImportManifestCmd() *cobra.Command {
+	var (
+		output         string
+		passphraseEnv  string
+		passphraseFile string
+	)
+	cmd := &cobra.Command{
+		Use:   "manifest <archive.zip>",
+		Short: "Write a manifest XML from a ZIP archive for manual editing",
+		Long:  "Reads the metadata from a ZIP archive and writes a manifest XML with empty resolve fields for hand-editing.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return &usageError{err: err}
+			}
+			return nil
+		},
+		RunE: runImportManifest,
+	}
+	cmd.Flags().StringVarP(&output, "output", "o", "manifest.xml",
+		"path to write the manifest XML")
+	cmd.Flags().StringVar(&passphraseEnv, "passphrase-env", "",
+		"name of the environment variable holding the passphrase "+
+			"(mutually exclusive with --passphrase-file)")
+	cmd.Flags().StringVar(&passphraseFile, "passphrase-file", "",
+		"path to a file holding the passphrase, trailing newlines trimmed "+
+			"(mutually exclusive with --passphrase-env)")
+	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
+	return cmd
 }
 
 // runImportManifest is the import manifest subcommand body, extracted so
@@ -129,15 +175,19 @@ var importManifestCmd = &cobra.Command{
 // overwrite an existing output file; the user deletes it or picks a
 // different path with --output.
 func runImportManifest(cmd *cobra.Command, args []string) (err error) {
+	output, _ := cmd.Flags().GetString("output")
+	passphraseEnv, _ := cmd.Flags().GetString("passphrase-env")
+	passphraseFile, _ := cmd.Flags().GetString("passphrase-file")
+
 	archivePath := args[0]
 
-	if _, err := os.Stat(importManifestOutput); err == nil {
-		return fmt.Errorf("%s already exists; remove it or pass --output", importManifestOutput)
+	if _, err := os.Stat(output); err == nil {
+		return fmt.Errorf("%s already exists; remove it or pass --output", output)
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("stat %s: %w", importManifestOutput, err)
+		return fmt.Errorf("stat %s: %w", output, err)
 	}
 
-	passphrase, err := resolvePassphrase(importManifestPassphraseEnv, importManifestPassphraseFile)
+	passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)
 	if err != nil {
 		return err
 	}
@@ -164,54 +214,13 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 		metadata.Placeholders[i].Resolve = ""
 	}
 
-	if err := manifest.WriteManifest(importManifestOutput, metadata); err != nil {
+	if err := manifest.WriteManifest(output, metadata); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
-	fmt.Printf("Manifest written to %s\n", importManifestOutput)
+	fmt.Printf("Manifest written to %s\n", output)
 	fmt.Println("Edit the resolve attributes and use --from-manifest to import.")
 	return nil
-}
-
-func init() {
-	importCmd.Flags().StringVar(
-		&importFromManifest, "from-manifest", "",
-		"path to a manifest XML file with pre-filled resolutions",
-	)
-	importCmd.Flags().StringArrayVar(
-		&importResolutionKV, "resolution", nil,
-		"resolve a placeholder non-interactively (repeatable; KEY=VALUE, "+
-			"e.g. --resolution '{{HOME}}=/Users/me'). When combined with "+
-			"--from-manifest, flag values win per key.",
-	)
-	importCmd.Flags().StringVar(
-		&importPassphraseEnv, "passphrase-env", "",
-		"name of the environment variable holding the passphrase "+
-			"(mutually exclusive with --passphrase-file)",
-	)
-	importCmd.Flags().StringVar(
-		&importPassphraseFile, "passphrase-file", "",
-		"path to a file holding the passphrase, trailing newlines trimmed "+
-			"(mutually exclusive with --passphrase-env)",
-	)
-	importCmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
-	importManifestCmd.Flags().StringVarP(
-		&importManifestOutput, "output", "o", "manifest.xml",
-		"path to write the manifest XML",
-	)
-	importManifestCmd.Flags().StringVar(
-		&importManifestPassphraseEnv, "passphrase-env", "",
-		"name of the environment variable holding the passphrase "+
-			"(mutually exclusive with --passphrase-file)",
-	)
-	importManifestCmd.Flags().StringVar(
-		&importManifestPassphraseFile, "passphrase-file", "",
-		"path to a file holding the passphrase, trailing newlines trimmed "+
-			"(mutually exclusive with --passphrase-env)",
-	)
-	importManifestCmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
-	importCmd.AddCommand(importManifestCmd)
-	rootCmd.AddCommand(importCmd)
 }
 
 func promptImportResolutions(

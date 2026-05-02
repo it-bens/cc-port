@@ -5,30 +5,32 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// captureRootCmd redirects rootCmd's output and error streams to a
-// shared buffer and resets the command's arg vector on test completion.
-// Package-level rootCmd state is shared across tests; the cleanup keeps
-// a test's configuration from leaking into its neighbors.
-func captureRootCmd(t *testing.T, args []string) *bytes.Buffer {
+// captureRootCmd builds a fresh rootCmd via newRootCmd(), redirects its
+// output and error streams to a shared buffer, and sets the arg vector.
+// Each test owns its rootCmd, so flag state cannot leak across tests.
+func captureRootCmd(t *testing.T, args []string) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 	var buffer bytes.Buffer
+	rootCmd := newRootCmd()
 	rootCmd.SetOut(&buffer)
 	rootCmd.SetErr(&buffer)
 	rootCmd.SetArgs(args)
-	t.Cleanup(func() { rootCmd.SetArgs(nil) })
-	return &buffer
+	return rootCmd, &buffer
 }
 
 func TestRootCommand_SilenceUsageOnRuntimeError(t *testing.T) {
+	rootCmd := newRootCmd()
 	require.True(t, rootCmd.SilenceUsage, "rootCmd must silence usage on runtime errors")
 	require.True(t, rootCmd.SilenceErrors, "rootCmd must silence error print (main owns it)")
 }
 
 func TestRootCommand_VersionFlagPresent(t *testing.T) {
+	rootCmd := newRootCmd()
 	assert.NotEmpty(t, rootCmd.Version, "rootCmd.Version must be set so --version registers")
 }
 
@@ -43,7 +45,7 @@ func TestUsageError_IsIdentifiable(t *testing.T) {
 }
 
 func TestRootCommandVersionFlagPrintsVersion(t *testing.T) {
-	buffer := captureRootCmd(t, []string{"--version"})
+	rootCmd, buffer := captureRootCmd(t, []string{"--version"})
 
 	require.NoError(t, rootCmd.Execute())
 
@@ -53,7 +55,7 @@ func TestRootCommandVersionFlagPrintsVersion(t *testing.T) {
 }
 
 func TestRootCommandHelpFlagPrintsUsageAndCommands(t *testing.T) {
-	buffer := captureRootCmd(t, []string{"--help"})
+	rootCmd, buffer := captureRootCmd(t, []string{"--help"})
 
 	require.NoError(t, rootCmd.Execute())
 
@@ -68,7 +70,7 @@ func TestRootCommandHelpFlagPrintsUsageAndCommands(t *testing.T) {
 }
 
 func TestVersionSubcommandPrintsVersion(t *testing.T) {
-	buffer := captureRootCmd(t, []string{"version"})
+	rootCmd, buffer := captureRootCmd(t, []string{"version"})
 
 	require.NoError(t, rootCmd.Execute())
 

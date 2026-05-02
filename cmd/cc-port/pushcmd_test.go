@@ -46,7 +46,7 @@ func pushTestManifestPath(t *testing.T) string {
 }
 
 func TestPush_RejectsMissingAsFlag(t *testing.T) {
-	resetPushFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{"push", "/tmp/x", "--remote", "mem://"})
 
 	err := rootCmd.Execute()
@@ -59,7 +59,7 @@ func TestPush_RejectsMissingAsFlag(t *testing.T) {
 }
 
 func TestPush_RejectsMissingRemoteFlag(t *testing.T) {
-	resetPushFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{"push", "/tmp/x", "--as", "name"})
 
 	err := rootCmd.Execute()
@@ -76,10 +76,9 @@ func TestPush_DryRunDoesNotUpload(t *testing.T) {
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
 	manifestPath := pushTestManifestPath(t)
 
-	resetPushFlags(t)
+	rootCmd := newRootCmd()
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
-	t.Cleanup(func() { rootCmd.SetOut(nil) })
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -111,7 +110,7 @@ func TestPush_ApplyCommitsToRemote(t *testing.T) {
 	manifestPath := pushTestManifestPath(t)
 	url := "file://" + t.TempDir()
 
-	resetPushFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -139,7 +138,7 @@ func TestPush_CrossMachineRefusesWithoutForce(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "other-host-other-user")
 
-	resetPushFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -163,7 +162,7 @@ func TestPush_ForceOverridesCrossMachineRefusal(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "other-host-other-user")
 
-	resetPushFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -239,26 +238,4 @@ func TestOpenPriorRead_PlaintextReturnsPriorReadWithoutEncryptedFlag(t *testing.
 	if prior.WasEncrypted {
 		t.Fatal("WasEncrypted = true, want false for plaintext archive")
 	}
-}
-
-// resetPushFlags zeros every package-level cobra flag var the push
-// command binds, plus the rootCmd persistent --claude-dir, and clears
-// every category boolean registered through registerCategoryFlags.
-// Cobra retains flag values across rootCmd.Execute calls when flags
-// share package state, so a previous test's --claude-dir or --apply
-// would leak into the next test without this reset.
-func resetPushFlags(t *testing.T) {
-	t.Helper()
-	pushAsName = ""
-	pushRemoteURL = ""
-	pushApply = false
-	pushForce = false
-	pushPassphraseEnv = ""
-	pushPassphraseFile = ""
-	pushFromManifest = ""
-	claudeDir = ""
-	for _, spec := range manifest.AllCategories {
-		_ = pushCmd.Flags().Set(spec.Name, "false")
-	}
-	_ = pushCmd.Flags().Set("all", "false")
 }

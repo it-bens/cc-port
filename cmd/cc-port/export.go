@@ -20,85 +20,112 @@ import (
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
-var (
-	exportOutput         string
-	exportFromManifest   string
-	exportManifestOutput string
-	exportPassphraseEnv  string
-	exportPassphraseFile string
-)
-
-var exportCmd = &cobra.Command{
-	Use:   "export <project-path>",
-	Short: "Export a project to a portable ZIP archive",
-	Long:  "Exports Claude Code project data to a ZIP archive with path anonymization.",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
-			return &usageError{err: err}
-		}
-		return nil
-	},
-	RunE: func(cmd *cobra.Command, args []string) (err error) {
-		exportOptions, outputPath, err := parseExportOptions(cmd, args)
-		if err != nil {
-			return err
-		}
-
-		claudeHome, err := claude.NewHome(claudeDir)
-		if err != nil {
-			return err
-		}
-
-		var placeholders []manifest.Placeholder
-		if exportOptions.FromManifest != "" {
-			metadata, err := manifest.ReadManifest(exportOptions.FromManifest)
-			if err != nil {
-				return fmt.Errorf("read manifest: %w", err)
+// newExportCmd returns the export subcommand with closure-scoped flag
+// locals. claudeDir points at the persistent root flag's local; cobra
+// populates it on flag parse, so the RunE closure must dereference at
+// call time. The export manifest subcommand is attached here so the
+// caller wires both with one AddCommand.
+func newExportCmd(claudeDir *string) *cobra.Command {
+	var (
+		output         string
+		fromManifest   string
+		passphraseEnv  string
+		passphraseFile string
+	)
+	cmd := &cobra.Command{
+		Use:   "export <project-path>",
+		Short: "Export a project to a portable ZIP archive",
+		Long:  "Exports Claude Code project data to a ZIP archive with path anonymization.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return &usageError{err: err}
 			}
-			exportOptions.Categories, err = manifest.ApplyCategoryEntries(metadata.Export.Categories)
-			if err != nil {
-				return fmt.Errorf("categories from manifest: %w", err)
-			}
-			placeholders = metadata.Placeholders
-		} else {
-			placeholders, err = discoverAndPromptPlaceholders(claudeHome, exportOptions.ProjectPath)
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			exportOptions, outputPath, err := parseExportOptions(cmd, args)
 			if err != nil {
 				return err
 			}
-		}
-		exportOptions.Placeholders = placeholders
 
-		printExportRulesWarnings(claudeHome, exportOptions.ProjectPath)
+			claudeHome, err := claude.NewHome(*claudeDir)
+			if err != nil {
+				return err
+			}
 
-		passphrase, err := resolvePassphrase(exportPassphraseEnv, exportPassphraseFile)
-		if err != nil {
-			return err
-		}
+			var placeholders []manifest.Placeholder
+			if exportOptions.FromManifest != "" {
+				metadata, err := manifest.ReadManifest(exportOptions.FromManifest)
+				if err != nil {
+					return fmt.Errorf("read manifest: %w", err)
+				}
+				exportOptions.Categories, err = manifest.ApplyCategoryEntries(metadata.Export.Categories)
+				if err != nil {
+					return fmt.Errorf("categories from manifest: %w", err)
+				}
+				placeholders = metadata.Placeholders
+			} else {
+				placeholders, err = discoverAndPromptPlaceholders(claudeHome, exportOptions.ProjectPath)
+				if err != nil {
+					return err
+				}
+			}
+			exportOptions.Placeholders = placeholders
 
-		result, err := runExportWithStages(
-			cmd.Context(), claudeHome, &exportOptions,
-			[]pipeline.WriterStage{
-				&encrypt.WriterStage{Pass: passphrase},
-				&file.Sink{Path: outputPath},
-			},
-		)
-		if err != nil {
-			return err
-		}
+			printExportRulesWarnings(claudeHome, exportOptions.ProjectPath)
 
-		if snapshotCount := len(result.FileHistory); snapshotCount > 0 {
-			fmt.Fprintf(
-				os.Stderr,
-				"Warning: %d file-history snapshot(s) archived as-is. "+
-					"Contents may still reference the original project path "+
-					"(used for in-session rewinds, not persisted data)\n",
-				snapshotCount,
+			passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)
+			if err != nil {
+				return err
+			}
+
+			result, err := runExportWithStages(
+				cmd.Context(), claudeHome, &exportOptions,
+				[]pipeline.WriterStage{
+					&encrypt.WriterStage{Pass: passphrase},
+					&file.Sink{Path: outputPath},
+				},
 			)
-		}
+			if err != nil {
+				return err
+			}
 
-		fmt.Printf("Exported to %s\n", outputPath)
-		return nil
-	},
+			if snapshotCount := len(result.FileHistory); snapshotCount > 0 {
+				fmt.Fprintf(
+					os.Stderr,
+					"Warning: %d file-history snapshot(s) archived as-is. "+
+						"Contents may still reference the original project path "+
+						"(used for in-session rewinds, not persisted data)\n",
+					snapshotCount,
+				)
+			}
+
+			fmt.Printf("Exported to %s\n", outputPath)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path (required for export)")
+	registerCategoryFlags(cmd, "export")
+	cmd.Flags().StringVar(
+		&fromManifest, "from-manifest", "",
+		"path to a manifest XML file to read categories and placeholders from",
+	)
+	cmd.Flags().StringVar(
+		&passphraseEnv, "passphrase-env", "",
+		"name of the environment variable holding the passphrase "+
+			"(mutually exclusive with --passphrase-file)",
+	)
+	cmd.Flags().StringVar(
+		&passphraseFile, "passphrase-file", "",
+		"path to a file holding the passphrase, trailing newlines trimmed "+
+			"(mutually exclusive with --passphrase-env)",
+	)
+	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
+	// MarkFlagRequired errors only when the flag name doesn't exist; "output" was registered above.
+	_ = cmd.MarkFlagRequired("output")
+
+	cmd.AddCommand(newExportManifestCmd(claudeDir))
+	return cmd
 }
 
 // runExportWithStages composes a writer pipeline from stages, hands it to
@@ -129,17 +156,30 @@ func runExportWithStages(
 	return result, nil
 }
 
-var exportManifestCmd = &cobra.Command{
-	Use:   "manifest <project-path>",
-	Short: "Write a manifest XML for an export without creating the ZIP",
-	Long:  "Discovers placeholders and categories for the project and writes a manifest XML file.",
-	Args: func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(1)(cmd, args); err != nil {
-			return &usageError{err: err}
-		}
-		return nil
-	},
-	RunE: runExportManifest,
+// newExportManifestCmd returns the `export manifest` subcommand. claudeDir
+// points at the persistent root flag's local. Output and category flags
+// live as closure-scoped locals on the cmd; runExportManifest reads
+// --output via cmd.Flags().GetString.
+func newExportManifestCmd(claudeDir *string) *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "manifest <project-path>",
+		Short: "Write a manifest XML for an export without creating the ZIP",
+		Long:  "Discovers placeholders and categories for the project and writes a manifest XML file.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return &usageError{err: err}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runExportManifest(cmd, args, *claudeDir)
+		},
+	}
+	cmd.Flags().StringVarP(&output, "output", "o", "manifest.xml",
+		"path to write the manifest XML")
+	registerCategoryFlags(cmd, "include")
+	return cmd
 }
 
 // runExportManifest is the export manifest subcommand body, extracted so
@@ -148,11 +188,12 @@ var exportManifestCmd = &cobra.Command{
 // different path with --output. The guard runs before placeholder
 // discovery so the user is not asked to answer prompts only to fail on
 // the pre-existing output.
-func runExportManifest(cmd *cobra.Command, args []string) error {
-	if _, err := os.Stat(exportManifestOutput); err == nil {
-		return fmt.Errorf("%s already exists; remove it or pass --output", exportManifestOutput)
+func runExportManifest(cmd *cobra.Command, args []string, claudeDir string) error {
+	output, _ := cmd.Flags().GetString("output")
+	if _, err := os.Stat(output); err == nil {
+		return fmt.Errorf("%s already exists; remove it or pass --output", output)
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("stat %s: %w", exportManifestOutput, err)
+		return fmt.Errorf("stat %s: %w", output, err)
 	}
 
 	projectPath, err := claude.ResolveProjectPath(args[0])
@@ -198,43 +239,12 @@ func runExportManifest(cmd *cobra.Command, args []string) error {
 
 	metadata := buildExportMetadata(&exportOptions)
 
-	if err := manifest.WriteManifest(exportManifestOutput, metadata); err != nil {
+	if err := manifest.WriteManifest(output, metadata); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
-	fmt.Printf("Manifest written to %s\n", exportManifestOutput)
+	fmt.Printf("Manifest written to %s\n", output)
 	return nil
-}
-
-func init() {
-	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "output file path (required for export)")
-	registerCategoryFlags(exportCmd, "export")
-	exportCmd.Flags().StringVar(
-		&exportFromManifest, "from-manifest", "",
-		"path to a manifest XML file to read categories and placeholders from",
-	)
-	exportCmd.Flags().StringVar(
-		&exportPassphraseEnv, "passphrase-env", "",
-		"name of the environment variable holding the passphrase "+
-			"(mutually exclusive with --passphrase-file)",
-	)
-	exportCmd.Flags().StringVar(
-		&exportPassphraseFile, "passphrase-file", "",
-		"path to a file holding the passphrase, trailing newlines trimmed "+
-			"(mutually exclusive with --passphrase-env)",
-	)
-	exportCmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
-	// MarkFlagRequired errors only when the flag name doesn't exist; "output" was registered above.
-	_ = exportCmd.MarkFlagRequired("output")
-
-	exportManifestCmd.Flags().StringVarP(
-		&exportManifestOutput, "output", "o", "manifest.xml",
-		"path to write the manifest XML",
-	)
-	registerCategoryFlags(exportManifestCmd, "include")
-
-	exportCmd.AddCommand(exportManifestCmd)
-	rootCmd.AddCommand(exportCmd)
 }
 
 // parseExportOptions turns the cobra command + positional args into an
