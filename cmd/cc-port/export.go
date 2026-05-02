@@ -78,16 +78,20 @@ func newExportCmd(claudeDir *string) *cobra.Command {
 			renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
 
 			if snapshotCount := len(result.FileHistory); snapshotCount > 0 {
-				fmt.Fprintf(
-					os.Stderr,
+				if _, err := fmt.Fprintf(
+					cmd.ErrOrStderr(),
 					"Warning: %d file-history snapshot(s) archived as-is. "+
 						"Contents may still reference the original project path "+
 						"(used for in-session rewinds, not persisted data)\n",
 					snapshotCount,
-				)
+				); err != nil {
+					return fmt.Errorf("write file-history warning: %w", err)
+				}
 			}
 
-			fmt.Printf("Exported to %s\n", outputPath)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Exported to %s\n", outputPath); err != nil {
+				return fmt.Errorf("write success line: %w", err)
+			}
 			return nil
 		},
 	}
@@ -230,7 +234,9 @@ func runExportManifest(cmd *cobra.Command, args []string, claudeDir string) erro
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
-	fmt.Printf("Manifest written to %s\n", output)
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Manifest written to %s\n", output); err != nil {
+		return fmt.Errorf("write success line: %w", err)
+	}
 	return nil
 }
 

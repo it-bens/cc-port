@@ -91,7 +91,9 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				return fmt.Errorf("import: %w", err)
 			}
 
-			fmt.Printf("Imported to %s\n", targetPath)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Imported to %s\n", targetPath); err != nil {
+				return fmt.Errorf("write success line: %w", err)
+			}
 
 			renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
 
@@ -205,8 +207,12 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
-	fmt.Printf("Manifest written to %s\n", output)
-	fmt.Println("Edit the resolve attributes and use --from-manifest to import.")
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Manifest written to %s\n", output); err != nil {
+		return fmt.Errorf("write success line: %w", err)
+	}
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Edit the resolve attributes and use --from-manifest to import."); err != nil {
+		return fmt.Errorf("write follow-up hint: %w", err)
+	}
 	return nil
 }
 
