@@ -72,8 +72,6 @@ func newExportCmd(claudeDir *string) *cobra.Command {
 			}
 			exportOptions.Placeholders = placeholders
 
-			printExportRulesWarnings(claudeHome, exportOptions.ProjectPath)
-
 			passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)
 			if err != nil {
 				return err
@@ -89,6 +87,8 @@ func newExportCmd(claudeDir *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
 
 			if snapshotCount := len(result.FileHistory); snapshotCount > 0 {
 				fmt.Fprintf(
@@ -229,7 +229,7 @@ func runExportManifest(cmd *cobra.Command, args []string, claudeDir string) erro
 		return err
 	}
 
-	printExportRulesWarnings(claudeHome, projectPath)
+	renderRulesReport(cmd.ErrOrStderr(), "", scan.ScanReport(claudeHome.RulesDir(), projectPath))
 
 	exportOptions := export.Options{
 		ProjectPath:  projectPath,
@@ -407,22 +407,6 @@ func resolveSuggestions(suggestions []export.PlaceholderSuggestion) ([]manifest.
 		})
 	}
 	return placeholders, nil
-}
-
-// printExportRulesWarnings scans the rules directory for references to projectPath
-// and prints any warnings found.
-func printExportRulesWarnings(claudeHome *claude.Home, projectPath string) {
-	warnings, err := scan.Rules(claudeHome.RulesDir(), projectPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not scan rules files: %v\n", err)
-		return
-	}
-	if len(warnings) > 0 {
-		fmt.Println("Warning: Rules files with matching paths:")
-		for _, warning := range warnings {
-			fmt.Printf("  %s (line %d)\n", warning.File, warning.Line)
-		}
-	}
 }
 
 func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {

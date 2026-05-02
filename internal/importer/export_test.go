@@ -17,7 +17,8 @@ func RunWithRenameHook(
 	renameHook func(oldpath, newpath string) error,
 ) error {
 	importOptions.renameHook = renameHook
-	return Run(ctx, claudeHome, importOptions)
+	_, err := Run(ctx, claudeHome, importOptions)
+	return err
 }
 
 // MaxArchiveBytes returns the live aggregate decompressed-size cap.

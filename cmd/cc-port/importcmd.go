@@ -16,7 +16,6 @@ import (
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
-	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
@@ -100,13 +99,14 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				Resolutions: resolutions,
 			}
 
-			if err := importer.Run(cmd.Context(), claudeHome, importOptions); err != nil {
+			result, err := importer.Run(cmd.Context(), claudeHome, importOptions)
+			if err != nil {
 				return fmt.Errorf("import: %w", err)
 			}
 
 			fmt.Printf("Imported to %s\n", targetPath)
 
-			printImportRulesWarnings(claudeHome, targetPath)
+			renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
 
 			return nil
 		},
@@ -321,18 +321,4 @@ func parseResolutionFlags(raw []string) (map[string]string, error) {
 		parsed[key] = value
 	}
 	return parsed, nil
-}
-
-func printImportRulesWarnings(claudeHome *claude.Home, targetPath string) {
-	warnings, err := scan.Rules(claudeHome.RulesDir(), targetPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not scan rules files: %v\n", err)
-		return
-	}
-	if len(warnings) > 0 {
-		fmt.Println("Warning: Rules files with matching paths:")
-		for _, warning := range warnings {
-			fmt.Printf("  %s (line %d)\n", warning.File, warning.Line)
-		}
-	}
 }

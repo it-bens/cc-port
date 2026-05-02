@@ -8,6 +8,8 @@ Read-only scanner for `~/.claude/rules/*.md`.
 
 - `Rules(rulesDir string, paths ...string) ([]Warning, error)`: scans every `.md` directly inside `rulesDir` for occurrences of any given path and returns per-line `Warning` entries.
 - `Warning`: struct with fields `File` (base filename, not full path), `Line` (1-based), `Text` (full line content), and `Path` (the search path that matched).
+- `Report`: struct with fields `Warnings []Warning` and `Err error`. Canonical bundle the cmd-layer renders; `Err` is non-fatal so callers surface both fields without aborting.
+- `ScanReport(rulesDir string, paths ...string) Report`: calls `Rules` and wraps the result as a `Report`. Convenience for callers that hand the bundle straight to a renderer.
 
 ## Contracts
 

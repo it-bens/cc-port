@@ -267,23 +267,25 @@ func computeUnresolved(
 // opens the source and owns the defer Close. The same source instance is
 // passed to PlanPull and ExecutePull; pipeline.Source.ReaderAt supports
 // repeated reads, so manifest reads in Plan and body reads in importer.Run
-// share one materialized tempfile.
-func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source pipeline.Source) error {
+// share one materialized tempfile. The returned *importer.Result carries
+// the post-import rules-scan; cmd renders it through renderRulesReport.
+func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source pipeline.Source) (*importer.Result, error) {
 	if plan == nil {
-		return errors.New("sync.ExecutePull: plan is nil")
+		return nil, errors.New("sync.ExecutePull: plan is nil")
 	}
 
 	merged := mergeResolutions(opts.FromManifest, opts.Resolutions)
 
-	if err := importer.Run(ctx, opts.ClaudeHome, importer.Options{
+	result, err := importer.Run(ctx, opts.ClaudeHome, importer.Options{
 		Source:      source.ReaderAt,
 		Size:        source.Size,
 		TargetPath:  opts.TargetPath,
 		Resolutions: merged,
-	}); err != nil {
-		return fmt.Errorf("sync.ExecutePull: import: %w", err)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sync.ExecutePull: import: %w", err)
 	}
-	return nil
+	return result, nil
 }
 
 // mergeResolutions builds the resolutions map ExecutePull hands to

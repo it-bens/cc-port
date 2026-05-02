@@ -265,7 +265,7 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 	if len(planB.UnresolvedPlaceholders) != 0 {
 		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders)
 	}
-	if err := ExecutePull(context.Background(), PullOptions{
+	if _, err := ExecutePull(context.Background(), PullOptions{
 		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
 		Resolutions: defaultResolutionsForTest(t),
 	}, planB, source); err != nil {

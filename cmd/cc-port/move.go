@@ -214,11 +214,8 @@ func renderPlanWarnings(stdout io.Writer, movePlan *move.Plan) {
 		_, _ = fmt.Fprintln(stdout, "  │")
 	}
 
-	if len(movePlan.RulesWarnings) > 0 {
-		_, _ = fmt.Fprintf(stdout, "  └ Warning: Rules files with matching paths:\n")
-		for _, warning := range movePlan.RulesWarnings {
-			_, _ = fmt.Fprintf(stdout, "      %s (line %d)\n", warning.File, warning.Line)
-		}
+	if len(movePlan.RulesReport.Warnings) > 0 {
+		renderRulesReport(stdout, "  └ ", movePlan.RulesReport)
 	} else {
 		_, _ = fmt.Fprintf(stdout, "  └ No rules file warnings\n")
 	}

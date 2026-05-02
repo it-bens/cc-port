@@ -155,9 +155,11 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		)
 	}
 
-	if err := syncc.ExecutePull(ctx, opts, plan, source); err != nil {
+	result, err := syncc.ExecutePull(ctx, opts, plan, source)
+	if err != nil {
 		return err
 	}
+	renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Pulled: %s\n", opts.TargetPath); err != nil {
 		return fmt.Errorf("write pull confirmation: %w", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/transport"
 )
 
@@ -67,6 +68,11 @@ type Result struct {
 	UsageData   []ArchiveEntry
 	PluginsData []ArchiveEntry
 	Tasks       []ArchiveEntry
+
+	// RulesReport carries the scan of ~/.claude/rules/*.md for paths
+	// matching ProjectPath. Populated unconditionally inside Run, before
+	// any archive bytes are written.
+	RulesReport scan.Report
 }
 
 // categoryEntriesByName returns a pointer to the Result slice that receives
@@ -119,6 +125,8 @@ func Run(
 	if err != nil {
 		return result, fmt.Errorf("locate project: %w", err)
 	}
+
+	result.RulesReport = scan.ScanReport(claudeHome.RulesDir(), exportOptions.ProjectPath)
 
 	archiveWriter := zip.NewWriter(exportOptions.Output)
 	defer func() {
