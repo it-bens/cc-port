@@ -45,6 +45,24 @@ func pushTestManifestPath(t *testing.T) string {
 	return path
 }
 
+func TestPush_RejectsFromManifestWithCategoryFlag(t *testing.T) {
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"push", "/Users/test/Projects/myproject",
+		"--as", "myproj",
+		"--remote", "mem://",
+		"--from-manifest", "/tmp/m.xml",
+		"--sessions",
+	})
+
+	err := rootCmd.Execute()
+
+	require.Error(t, err)
+	if !strings.Contains(err.Error(), "--from-manifest is mutually exclusive") {
+		t.Fatalf("err = %v, want exclusivity error", err)
+	}
+}
+
 func TestPush_RejectsMissingAsFlag(t *testing.T) {
 	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{"push", "/tmp/x", "--remote", "mem://"})

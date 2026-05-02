@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -53,23 +52,11 @@ func newExportCmd(claudeDir *string) *cobra.Command {
 				return err
 			}
 
-			var placeholders []manifest.Placeholder
-			if exportOptions.FromManifest != "" {
-				metadata, err := manifest.ReadManifest(exportOptions.FromManifest)
-				if err != nil {
-					return fmt.Errorf("read manifest: %w", err)
-				}
-				exportOptions.Categories, err = manifest.ApplyCategoryEntries(metadata.Export.Categories)
-				if err != nil {
-					return fmt.Errorf("categories from manifest: %w", err)
-				}
-				placeholders = metadata.Placeholders
-			} else {
-				placeholders, err = discoverAndPromptPlaceholders(claudeHome, exportOptions.ProjectPath)
-				if err != nil {
-					return err
-				}
+			categories, placeholders, err := applyCategorySelection(cmd, claudeHome, exportOptions.ProjectPath)
+			if err != nil {
+				return err
 			}
+			exportOptions.Categories = categories
 			exportOptions.Placeholders = placeholders
 
 			passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)
@@ -247,11 +234,10 @@ func runExportManifest(cmd *cobra.Command, args []string, claudeDir string) erro
 	return nil
 }
 
-// parseExportOptions turns the cobra command + positional args into an
-// export.Options and the destination path the cmd-layer uses to compose
-// the output pipeline. Pure: does not load manifests or discover
-// placeholders. Callers handle those side effects based on the returned
-// FromManifest value.
+// parseExportOptions resolves the project path and the output destination
+// from positional args plus the --output flag. Returns a partial Options
+// (ProjectPath, FromManifest) and the output path. Categories and
+// Placeholders are filled in by applyCategorySelection in the caller.
 func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, string, error) {
 	projectPath, err := claude.ResolveProjectPath(args[0])
 	if err != nil {
@@ -259,48 +245,8 @@ func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, stri
 	}
 	output, _ := cmd.Flags().GetString("output")
 	fromManifest, _ := cmd.Flags().GetString("from-manifest")
-
-	if fromManifest != "" {
-		var conflicts []string
-		if cmd.Flags().Changed("all") {
-			conflicts = append(conflicts, "--all")
-		}
-		for _, spec := range manifest.AllCategories {
-			if cmd.Flags().Changed(spec.Name) {
-				conflicts = append(conflicts, "--"+spec.Name)
-			}
-		}
-		if len(conflicts) > 0 {
-			return export.Options{}, "", fmt.Errorf(
-				"--from-manifest is mutually exclusive with %s; pass one or the other",
-				strings.Join(conflicts, ", "),
-			)
-		}
-	}
-
-	var categories manifest.CategorySet
-	if fromManifest == "" {
-		categories, err = resolveCategoriesFromCmd(cmd)
-		if err != nil {
-			return export.Options{}, "", err
-		}
-		anySet := false
-		for _, spec := range manifest.AllCategories {
-			if spec.Value(&categories) {
-				anySet = true
-				break
-			}
-		}
-		if !anySet {
-			categories, err = ui.SelectCategories()
-			if err != nil {
-				return export.Options{}, "", err
-			}
-		}
-	}
 	return export.Options{
 		ProjectPath:  projectPath,
-		Categories:   categories,
 		FromManifest: fromManifest,
 	}, output, nil
 }

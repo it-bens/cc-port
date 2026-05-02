@@ -9,18 +9,16 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/encrypt"
-	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
-	"github.com/it-bens/cc-port/internal/ui"
 )
 
 // newPushCmd returns the push subcommand with closure-scoped flag locals.
 // claudeDir points at the persistent root flag's local; runPushCmd reads
-// it via *claudeDir at call time. resolvePushCategoriesAndPlaceholders
-// reads --from-manifest via cmd.Flags() so a future caller can drive the
-// helper without sharing closure state.
+// it via *claudeDir at call time. applyCategorySelection (shared with
+// newExportCmd) reads --from-manifest via cmd.Flags() and owns the
+// exclusivity guard with --all and per-category flags.
 func newPushCmd(claudeDir *string) *cobra.Command {
 	var (
 		asName         string
@@ -130,7 +128,7 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		return err
 	}
 
-	categories, placeholders, err := resolvePushCategoriesAndPlaceholders(cmd, claudeHome, projectPath)
+	categories, placeholders, err := applyCategorySelection(cmd, claudeHome, projectPath)
 	if err != nil {
 		return err
 	}
@@ -231,49 +229,4 @@ func applyPush(
 		return fmt.Errorf("write push confirmation: %w", err)
 	}
 	return nil
-}
-
-// resolvePushCategoriesAndPlaceholders mirrors cc-port export's branch:
-// --from-manifest carries categories AND placeholders; without it, read
-// categories from flags (or prompt via ui.SelectCategories when none
-// are set) and run discoverAndPromptPlaceholders for placeholder
-// confirmation.
-func resolvePushCategoriesAndPlaceholders(
-	cmd *cobra.Command, claudeHome *claude.Home, projectPath string,
-) (manifest.CategorySet, []manifest.Placeholder, error) {
-	fromManifest, _ := cmd.Flags().GetString("from-manifest")
-	if fromManifest != "" {
-		metadata, err := manifest.ReadManifest(fromManifest)
-		if err != nil {
-			return manifest.CategorySet{}, nil, fmt.Errorf("read manifest: %w", err)
-		}
-		categories, err := manifest.ApplyCategoryEntries(metadata.Export.Categories)
-		if err != nil {
-			return manifest.CategorySet{}, nil, fmt.Errorf("categories from manifest: %w", err)
-		}
-		return categories, metadata.Placeholders, nil
-	}
-
-	categories, err := resolveCategoriesFromCmd(cmd)
-	if err != nil {
-		return manifest.CategorySet{}, nil, err
-	}
-	anySet := false
-	for _, spec := range manifest.AllCategories {
-		if spec.Value(&categories) {
-			anySet = true
-			break
-		}
-	}
-	if !anySet {
-		categories, err = ui.SelectCategories()
-		if err != nil {
-			return manifest.CategorySet{}, nil, err
-		}
-	}
-	placeholders, err := discoverAndPromptPlaceholders(claudeHome, projectPath)
-	if err != nil {
-		return manifest.CategorySet{}, nil, err
-	}
-	return categories, placeholders, nil
 }

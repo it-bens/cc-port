@@ -52,6 +52,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | User-wide files are rewritten via a polymorphic registry | [`internal/claude/README.md`](../internal/claude/README.md) §User-wide registry |
 | Sync conflict-detection metadata stays inside the archive | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
 | Cross-machine push refuses without `--force`              | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
+| `--from-manifest` exclusivity with `--all` and per-category flags | [`cmd/cc-port/README.md`](../cmd/cc-port/README.md) §Category selection |
 
 ## Session-UUID-keyed user-wide data (cross-cutting)
 
