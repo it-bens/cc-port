@@ -40,9 +40,11 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Path substring rewrites respect component boundaries    | [`internal/rewrite/README.md`](../internal/rewrite/README.md)                    |
 | Project paths use a lossy encoding; collisions refused  | [`internal/claude/README.md`](../internal/claude/README.md)                      |
 | `~/.claude/rules/*.md` never rewritten in place         | [`internal/scan/README.md`](../internal/scan/README.md)                          |
+| Rules-scan output flows as `scan.Report` bundle         | [`internal/scan/README.md`](../internal/scan/README.md)                          |
 | Malformed `history.jsonl` lines preserved, not repaired | [`internal/move/README.md`](../internal/move/README.md)                          |
 | `history.jsonl` lines bounded at 16 MiB, oversized fail  | [`internal/claude/README.md`](../internal/claude/README.md) §History line cap    |
 | Archives are a closed placeholder contract              | [`internal/importer/README.md`](../internal/importer/README.md) §Import contract |
+| Placeholder resolution composition (implicit-key filter, manifest-known merge, prompter delegation) | [`internal/importer/README.md`](../internal/importer/README.md) §Public API (`ResolvePlaceholders`, `IsImplicitKey`) |
 | Every export declares all categories; unknown refused   | [`internal/manifest/README.md`](../internal/manifest/README.md) §Category manifest |
 | Import writes are atomic with rollback                  | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
 | Mutating commands lock + refuse during live sessions    | [`internal/lock/README.md`](../internal/lock/README.md)                          |
@@ -50,6 +52,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | User-wide files are rewritten via a polymorphic registry | [`internal/claude/README.md`](../internal/claude/README.md) §User-wide registry |
 | Sync conflict-detection metadata stays inside the archive | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
 | Cross-machine push refuses without `--force`              | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
+| `--from-manifest` exclusivity with `--all` and per-category flags | [`cmd/cc-port/README.md`](../cmd/cc-port/README.md) §Category selection |
 
 ## Session-UUID-keyed user-wide data (cross-cutting)
 
@@ -103,7 +106,7 @@ Per-command handling:
 
 - [`internal/move/README.md`](../internal/move/README.md) §File-history handling (move): copy-verbatim, stderr warning, stale-path-strings residual risk.
 - [`internal/export/README.md`](../internal/export/README.md) §File-history handling (export): archive-verbatim, stderr warning, privacy-of-exported-snapshots residual risk and the `--file-history=false` opt-out.
-- [`internal/importer/README.md`](../internal/importer/README.md) §File-history handling (import): write-verbatim, `ResolvePlaceholders` no-op detail on current archives.
+- [`internal/importer/README.md`](../internal/importer/README.md) §File-history handling (import): write-verbatim; placeholder substitution is skipped on file-history bodies on current archives.
 
 ## Pipeline composition (cross-cutting)
 

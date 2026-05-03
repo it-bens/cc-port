@@ -119,6 +119,42 @@ func TestRules_RejectsLineOverLimit(t *testing.T) {
 	assert.ErrorIs(t, err, bufio.ErrTooLong)
 }
 
+func TestScanReport_PassesWarnings(t *testing.T) {
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "rule.md"),
+		[]byte("path is /foo/bar\n"), 0o600)
+	require.NoError(t, err)
+
+	report := scan.ScanReport(dir, "/foo/bar")
+
+	require.NoError(t, report.Err)
+	require.Len(t, report.Warnings, 1)
+	assert.Equal(t, "rule.md", report.Warnings[0].File)
+}
+
+func TestScanReport_MissingDirReturnsNoError(t *testing.T) {
+	report := scan.ScanReport(filepath.Join(t.TempDir(), "missing"), "/x")
+
+	require.NoError(t, report.Err)
+	assert.Nil(t, report.Warnings)
+}
+
+func TestScanReport_PermissionErrorPropagatesToErr(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses permission errors")
+	}
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "rules")
+	require.NoError(t, os.Mkdir(sub, 0o000))
+	//nolint:gosec // G302: 0o755 restores readable mode so t.TempDir cleanup can recurse into the staged dir
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+
+	report := scan.ScanReport(sub, "/x")
+
+	require.Error(t, report.Err)
+	assert.Nil(t, report.Warnings)
+}
+
 type ruleFile struct {
 	name    string
 	content []byte

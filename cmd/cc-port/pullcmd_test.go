@@ -19,7 +19,7 @@ import (
 )
 
 func TestPull_RejectsMissingTo(t *testing.T) {
-	resetPullFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{"pull", "myproj", "--remote", "file:///tmp/x"})
 
 	err := rootCmd.Execute()
@@ -32,7 +32,7 @@ func TestPull_RejectsMissingTo(t *testing.T) {
 }
 
 func TestPull_RejectsMissingRemote(t *testing.T) {
-	resetPullFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{"pull", "myproj", "--to", "/tmp/x"})
 
 	err := rootCmd.Execute()
@@ -51,10 +51,9 @@ func TestPull_DryRunDoesNotImport(t *testing.T) {
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
-	resetPullFlags(t)
+	rootCmd := newRootCmd()
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
-	t.Cleanup(func() { rootCmd.SetOut(nil) })
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-dir", claudeFixtureDir,
@@ -84,7 +83,7 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
-	resetPullFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-dir", claudeFixtureDir,
@@ -114,7 +113,7 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	emptyManifestPath := filepath.Join(t.TempDir(), "empty-manifest.xml")
 	require.NoError(t, manifest.WriteManifest(emptyManifestPath, &manifest.Metadata{}))
 
-	resetPullFlags(t)
+	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-dir", claudeFixtureDir,
@@ -185,21 +184,4 @@ func TestOpenArchiveSource_PlaintextNoPassphraseSucceeds(t *testing.T) {
 	if src.Size <= 0 {
 		t.Fatalf("src.Size = %d, want > 0", src.Size)
 	}
-}
-
-// resetPullFlags zeros every package-level cobra flag var the pull
-// command binds, plus the rootCmd persistent --claude-dir. Cobra retains
-// flag values across rootCmd.Execute calls when flags share package
-// state, so a previous test's --to or --apply would leak into the next
-// test without this reset.
-func resetPullFlags(t *testing.T) {
-	t.Helper()
-	pullToPath = ""
-	pullRemoteURL = ""
-	pullApply = false
-	pullPassphraseEnv = ""
-	pullPassphraseFile = ""
-	pullResolutionKV = nil
-	pullFromManifest = ""
-	claudeDir = ""
 }

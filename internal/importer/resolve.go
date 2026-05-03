@@ -14,12 +14,24 @@ import (
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
-// ProjectPathKey is the manifest key cc-port always pre-fills with the import
-// target path. It is treated as resolved even when the caller did not list it
-// explicitly in Resolutions, because importer.Run injects it unconditionally.
-const ProjectPathKey = "{{PROJECT_PATH}}"
+// projectPathKey is the manifest key cc-port always pre-fills with the import
+// target path. Run injects it unconditionally, so it is treated as resolved
+// even when the caller did not list it explicitly. Lowercase: callers outside
+// internal/importer test membership via IsImplicitKey, not the constant.
+const projectPathKey = "{{PROJECT_PATH}}"
 
-// ResolvePlaceholders replaces each placeholder token in content with its
+// IsImplicitKey reports whether key is one of the placeholder keys importer.Run
+// supplies on its own. Callers refuse user-supplied resolutions for these keys
+// and treat them as already-resolved when computing unresolved sets.
+//
+// The set has one member today (projectPathKey). The predicate exists so
+// callers do not import the literal value; adding a second implicit key
+// requires only an edit here.
+func IsImplicitKey(key string) bool {
+	return key == projectPathKey
+}
+
+// applyResolutions replaces each placeholder token in content with its
 // resolved value. Tokens without a mapping are left verbatim — the import
 // pre-flight gate in Run is responsible for refusing archives with
 // unresolved declared keys before reaching this point, so surviving literals
@@ -35,7 +47,7 @@ const ProjectPathKey = "{{PROJECT_PATH}}"
 // disk. The pre-flight gate in Run enforces the "no unresolved tokens
 // survive unless marked Resolvable: false" contract so plain replacement is
 // safe here.
-func ResolvePlaceholders(content []byte, resolutions map[string]string) []byte {
+func applyResolutions(content []byte, resolutions map[string]string) []byte {
 	for placeholder, value := range resolutions {
 		content = bytes.ReplaceAll(content, []byte(placeholder), []byte(value))
 	}
@@ -146,7 +158,7 @@ func ValidateResolutions(resolutions map[string]string) error {
 //     nil and *true both mean "must be resolved", *false means "explicitly
 //     allowed to remain symbolic".
 //   - resolutions: the caller-supplied key → value map that Run will pass
-//     to ResolvePlaceholders.
+//     to applyResolutions.
 //
 // Returns two alphabetically sorted slices:
 //   - missing: declared keys that are embedded in at least one body, are
@@ -172,7 +184,7 @@ func ClassifyPlaceholders(
 		if _, isResolved := resolutions[placeholder.Key]; isResolved {
 			continue
 		}
-		if placeholder.Key == ProjectPathKey {
+		if placeholder.Key == projectPathKey {
 			// Run injects PROJECT_PATH unconditionally; treat as resolved
 			// even if the caller did not list it explicitly.
 			continue

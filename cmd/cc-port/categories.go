@@ -23,9 +23,9 @@ func registerCategoryFlags(cmd *cobra.Command, verb string) {
 // resolveCategoriesFromCmd reads the boolean category flags registered
 // by registerCategoryFlags and returns the matching manifest.CategorySet.
 // --all sets every spec; an explicit per-category flag sets only that
-// spec. No-flag invocations return the zero set; callers decide what
-// the no-flag default means (export prompts via ui.SelectCategories;
-// push defaults to --all because sync is non-interactive).
+// spec. No-flag invocations return the zero set; callers (export and
+// push, both via applyCategorySelection) detect the zero set and prompt
+// via ui.SelectCategories.
 func resolveCategoriesFromCmd(cmd *cobra.Command) (manifest.CategorySet, error) {
 	all, err := cmd.Flags().GetBool("all")
 	if err != nil {

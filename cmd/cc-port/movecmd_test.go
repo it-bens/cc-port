@@ -148,9 +148,11 @@ func TestRenderPlanWarningsReportsMalformedHistoryLines(t *testing.T) {
 
 func TestRenderPlanWarningsReportsRulesFileMatches(t *testing.T) {
 	plan := &move.Plan{
-		RulesWarnings: []scan.Warning{
-			{File: "go-style.md", Line: 12},
-			{File: "review-checklist.md", Line: 47},
+		RulesReport: scan.Report{
+			Warnings: []scan.Warning{
+				{File: "go-style.md", Line: 12},
+				{File: "review-checklist.md", Line: 47},
+			},
 		},
 	}
 	var stdout bytes.Buffer

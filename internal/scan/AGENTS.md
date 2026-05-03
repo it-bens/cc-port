@@ -10,4 +10,6 @@
 
 - Entry: `rules.go:Rules`.
 - Warning type: `rules.go:Warning`.
+- Report type: `rules.go:Report`.
+- Report helper: `rules.go:ScanReport`.
 - Tests: `rules_test.go`.

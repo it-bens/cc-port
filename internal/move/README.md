@@ -19,7 +19,7 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
   - `ReplacementsByCategory map[string]int`: keyed on `planCategories` order, missing keys read as zero.
   - `TranscriptReplacements` (int), `ConfigBlockRekey` and `MoveProjectDir` (booleans).
   - `HistoryMalformedLines []int`: 1-based line numbers that failed to parse.
-  - `RulesWarnings []scan.Warning`.
+  - `RulesReport scan.Report`.
 
 ### Internal helpers
 

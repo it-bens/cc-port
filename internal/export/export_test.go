@@ -734,3 +734,20 @@ func fileHistoryFixtureSnapshotCount(t *testing.T, claudeHome *claude.Home) int 
 	}
 	return count
 }
+
+func TestRun_PopulatesRulesReportWarnings(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	var buf bytes.Buffer
+
+	result, err := export.Run(t.Context(), claudeHome, &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		Output:       &buf,
+		Categories:   manifest.CategorySet{Sessions: true},
+		Placeholders: defaultPlaceholders(),
+	})
+
+	require.NoError(t, err)
+	require.NoError(t, result.RulesReport.Err)
+	assert.NotEmpty(t, result.RulesReport.Warnings,
+		"fixture rules dir contains a rule referencing fixtureProjectPath; result.RulesReport.Warnings must reflect it")
+}

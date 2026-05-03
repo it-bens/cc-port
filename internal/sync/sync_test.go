@@ -265,10 +265,45 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 	if len(planB.UnresolvedPlaceholders) != 0 {
 		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders)
 	}
-	if err := ExecutePull(context.Background(), PullOptions{
+	if _, err := ExecutePull(context.Background(), PullOptions{
 		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
 		Resolutions: defaultResolutionsForTest(t),
 	}, planB, source); err != nil {
+		t.Fatalf("ExecutePull: %v", err)
+	}
+
+	encodedDir := claude.EncodePath(targetPath)
+	if _, err := os.Stat(filepath.Join(homeB.Dir, "projects", encodedDir)); err != nil {
+		t.Fatalf("encoded project dir missing after pull: %v", err)
+	}
+}
+
+// TestExecutePull_ResolutionsOnlyCoverDeclaredPlaceholder is a regression
+// guard: a declared placeholder covered solely by opts.Resolutions (no
+// --from-manifest) must succeed. The earlier orchestrator-based body
+// errored here because importer.ResolvePlaceholders does not see
+// opts.Resolutions and rejected the unresolved key when prompter was nil.
+func TestExecutePull_ResolutionsOnlyCoverDeclaredPlaceholder(t *testing.T) {
+	r := newMemRemote(t)
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	homeB := buildTestHomeBlank(t)
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	source := openSourceForTest(t, r, "k", "")
+	opts := PullOptions{
+		ClaudeHome:  homeB,
+		Name:        "k",
+		TargetPath:  targetPath,
+		Resolutions: map[string]string{"{{HOME}}": "/Users/me"},
+	}
+	plan, err := PlanPull(context.Background(), opts, source)
+	if err != nil {
+		t.Fatalf("PlanPull: %v", err)
+	}
+	if len(plan.UnresolvedPlaceholders) != 0 {
+		t.Fatalf("UnresolvedPlaceholders = %v, want empty", plan.UnresolvedPlaceholders)
+	}
+
+	if _, err := ExecutePull(context.Background(), opts, plan, source); err != nil {
 		t.Fatalf("ExecutePull: %v", err)
 	}
 

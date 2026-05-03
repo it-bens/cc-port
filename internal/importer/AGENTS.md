@@ -13,7 +13,8 @@
 ## Navigation
 
 - Entry: `importer.go:Run`.
+- Resolution orchestrator: `resolve_orchestrator.go:ResolvePlaceholders`.
 - Classification: `resolve.go:ClassifyPlaceholders`, `resolve.go:ValidateResolutions`.
 - Staging preflight: `importer.go:stagingTempPath`, `importer.go:checkStagingFilesystems`.
 - Conflict check: `resolve.go:CheckConflict`.
-- Tests: `importer_test.go`, `resolve_test.go`, `resolve_fuzz_test.go`.
+- Tests: `importer_test.go`, `resolve_test.go`, `resolve_fuzz_test.go`, `resolve_orchestrator_test.go`.

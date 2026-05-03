@@ -22,6 +22,7 @@ import (
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/transport"
 )
 
@@ -135,15 +136,24 @@ type archiveClassification struct {
 	undeclaredTokens    map[string]struct{}
 }
 
+// Result summarizes the observable outcome of a successful import. The
+// rules-file scan runs against TargetPath after staging promotion;
+// warnings reflect post-import state.
+type Result struct {
+	RulesReport scan.Report
+}
+
 // Run imports a cc-port ZIP archive into claudeHome. Acquires the claudeHome
 // lock, validates resolutions and staging parents up front, then reads and
 // stages the archive. SafeRenamePromoter promotes all staged temps atomically
-// and rolls back on any rename failure.
-func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) error {
+// and rolls back on any rename failure. After the promote succeeds the
+// rules-scan runs against TargetPath; the returned Result carries the report.
+func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*Result, error) {
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("canceled: %w", err)
+		return nil, fmt.Errorf("canceled: %w", err)
 	}
-	return lock.WithLock(claudeHome, func() error {
+	var report scan.Report
+	err := lock.WithLock(claudeHome, func() error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("canceled: %w", err)
 		}
@@ -195,8 +205,16 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) er
 			return err
 		}
 
-		return promotePlan(plan, importOptions.renameHook)
+		if err := promotePlan(plan, importOptions.renameHook); err != nil {
+			return err
+		}
+		report = scan.ScanReport(claudeHome.RulesDir(), importOptions.TargetPath)
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &Result{RulesReport: report}, nil
 }
 
 // classifyArchive is pass one of the two-pass archive read. It walks each
@@ -280,8 +298,8 @@ func withProjectPath(resolutions map[string]string, targetPath string) map[strin
 	for key, value := range resolutions {
 		result[key] = value
 	}
-	if _, hasProjectPath := result[ProjectPathKey]; !hasProjectPath {
-		result[ProjectPathKey] = targetPath
+	if _, hasProjectPath := result[projectPathKey]; !hasProjectPath {
+		result[projectPathKey] = targetPath
 	}
 	return result
 }
@@ -328,7 +346,7 @@ func classifyMissingResolutions(
 		if _, isResolved := resolutions[placeholder.Key]; isResolved {
 			continue
 		}
-		if placeholder.Key == ProjectPathKey {
+		if placeholder.Key == projectPathKey {
 			continue
 		}
 		if _, present := classification.presentDeclaredKeys[placeholder.Key]; !present {
@@ -858,7 +876,7 @@ func (r *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// readAndResolve reads one zip entry whole and applies ResolvePlaceholders.
+// readAndResolve reads one zip entry whole and applies applyResolutions.
 // Used for history appends and the config block, both of which feed into
 // in-memory merge logic. Enforces the per-entry cap in-stream.
 func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved []byte, bytesRead int64, err error) {
@@ -885,7 +903,7 @@ func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved 
 			zipFile.Name, maxZipEntryBytes,
 		)
 	}
-	return ResolvePlaceholders(data, resolutions), int64(len(data)), nil
+	return applyResolutions(data, resolutions), int64(len(data)), nil
 }
 
 func stageHistoryIfNeeded(plan *importPlan, appends [][]byte) error {

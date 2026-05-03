@@ -48,7 +48,7 @@ func TestDryRun(t *testing.T) {
 
 	assert.Equal(t, 0, plan.TranscriptReplacements, "transcripts not opted in, should be 0")
 
-	assert.NotEmpty(t, plan.RulesWarnings, "expected rules warnings for paths in test-rule.md")
+	assert.NotEmpty(t, plan.RulesReport.Warnings, "expected rules warnings for paths in test-rule.md")
 
 	assert.True(t, plan.MoveProjectDir, "RefsOnly=false should set MoveProjectDir=true")
 }

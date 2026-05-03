@@ -38,7 +38,7 @@ type Plan struct {
 	TranscriptReplacements int
 
 	HistoryMalformedLines []int
-	RulesWarnings         []scan.Warning
+	RulesReport           scan.Report
 	MoveProjectDir        bool
 }
 
@@ -91,11 +91,11 @@ func DryRun(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (
 		return nil, err
 	}
 
-	warnings, err := scan.Rules(claudeHome.RulesDir(), moveOptions.OldPath)
-	if err != nil {
-		return nil, fmt.Errorf("scan rules: %w", err)
+	report := scan.ScanReport(claudeHome.RulesDir(), moveOptions.OldPath)
+	if report.Err != nil {
+		return nil, fmt.Errorf("scan rules: %w", report.Err)
 	}
-	plan.RulesWarnings = warnings
+	plan.RulesReport = report
 
 	return plan, nil
 }

@@ -24,6 +24,26 @@ type Warning struct {
 // derived from claude.MaxHistoryLine despite sharing 16 MiB today.
 const maxScannerLine = 16 << 20
 
+// Report bundles the rules-scan output. Err carries scan failure when it
+// occurs; callers decide whether to surface and continue (export, import,
+// pull treat the report as diagnostic) or fail (move's dry-run treats it
+// as part of the plan contract). Warnings is nil when Err is non-nil;
+// callers must check Err before iterating.
+type Report struct {
+	Warnings []Warning
+	Err      error
+}
+
+// ScanReport calls Rules and packages the result as a Report. Convenience
+// for callers that hand the bundle to a renderer; callers that want
+// []Warning, error directly should call Rules instead.
+//
+//nolint:revive // stutter is intentional: cmd-layer reads as scan.ScanReport(...) at the call site, signposting the bundle return type explicitly.
+func ScanReport(rulesDir string, paths ...string) Report {
+	warnings, err := Rules(rulesDir, paths...)
+	return Report{Warnings: warnings, Err: err}
+}
+
 // Rules scans .md files directly in rulesDir (non-recursive); emits one Warning per matched line, not per matched path.
 func Rules(rulesDir string, paths ...string) ([]Warning, error) {
 	_, err := os.Stat(rulesDir)

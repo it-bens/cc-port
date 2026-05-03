@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/fsutil"
+	"github.com/it-bens/cc-port/internal/manifest"
 )
 
 // deadSessionPID exceeds the Linux/macOS PID ceiling but stays below int32 max, so Kill(pid, 0) returns ESRCH.
@@ -85,6 +87,44 @@ func replaceSessionPIDs(sessionsDir string, deadPID int) error {
 		}
 	}
 	return nil
+}
+
+// FixtureProjectPath returns the canonical project path the fixture tree is
+// keyed on. Tests that drive a cmd through the happy path against
+// SetupFixture's home pass this as the project argument.
+func FixtureProjectPath() string {
+	return "/Users/test/Projects/myproject"
+}
+
+// WriteFixtureArchive runs an in-process export against the fixture project
+// and returns the resulting archive path under t.TempDir(). Tests that need
+// to drive an import or pull cmd against a known-good archive call this
+// rather than constructing one inline.
+func WriteFixtureArchive(t *testing.T) string {
+	t.Helper()
+	home := SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "fixture.zip")
+
+	file, err := os.Create(archivePath) //nolint:gosec // path under t.TempDir
+	if err != nil {
+		t.Fatalf("create archive: %v", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	var allCategories manifest.CategorySet
+	for _, spec := range manifest.AllCategories {
+		spec.Apply(&allCategories, true)
+	}
+
+	options := export.Options{
+		ProjectPath: FixtureProjectPath(),
+		Output:      file,
+		Categories:  allCategories,
+	}
+	if _, err := export.Run(context.Background(), home, &options); err != nil {
+		t.Fatalf("export fixture: %v", err)
+	}
+	return archivePath
 }
 
 func findFixtureDir(t *testing.T) string {
