@@ -196,14 +196,19 @@ type byteSource struct {
 	log  *[]string
 }
 
-func (s *byteSource) Open(_ context.Context, _ pipeline.View) (pipeline.View, io.Closer, error) {
+func (s *byteSource) Open(_ context.Context, _ pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
 	if s.log != nil {
 		*s.log = append(*s.log, "open:"+s.name)
 	}
+	reader := bytes.NewReader(s.data)
 	return pipeline.View{
-		ReaderAt: bytes.NewReader(s.data),
-		Size:     int64(len(s.data)),
-	}, &loggingCloser{name: s.name, log: s.log}, nil
+			Reader:   reader,
+			ReaderAt: reader,
+			Size:     int64(len(s.data)),
+		},
+		pipeline.Meta{},
+		&loggingCloser{name: s.name, log: s.log},
+		nil
 }
 func (s *byteSource) Name() string { return s.name }
 
@@ -215,16 +220,16 @@ type trackingReaderFilter struct {
 	log  *[]string
 }
 
-func (f *trackingReaderFilter) Open(_ context.Context, upstream pipeline.View) (pipeline.View, io.Closer, error) {
+func (f *trackingReaderFilter) Open(_ context.Context, upstream pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
 	*f.log = append(*f.log, "open:"+f.name)
-	return upstream, &loggingCloser{name: f.name, log: f.log}, nil
+	return upstream, pipeline.Meta{}, &loggingCloser{name: f.name, log: f.log}, nil
 }
 func (f *trackingReaderFilter) Name() string { return f.name }
 
 type passthroughReaderFilter struct{ name string }
 
-func (f *passthroughReaderFilter) Open(_ context.Context, upstream pipeline.View) (pipeline.View, io.Closer, error) {
-	return upstream, nil, nil
+func (f *passthroughReaderFilter) Open(_ context.Context, upstream pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
+	return upstream, pipeline.Meta{}, nil, nil
 }
 func (f *passthroughReaderFilter) Name() string { return f.name }
 
@@ -233,8 +238,8 @@ type errorReaderStage struct {
 	err  error
 }
 
-func (s *errorReaderStage) Open(_ context.Context, _ pipeline.View) (pipeline.View, io.Closer, error) {
-	return pipeline.View{}, nil, s.err
+func (s *errorReaderStage) Open(_ context.Context, _ pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
+	return pipeline.View{}, pipeline.Meta{}, nil, s.err
 }
 func (s *errorReaderStage) Name() string { return s.name }
 
@@ -360,8 +365,10 @@ func (s *countingCloseSink) Name() string { return "counting-sink" }
 
 type countingCloseSource struct{ count *int }
 
-func (s *countingCloseSource) Open(_ context.Context, _ pipeline.View) (pipeline.View, io.Closer, error) {
-	return pipeline.View{ReaderAt: bytes.NewReader(nil), Size: 0},
+func (s *countingCloseSource) Open(_ context.Context, _ pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
+	reader := bytes.NewReader(nil)
+	return pipeline.View{Reader: reader, ReaderAt: reader, Size: 0},
+		pipeline.Meta{},
 		&errClosingCloser{count: s.count},
 		nil
 }
@@ -393,8 +400,10 @@ type errClosingSource struct {
 	count *int
 }
 
-func (s *errClosingSource) Open(_ context.Context, _ pipeline.View) (pipeline.View, io.Closer, error) {
-	return pipeline.View{ReaderAt: bytes.NewReader(nil), Size: 0},
+func (s *errClosingSource) Open(_ context.Context, _ pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
+	reader := bytes.NewReader(nil)
+	return pipeline.View{Reader: reader, ReaderAt: reader},
+		pipeline.Meta{},
 		&errClosingCloser{err: s.err, count: s.count},
 		nil
 }
@@ -405,7 +414,55 @@ type errClosingReaderFilter struct {
 	count *int
 }
 
-func (f *errClosingReaderFilter) Open(_ context.Context, upstream pipeline.View) (pipeline.View, io.Closer, error) {
-	return upstream, &errClosingCloser{err: f.err, count: f.count}, nil
+func (f *errClosingReaderFilter) Open(_ context.Context, upstream pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
+	return upstream, pipeline.Meta{}, &errClosingCloser{err: f.err, count: f.count}, nil
 }
 func (f *errClosingReaderFilter) Name() string { return "err-closing-filter" }
+
+// metaContributingStage is a test ReaderStage that returns the supplied
+// Meta and forwards upstream's View unchanged. Used to drive RunReader's
+// Meta merge.
+type metaContributingStage struct {
+	name string
+	meta pipeline.Meta
+}
+
+func (s *metaContributingStage) Open(_ context.Context, upstream pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
+	return upstream, s.meta, nil, nil
+}
+func (s *metaContributingStage) Name() string { return s.name }
+
+func TestRunReader_MergesMetaAcrossStages(t *testing.T) {
+	src := &byteSource{
+		name: "source",
+		data: []byte("payload"),
+		log:  &[]string{},
+	}
+
+	source, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
+		src,
+		&metaContributingStage{name: "observer", meta: pipeline.Meta{WasEncrypted: true}},
+	})
+
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = source.Close() })
+	assert.True(t, source.Meta.WasEncrypted, "WasEncrypted contribution must surface in Source.Meta")
+}
+
+func TestRunReader_LaterStageDoesNotClearEarlierMeta(t *testing.T) {
+	src := &byteSource{
+		name: "source",
+		data: []byte("payload"),
+		log:  &[]string{},
+	}
+
+	source, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
+		src,
+		&metaContributingStage{name: "observer", meta: pipeline.Meta{WasEncrypted: true}},
+		&metaContributingStage{name: "passthrough", meta: pipeline.Meta{}},
+	})
+
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = source.Close() })
+	assert.True(t, source.Meta.WasEncrypted, "later stage's zero Meta must not clear an earlier true contribution")
+}

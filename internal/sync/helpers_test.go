@@ -182,10 +182,10 @@ func (b *bufferSinkCloser) Close() error { return nil }
 //nolint:unparam // pass mirrors openPriorRead; reserved for a future encrypted-prior test.
 func openPriorForTest(t *testing.T, r *remote.Remote, name, pass string) *PriorRead {
 	t.Helper()
-	stage := &encrypt.ReaderStage{Pass: pass, Mode: encrypt.Permissive}
 	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
 		&remote.Source{Remote: r, Key: name},
-		stage,
+		&encrypt.ReaderStage{Pass: pass, Mode: encrypt.Permissive},
+		&pipeline.MaterializeStage{},
 	})
 	if errors.Is(err, remote.ErrNotFound) {
 		return nil
@@ -194,7 +194,7 @@ func openPriorForTest(t *testing.T, r *remote.Remote, name, pass string) *PriorR
 		t.Fatalf("openPriorForTest: %v", err)
 	}
 	t.Cleanup(func() { _ = src.Close() })
-	return &PriorRead{Source: src, WasEncrypted: stage.WasEncrypted()}
+	return &PriorRead{Source: src, WasEncrypted: src.Meta.WasEncrypted}
 }
 
 // openSourceForTest opens the strict reader pipeline for pull tests. Returns
@@ -207,6 +207,7 @@ func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeli
 	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
 		&remote.Source{Remote: r, Key: name},
 		&encrypt.ReaderStage{Pass: pass, Mode: encrypt.Strict},
+		&pipeline.MaterializeStage{},
 	})
 	if err != nil {
 		t.Fatalf("openSourceForTest: %v", err)

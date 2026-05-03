@@ -44,9 +44,10 @@ type Remote struct {
 // URL returns the URL the Remote was opened with. Useful for logging.
 func (r *Remote) URL() string { return r.url }
 
-// Open returns a reader for the archive at name. Returns ErrNotFound
-// (not a wrapped gocloud-coded error) when the key is absent.
-func (r *Remote) Open(ctx context.Context, name string) (io.ReadCloser, error) {
+// Open returns a Reader for the archive at name. The Reader carries
+// the content length reported by the bucket without a stat round trip.
+// Returns ErrNotFound when the key is absent.
+func (r *Remote) Open(ctx context.Context, name string) (*Reader, error) {
 	rc, err := r.bucket.NewReader(ctx, name, nil)
 	if err != nil {
 		if gcerrors.Code(err) == gcerrors.NotFound {
@@ -54,7 +55,7 @@ func (r *Remote) Open(ctx context.Context, name string) (io.ReadCloser, error) {
 		}
 		return nil, fmt.Errorf("remote: open %q: %w", name, err)
 	}
-	return rc, nil
+	return &Reader{inner: rc}, nil
 }
 
 // Create returns a writer for the archive at name. Failure to close
@@ -88,6 +89,22 @@ type Attributes struct {
 	Size    int64
 	ModTime time.Time
 }
+
+// Reader is the handle returned by Remote.Open. It carries the content
+// length the bucket reported on open so callers do not stat separately.
+// Wraps *blob.Reader without leaking the gocloud type into the surface.
+type Reader struct {
+	inner *blob.Reader
+}
+
+// Read implements io.Reader.
+func (r *Reader) Read(p []byte) (int, error) { return r.inner.Read(p) }
+
+// Close implements io.Closer.
+func (r *Reader) Close() error { return r.inner.Close() }
+
+// Size returns the content length reported by the bucket on open.
+func (r *Reader) Size() int64 { return r.inner.Size() }
 
 // ErrNotFound is returned by Open and Stat when the requested key is
 // absent on the remote. Backend-specific not-found errors are

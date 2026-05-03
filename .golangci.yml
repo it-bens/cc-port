@@ -34,6 +34,8 @@ linters:
     - unused
     - whitespace
   settings:
+    dogsled:
+      max-blank-identifiers: 3
     funlen:
       lines: 120
       statements: 60

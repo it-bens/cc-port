@@ -4,10 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/it-bens/cc-port/internal/pipeline"
@@ -15,7 +11,7 @@ import (
 )
 
 func TestSource_RejectsNilRemote(t *testing.T) {
-	_, _, err := (&remote.Source{Remote: nil, Key: "k"}).Open(context.Background(), pipeline.View{})
+	_, _, _, err := (&remote.Source{Remote: nil, Key: "k"}).Open(context.Background(), pipeline.View{})
 	if err == nil {
 		t.Fatal("expected error on nil Remote")
 	}
@@ -24,13 +20,13 @@ func TestSource_RejectsNilRemote(t *testing.T) {
 func TestSource_RejectsEmptyKey(t *testing.T) {
 	r, _ := remote.New(context.Background(), memURL)
 	defer func() { _ = r.Close() }()
-	_, _, err := (&remote.Source{Remote: r, Key: ""}).Open(context.Background(), pipeline.View{})
+	_, _, _, err := (&remote.Source{Remote: r, Key: ""}).Open(context.Background(), pipeline.View{})
 	if err == nil {
 		t.Fatal("expected error on empty Key")
 	}
 }
 
-func TestSource_OpenRoundTripMaterializesToTempfile(t *testing.T) {
+func TestSource_OpenStreamsBucketReaderDirectly(t *testing.T) {
 	r, _ := remote.New(context.Background(), memURL)
 	defer func() { _ = r.Close() }()
 
@@ -39,53 +35,28 @@ func TestSource_OpenRoundTripMaterializesToTempfile(t *testing.T) {
 	_, _ = w.Write(want)
 	_ = w.Close()
 
-	view, closer, err := (&remote.Source{Remote: r, Key: "k"}).Open(context.Background(), pipeline.View{})
+	view, _, closer, err := (&remote.Source{Remote: r, Key: "k"}).Open(context.Background(), pipeline.View{})
 	if err != nil {
 		t.Fatalf("Source.Open: %v", err)
 	}
 	defer func() { _ = closer.Close() }()
 
-	if view.Size != int64(len(want)) {
-		t.Fatalf("Size = %d, want %d", view.Size, len(want))
+	if view.Reader == nil {
+		t.Fatal("Reader must be populated for streaming source")
 	}
-	got := make([]byte, view.Size)
-	if _, err := view.ReaderAt.ReadAt(got, 0); err != nil && err != io.EOF {
-		t.Fatalf("ReadAt: %v", err)
+	if view.ReaderAt != nil {
+		t.Fatal("ReaderAt must be nil; remote source is streaming")
+	}
+	if view.Size != int64(len(want)) {
+		t.Fatalf("Size = %d, want %d (gocloud-reported content length)", view.Size, len(want))
+	}
+
+	got, err := io.ReadAll(view.Reader)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
-	}
-}
-
-func TestSource_CloseRemovesTempfile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("tempdir listing semantics differ on Windows")
-	}
-	r, _ := remote.New(context.Background(), memURL)
-	defer func() { _ = r.Close() }()
-	w, _ := r.Create(context.Background(), "k")
-	_, _ = w.Write([]byte("data"))
-	_ = w.Close()
-
-	view, closer, err := (&remote.Source{Remote: r, Key: "k"}).Open(context.Background(), pipeline.View{})
-	if err != nil {
-		t.Fatalf("Source.Open: %v", err)
-	}
-
-	tempfile, ok := view.ReaderAt.(*os.File)
-	if !ok {
-		t.Fatalf("ReaderAt = %T, want *os.File", view.ReaderAt)
-	}
-	tempPath := tempfile.Name()
-	if !strings.HasPrefix(filepath.Base(tempPath), "cc-port-remote-") {
-		t.Fatalf("tempPath = %q, want cc-port-remote-* prefix", tempPath)
-	}
-
-	if err := closer.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
-		t.Fatalf("tempfile still exists after Close: %v", err)
 	}
 }
 

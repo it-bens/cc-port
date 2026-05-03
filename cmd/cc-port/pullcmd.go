@@ -79,6 +79,7 @@ func openArchiveSource(
 	src, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
 		&remote.Source{Remote: r, Key: name},
 		&encrypt.ReaderStage{Pass: pass, Mode: encrypt.Strict},
+		&pipeline.MaterializeStage{},
 	})
 	switch {
 	case errors.Is(err, remote.ErrNotFound):

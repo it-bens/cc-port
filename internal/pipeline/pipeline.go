@@ -1,7 +1,7 @@
 // Package pipeline composes io.Writer chains (WriterStage) and View
 // chains (ReaderStage) for cc-port's read and write data flows. Stages
 // live in their owning packages; this package owns the interfaces, the
-// runners, and the close cascade.
+// runners, the close cascade, and the terminal MaterializeStage.
 package pipeline
 
 import (
@@ -11,21 +11,36 @@ import (
 	"io"
 )
 
-// View is the data carrier passed between reader stages: a random-access
-// reader plus its byte count. Lifetime ownership is reported via a
+// View is the data carrier passed between reader stages. Reader is
+// always set. ReaderAt and Size are populated by stages that can supply
+// them (file source, MaterializeStage); transformers and streaming
+// sources may leave them zero. Lifetime ownership is reported via a
 // separate io.Closer return on stage Open so the runner assembles the
 // close cascade.
 type View struct {
+	Reader   io.Reader
 	ReaderAt io.ReaderAt
 	Size     int64
 }
 
-// Source is what RunReader returns to the consumer. Close walks every
-// stage's closer in reverse chain order (latest stage first, source
-// stage last), joins their errors with errors.Join, and is idempotent
-// (second and later calls return nil).
+// Meta carries dispatch observations contributed by stages during Open.
+// Stages return Meta alongside View; the runner merges every stage's
+// contribution into Source.Meta. Merge semantics: boolean fields OR
+// across stages; non-boolean value-typed fields take the last non-zero
+// contribution. Only one observation field exists today; future
+// observations add a field with explicit merge semantics.
+type Meta struct {
+	WasEncrypted bool
+}
+
+// Source is what RunReader returns to the consumer. View carries the
+// final stage's data shape. Meta carries the merged observations from
+// every stage. Close walks every stage's closer in reverse chain order
+// (latest stage first, source stage last), joins their errors with
+// errors.Join, and is idempotent (second and later calls return nil).
 type Source struct {
 	View
+	Meta  Meta
 	Close func() error
 }
 
@@ -39,11 +54,12 @@ type WriterStage interface {
 }
 
 // ReaderStage is one step on the read path. Open returns the View this
-// stage produces plus an optional closer for the stage's own resources.
-// closer == nil means "passthrough; I own nothing." Source stages
-// receive a zero View.
+// stage produces, the Meta it contributes (zero value when the stage
+// observes nothing), and an optional closer for the stage's own
+// resources. closer == nil means "passthrough; I own nothing." Source
+// stages receive a zero View.
 type ReaderStage interface {
-	Open(ctx context.Context, upstream View) (data View, closer io.Closer, err error)
+	Open(ctx context.Context, upstream View) (data View, meta Meta, closer io.Closer, err error)
 	Name() string
 }
 
@@ -83,17 +99,20 @@ func RunWriter(ctx context.Context, stages []WriterStage) (io.WriteCloser, error
 // RunReader composes stages outside-in. The first stage opens with the
 // zero View (it is the source). Each later stage opens with the
 // previous stage's View. The runner accumulates every non-nil closer in
-// chain order (source-first, latest-last). The returned Source carries
-// the final stage's View and a Close closure that walks the closers in
-// reverse order using errors.Join. Close is idempotent.
+// chain order (source-first, latest-last) and merges every stage's Meta
+// contribution into a single Source.Meta as it walks. Returns a Source
+// whose View is the final stage's output, whose Meta carries the merged
+// observations, and whose Close walks the closers in reverse order
+// (latest-first, source-last) using errors.Join. Close is idempotent.
 func RunReader(ctx context.Context, stages []ReaderStage) (Source, error) {
 	if len(stages) == 0 {
 		return Source{}, errors.New("pipeline: RunReader requires at least one stage")
 	}
 	var current View
+	var merged Meta
 	closers := make([]io.Closer, 0, len(stages))
 	for i, stage := range stages {
-		next, closer, err := stage.Open(ctx, current)
+		next, contributed, closer, err := stage.Open(ctx, current)
 		if err != nil {
 			closeErr := walkCloseReverse(closers)
 			return Source{}, errors.Join(
@@ -104,12 +123,24 @@ func RunReader(ctx context.Context, stages []ReaderStage) (Source, error) {
 		if closer != nil {
 			closers = append(closers, closer)
 		}
+		mergeMeta(&merged, contributed)
 		current = next
 	}
 	return Source{
 		View:  current,
+		Meta:  merged,
 		Close: makeIdempotentReverseClose(closers),
 	}, nil
+}
+
+// mergeMeta folds contributed into merged. Boolean fields OR across
+// contributions. Non-boolean value-typed fields take the last non-zero
+// contribution. Add a case here when introducing a new Meta field; the
+// merge rule for that field MUST be explicit, never default-assigned.
+func mergeMeta(merged *Meta, contributed Meta) {
+	if contributed.WasEncrypted {
+		merged.WasEncrypted = true
+	}
 }
 
 // chainWriteCloser writes through the outermost stage and on Close

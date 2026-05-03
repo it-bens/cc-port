@@ -1,11 +1,11 @@
 package encrypt
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/it-bens/cc-port/internal/pipeline"
 )
@@ -24,9 +24,14 @@ var ErrUnencryptedInput = errors.New(
 	"encrypt: archive is not encrypted; passphrase flags expected encrypted input",
 )
 
-// peekBufLen is the read-ahead size ReaderStage uses to decide encrypted
-// vs plaintext via View.ReaderAt.ReadAt. Must be at least MinPeekLen.
+// peekBufLen is the inspection window ReaderStage hands to bufio.Peek to
+// decide encrypted vs plaintext. Must be at least MinPeekLen.
 const peekBufLen = 32
+
+// readBufLen is the bufio buffer size. Sized larger than peekBufLen so
+// age.Decrypt's header parse can refill past the peek window without the
+// buffer doubling as a one-shot peek slot.
+const readBufLen = 4096
 
 // Mode selects ReaderStage's behavior in the plaintext-with-passphrase
 // cell of the dispatch matrix. Strict is the zero value, so an unset
@@ -78,22 +83,23 @@ func (w *WriterStage) Name() string { return "encrypt" }
 
 // ReaderStage is a pipeline.ReaderStage that owns the
 // encrypted-vs-plaintext × pass-vs-no-pass dispatch matrix. Open peeks
-// the upstream's first 32 bytes via View.ReaderAt.ReadAt (position-
-// independent; later consumers re-read from byte 0 unaffected) and:
+// the upstream's first peekBufLen bytes via bufio.Reader.Peek (does not
+// consume) and:
 //
-//   - encrypted + non-empty Pass: decrypts upstream into a 0600 tempfile,
-//     returns the tempfile as the new View plus an io.Closer that closes
-//     the file and removes it.
+//   - encrypted + non-empty Pass: wraps the buffered upstream in
+//     DecryptingReader and returns it as the new View. Meta carries
+//     WasEncrypted = true.
 //   - encrypted + empty Pass: returns ErrPassphraseRequired.
 //   - plaintext + non-empty Pass + Mode==Strict: returns ErrUnencryptedInput.
-//   - plaintext + non-empty Pass + Mode==Permissive: returns upstream
-//     unchanged with a nil closer.
-//   - plaintext + empty Pass: returns upstream unchanged with a nil closer.
+//   - plaintext + non-empty Pass + Mode==Permissive: returns the
+//     buffered upstream as the new View, propagating any ReaderAt and
+//     Size the upstream already exposed. Meta.WasEncrypted = false.
+//   - plaintext + empty Pass: same as the Permissive plaintext case.
 //
-// Mismatch and decrypt-failure cells return the sentinel; the pipeline
-// runner closes any upstream closer it has accumulated so far. The
-// stage does not call upstream.Close itself; the runner owns the
-// cascade.
+// No tempfile is created in any branch. The bufio buffer is internal to
+// the streaming Reader path; consumers that read via View.ReaderAt
+// observe position-independent ReadAt semantics on the original
+// upstream and are unaffected by the bufio peek.
 //
 // Cmd-layer read paths (import, import manifest, sync pull) compose this
 // stage with Mode=Strict. Sync push prior-read composes with
@@ -101,102 +107,45 @@ func (w *WriterStage) Name() string { return "encrypt" }
 type ReaderStage struct {
 	Pass string
 	Mode Mode
-
-	// wasEncrypted records the IsEncrypted peek decision from the most
-	// recent successful Open. Stale after a failed Open; callers must
-	// not read it on the error path.
-	wasEncrypted bool
 }
 
-// WasEncrypted reports whether the most recent Open dispatched the
-// encrypted branch (encrypted upstream + non-empty Pass). Read after a
-// successful Open only.
-func (r *ReaderStage) WasEncrypted() bool { return r.wasEncrypted }
-
-// Open peeks the upstream's first 32 bytes and dispatches the
-// encrypted-vs-plaintext × pass-vs-no-pass matrix per the package
-// docs. Mismatch and decrypt-failure cells return their sentinel.
-func (r *ReaderStage) Open(ctx context.Context, upstream pipeline.View) (pipeline.View, io.Closer, error) {
-	if upstream.ReaderAt == nil {
-		return pipeline.View{}, nil, errors.New("encrypt.ReaderStage: upstream is empty")
+// Open performs the dispatch. Mismatch and decrypt-failure cells return
+// their sentinel; the pipeline runner closes any upstream closer it has
+// accumulated so far. The stage does not call upstream.Close itself;
+// the runner owns the cascade.
+func (r *ReaderStage) Open(_ context.Context, upstream pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
+	if upstream.Reader == nil {
+		return pipeline.View{}, pipeline.Meta{}, nil, errors.New("encrypt.ReaderStage: upstream is empty")
 	}
-	header := make([]byte, peekBufLen)
-	n, err := upstream.ReaderAt.ReadAt(header, 0)
+	buffered := bufio.NewReaderSize(upstream.Reader, readBufLen)
+	header, err := buffered.Peek(peekBufLen)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return pipeline.View{}, nil, fmt.Errorf("peek archive header: %w", err)
+		return pipeline.View{}, pipeline.Meta{}, nil, fmt.Errorf("peek archive header: %w", err)
 	}
-	encrypted := IsEncrypted(header[:n])
-	r.wasEncrypted = encrypted
+	encrypted := IsEncrypted(header)
 
 	switch {
 	case encrypted && r.Pass == "":
-		return pipeline.View{}, nil, ErrPassphraseRequired
+		return pipeline.View{}, pipeline.Meta{}, nil, ErrPassphraseRequired
 	case !encrypted && r.Pass != "" && r.Mode == Strict:
-		return pipeline.View{}, nil, ErrUnencryptedInput
+		return pipeline.View{}, pipeline.Meta{}, nil, ErrUnencryptedInput
 	case encrypted && r.Pass != "":
-		return r.decrypt(ctx, upstream)
+		plain, err := DecryptingReader(buffered, r.Pass)
+		if err != nil {
+			return pipeline.View{}, pipeline.Meta{}, nil, fmt.Errorf("decrypt archive: %w", err)
+		}
+		return pipeline.View{Reader: plain}, pipeline.Meta{WasEncrypted: true}, nil, nil
 	default:
-		// plaintext + empty pass, or plaintext + pass + Permissive
-		return upstream, nil, nil
+		return pipeline.View{
+				Reader:   buffered,
+				ReaderAt: upstream.ReaderAt,
+				Size:     upstream.Size,
+			},
+			pipeline.Meta{WasEncrypted: false},
+			nil,
+			nil
 	}
 }
 
 // Name implements pipeline.ReaderStage.
 func (r *ReaderStage) Name() string { return "decrypt" }
-
-// decrypt materializes plaintext into a 0600 tempfile and returns it as
-// the new View. The returned io.Closer closes the file and removes it,
-// joining errors via errors.Join. On error, the tempfile is cleaned up
-// here.
-func (r *ReaderStage) decrypt(_ context.Context, upstream pipeline.View) (pipeline.View, io.Closer, error) {
-	temp, err := os.CreateTemp("", "cc-port-decrypt-*.zip")
-	if err != nil {
-		return pipeline.View{}, nil, fmt.Errorf("create tempfile: %w", err)
-	}
-	tempPath := temp.Name()
-	if err := os.Chmod(tempPath, 0o600); err != nil {
-		_ = temp.Close()
-		_ = os.Remove(tempPath)
-		return pipeline.View{}, nil, fmt.Errorf("chmod tempfile %s: %w", tempPath, err)
-	}
-
-	section := io.NewSectionReader(upstream.ReaderAt, 0, upstream.Size)
-	decryptor, err := DecryptingReader(section, r.Pass)
-	if err != nil {
-		_ = temp.Close()
-		_ = os.Remove(tempPath)
-		return pipeline.View{}, nil, fmt.Errorf("decrypt archive: %w", err)
-	}
-	if _, err := io.Copy(temp, decryptor); err != nil {
-		_ = temp.Close()
-		_ = os.Remove(tempPath)
-		return pipeline.View{}, nil, fmt.Errorf("decrypt archive: %w", err)
-	}
-
-	info, err := temp.Stat()
-	if err != nil {
-		_ = temp.Close()
-		_ = os.Remove(tempPath)
-		return pipeline.View{}, nil, fmt.Errorf("stat tempfile %s: %w", tempPath, err)
-	}
-
-	return pipeline.View{ReaderAt: temp, Size: info.Size()},
-		&tempfileCloser{file: temp, path: tempPath},
-		nil
-}
-
-// tempfileCloser closes the tempfile and removes it. errors.Join
-// surfaces both failures; os.IsNotExist on Remove is filtered to nil.
-type tempfileCloser struct {
-	file *os.File
-	path string
-}
-
-func (c *tempfileCloser) Close() error {
-	closeErr := c.file.Close()
-	removeErr := os.Remove(c.path)
-	if removeErr != nil && os.IsNotExist(removeErr) {
-		removeErr = nil
-	}
-	return errors.Join(closeErr, removeErr)
-}
