@@ -19,4 +19,4 @@ Go CLI that rewrites Claude Code project state. See `README.md` for the project 
 - CLI entry: `cmd/cc-port`.
 - Commands: `internal/move`, `internal/export`, `internal/importer`, `internal/sync`.
 - Shared primitives: `internal/rewrite`, `internal/lock`, `internal/fsutil`, `internal/claude`, `internal/scan`, `internal/ui`, `internal/pipeline`, `internal/file`.
-- Each directory with a `README.md` has an `AGENTS.md` with its hard rules.
+- Modules with hard editing rules additionally carry an `AGENTS.md`.

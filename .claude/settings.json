@@ -1,0 +1,18 @@
+{
+  "enabledPlugins": {
+    "superpowers-additions@itb-ai-tools": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq --rawfile ctx .claude/hook-contexts/reviewing-plans.md 'if .tool_input.skill == \"superpowers-additions:reviewing-plans\" then {hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $ctx}} else empty end'"
+          }
+        ]
+      }
+    ]
+  }
+}

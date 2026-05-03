@@ -46,9 +46,15 @@ AGENTS.local.md
 
 # Claude Code local config
 .claude/*
+!.claude/hook-contexts/
+!.claude/rules/
+!.claude/settings.json
 !.claude/skills/
 
 # Go build artifacts
 /cc-port
 dist/
 coverage.txt
+
+# Git worktrees (local-only)
+.worktrees/
