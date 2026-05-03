@@ -38,7 +38,10 @@ type segment struct {
 // enforces the invariant so edits that break alignment fail loudly.
 // The extra column over a naive design gives the container stack a true
 // midline at col 11: trolley, cable, and container hook ┴ all align.
-const rowWidth = 22
+const (
+	rowWidth        = 22
+	containerRibRow = " │╳│    │║║║║║│    │╳│"
+)
 
 var art = [][]segment{
 	{{" ┌───────────────────┐", colorNavy}},
@@ -55,13 +58,13 @@ var art = [][]segment{
 		{"       │╳│", colorNavy},
 	},
 	{{" │╳│    ┌──┴──┐    │╳│", colorNavy}},
-	{{" │╳│    │║║║║║│    │╳│", colorNavy}},
+	{{containerRibRow, colorNavy}},
 	{{" │╳│    └─────┘    │╳│", colorNavy}},
 	{{" │╳│               │╳│", colorNavy}},
 	{{" │╳│    ┌─────┐    │╳│", colorNavy}},
-	{{" │╳│    │║║║║║│    │╳│", colorNavy}},
+	{{containerRibRow, colorNavy}},
 	{{" │╳│    ├─────┤    │╳│", colorNavy}},
-	{{" │╳│    │║║║║║│    │╳│", colorNavy}},
+	{{containerRibRow, colorNavy}},
 	{{" └─┘    └─────┘    └─┘", colorNavy}},
 }
 
