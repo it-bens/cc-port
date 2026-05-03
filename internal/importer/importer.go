@@ -258,7 +258,8 @@ func classifyArchive(
 		aggregate += int64(len(content))
 		if aggregate > maxArchiveUncompressedBytes {
 			return classification, fmt.Errorf(
-				"archive decompressed size exceeds %d bytes", maxArchiveUncompressedBytes,
+				"%w: aggregate %d > limit %d",
+				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
 			)
 		}
 		recordPresentDeclaredKeys(content, declaredByKey, classification.presentDeclaredKeys)
@@ -509,7 +510,8 @@ func stageArchiveEntries(
 		aggregate += entryBytes
 		if aggregate > maxArchiveUncompressedBytes {
 			return nil, nil, fmt.Errorf(
-				"archive decompressed size exceeds %d bytes", maxArchiveUncompressedBytes,
+				"%w: aggregate %d > limit %d",
+				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
 			)
 		}
 	}

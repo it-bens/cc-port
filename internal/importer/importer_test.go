@@ -1109,7 +1109,7 @@ func TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap(t *testing
 	})
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "archive decompressed size exceeds")
+	require.ErrorIs(t, err, importer.ErrAggregateCapExceeded)
 }
 
 func TestRun_CancelsWhenContextCancelled(t *testing.T) {

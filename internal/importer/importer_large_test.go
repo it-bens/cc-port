@@ -50,5 +50,5 @@ func TestRun_RefusesArchiveExceedingAggregateUncompressedCap(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "archive decompressed size exceeds")
+	require.ErrorIs(t, err, importer.ErrAggregateCapExceeded)
 }

@@ -21,3 +21,9 @@ var ErrStatProjectDirectory = errors.New("stat project directory")
 // names the entry and the limit. Fires from both the declared-size check
 // (zip central directory) and the post-decode counter.
 var ErrEntryCapExceeded = errors.New("archive entry exceeds per-entry size limit")
+
+// ErrAggregateCapExceeded is returned when the sum of decompressed bytes
+// across all archive entries exceeds maxArchiveUncompressedBytes. Fires
+// from both classifyArchive (pass one) and stageArchiveEntries (pass two);
+// pass two re-checks against actual observed bytes, not declared sizes.
+var ErrAggregateCapExceeded = errors.New("archive aggregate decompressed size exceeds limit")
