@@ -41,3 +41,15 @@ type UnknownArchiveEntryError struct {
 func (e *UnknownArchiveEntryError) Error() string {
 	return fmt.Sprintf("unknown archive entry: %q", e.Name)
 }
+
+// ErrZipSlip is returned when an archive entry's resolved relative path
+// would land outside its staging base. Fires from the os.Root.MkdirAll
+// and os.Root.OpenFile guards inside assertWithinRoot and
+// streamResolveIntoRoot. The underlying os error stays in the chain.
+var ErrZipSlip = errors.New("staging path escapes containment base")
+
+// ErrStagingFailed is returned when the staging jail itself cannot be
+// established: the staging base directory cannot be created, or os.OpenRoot
+// cannot open it. Distinct from ErrZipSlip: this signals a permission or
+// disk failure on the destination side, not a containment violation.
+var ErrStagingFailed = errors.New("staging base setup failed")

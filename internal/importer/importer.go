@@ -629,18 +629,18 @@ func buildImportPlan(
 // session-keyed) but still need the containment guarantee.
 func assertWithinRoot(baseDir, relativePath string) error {
 	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
-		return fmt.Errorf("create staging base %q: %w", baseDir, err)
+		return fmt.Errorf("%w: create %q: %w", ErrStagingFailed, baseDir, err)
 	}
 	root, err := os.OpenRoot(baseDir)
 	if err != nil {
-		return fmt.Errorf("open staging root %q: %w", baseDir, err)
+		return fmt.Errorf("%w: open root %q: %w", ErrStagingFailed, baseDir, err)
 	}
 	defer func() { _ = root.Close() }()
 
 	relativePath = filepath.Clean(relativePath)
 	if dir := filepath.Dir(relativePath); dir != "." {
 		if err := root.MkdirAll(dir, dirPerm); err != nil {
-			return fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+			return fmt.Errorf("%w: %q under %q: %w", ErrZipSlip, relativePath, baseDir, err)
 		}
 	}
 	return nil
@@ -724,23 +724,23 @@ func streamResolveIntoRoot(
 ) (int64, error) {
 	relativePath = filepath.Clean(relativePath)
 	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
-		return 0, fmt.Errorf("create staging base %q: %w", baseDir, err)
+		return 0, fmt.Errorf("%w: create %q: %w", ErrStagingFailed, baseDir, err)
 	}
 	root, err := os.OpenRoot(baseDir)
 	if err != nil {
-		return 0, fmt.Errorf("open staging root %q: %w", baseDir, err)
+		return 0, fmt.Errorf("%w: open root %q: %w", ErrStagingFailed, baseDir, err)
 	}
 	defer func() { _ = root.Close() }()
 
 	if dir := filepath.Dir(relativePath); dir != "." {
 		if err := root.MkdirAll(dir, dirPerm); err != nil {
-			return 0, fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+			return 0, fmt.Errorf("%w: %q under %q: %w", ErrZipSlip, relativePath, baseDir, err)
 		}
 	}
 
 	writer, err := root.OpenFile(relativePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
-		return 0, fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+		return 0, fmt.Errorf("%w: %q under %q: %w", ErrZipSlip, relativePath, baseDir, err)
 	}
 	defer func() { _ = writer.Close() }()
 

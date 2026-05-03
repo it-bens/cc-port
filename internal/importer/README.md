@@ -28,6 +28,8 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `ErrEntryCapExceeded`: returned by `Run` when an archive entry's uncompressed size exceeds the per-entry cap (`maxZipEntryBytes`, 512 MiB). Fires from both the declared-size check and the post-decode counter.
 - `ErrAggregateCapExceeded`: returned by `Run` when the sum of decompressed bytes across all archive entries exceeds `maxArchiveUncompressedBytes` (4 GiB). Fires from both classify (pass one) and stage (pass two).
 - `UnknownArchiveEntryError`: typed error returned by `Run` when an archive entry's name does not match any known prefix. `Name` carries the offending entry; tests assert via `errors.As`.
+- `ErrZipSlip`: returned by `Run` when an archive entry's resolved relative path would land outside its staging base. Fires from the os.Root containment guard inside `assertWithinRoot` and `streamResolveIntoRoot`.
+- `ErrStagingFailed`: returned by `Run` when the staging jail cannot be established (staging-base mkdir or os.OpenRoot failure). Distinct from `ErrZipSlip`: signals destination-side I/O failure, not a containment violation.
 
 ## Contracts
 
