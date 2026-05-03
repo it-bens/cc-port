@@ -33,6 +33,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `ErrSourceNil`: returned by `Run` when `Options.Source` is nil. The wrapping message hints that the caller's pipeline likely missed `MaterializeStage`.
 - `MissingResolutionsError`: typed error reporting declared placeholder keys present in the archive that the caller did not resolve. `Keys` carries the offending key list, alphabetically sorted; tests assert via `errors.As`.
 - `UndeclaredTokensError`: typed error reporting `{{UPPER_SNAKE}}` tokens that appear in the archive but are not listed in the manifest's placeholders. `Tokens` carries the offending token list, alphabetically sorted.
+- `InvalidConfigJSONError`: typed error returned by `MergeProjectConfigBytes` when `existingData` is not valid JSON. `Path` carries the config file path the caller passed.
 
 ## Contracts
 

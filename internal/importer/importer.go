@@ -1059,7 +1059,7 @@ func MergeProjectConfigBytes(existingData []byte, configPath, targetPath string,
 	if len(existingData) == 0 {
 		existingData = []byte(`{}`)
 	} else if !gjson.ValidBytes(existingData) {
-		return nil, fmt.Errorf("invalid JSON in config file %q", configPath)
+		return nil, &InvalidConfigJSONError{Path: configPath}
 	}
 
 	path := "projects." + rewrite.EscapeSJSONKey(targetPath)

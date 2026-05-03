@@ -80,3 +80,14 @@ type UndeclaredTokensError struct {
 func (e *UndeclaredTokensError) Error() string {
 	return fmt.Sprintf("archive contains undeclared placeholder(s) %s", strings.Join(e.Tokens, ", "))
 }
+
+// InvalidConfigJSONError reports that MergeProjectConfigBytes rejected
+// existingData because it is not valid JSON. Path carries the config file
+// path the caller passed; it appears in the error message verbatim.
+type InvalidConfigJSONError struct {
+	Path string
+}
+
+func (e *InvalidConfigJSONError) Error() string {
+	return fmt.Sprintf("invalid JSON in config file %q", e.Path)
+}
