@@ -474,7 +474,9 @@ func TestImport_RefusesUndeclaredKey(t *testing.T) {
 	}
 	_, err = importer.Run(t.Context(), destClaudeHome, importOptions)
 	require.Error(t, err, "import must refuse an archive carrying an undeclared token")
-	assert.Contains(t, err.Error(), "{{SECRET}}")
+	var undeclaredErr *importer.UndeclaredTokensError
+	require.ErrorAs(t, err, &undeclaredErr)
+	assert.Equal(t, []string{"{{SECRET}}"}, undeclaredErr.Tokens)
 
 	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
 }

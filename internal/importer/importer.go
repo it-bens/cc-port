@@ -326,7 +326,7 @@ func runPreflight(
 		errs = append(errs, &MissingResolutionsError{Keys: missing})
 	}
 	if len(undeclared) > 0 {
-		errs = append(errs, fmt.Errorf("archive contains undeclared placeholder(s) %s", strings.Join(undeclared, ", ")))
+		errs = append(errs, &UndeclaredTokensError{Tokens: undeclared})
 	}
 	if len(errs) == 1 {
 		return fmt.Errorf("archive preflight: %w", errs[0])

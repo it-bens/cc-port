@@ -69,3 +69,14 @@ type MissingResolutionsError struct {
 func (e *MissingResolutionsError) Error() string {
 	return fmt.Sprintf("missing resolutions for declared placeholder(s) %s", strings.Join(e.Keys, ", "))
 }
+
+// UndeclaredTokensError reports {{UPPER_SNAKE}} tokens that appear in the
+// archive but are not listed in the manifest's placeholders. Tokens carries
+// the offending token list, alphabetically sorted.
+type UndeclaredTokensError struct {
+	Tokens []string
+}
+
+func (e *UndeclaredTokensError) Error() string {
+	return fmt.Sprintf("archive contains undeclared placeholder(s) %s", strings.Join(e.Tokens, ", "))
+}

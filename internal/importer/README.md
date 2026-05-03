@@ -32,6 +32,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `ErrStagingFailed`: returned by `Run` when the staging jail cannot be established (staging-base mkdir or os.OpenRoot failure). Distinct from `ErrZipSlip`: signals destination-side I/O failure, not a containment violation.
 - `ErrSourceNil`: returned by `Run` when `Options.Source` is nil. The wrapping message hints that the caller's pipeline likely missed `MaterializeStage`.
 - `MissingResolutionsError`: typed error reporting declared placeholder keys present in the archive that the caller did not resolve. `Keys` carries the offending key list, alphabetically sorted; tests assert via `errors.As`.
+- `UndeclaredTokensError`: typed error reporting `{{UPPER_SNAKE}}` tokens that appear in the archive but are not listed in the manifest's placeholders. `Tokens` carries the offending token list, alphabetically sorted.
 
 ## Contracts
 
