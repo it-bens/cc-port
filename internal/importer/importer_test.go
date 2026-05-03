@@ -404,7 +404,9 @@ func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	}
 	_, err = importer.Run(t.Context(), destClaudeHome, importOptions)
 	require.Error(t, err, "import must refuse when a declared placeholder is not resolved")
-	assert.Contains(t, err.Error(), "{{EXTRA}}")
+	var missingErr *importer.MissingResolutionsError
+	require.ErrorAs(t, err, &missingErr)
+	assert.Equal(t, []string{"{{EXTRA}}"}, missingErr.Keys)
 
 	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
 }

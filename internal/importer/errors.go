@@ -5,6 +5,7 @@ package importer
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrEncodedDirCollision is returned by CheckConflict when the encoded
@@ -57,3 +58,14 @@ var ErrStagingFailed = errors.New("staging base setup failed")
 // ErrSourceNil is returned by Run when Options.Source is nil. The wrapping
 // message hints that the caller's pipeline likely missed MaterializeStage.
 var ErrSourceNil = errors.New("source is nil; pipeline missing MaterializeStage")
+
+// MissingResolutionsError reports declared placeholder keys present in the
+// archive that the caller did not resolve. Keys carries the offending key
+// list, alphabetically sorted; tests assert on the slice via errors.As.
+type MissingResolutionsError struct {
+	Keys []string
+}
+
+func (e *MissingResolutionsError) Error() string {
+	return fmt.Sprintf("missing resolutions for declared placeholder(s) %s", strings.Join(e.Keys, ", "))
+}

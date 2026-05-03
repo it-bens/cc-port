@@ -321,18 +321,17 @@ func runPreflight(
 		return nil
 	}
 
-	var parts []string
+	var errs []error
 	if len(missing) > 0 {
-		parts = append(parts, fmt.Sprintf(
-			"missing resolutions for declared placeholder(s) %s", strings.Join(missing, ", "),
-		))
+		errs = append(errs, &MissingResolutionsError{Keys: missing})
 	}
 	if len(undeclared) > 0 {
-		parts = append(parts, fmt.Sprintf(
-			"archive contains undeclared placeholder(s) %s", strings.Join(undeclared, ", "),
-		))
+		errs = append(errs, fmt.Errorf("archive contains undeclared placeholder(s) %s", strings.Join(undeclared, ", ")))
 	}
-	return fmt.Errorf("archive preflight: %s", strings.Join(parts, "; "))
+	if len(errs) == 1 {
+		return fmt.Errorf("archive preflight: %w", errs[0])
+	}
+	return fmt.Errorf("archive preflight: %w; %w", errs[0], errs[1])
 }
 
 // classifyMissingResolutions mirrors ClassifyPlaceholders's missing-key

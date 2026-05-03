@@ -31,6 +31,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `ErrZipSlip`: returned by `Run` when an archive entry's resolved relative path would land outside its staging base. Fires from the os.Root containment guard inside `assertWithinRoot` and `streamResolveIntoRoot`.
 - `ErrStagingFailed`: returned by `Run` when the staging jail cannot be established (staging-base mkdir or os.OpenRoot failure). Distinct from `ErrZipSlip`: signals destination-side I/O failure, not a containment violation.
 - `ErrSourceNil`: returned by `Run` when `Options.Source` is nil. The wrapping message hints that the caller's pipeline likely missed `MaterializeStage`.
+- `MissingResolutionsError`: typed error reporting declared placeholder keys present in the archive that the caller did not resolve. `Keys` carries the offending key list, alphabetically sorted; tests assert via `errors.As`.
 
 ## Contracts
 
