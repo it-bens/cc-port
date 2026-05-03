@@ -11,7 +11,7 @@ Orchestrates `cc-port push` and `cc-port pull`. Owns conflict-detection logic, p
 - `PlanPush(ctx, opts, prior) (*PushPlan, error)`: reads prior remote (when prior is non-nil), populates plan with cross-machine state and encryption metadata.
 - `ExecutePush(ctx, opts, plan, output io.Writer) error`: runs the export-side pipeline against the writer cmd opened.
 - `PlanPull(ctx, opts, source) (*PullPlan, error)`: reads remote archive's manifest from the pre-opened source, populates plan with placeholder resolutions.
-- `ExecutePull(ctx, opts, plan, source) error`: runs importer.Run against the source.
+- `ExecutePull(ctx, opts, plan, source) (*importer.Result, error)`: runs `importer.Run` against the source. Returns the importer's `Result` so cmd can render the rules-file scan via `renderRulesReport`.
 - `(*PushPlan).Render(io.Writer) error`, `(*PullPlan).Render(io.Writer) error`: write the dry-run preview.
 - Sentinel errors: `ErrCrossMachineConflict`, `ErrRemoteNotFound`, `ErrPassphraseRequired`, `ErrUnresolvedPlaceholder`. cmd translates raw `remote.ErrNotFound` and `encrypt.ErrPassphraseRequired` into the matching sentinel at pipeline-open time.
 

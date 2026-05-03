@@ -8,7 +8,8 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 
 ## Public API
 
-- `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) error`: import an archive end-to-end. Reads the archive via `zip.NewReader` on `Options.Source`. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure.
+- `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*Result, error)`: import an archive end-to-end. Reads the archive via `zip.NewReader` on `Options.Source`. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure. Returns `Result.RulesReport` carrying the post-promote rules-file scan against `TargetPath`.
+- `Result`: success-path output of `Run`. `RulesReport scan.Report` carries the rules-file scan; cmd renders it via `cmd/cc-port`'s `renderRulesReport`.
 - `ResolvePlaceholders(unresolved []string, fromManifest *manifest.Metadata, prompter Prompter) (map[string]string, error)`: compose a resolution map from the plan's unresolved keys, optional `--from-manifest` metadata, and a caller-supplied `Prompter`. Filters implicit keys, merges manifest-known non-empty values, and delegates remaining keys to the prompter. The byte-level token substitution helper used inside `Run` is unexported.
 - `IsImplicitKey(key string) bool`: predicate exposing the implicit-key set without leaking the constant. Callers refuse user-supplied resolutions for these keys and treat them as already-resolved when computing unresolved sets.
 - `Prompter`: function type `func(unresolved []string) (map[string]string, error)` the orchestrator calls when keys remain after the manifest merge. cmd constructs one that delegates to `internal/ui`.
