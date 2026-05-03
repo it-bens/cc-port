@@ -2,7 +2,10 @@
 // errors.Is / errors.As rather than substring-matching Error() output.
 package importer
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrEncodedDirCollision is returned by CheckConflict when the encoded
 // project directory already exists. The wrapping error message names the
@@ -27,3 +30,14 @@ var ErrEntryCapExceeded = errors.New("archive entry exceeds per-entry size limit
 // from both classifyArchive (pass one) and stageArchiveEntries (pass two);
 // pass two re-checks against actual observed bytes, not declared sizes.
 var ErrAggregateCapExceeded = errors.New("archive aggregate decompressed size exceeds limit")
+
+// UnknownArchiveEntryError reports an archive entry whose name does not
+// match any known prefix. Name carries the offending entry as observed in
+// the archive; tests assert on the field via errors.As.
+type UnknownArchiveEntryError struct {
+	Name string
+}
+
+func (e *UnknownArchiveEntryError) Error() string {
+	return fmt.Sprintf("unknown archive entry: %q", e.Name)
+}

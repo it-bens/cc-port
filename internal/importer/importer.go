@@ -562,7 +562,7 @@ func routeArchiveEntry(
 		}
 		return bytesRead, historyAppends, content, nil
 	default:
-		return 0, historyAppends, configBlock, fmt.Errorf("unknown archive entry: %q", name)
+		return 0, historyAppends, configBlock, &UnknownArchiveEntryError{Name: name}
 	}
 }
 

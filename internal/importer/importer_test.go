@@ -964,9 +964,9 @@ func TestImport_HardFailsOnUnknownEntryPrefix(t *testing.T) {
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown archive entry")
-	assert.Contains(t, err.Error(), "rogue/file.txt")
+	var entryErr *importer.UnknownArchiveEntryError
+	require.ErrorAs(t, err, &entryErr)
+	assert.Equal(t, "rogue/file.txt", entryErr.Name)
 }
 
 // assertNoPendingPlaceholders walks dirPath and fails the test if any file

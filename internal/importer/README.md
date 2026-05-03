@@ -27,6 +27,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `ErrStatProjectDirectory`: returned by `CheckConflict` when the encoded project directory's existence cannot be determined (permission error on an intermediate path component). Wraps the underlying os error via `%w` chain.
 - `ErrEntryCapExceeded`: returned by `Run` when an archive entry's uncompressed size exceeds the per-entry cap (`maxZipEntryBytes`, 512 MiB). Fires from both the declared-size check and the post-decode counter.
 - `ErrAggregateCapExceeded`: returned by `Run` when the sum of decompressed bytes across all archive entries exceeds `maxArchiveUncompressedBytes` (4 GiB). Fires from both classify (pass one) and stage (pass two).
+- `UnknownArchiveEntryError`: typed error returned by `Run` when an archive entry's name does not match any known prefix. `Name` carries the offending entry; tests assert via `errors.As`.
 
 ## Contracts
 
