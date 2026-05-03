@@ -53,3 +53,7 @@ var ErrZipSlip = errors.New("staging path escapes containment base")
 // cannot open it. Distinct from ErrZipSlip: this signals a permission or
 // disk failure on the destination side, not a containment violation.
 var ErrStagingFailed = errors.New("staging base setup failed")
+
+// ErrSourceNil is returned by Run when Options.Source is nil. The wrapping
+// message hints that the caller's pipeline likely missed MaterializeStage.
+var ErrSourceNil = errors.New("source is nil; pipeline missing MaterializeStage")

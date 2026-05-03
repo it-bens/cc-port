@@ -1293,7 +1293,5 @@ func TestRun_NilSource(t *testing.T) {
 		TargetPath: "/Users/test/Projects/myproject",
 	})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "MaterializeStage",
-		"error must hint at the missing pipeline stage to ease debugging")
+	require.ErrorIs(t, err, importer.ErrSourceNil)
 }

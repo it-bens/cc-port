@@ -153,7 +153,7 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 		return nil, fmt.Errorf("canceled: %w", err)
 	}
 	if importOptions.Source == nil {
-		return nil, errors.New("importer: Source is nil; pipeline missing MaterializeStage?")
+		return nil, fmt.Errorf("importer: %w", ErrSourceNil)
 	}
 	var report scan.Report
 	err := lock.WithLock(claudeHome, func() error {
