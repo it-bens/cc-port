@@ -15,3 +15,9 @@ var ErrEncodedDirCollision = errors.New("encoded project directory already exist
 // the underlying os error via %w; callers can chain errors.Is against
 // both this sentinel and the underlying os error type.
 var ErrStatProjectDirectory = errors.New("stat project directory")
+
+// ErrEntryCapExceeded is returned when an archive entry's uncompressed
+// size exceeds the per-entry cap (maxZipEntryBytes). The wrapping error
+// names the entry and the limit. Fires from both the declared-size check
+// (zip central directory) and the post-decode counter.
+var ErrEntryCapExceeded = errors.New("archive entry exceeds per-entry size limit")

@@ -1086,7 +1086,7 @@ func TestReadZipFile_RejectsOversizedEntry_SmallCap(t *testing.T) {
 		TargetPath: filepath.Join(t.TempDir(), "project"),
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds")
+	require.ErrorIs(t, err, importer.ErrEntryCapExceeded)
 }
 
 // TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap exercises

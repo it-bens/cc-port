@@ -25,6 +25,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 
 - `ErrEncodedDirCollision`: returned by `CheckConflict` (and surfaced via `Run`'s "conflict check" wrap) when the encoded project directory already exists. Tests assert via `errors.Is`.
 - `ErrStatProjectDirectory`: returned by `CheckConflict` when the encoded project directory's existence cannot be determined (permission error on an intermediate path component). Wraps the underlying os error via `%w` chain.
+- `ErrEntryCapExceeded`: returned by `Run` when an archive entry's uncompressed size exceeds the per-entry cap (`maxZipEntryBytes`, 512 MiB). Fires from both the declared-size check and the post-decode counter.
 
 ## Contracts
 
