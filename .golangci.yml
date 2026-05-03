@@ -45,6 +45,8 @@ linters:
       line-length: 150
     misspell:
       locale: US
+    goconst:
+      ignore-tests: true
     gocritic:
       enabled-tags:
         - diagnostic
