@@ -4,6 +4,43 @@
 
 See [`docs/architecture.md`](docs/architecture.md) for the module layout, contract index, and cross-cutting file-history policy.
 
+## Claude Code plugins
+
+Add the marketplaces ([`it-bens/ai-tools`](https://github.com/it-bens/ai-tools) and [`shopwareLabs/ai-coding-tools`](https://github.com/shopwareLabs/ai-coding-tools)):
+
+```
+/plugin marketplace add it-bens/ai-tools
+/plugin marketplace add shopwareLabs/ai-coding-tools
+```
+
+[`superpowers-additions@itb-ai-tools`](https://github.com/it-bens/ai-tools/tree/main/plugins/superpowers-additions) is required, on top of the default superpowers plugin:
+
+```
+/plugin install superpowers-additions@itb-ai-tools
+```
+
+[`reviewing-plans-with-opus-enforcer@itb-ai-tools`](https://github.com/it-bens/ai-tools/tree/main/plugins/reviewing-plans-with-opus-enforcer) is optional:
+
+```
+/plugin install reviewing-plans-with-opus-enforcer@itb-ai-tools
+```
+
+Other recommended plugins:
+
+- [`explore-with-sonnet-enforcer@itb-ai-tools`](https://github.com/it-bens/ai-tools/tree/main/plugins/explore-with-sonnet-enforcer)
+- [`native-tools-enforcer@itb-ai-tools`](https://github.com/it-bens/ai-tools/tree/main/plugins/native-tools-enforcer)
+- [`plan-with-opus-enforcer@itb-ai-tools`](https://github.com/it-bens/ai-tools/tree/main/plugins/plan-with-opus-enforcer)
+- [`redundant-read-blocker@itb-ai-tools`](https://github.com/it-bens/ai-tools/tree/main/plugins/redundant-read-blocker)
+- [`gh-tooling@shopware-ai-coding-tools`](https://github.com/shopwareLabs/ai-coding-tools/tree/main/plugins/gh-tooling)
+
+```
+/plugin install explore-with-sonnet-enforcer@itb-ai-tools
+/plugin install native-tools-enforcer@itb-ai-tools
+/plugin install plan-with-opus-enforcer@itb-ai-tools
+/plugin install redundant-read-blocker@itb-ai-tools
+/plugin install gh-tooling@shopware-ai-coding-tools
+```
+
 ## Tests and lint
 
 - Unit tests live next to the code they cover (`*_test.go` in each `internal/*` directory).
