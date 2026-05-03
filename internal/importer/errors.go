@@ -1,0 +1,93 @@
+// Package importer error values. Tests assert against these via
+// errors.Is / errors.As rather than substring-matching Error() output.
+package importer
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// ErrEncodedDirCollision is returned by CheckConflict when the encoded
+// project directory already exists. The wrapping error message names the
+// path; callers test branch identity with errors.Is.
+var ErrEncodedDirCollision = errors.New("encoded project directory already exists")
+
+// ErrStatProjectDirectory is returned by CheckConflict when the encoded
+// project directory's existence cannot be determined (e.g. permission
+// error on an intermediate path component). The wrapping error preserves
+// the underlying os error via %w; callers can chain errors.Is against
+// both this sentinel and the underlying os error type.
+var ErrStatProjectDirectory = errors.New("stat project directory")
+
+// ErrEntryCapExceeded is returned when an archive entry's uncompressed
+// size exceeds the per-entry cap (maxZipEntryBytes). The wrapping error
+// names the entry and the limit. Fires from both the declared-size check
+// (zip central directory) and the post-decode counter.
+var ErrEntryCapExceeded = errors.New("archive entry exceeds per-entry size limit")
+
+// ErrAggregateCapExceeded is returned when the sum of decompressed bytes
+// across all archive entries exceeds maxArchiveUncompressedBytes. Fires
+// from both classifyArchive (pass one) and stageArchiveEntries (pass two);
+// pass two re-checks against actual observed bytes, not declared sizes.
+var ErrAggregateCapExceeded = errors.New("archive aggregate decompressed size exceeds limit")
+
+// UnknownArchiveEntryError reports an archive entry whose name does not
+// match any known prefix. Name carries the offending entry as observed in
+// the archive; tests assert on the field via errors.As.
+type UnknownArchiveEntryError struct {
+	Name string
+}
+
+func (e *UnknownArchiveEntryError) Error() string {
+	return fmt.Sprintf("unknown archive entry: %q", e.Name)
+}
+
+// ErrZipSlip is returned when an archive entry's resolved relative path
+// would land outside its staging base. Fires from the os.Root.MkdirAll
+// and os.Root.OpenFile guards inside assertWithinRoot and
+// streamResolveIntoRoot. The underlying os error stays in the chain.
+var ErrZipSlip = errors.New("staging path escapes containment base")
+
+// ErrStagingFailed is returned when the staging jail itself cannot be
+// established: the staging base directory cannot be created, or os.OpenRoot
+// cannot open it. Distinct from ErrZipSlip: this signals a permission or
+// disk failure on the destination side, not a containment violation.
+var ErrStagingFailed = errors.New("staging base setup failed")
+
+// ErrSourceNil is returned by Run when Options.Source is nil. The wrapping
+// message hints that the caller's pipeline likely missed MaterializeStage.
+var ErrSourceNil = errors.New("source is nil; pipeline missing MaterializeStage")
+
+// MissingResolutionsError reports declared placeholder keys present in the
+// archive that the caller did not resolve. Keys carries the offending key
+// list, alphabetically sorted; tests assert on the slice via errors.As.
+type MissingResolutionsError struct {
+	Keys []string
+}
+
+func (e *MissingResolutionsError) Error() string {
+	return fmt.Sprintf("missing resolutions for declared placeholder(s) %s", strings.Join(e.Keys, ", "))
+}
+
+// UndeclaredTokensError reports {{UPPER_SNAKE}} tokens that appear in the
+// archive but are not listed in the manifest's placeholders. Tokens carries
+// the offending token list, alphabetically sorted.
+type UndeclaredTokensError struct {
+	Tokens []string
+}
+
+func (e *UndeclaredTokensError) Error() string {
+	return fmt.Sprintf("archive contains undeclared placeholder(s) %s", strings.Join(e.Tokens, ", "))
+}
+
+// InvalidConfigJSONError reports that MergeProjectConfigBytes rejected
+// existingData because it is not valid JSON. Path carries the config file
+// path the caller passed; it appears in the error message verbatim.
+type InvalidConfigJSONError struct {
+	Path string
+}
+
+func (e *InvalidConfigJSONError) Error() string {
+	return fmt.Sprintf("invalid JSON in config file %q", e.Path)
+}

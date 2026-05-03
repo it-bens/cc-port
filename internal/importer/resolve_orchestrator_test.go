@@ -77,12 +77,12 @@ func TestResolvePlaceholders_ManifestImplicitKeyDropped(t *testing.T) {
 }
 
 func TestResolvePlaceholders_PrompterErrorPropagates(t *testing.T) {
+	sentinelPrompterErr := errors.New("user canceled")
 	prompter := func(_ []string) (map[string]string, error) {
-		return nil, errors.New("user canceled")
+		return nil, sentinelPrompterErr
 	}
 	_, err := importer.ResolvePlaceholders([]string{"{{HOME}}"}, nil, prompter)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user canceled")
+	require.ErrorIs(t, err, sentinelPrompterErr)
 }
 
 func TestResolvePlaceholders_NilPrompterRejectedWhenNeeded(t *testing.T) {

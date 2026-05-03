@@ -404,7 +404,9 @@ func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	}
 	_, err = importer.Run(t.Context(), destClaudeHome, importOptions)
 	require.Error(t, err, "import must refuse when a declared placeholder is not resolved")
-	assert.Contains(t, err.Error(), "{{EXTRA}}")
+	var missingErr *importer.MissingResolutionsError
+	require.ErrorAs(t, err, &missingErr)
+	assert.Equal(t, []string{"{{EXTRA}}"}, missingErr.Keys)
 
 	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
 }
@@ -472,7 +474,9 @@ func TestImport_RefusesUndeclaredKey(t *testing.T) {
 	}
 	_, err = importer.Run(t.Context(), destClaudeHome, importOptions)
 	require.Error(t, err, "import must refuse an archive carrying an undeclared token")
-	assert.Contains(t, err.Error(), "{{SECRET}}")
+	var undeclaredErr *importer.UndeclaredTokensError
+	require.ErrorAs(t, err, &undeclaredErr)
+	assert.Equal(t, []string{"{{SECRET}}"}, undeclaredErr.Tokens)
 
 	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
 }
@@ -763,7 +767,7 @@ func TestImport_ConflictRefused(t *testing.T) {
 
 	_, err := importer.Run(t.Context(), sourceClaudeHome, importOptions)
 	require.Error(t, err, "import to existing project should fail")
-	assert.Contains(t, err.Error(), "already exists", "error should mention conflict")
+	require.ErrorIs(t, err, importer.ErrEncodedDirCollision)
 }
 
 func TestImport_RoundTrip_NewCategories(t *testing.T) {
@@ -964,9 +968,9 @@ func TestImport_HardFailsOnUnknownEntryPrefix(t *testing.T) {
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown archive entry")
-	assert.Contains(t, err.Error(), "rogue/file.txt")
+	var entryErr *importer.UnknownArchiveEntryError
+	require.ErrorAs(t, err, &entryErr)
+	assert.Equal(t, "rogue/file.txt", entryErr.Name)
 }
 
 // assertNoPendingPlaceholders walks dirPath and fails the test if any file
@@ -1045,7 +1049,7 @@ func TestRun_RejectsZipSlipEntry(t *testing.T) {
 		TargetPath: filepath.Join(t.TempDir(), "project"),
 	})
 	require.Error(t, err)
-	assert.Contains(t, strings.ToLower(err.Error()), "stage")
+	require.ErrorIs(t, err, importer.ErrZipSlip)
 
 	escapeSibling := filepath.Join(destClaudeHome.Dir, "projects", "escape.txt")
 	_, statErr := os.Stat(escapeSibling)
@@ -1068,6 +1072,34 @@ func TestRun_RejectsAbsoluteZipEntry(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestRun_RejectsArchiveWhenStagingBaseUnstageable plants a regular file at
+// the file-history base path so the os.MkdirAll inside assertWithinRoot
+// fails. This exercises the ErrStagingFailed branch (destination-side I/O
+// failure on the staging jail) as distinct from the zip-slip containment
+// branch (ErrZipSlip).
+func TestRun_RejectsArchiveWhenStagingBaseUnstageable(t *testing.T) {
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+
+	// Block the file-history base with a regular file so MkdirAll fails.
+	require.NoError(t, os.WriteFile(
+		destClaudeHome.FileHistoryDir(), []byte("blocker"), 0o600,
+	))
+
+	archivePath := filepath.Join(t.TempDir(), "fh.zip")
+	buildArchiveWithFileHistoryEntry(t, archivePath,
+		"file-history/abc/snapshot@v1", []byte("opaque"))
+
+	source, size := openArchive(t, archivePath)
+	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: filepath.Join(t.TempDir(), "project"),
+	})
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, importer.ErrStagingFailed)
+}
+
 // TestReadZipFile_RejectsOversizedEntry_SmallCap exercises the per-entry cap
 // guard under a 1 MiB test override so the archive is a few megabytes rather
 // than 600. The scale sibling in importer_large_test.go materializes a real
@@ -1086,7 +1118,7 @@ func TestReadZipFile_RejectsOversizedEntry_SmallCap(t *testing.T) {
 		TargetPath: filepath.Join(t.TempDir(), "project"),
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds")
+	require.ErrorIs(t, err, importer.ErrEntryCapExceeded)
 }
 
 // TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap exercises
@@ -1109,7 +1141,7 @@ func TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap(t *testing
 	})
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "archive decompressed size exceeds")
+	require.ErrorIs(t, err, importer.ErrAggregateCapExceeded)
 }
 
 func TestRun_CancelsWhenContextCancelled(t *testing.T) {
@@ -1201,6 +1233,43 @@ func buildArchiveWithSingleEntry(t *testing.T, archivePath, entryName string, si
 	}
 }
 
+// buildArchiveWithFileHistoryEntry writes a cc-port-shaped archive at
+// archivePath with metadata.xml declaring the file-history category included
+// and one entry at entryName carrying entryBody verbatim. Used by tests
+// that need importer.Run to dispatch into the file-history staging path.
+func buildArchiveWithFileHistoryEntry(
+	t *testing.T, archivePath, entryName string, entryBody []byte,
+) {
+	t.Helper()
+
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	defer func() { _ = archiveFile.Close() }()
+
+	zipWriter := zip.NewWriter(archiveFile)
+	defer func() { _ = zipWriter.Close() }()
+
+	metadata := manifest.Metadata{
+		Export: manifest.Info{
+			Created: time.Now().UTC(),
+			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{
+				FileHistory: true,
+			}),
+		},
+	}
+	metadataBytes, err := xml.MarshalIndent(&metadata, "", "  ")
+	require.NoError(t, err)
+	metadataEntry, err := zipWriter.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = metadataEntry.Write(append([]byte(xml.Header), metadataBytes...))
+	require.NoError(t, err)
+
+	entry, err := zipWriter.Create(entryName)
+	require.NoError(t, err)
+	_, err = entry.Write(entryBody)
+	require.NoError(t, err)
+}
+
 // writeMetadataXML emits the sessions-only metadata.xml header entry that
 // every test archive needs for importer.Run to accept the archive shape.
 func writeMetadataXML(t *testing.T, zipWriter *zip.Writer) {
@@ -1228,7 +1297,5 @@ func TestRun_NilSource(t *testing.T) {
 		TargetPath: "/Users/test/Projects/myproject",
 	})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "MaterializeStage",
-		"error must hint at the missing pipeline stage to ease debugging")
+	require.ErrorIs(t, err, importer.ErrSourceNil)
 }

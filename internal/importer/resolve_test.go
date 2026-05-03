@@ -311,8 +311,7 @@ func TestCheckConflict(t *testing.T) {
 
 		err := importer.CheckConflict(existingDir)
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "already exists")
+		require.ErrorIs(t, err, importer.ErrEncodedDirCollision)
 	})
 
 	t.Run("wraps stat error when existence cannot be determined", func(t *testing.T) {
@@ -338,9 +337,9 @@ func TestCheckConflict(t *testing.T) {
 		err := importer.CheckConflict(target)
 
 		require.Error(t, err)
-		assert.NotContains(t, err.Error(), "already exists",
+		require.NotErrorIs(t, err, importer.ErrEncodedDirCollision,
 			"must not silently treat a stat error as 'no conflict'")
-		assert.Contains(t, err.Error(), "stat project directory")
-		assert.ErrorIs(t, err, fs.ErrPermission)
+		require.ErrorIs(t, err, importer.ErrStatProjectDirectory)
+		require.ErrorIs(t, err, fs.ErrPermission)
 	})
 }

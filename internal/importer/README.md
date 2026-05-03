@@ -21,6 +21,20 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `MergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error)`: splice a project block into an existing `.claude.json` body. Preserves key order, indent, and trailing newlines via `sjson`. `configPath` is used only in error messages.
 - `Options`: import configuration. `Source io.ReaderAt` and `Size int64` describe the archive bytes; the importer constructs `*zip.Reader` directly and never opens files. `TargetPath`, `Resolutions`, and the unexported `renameHook` test seam stay as before. `Source` must be non-nil; cmd-layer chains compose `pipeline.MaterializeStage` to populate it.
 
+### Errors
+
+- `ErrEncodedDirCollision`: returned by `CheckConflict` (and surfaced via `Run`'s "conflict check" wrap) when the encoded project directory already exists. Tests assert via `errors.Is`.
+- `ErrStatProjectDirectory`: returned by `CheckConflict` when the encoded project directory's existence cannot be determined (permission error on an intermediate path component). Wraps the underlying os error via `%w` chain.
+- `ErrEntryCapExceeded`: returned by `Run` when an archive entry's uncompressed size exceeds the per-entry cap (`maxZipEntryBytes`, 512 MiB). Fires from both the declared-size check and the post-decode counter.
+- `ErrAggregateCapExceeded`: returned by `Run` when the sum of decompressed bytes across all archive entries exceeds `maxArchiveUncompressedBytes` (4 GiB). Fires from both classify (pass one) and stage (pass two).
+- `UnknownArchiveEntryError`: typed error returned by `Run` when an archive entry's name does not match any known prefix. `Name` carries the offending entry; tests assert via `errors.As`.
+- `ErrZipSlip`: returned by `Run` when an archive entry's resolved relative path would land outside its staging base. Fires from the os.Root containment guard inside `assertWithinRoot` and `streamResolveIntoRoot`.
+- `ErrStagingFailed`: returned by `Run` when the staging jail cannot be established (staging-base mkdir or os.OpenRoot failure). Distinct from `ErrZipSlip`: signals destination-side I/O failure, not a containment violation.
+- `ErrSourceNil`: returned by `Run` when `Options.Source` is nil. The wrapping message hints that the caller's pipeline likely missed `MaterializeStage`.
+- `MissingResolutionsError`: typed error reporting declared placeholder keys present in the archive that the caller did not resolve. `Keys` carries the offending key list, alphabetically sorted; tests assert via `errors.As`.
+- `UndeclaredTokensError`: typed error reporting `{{UPPER_SNAKE}}` tokens that appear in the archive but are not listed in the manifest's placeholders. `Tokens` carries the offending token list, alphabetically sorted.
+- `InvalidConfigJSONError`: typed error returned by `MergeProjectConfigBytes` when `existingData` is not valid JSON. `Path` carries the config file path the caller passed.
+
 ## Contracts
 
 ### Import contract

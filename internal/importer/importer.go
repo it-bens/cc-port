@@ -153,7 +153,7 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 		return nil, fmt.Errorf("canceled: %w", err)
 	}
 	if importOptions.Source == nil {
-		return nil, errors.New("importer: Source is nil; pipeline missing MaterializeStage?")
+		return nil, fmt.Errorf("importer: %w", ErrSourceNil)
 	}
 	var report scan.Report
 	err := lock.WithLock(claudeHome, func() error {
@@ -258,7 +258,8 @@ func classifyArchive(
 		aggregate += int64(len(content))
 		if aggregate > maxArchiveUncompressedBytes {
 			return classification, fmt.Errorf(
-				"archive decompressed size exceeds %d bytes", maxArchiveUncompressedBytes,
+				"%w: aggregate %d > limit %d",
+				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
 			)
 		}
 		recordPresentDeclaredKeys(content, declaredByKey, classification.presentDeclaredKeys)
@@ -320,18 +321,17 @@ func runPreflight(
 		return nil
 	}
 
-	var parts []string
+	var errs []error
 	if len(missing) > 0 {
-		parts = append(parts, fmt.Sprintf(
-			"missing resolutions for declared placeholder(s) %s", strings.Join(missing, ", "),
-		))
+		errs = append(errs, &MissingResolutionsError{Keys: missing})
 	}
 	if len(undeclared) > 0 {
-		parts = append(parts, fmt.Sprintf(
-			"archive contains undeclared placeholder(s) %s", strings.Join(undeclared, ", "),
-		))
+		errs = append(errs, &UndeclaredTokensError{Tokens: undeclared})
 	}
-	return fmt.Errorf("archive preflight: %s", strings.Join(parts, "; "))
+	if len(errs) == 1 {
+		return fmt.Errorf("archive preflight: %w", errs[0])
+	}
+	return fmt.Errorf("archive preflight: %w; %w", errs[0], errs[1])
 }
 
 // classifyMissingResolutions mirrors ClassifyPlaceholders's missing-key
@@ -509,7 +509,8 @@ func stageArchiveEntries(
 		aggregate += entryBytes
 		if aggregate > maxArchiveUncompressedBytes {
 			return nil, nil, fmt.Errorf(
-				"archive decompressed size exceeds %d bytes", maxArchiveUncompressedBytes,
+				"%w: aggregate %d > limit %d",
+				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
 			)
 		}
 	}
@@ -560,7 +561,7 @@ func routeArchiveEntry(
 		}
 		return bytesRead, historyAppends, content, nil
 	default:
-		return 0, historyAppends, configBlock, fmt.Errorf("unknown archive entry: %q", name)
+		return 0, historyAppends, configBlock, &UnknownArchiveEntryError{Name: name}
 	}
 }
 
@@ -627,18 +628,18 @@ func buildImportPlan(
 // session-keyed) but still need the containment guarantee.
 func assertWithinRoot(baseDir, relativePath string) error {
 	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
-		return fmt.Errorf("create staging base %q: %w", baseDir, err)
+		return fmt.Errorf("%w: create %q: %w", ErrStagingFailed, baseDir, err)
 	}
 	root, err := os.OpenRoot(baseDir)
 	if err != nil {
-		return fmt.Errorf("open staging root %q: %w", baseDir, err)
+		return fmt.Errorf("%w: open root %q: %w", ErrStagingFailed, baseDir, err)
 	}
 	defer func() { _ = root.Close() }()
 
 	relativePath = filepath.Clean(relativePath)
 	if dir := filepath.Dir(relativePath); dir != "." {
 		if err := root.MkdirAll(dir, dirPerm); err != nil {
-			return fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+			return fmt.Errorf("%w: %q under %q: %w", ErrZipSlip, relativePath, baseDir, err)
 		}
 	}
 	return nil
@@ -722,23 +723,23 @@ func streamResolveIntoRoot(
 ) (int64, error) {
 	relativePath = filepath.Clean(relativePath)
 	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
-		return 0, fmt.Errorf("create staging base %q: %w", baseDir, err)
+		return 0, fmt.Errorf("%w: create %q: %w", ErrStagingFailed, baseDir, err)
 	}
 	root, err := os.OpenRoot(baseDir)
 	if err != nil {
-		return 0, fmt.Errorf("open staging root %q: %w", baseDir, err)
+		return 0, fmt.Errorf("%w: open root %q: %w", ErrStagingFailed, baseDir, err)
 	}
 	defer func() { _ = root.Close() }()
 
 	if dir := filepath.Dir(relativePath); dir != "." {
 		if err := root.MkdirAll(dir, dirPerm); err != nil {
-			return 0, fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+			return 0, fmt.Errorf("%w: %q under %q: %w", ErrZipSlip, relativePath, baseDir, err)
 		}
 	}
 
 	writer, err := root.OpenFile(relativePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
-		return 0, fmt.Errorf("stage %q under %q: %w", relativePath, baseDir, err)
+		return 0, fmt.Errorf("%w: %q under %q: %w", ErrZipSlip, relativePath, baseDir, err)
 	}
 	defer func() { _ = writer.Close() }()
 
@@ -840,8 +841,8 @@ func streamResolveEntry(
 func openCappedZipEntry(zipFile *zip.File) (io.ReadCloser, io.Reader, error) {
 	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) { //nolint:gosec // G115: maxZipEntryBytes is positive by construction
 		return nil, nil, fmt.Errorf(
-			"archive entry %q exceeds %d-byte limit (declared %d)",
-			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
+			"%w: %q declared %d > limit %d",
+			ErrEntryCapExceeded, zipFile.Name, zipFile.UncompressedSize64, maxZipEntryBytes,
 		)
 	}
 	readCloser, err := zipFile.Open()
@@ -857,8 +858,8 @@ func openCappedZipEntry(zipFile *zip.File) (io.ReadCloser, io.Reader, error) {
 func enforcePostDecodeCap(name string, bytesRead int64) error {
 	if bytesRead > maxZipEntryBytes {
 		return fmt.Errorf(
-			"archive entry %q exceeds %d-byte limit (post-decode)",
-			name, maxZipEntryBytes,
+			"%w: %q post-decode %d > limit %d",
+			ErrEntryCapExceeded, name, bytesRead, maxZipEntryBytes,
 		)
 	}
 	return nil
@@ -885,8 +886,8 @@ func (r *countingReader) Read(p []byte) (int, error) {
 func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved []byte, bytesRead int64, err error) {
 	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) { //nolint:gosec // G115: maxZipEntryBytes is positive by construction
 		return nil, 0, fmt.Errorf(
-			"archive entry %q exceeds %d-byte limit (declared %d)",
-			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
+			"%w: %q declared %d > limit %d",
+			ErrEntryCapExceeded, zipFile.Name, zipFile.UncompressedSize64, maxZipEntryBytes,
 		)
 	}
 	readCloser, err := zipFile.Open()
@@ -902,8 +903,8 @@ func readAndResolve(zipFile *zip.File, resolutions map[string]string) (resolved 
 	}
 	if int64(len(data)) > maxZipEntryBytes {
 		return nil, int64(len(data)), fmt.Errorf(
-			"archive entry %q exceeds %d-byte limit (post-decode)",
-			zipFile.Name, maxZipEntryBytes,
+			"%w: %q post-decode %d > limit %d",
+			ErrEntryCapExceeded, zipFile.Name, int64(len(data)), maxZipEntryBytes,
 		)
 	}
 	return applyResolutions(data, resolutions), int64(len(data)), nil
@@ -1006,8 +1007,8 @@ func readZipFile(zipFile *zip.File) ([]byte, error) {
 	// UncompressedSize64, so the post-decode check below is still required.
 	if zipFile.UncompressedSize64 > uint64(maxZipEntryBytes) { //nolint:gosec // G115: maxZipEntryBytes is positive by construction
 		return nil, fmt.Errorf(
-			"archive entry %q exceeds %d-byte limit (declared %d)",
-			zipFile.Name, maxZipEntryBytes, zipFile.UncompressedSize64,
+			"%w: %q declared %d > limit %d",
+			ErrEntryCapExceeded, zipFile.Name, zipFile.UncompressedSize64, maxZipEntryBytes,
 		)
 	}
 
@@ -1024,8 +1025,8 @@ func readZipFile(zipFile *zip.File) ([]byte, error) {
 	}
 	if int64(len(data)) > maxZipEntryBytes {
 		return nil, fmt.Errorf(
-			"archive entry %q exceeds %d-byte limit (post-decode)",
-			zipFile.Name, maxZipEntryBytes,
+			"%w: %q post-decode %d > limit %d",
+			ErrEntryCapExceeded, zipFile.Name, int64(len(data)), maxZipEntryBytes,
 		)
 	}
 
@@ -1058,7 +1059,7 @@ func MergeProjectConfigBytes(existingData []byte, configPath, targetPath string,
 	if len(existingData) == 0 {
 		existingData = []byte(`{}`)
 	} else if !gjson.ValidBytes(existingData) {
-		return nil, fmt.Errorf("invalid JSON in config file %q", configPath)
+		return nil, &InvalidConfigJSONError{Path: configPath}
 	}
 
 	path := "projects." + rewrite.EscapeSJSONKey(targetPath)

@@ -56,7 +56,7 @@ func TestMergeProjectConfigBytes_PreservesSiblingKeys(t *testing.T) {
 func TestMergeProjectConfigBytes_RejectsInvalidJSON(t *testing.T) {
 	existing := []byte(`{not valid json`)
 	_, err := importer.MergeProjectConfigBytes(existing, "/fake/config", "/proj", []byte(`{}`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid JSON")
-	assert.Contains(t, err.Error(), "/fake/config")
+	var configErr *importer.InvalidConfigJSONError
+	require.ErrorAs(t, err, &configErr)
+	assert.Equal(t, "/fake/config", configErr.Path)
 }

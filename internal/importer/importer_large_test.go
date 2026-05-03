@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/importer"
@@ -30,7 +29,7 @@ func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
 		TargetPath: filepath.Join(t.TempDir(), "project"),
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds")
+	require.ErrorIs(t, err, importer.ErrEntryCapExceeded)
 }
 
 // TestRun_RefusesArchiveExceedingAggregateUncompressedCap builds an archive
@@ -51,5 +50,5 @@ func TestRun_RefusesArchiveExceedingAggregateUncompressedCap(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "archive decompressed size exceeds")
+	require.ErrorIs(t, err, importer.ErrAggregateCapExceeded)
 }
