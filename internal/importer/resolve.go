@@ -246,7 +246,7 @@ func CheckConflict(encodedProjectDir string) error {
 		return fmt.Errorf("project directory %q: %w", encodedProjectDir, ErrEncodedDirCollision)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat project directory %q: %w", encodedProjectDir, err)
+		return fmt.Errorf("%w %q: %w", ErrStatProjectDirectory, encodedProjectDir, err)
 	}
 	return nil
 }

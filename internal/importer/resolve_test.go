@@ -339,7 +339,7 @@ func TestCheckConflict(t *testing.T) {
 		require.Error(t, err)
 		require.NotErrorIs(t, err, importer.ErrEncodedDirCollision,
 			"must not silently treat a stat error as 'no conflict'")
-		assert.Contains(t, err.Error(), "stat project directory")
-		assert.ErrorIs(t, err, fs.ErrPermission)
+		require.ErrorIs(t, err, importer.ErrStatProjectDirectory)
+		require.ErrorIs(t, err, fs.ErrPermission)
 	})
 }

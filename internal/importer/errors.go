@@ -8,3 +8,10 @@ import "errors"
 // project directory already exists. The wrapping error message names the
 // path; callers test branch identity with errors.Is.
 var ErrEncodedDirCollision = errors.New("encoded project directory already exists")
+
+// ErrStatProjectDirectory is returned by CheckConflict when the encoded
+// project directory's existence cannot be determined (e.g. permission
+// error on an intermediate path component). The wrapping error preserves
+// the underlying os error via %w; callers can chain errors.Is against
+// both this sentinel and the underlying os error type.
+var ErrStatProjectDirectory = errors.New("stat project directory")

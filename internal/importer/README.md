@@ -24,6 +24,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 ### Errors
 
 - `ErrEncodedDirCollision`: returned by `CheckConflict` (and surfaced via `Run`'s "conflict check" wrap) when the encoded project directory already exists. Tests assert via `errors.Is`.
+- `ErrStatProjectDirectory`: returned by `CheckConflict` when the encoded project directory's existence cannot be determined (permission error on an intermediate path component). Wraps the underlying os error via `%w` chain.
 
 ## Contracts
 
