@@ -763,7 +763,7 @@ func TestImport_ConflictRefused(t *testing.T) {
 
 	_, err := importer.Run(t.Context(), sourceClaudeHome, importOptions)
 	require.Error(t, err, "import to existing project should fail")
-	assert.Contains(t, err.Error(), "already exists", "error should mention conflict")
+	require.ErrorIs(t, err, importer.ErrEncodedDirCollision)
 }
 
 func TestImport_RoundTrip_NewCategories(t *testing.T) {

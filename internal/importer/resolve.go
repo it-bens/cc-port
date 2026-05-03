@@ -243,7 +243,7 @@ func scanUpperSnakeTokens(bodies [][]byte) map[string]struct{} {
 func CheckConflict(encodedProjectDir string) error {
 	_, err := os.Stat(encodedProjectDir)
 	if err == nil {
-		return fmt.Errorf("project directory %q already exists", encodedProjectDir)
+		return fmt.Errorf("project directory %q: %w", encodedProjectDir, ErrEncodedDirCollision)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat project directory %q: %w", encodedProjectDir, err)

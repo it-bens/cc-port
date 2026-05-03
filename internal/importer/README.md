@@ -21,6 +21,10 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `MergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error)`: splice a project block into an existing `.claude.json` body. Preserves key order, indent, and trailing newlines via `sjson`. `configPath` is used only in error messages.
 - `Options`: import configuration. `Source io.ReaderAt` and `Size int64` describe the archive bytes; the importer constructs `*zip.Reader` directly and never opens files. `TargetPath`, `Resolutions`, and the unexported `renameHook` test seam stay as before. `Source` must be non-nil; cmd-layer chains compose `pipeline.MaterializeStage` to populate it.
 
+### Errors
+
+- `ErrEncodedDirCollision`: returned by `CheckConflict` (and surfaced via `Run`'s "conflict check" wrap) when the encoded project directory already exists. Tests assert via `errors.Is`.
+
 ## Contracts
 
 ### Import contract
