@@ -53,6 +53,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Sync conflict-detection metadata stays inside the archive | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
 | Cross-machine push refuses without `--force`              | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
 | `--from-manifest` exclusivity with `--all` and per-category flags | [`cmd/cc-port/README.md`](../cmd/cc-port/README.md) §Category selection |
+| Tempfile materialization for random-access consumers | [`internal/pipeline/README.md`](../internal/pipeline/README.md) §Public API |
 
 ## Session-UUID-keyed user-wide data (cross-cutting)
 
@@ -118,7 +119,7 @@ parameter is the zero value). The runners `RunWriter` and `RunReader`
 chain stages in a list, returning the outermost writer or final
 `Source` to the consumer.
 
-Each stage's `Open` returns a data half (`io.Writer` for writers, `pipeline.View` for readers) plus an optional `io.Closer` for the stage's own resources. The runner accumulates non-nil closers and walks them on outer Close in chain order (writer) or reverse chain order (reader) with `errors.Join`. Outer Close is idempotent. Stages do not chain to upstream or downstream Close.
+A writer stage's `Open` returns its writer plus an optional `io.Closer`. A reader stage's `Open` returns its `pipeline.View`, the `pipeline.Meta` it contributes, and an optional `io.Closer`. The runner accumulates non-nil closers and walks them on outer Close in chain order (writer) or reverse chain order (reader) with `errors.Join`. The reader runner also merges every stage's Meta contribution into `Source.Meta` as it walks the chain. Outer Close is idempotent. Stages do not chain to upstream or downstream Close.
 
 Stages live in their owning packages:
 
@@ -127,6 +128,7 @@ Stages live in their owning packages:
 | `file.Source`, `file.Sink` | `internal/file` | Local filesystem endpoints |
 | `encrypt.WriterStage`, `encrypt.ReaderStage` | `internal/encrypt` | Age encrypt / decrypt filters (self-skipping) |
 | `remote.Source`, `remote.Sink` | `internal/remote` | gocloud.dev-backed remote endpoints (file://, s3://) |
+| `pipeline.MaterializeStage` | `internal/pipeline` | Terminal materialization to a 0600 tempfile when the downstream consumer needs `io.ReaderAt` |
 
 `cmd/cc-port` owns ordering and any policy decisions (which stages to
 include per invocation). The runner is policy-free.
@@ -134,10 +136,12 @@ include per invocation). The runner is policy-free.
 Per-command pipelines:
 
 - [`cmd/cc-port/export.go`](../cmd/cc-port/export.go) write path uses `[encrypt.WriterStage{Pass}, file.Sink]`. The encrypt stage self-skips when `Pass` is empty.
-- [`cmd/cc-port/importcmd.go`](../cmd/cc-port/importcmd.go) read path uses `[file.Source, encrypt.ReaderStage{Pass, Mode: Strict}]`. The reader stage owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch internally. `import manifest` reuses the same stage list.
+- [`cmd/cc-port/importcmd.go`](../cmd/cc-port/importcmd.go) read path uses `[file.Source, encrypt.ReaderStage{Pass, Mode: Strict}, pipeline.MaterializeStage]`. The reader stage owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch internally. `MaterializeStage` short-circuits on local-file chains because `file.Source` already populates `ReaderAt`. `import manifest` reuses the same stage list.
 - [`cmd/cc-port/pushcmd.go`](../cmd/cc-port/pushcmd.go) write path uses `[encrypt.WriterStage{Pass}, remote.Sink]`. The encrypt stage self-skips when `Pass` is empty.
-- [`cmd/cc-port/pushcmd.go`](../cmd/cc-port/pushcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Permissive}]` for the cross-machine probe. Permissive admits a plaintext prior; Strict is on pull.
-- [`cmd/cc-port/pullcmd.go`](../cmd/cc-port/pullcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Strict}]`. The reader stage owns the encrypted-vs-plaintext dispatch internally.
+- [`cmd/cc-port/pushcmd.go`](../cmd/cc-port/pushcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Permissive}, pipeline.MaterializeStage]` for the cross-machine probe. Permissive admits a plaintext prior; Strict is on pull. `MaterializeStage` drains the gocloud reader because `remote.Source` is streaming.
+- [`cmd/cc-port/pullcmd.go`](../cmd/cc-port/pullcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Strict}, pipeline.MaterializeStage]`.
+
+Materialization moved out of `remote.Source` and `encrypt.ReaderStage` into a dedicated terminal stage. Read paths are streaming by default. `MaterializeStage` short-circuits when the upstream View already exposes `ReaderAt` (local-file chains, `file.Source`) and otherwise drains to a 0600 tempfile owned by the runner's close cascade.
 
 Future filters (compression, signing) plug in by adding new stage
 types and including them in a command's stage list. The runner does

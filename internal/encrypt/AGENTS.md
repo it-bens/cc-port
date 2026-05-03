@@ -7,8 +7,7 @@
 - `ReaderStage` is the single owner of the encrypted-vs-plaintext × pass-vs-no-pass dispatch. Cmd-layer callers (`cmd/cc-port import`, `cmd/cc-port import manifest`, `cmd/cc-port pull`, sync push prior-read) compose the stage with the right `Mode` and let it decide; do not peek bytes or branch in the cmd layer (README §Stage dispatch).
 - `Mode = Strict` is the default for read-side import paths; `Mode = Permissive` is reserved for sync push prior-read. Never use Permissive on import paths (README §Stage dispatch).
 - `WriterStage` self-skips on empty `Pass` via a passthrough writer; the cmd layer always includes the stage. Never make inclusion conditional in callers (README §Passphrase mode only).
-- `ReaderStage` materializes plaintext into a `0600` tempfile in `os.TempDir()`. Never widen perms or relocate (README §Tempfile lifecycle).
-- ReaderStage's returned io.Closer closes the tempfile and removes it. Idempotency lives in the runner; never add a `closed` flag to the stage (README §Tempfile lifecycle).
+- `ReaderStage` is streaming: peek the magic-byte window with bufio.Peek, never read into the upstream Reader before dispatch, never re-introduce a tempfile (README §Stage dispatch).
 - Add asymmetric (X25519) support as a separate spec, never as a flag on the existing functions (README §Passphrase mode only).
 
 ## Navigation
