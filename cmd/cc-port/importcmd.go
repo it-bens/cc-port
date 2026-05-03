@@ -64,6 +64,7 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 			source, err := pipeline.RunReader(cmd.Context(), []pipeline.ReaderStage{
 				&file.Source{Path: archivePath},
 				&encrypt.ReaderStage{Pass: passphrase, Mode: encrypt.Strict},
+				&pipeline.MaterializeStage{},
 			})
 			if err != nil {
 				return fmt.Errorf("open archive source: %w", err)
@@ -184,6 +185,7 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 	source, err := pipeline.RunReader(cmd.Context(), []pipeline.ReaderStage{
 		&file.Source{Path: archivePath},
 		&encrypt.ReaderStage{Pass: passphrase, Mode: encrypt.Strict},
+		&pipeline.MaterializeStage{},
 	})
 	if err != nil {
 		return fmt.Errorf("open archive source: %w", err)

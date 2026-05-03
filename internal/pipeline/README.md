@@ -6,11 +6,14 @@ Composes write-side `io.Writer` chains and read-side `View` chains for cc-port's
 
 ## Public API
 
-- `View`: stage-to-stage data carrier (`ReaderAt`, `Size`). No Close field; lifetime is reported separately.
-- `Source`: read-side consumer-facing struct. Embeds `View` and adds an idempotent `Close` built by the runner.
-- `WriterStage`, `ReaderStage`: stage interfaces. `Open` returns the data half plus an optional `io.Closer` (nil means passthrough).
+- `View`: stage-to-stage data carrier. `Reader` is always set. `ReaderAt` and `Size` are populated by stages that can supply them (file source, MaterializeStage). Transformers and streaming sources may leave them zero.
+- `Meta`: dispatch observations contributed by stages during Open. `WasEncrypted bool` is the only field today. Stages return `Meta{}` when they observe nothing. The runner merges every stage's contribution into `Source.Meta`: boolean fields OR across stages; non-boolean value-typed fields take the last non-zero contribution.
+- `Source`: read-side consumer-facing struct. Embeds `View`, adds `Meta`, and adds an idempotent `Close` built by the runner.
+- `WriterStage`: write-side stage interface. `Open` returns the writer plus an optional `io.Closer` (nil means passthrough).
+- `ReaderStage`: read-side stage interface. `Open` returns the data `View`, the `Meta` it contributes (zero value when the stage observes nothing), and an optional `io.Closer` (nil means passthrough).
+- `MaterializeStage`: terminal `ReaderStage` for chains whose downstream consumer needs `io.ReaderAt`. Short-circuits when `upstream.ReaderAt` is non-nil (returns the upstream View unchanged with no closer). Otherwise drains `upstream.Reader` to a 0600 tempfile and returns it as `View{Reader, ReaderAt, Size}` plus a closer that closes and removes the file.
 - `RunWriter(ctx, []WriterStage) (io.WriteCloser, error)`: composes inside-out, returns an outer writer whose Close walks every accumulated closer with `errors.Join`.
-- `RunReader(ctx, []ReaderStage) (Source, error)`: composes outside-in, returns a Source whose Close walks every accumulated closer in reverse with `errors.Join`.
+- `RunReader(ctx, []ReaderStage) (Source, error)`: composes outside-in. Returns a Source whose `View` is the final stage's output, whose `Meta` carries the merged observations across all stages, and whose `Close` walks every accumulated closer in reverse with `errors.Join`.
 
 ## Contracts
 
@@ -47,7 +50,7 @@ Used by `cmd/cc-port` to assemble per-command pipelines.
 
 #### Not covered
 
-- Stage Closers that internally manage multiple resources (for example, `encrypt.decrypt` and `remote.drainToTempfile` close a tempfile and remove it). Those stages join their internal errors with `errors.Join`; the policy is the same shape as the runner's outer policy.
+- Stage Closers that internally manage multiple resources (for example, `MaterializeStage`'s tempfile closer joins `temp.Close()` and `os.Remove` errors with `errors.Join`). The policy is the same shape as the runner's outer policy.
 
 ## Quirks
 
@@ -64,3 +67,12 @@ A stage may inspect its input at `Open` time and either transform it or return i
 - `errors.Join` of stage close errors on both paths.
 - Open-error mid-composition: already-opened stage closers run before the error propagates.
 - Stage-name and position-index appear in the wrapped error.
+- `TestRunReader_MergesMetaAcrossStages` and `TestRunReader_LaterStageDoesNotClearEarlierMeta` pin the boolean-OR Meta merge.
+
+`materialize_test.go` exercises `MaterializeStage`:
+- Short-circuit when `upstream.ReaderAt` is non-nil (forwards upstream unchanged with nil closer).
+- Drain path populates `ReaderAt` and `Size` from the tempfile.
+- Close removes the tempfile.
+- Tempfile is created with mode 0600 (POSIX-only test).
+- Nil `upstream.Reader` returns an error mentioning `MaterializeStage`.
+- End-to-end via `RunReader`: streaming source plus `MaterializeStage` produces a Source with non-nil `ReaderAt` and the right `Size`.

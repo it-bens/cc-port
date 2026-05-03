@@ -19,19 +19,20 @@ type Source struct {
 }
 
 // Open opens Path and returns it as a pipeline.View carrying the
-// underlying *os.File as ReaderAt. The returned io.Closer is the same
-// *os.File; the runner closes it.
-func (s *Source) Open(_ context.Context, _ pipeline.View) (pipeline.View, io.Closer, error) {
+// underlying *os.File as both Reader and ReaderAt, with Size from
+// Stat. The returned io.Closer is the same *os.File; the runner closes
+// it. file.Source contributes no Meta.
+func (s *Source) Open(_ context.Context, _ pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
 	f, err := os.Open(s.Path)
 	if err != nil {
-		return pipeline.View{}, nil, fmt.Errorf("file source: open %s: %w", s.Path, err)
+		return pipeline.View{}, pipeline.Meta{}, nil, fmt.Errorf("file source: open %s: %w", s.Path, err)
 	}
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return pipeline.View{}, nil, fmt.Errorf("file source: stat %s: %w", s.Path, err)
+		return pipeline.View{}, pipeline.Meta{}, nil, fmt.Errorf("file source: stat %s: %w", s.Path, err)
 	}
-	return pipeline.View{ReaderAt: f, Size: info.Size()}, f, nil
+	return pipeline.View{Reader: f, ReaderAt: f, Size: info.Size()}, pipeline.Meta{}, f, nil
 }
 
 // Name returns the stage name used in pipeline error wrapping.

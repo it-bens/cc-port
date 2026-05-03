@@ -92,6 +92,9 @@ func ReadManifest(path string) (*Metadata, error) {
 // and pass it through; the manifest package never touches paths.
 // Rejects entries whose decoded size exceeds maxManifestBytes.
 func ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error) {
+	if src == nil {
+		return nil, fmt.Errorf("manifest: src is nil; pipeline missing MaterializeStage?")
+	}
 	reader, err := zip.NewReader(src, size)
 	if err != nil {
 		return nil, fmt.Errorf("open zip archive: %w", err)

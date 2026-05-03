@@ -76,10 +76,10 @@ func openPriorRead(
 	name, pass string,
 	force bool,
 ) (*syncc.PriorRead, error) {
-	stage := &encrypt.ReaderStage{Pass: pass, Mode: encrypt.Permissive}
 	src, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
 		&remote.Source{Remote: r, Key: name},
-		stage,
+		&encrypt.ReaderStage{Pass: pass, Mode: encrypt.Permissive},
+		&pipeline.MaterializeStage{},
 	})
 	switch {
 	case errors.Is(err, remote.ErrNotFound):
@@ -92,7 +92,7 @@ func openPriorRead(
 	case err != nil:
 		return nil, fmt.Errorf("open prior: %w", err)
 	}
-	return &syncc.PriorRead{Source: src, WasEncrypted: stage.WasEncrypted()}, nil
+	return &syncc.PriorRead{Source: src, WasEncrypted: src.Meta.WasEncrypted}, nil
 }
 
 // runPushCmd is the push subcommand body. The named return + deferred

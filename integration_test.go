@@ -587,6 +587,7 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 	source, err := pipeline.RunReader(t.Context(), []pipeline.ReaderStage{
 		&file.Source{Path: archivePath},
 		&encrypt.ReaderStage{Pass: passphrase, Mode: encrypt.Strict},
+		&pipeline.MaterializeStage{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = source.Close() })

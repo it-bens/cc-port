@@ -342,3 +342,11 @@ func createTestZip(zipPath, sourcePath string) error {
 	_, err = entry.Write(data)
 	return err
 }
+
+func TestReadManifestFromZip_NilSrc(t *testing.T) {
+	_, err := manifest.ReadManifestFromZip(nil, 0)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MaterializeStage",
+		"error must hint at the missing pipeline stage to ease debugging")
+}

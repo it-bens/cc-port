@@ -8,7 +8,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 
 ## Public API
 
-- `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*Result, error)`: import an archive end-to-end. Reads the archive via `zip.NewReader` on `Options.Source`. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure. Returns `Result.RulesReport` carrying the post-promote rules-file scan against `TargetPath`.
+- `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*Result, error)`: import an archive end-to-end. Reads the archive via `zip.NewReader` on `Options.Source`. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure. Returns `Result.RulesReport` carrying the post-promote rules-file scan against `TargetPath`. Refuses a nil `Options.Source` with an error naming `MaterializeStage`; cmd-layer chains compose `pipeline.MaterializeStage` to satisfy the contract.
 - `Result`: success-path output of `Run`. `RulesReport scan.Report` carries the rules-file scan; cmd renders it via `cmd/cc-port`'s `renderRulesReport`.
 - `ResolvePlaceholders(unresolved []string, fromManifest *manifest.Metadata, prompter Prompter) (map[string]string, error)`: compose a resolution map from the plan's unresolved keys, optional `--from-manifest` metadata, and a caller-supplied `Prompter`. Filters implicit keys, merges manifest-known non-empty values, and delegates remaining keys to the prompter. The byte-level token substitution helper used inside `Run` is unexported.
 - `IsImplicitKey(key string) bool`: predicate exposing the implicit-key set without leaking the constant. Callers refuse user-supplied resolutions for these keys and treat them as already-resolved when computing unresolved sets.
@@ -19,7 +19,7 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `CheckConflict(encodedProjectDir string) error`: refuse the import if the encoded target directory already exists. Also refuse when existence cannot be determined (e.g. a permission error on an intermediate component). Only a clean "does not exist" returns `nil`.
 - `BuildHistoryBytes(existing []byte, appends [][]byte) []byte`: pure byte concatenation used by staging to compute the merged history bytes before atomic promote. No I/O, no lock.
 - `MergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error)`: splice a project block into an existing `.claude.json` body. Preserves key order, indent, and trailing newlines via `sjson`. `configPath` is used only in error messages.
-- `Options`: import configuration. `Source io.ReaderAt` and `Size int64` describe the archive bytes; the importer constructs `*zip.Reader` directly and never opens files. `TargetPath`, `Resolutions`, and the unexported `renameHook` test seam stay as before.
+- `Options`: import configuration. `Source io.ReaderAt` and `Size int64` describe the archive bytes; the importer constructs `*zip.Reader` directly and never opens files. `TargetPath`, `Resolutions`, and the unexported `renameHook` test seam stay as before. `Source` must be non-nil; cmd-layer chains compose `pipeline.MaterializeStage` to populate it.
 
 ## Contracts
 

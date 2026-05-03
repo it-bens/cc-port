@@ -27,7 +27,7 @@ command modules agree on the wire contract through a neutral third party.
 - **Manifest I/O**
   - `WriteManifest(path string, metadata *Metadata) error`
   - `ReadManifest(path string) (*Metadata, error)`
-  - `ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error)`: parses metadata.xml from a ZIP exposed as `io.ReaderAt + size`. Callers open the source (file, decrypted tempfile, or in-memory bytes) and pass it through; the manifest package is path-agnostic.
+  - `ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error)`: parses metadata.xml from a ZIP exposed as `io.ReaderAt + size`. Callers open the source (file, materialized tempfile, or in-memory bytes) and pass it through; the manifest package is path-agnostic. Refuses a nil `src` with an error naming `MaterializeStage`.
 
 ## Contracts
 

@@ -1218,3 +1218,17 @@ func writeMetadataXML(t *testing.T, zipWriter *zip.Writer) {
 	_, err = mdEntry.Write(append([]byte(xml.Header), mdBytes...))
 	require.NoError(t, err)
 }
+
+func TestRun_NilSource(t *testing.T) {
+	home := testutil.SetupFixture(t)
+
+	_, err := importer.Run(t.Context(), home, importer.Options{
+		Source:     nil,
+		Size:       0,
+		TargetPath: "/Users/test/Projects/myproject",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MaterializeStage",
+		"error must hint at the missing pipeline stage to ease debugging")
+}

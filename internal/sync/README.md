@@ -7,7 +7,7 @@ Orchestrates `cc-port push` and `cc-port pull`. Owns conflict-detection logic, p
 ## Public API
 
 - `PushOptions`, `PushPlan`, `PullOptions`, `PullPlan`: option and plan structs. Options carry no `Remote` or `Passphrase` field; cmd opens the pipelines.
-- `PriorRead`: bundles a pre-opened `pipeline.Source` plus the encrypted-or-not observation cmd reads off the encrypt stage. nil means no prior.
+- `PriorRead`: bundles a pre-opened `pipeline.Source` plus the encrypted-or-not observation cmd reads off `Source.Meta.WasEncrypted`. nil means no prior.
 - `PlanPush(ctx, opts, prior) (*PushPlan, error)`: reads prior remote (when prior is non-nil), populates plan with cross-machine state and encryption metadata.
 - `ExecutePush(ctx, opts, plan, output io.Writer) error`: runs the export-side pipeline against the writer cmd opened.
 - `PlanPull(ctx, opts, source) (*PullPlan, error)`: reads remote archive's manifest from the pre-opened source, populates plan with placeholder resolutions.

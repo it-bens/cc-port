@@ -23,16 +23,19 @@ func TestSource_OpenExisting(t *testing.T) {
 	want := []byte("hello world")
 	require.NoError(t, os.WriteFile(path, want, 0o600), "WriteFile")
 
-	view, closer, err := (&file.Source{Path: path}).Open(context.Background(), pipeline.View{})
+	view, _, closer, err := (&file.Source{Path: path}).Open(context.Background(), pipeline.View{})
 	require.NoError(t, err, "Open")
 	t.Cleanup(func() { _ = closer.Close() })
 
+	require.NotNil(t, view.Reader, "Reader must be populated")
+	require.NotNil(t, view.ReaderAt, "ReaderAt must be populated")
+	assert.Equal(t, int64(len(want)), view.Size)
+
 	got := make([]byte, len(want))
-	if _, err := view.ReaderAt.ReadAt(got, 0); err != nil && !errors.Is(err, io.EOF) {
+	_, err = view.ReaderAt.ReadAt(got, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("ReadAt: %v", err)
 	}
-
-	assert.Equal(t, int64(len(want)), view.Size)
 	assert.Equal(t, want, got)
 }
 
@@ -40,7 +43,7 @@ func TestSource_OpenMissingWrapsError(t *testing.T) {
 	tempDir := t.TempDir()
 	path := filepath.Join(tempDir, "missing.txt")
 
-	_, _, err := (&file.Source{Path: path}).Open(context.Background(), pipeline.View{})
+	_, _, _, err := (&file.Source{Path: path}).Open(context.Background(), pipeline.View{})
 
 	require.Error(t, err, "expected error on missing file")
 	require.ErrorIs(t, err, fs.ErrNotExist)
