@@ -49,11 +49,11 @@ func TestResolveHomeAnchor_RejectsNonAbsolute(t *testing.T) {
 
 func TestResolveHomeAnchor_FollowsSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("symlink test exercises Linux/macOS behaviour")
+		t.Skip("symlink test exercises Linux/macOS behavior")
 	}
 	tempDir := t.TempDir()
 	realHome := filepath.Join(tempDir, "real-home")
-	require.NoError(t, os.MkdirAll(realHome, 0o755))
+	require.NoError(t, os.MkdirAll(realHome, 0o750))
 	linkHome := filepath.Join(tempDir, "link-home")
 	require.NoError(t, os.Symlink(realHome, linkHome))
 	t.Setenv("HOME", linkHome)
