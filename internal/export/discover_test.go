@@ -87,36 +87,27 @@ func TestAutoDetectPlaceholders(t *testing.T) {
 	prefixes := []string{
 		"/Users/test/Projects/myproject",
 		"/Users/test",
+	}
+	suggestions := export.AutoDetectPlaceholders(prefixes, "/Users/test/Projects/myproject", "/Users/test")
+
+	require.Len(t, suggestions, 2)
+
+	assert.Equal(t, "{{PROJECT_PATH}}", suggestions[0].Key)
+	assert.Equal(t, "/Users/test/Projects/myproject", suggestions[0].Original)
+
+	assert.Equal(t, "{{HOME}}", suggestions[1].Key)
+	assert.Equal(t, "/Users/test", suggestions[1].Original)
+}
+
+func TestAutoDetectPlaceholders_DropsUnknownPrefix(t *testing.T) {
+	prefixes := []string{
+		"/Users/test/Projects/myproject",
 		"/opt/homebrew",
 	}
 	suggestions := export.AutoDetectPlaceholders(prefixes, "/Users/test/Projects/myproject", "/Users/test")
 
-	assert.Len(t, suggestions, 3)
-
+	require.Len(t, suggestions, 1)
 	assert.Equal(t, "{{PROJECT_PATH}}", suggestions[0].Key)
-	assert.Equal(t, "/Users/test/Projects/myproject", suggestions[0].Original)
-	assert.True(t, suggestions[0].Auto)
-
-	assert.Equal(t, "{{HOME}}", suggestions[1].Key)
-	assert.Equal(t, "/Users/test", suggestions[1].Original)
-	assert.True(t, suggestions[1].Auto)
-
-	assert.Equal(t, "{{UNRESOLVED_1}}", suggestions[2].Key)
-	assert.Equal(t, "/opt/homebrew", suggestions[2].Original)
-	assert.False(t, suggestions[2].Auto)
-}
-
-func TestAutoDetectPlaceholders_MultipleUnresolved(t *testing.T) {
-	prefixes := []string{"/opt/homebrew", "/usr/local", "/var/log"}
-	suggestions := export.AutoDetectPlaceholders(prefixes, "/Users/test/Projects/myproject", "/Users/test")
-
-	assert.Len(t, suggestions, 3)
-	assert.Equal(t, "{{UNRESOLVED_1}}", suggestions[0].Key)
-	assert.Equal(t, "{{UNRESOLVED_2}}", suggestions[1].Key)
-	assert.Equal(t, "{{UNRESOLVED_3}}", suggestions[2].Key)
-	assert.False(t, suggestions[0].Auto)
-	assert.False(t, suggestions[1].Auto)
-	assert.False(t, suggestions[2].Auto)
 }
 
 func TestAutoDetectPlaceholders_Empty(t *testing.T) {

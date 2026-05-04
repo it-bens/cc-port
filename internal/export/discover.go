@@ -1,7 +1,6 @@
 package export
 
 import (
-	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -12,7 +11,6 @@ import (
 type PlaceholderSuggestion struct {
 	Key      string // e.g., "{{PROJECT_PATH}}"
 	Original string // e.g., "/Users/test/Projects/myproject"
-	Auto     bool   // true if auto-detected
 }
 
 // pathPattern rejects trailing dots and slashes so cleaned paths always end at
@@ -153,37 +151,25 @@ func findWinningPrefixes(parentCoverage map[string]int) []string {
 	return winningPrefixes
 }
 
-// AutoDetectPlaceholders assigns placeholder names to a list of path prefixes.
-// projectPath maps to {{PROJECT_PATH}}, homePath maps to {{HOME}}, and all
-// remaining prefixes receive {{UNRESOLVED_N}} names starting from 1.
+// AutoDetectPlaceholders maps each prefix that exactly matches projectPath
+// or homePath to its placeholder name. Unknown prefixes are dropped: with
+// the strict anchor filter upstream, only the two anchors ever survive.
 func AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion {
 	suggestions := make([]PlaceholderSuggestion, 0, len(prefixes))
-	unresolvedCounter := 1
-
 	for _, prefix := range prefixes {
 		switch prefix {
 		case projectPath:
 			suggestions = append(suggestions, PlaceholderSuggestion{
 				Key:      "{{PROJECT_PATH}}",
 				Original: prefix,
-				Auto:     true,
 			})
 		case homePath:
 			suggestions = append(suggestions, PlaceholderSuggestion{
 				Key:      "{{HOME}}",
 				Original: prefix,
-				Auto:     true,
 			})
-		default:
-			suggestions = append(suggestions, PlaceholderSuggestion{
-				Key:      fmt.Sprintf("{{UNRESOLVED_%d}}", unresolvedCounter),
-				Original: prefix,
-				Auto:     false,
-			})
-			unresolvedCounter++
 		}
 	}
-
 	return suggestions
 }
 
