@@ -27,11 +27,11 @@ import (
 // and declaring no placeholders, then returns its path. Tests pass
 // --from-manifest <path> instead of --all + per-category flags so
 // runPushCmd skips both ui.SelectCategories and
-// discoverAndPromptPlaceholders. The fixture's session transcripts
-// reference incidental absolute paths (e.g. "/remote-control" mentioned
-// in a system message) that DiscoverPaths surfaces as non-Auto
-// {{UNRESOLVED_N}} suggestions; without --from-manifest those would
-// trip the no-TTY guard in ui.ResolvePlaceholder.
+// discoverAndPromptPlaceholders. --from-manifest bypasses the discovery
+// pipeline entirely and loads the placeholder set straight from XML; the
+// test uses it so the assertion is keyed to a known placeholder list
+// rather than whatever export.DiscoverPlaceholders happens to surface
+// from the fixture's transcripts.
 func pushTestManifestPath(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "push-manifest.xml")
