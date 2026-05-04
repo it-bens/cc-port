@@ -55,34 +55,6 @@ func TestDiscoverPaths_TrailingDotsSlashes(t *testing.T) {
 	assert.NotContains(t, paths, "/Users/test.")
 }
 
-func TestGroupPathPrefixes(t *testing.T) {
-	paths := []string{
-		"/Users/test/Projects/myproject",
-		"/Users/test/Projects/otherproject",
-		"/Users/test/Documents/notes",
-		"/opt/homebrew/bin/tool",
-	}
-	prefixes := export.GroupPathPrefixes(paths)
-
-	// /Users/test should emerge as a common prefix covering 3 input paths;
-	// sub-paths must be absorbed into it, not kept as separate top-level prefixes.
-	assert.Contains(t, prefixes, "/Users/test")
-	assert.NotContains(t, prefixes, "/Users/test/Projects/myproject")
-	assert.NotContains(t, prefixes, "/Users/test/Projects/otherproject")
-	assert.NotContains(t, prefixes, "/Users/test/Documents/notes")
-}
-
-func TestGroupPathPrefixes_Empty(t *testing.T) {
-	prefixes := export.GroupPathPrefixes(nil)
-	assert.Nil(t, prefixes)
-}
-
-func TestGroupPathPrefixes_SinglePath(t *testing.T) {
-	prefixes := export.GroupPathPrefixes([]string{"/Users/test/Projects/myproject"})
-	// Single path: no parent has count >= 2, so only the path itself is kept
-	assert.Contains(t, prefixes, "/Users/test/Projects/myproject")
-}
-
 func TestAutoDetectPlaceholders(t *testing.T) {
 	prefixes := []string{
 		"/Users/test/Projects/myproject",

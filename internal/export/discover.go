@@ -1,7 +1,6 @@
 package export
 
 import (
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -37,118 +36,6 @@ func DiscoverPaths(content []byte) []string {
 	}
 
 	return paths
-}
-
-// GroupPathPrefixes finds meaningful common path prefixes from a list of paths,
-// sorted longest first. A path is excluded if it is a sub-path of another
-// prefix in the result.
-func GroupPathPrefixes(paths []string) []string {
-	if len(paths) == 0 {
-		return nil
-	}
-
-	parentCoverage := countParentCoverage(paths)
-	winningPrefixes := findWinningPrefixes(parentCoverage)
-
-	// Start with the winning prefix set. Sort shortest first so that
-	// more-general prefixes are accepted before their sub-paths, allowing
-	// sub-paths to be filtered out as redundant.
-	sort.Slice(winningPrefixes, func(i, j int) bool {
-		return len(winningPrefixes[i]) < len(winningPrefixes[j])
-	})
-
-	seenPaths := make(map[string]struct{})
-	var result []string
-
-	for _, prefix := range winningPrefixes {
-		if _, alreadyAdded := seenPaths[prefix]; alreadyAdded {
-			continue
-		}
-		coveredByExistingPrefix := false
-		for _, kept := range result {
-			if strings.HasPrefix(prefix, kept+"/") {
-				coveredByExistingPrefix = true
-				break
-			}
-		}
-		if !coveredByExistingPrefix {
-			seenPaths[prefix] = struct{}{}
-			result = append(result, prefix)
-		}
-	}
-
-	for _, path := range paths {
-		if _, alreadyAdded := seenPaths[path]; alreadyAdded {
-			continue
-		}
-		coveredByPrefix := false
-		for _, prefix := range winningPrefixes {
-			if strings.HasPrefix(path, prefix+"/") || path == prefix {
-				coveredByPrefix = true
-				break
-			}
-		}
-		if !coveredByPrefix {
-			seenPaths[path] = struct{}{}
-			result = append(result, path)
-		}
-	}
-
-	// Sort result longest first for the return value.
-	sort.Slice(result, func(i, j int) bool {
-		return len(result[i]) > len(result[j])
-	})
-
-	return result
-}
-
-// countParentCoverage counts how many input paths each ancestor directory covers.
-func countParentCoverage(paths []string) map[string]int {
-	parentCoverage := make(map[string]int)
-	for _, path := range paths {
-		parent := filepath.Dir(path)
-		for parent != "/" && parent != "." && parent != "" {
-			parentCoverage[parent]++
-			parent = filepath.Dir(parent)
-		}
-	}
-	return parentCoverage
-}
-
-// findWinningPrefixes returns the most specific qualifying parents: those with
-// coverage >= 2 and no equally covering child.
-func findWinningPrefixes(parentCoverage map[string]int) []string {
-	var qualifyingParents []string
-	for parent, count := range parentCoverage {
-		if count >= 2 {
-			qualifyingParents = append(qualifyingParents, parent)
-		}
-	}
-
-	// Sort longest first so we can check children efficiently.
-	sort.Slice(qualifyingParents, func(i, j int) bool {
-		return len(qualifyingParents[i]) > len(qualifyingParents[j])
-	})
-
-	// A qualifying parent is "winning" if no more-specific qualifying parent
-	// covers ALL of the same paths (i.e., has the same coverage count).
-	var winningPrefixes []string
-	for _, parent := range qualifyingParents {
-		parentCount := parentCoverage[parent]
-		hasEquallyCoveringChild := false
-		for _, other := range qualifyingParents {
-			if len(other) > len(parent) &&
-				strings.HasPrefix(other, parent+"/") &&
-				parentCoverage[other] == parentCount {
-				hasEquallyCoveringChild = true
-				break
-			}
-		}
-		if !hasEquallyCoveringChild {
-			winningPrefixes = append(winningPrefixes, parent)
-		}
-	}
-	return winningPrefixes
 }
 
 // AutoDetectPlaceholders maps each prefix that exactly matches projectPath
