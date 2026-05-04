@@ -20,6 +20,12 @@ import (
 // internal/importer test membership via IsImplicitKey, not the constant.
 const projectPathKey = "{{PROJECT_PATH}}"
 
+// homePathKey is the manifest key cc-port supplies from the import
+// machine's os.UserHomeDir(). importer.Run injects it into the
+// resolution map via withImplicitAnchors. The IsImplicitKey predicate
+// covers it once Task 15 lands.
+const homePathKey = "{{HOME}}"
+
 // IsImplicitKey reports whether key is one of the placeholder keys importer.Run
 // supplies on its own. Callers refuse user-supplied resolutions for these keys
 // and treat them as already-resolved when computing unresolved sets.

@@ -80,10 +80,16 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				return err
 			}
 
+			homePath, err := resolveHomeAnchor()
+			if err != nil {
+				return err
+			}
+
 			importOptions := importer.Options{
 				Source:      source.ReaderAt,
 				Size:        source.Size,
 				TargetPath:  targetPath,
+				HomePath:    homePath,
 				Resolutions: resolutions,
 			}
 

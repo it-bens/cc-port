@@ -52,9 +52,11 @@ type PushPlan struct {
 // ExecutePull. Cmd opens the reader pipeline once and passes the
 // pipeline.Source to both Plan and Execute.
 type PullOptions struct {
-	ClaudeHome        *claude.Home
-	Name              string
-	TargetPath        string
+	ClaudeHome *claude.Home
+	Name       string
+	TargetPath string
+	// HomePath is the recipient's home directory, supplied via cmd resolveHomeAnchor()
+	HomePath          string
 	Resolutions       map[string]string
 	FromManifest      *manifest.Metadata
 	EncryptionEnabled bool
@@ -171,6 +173,8 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 // before calling, and owns the defer Close. The context.Context parameter is
 // unused today but kept on the public API to mirror ExecutePull and reserve
 // a cancellation seam for future readers.
+//
+//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
 func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*PullPlan, error) {
 	if opts.Name == "" {
 		return nil, errors.New("sync.PlanPull: Name is empty")
@@ -271,6 +275,8 @@ func computeUnresolved(
 // repeated reads, so manifest reads in Plan and body reads in importer.Run
 // share one materialized tempfile. The returned *importer.Result carries
 // the post-import rules-scan; cmd renders it through renderRulesReport.
+//
+//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
 func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source pipeline.Source) (*importer.Result, error) {
 	if plan == nil {
 		return nil, errors.New("sync.ExecutePull: plan is nil")
@@ -305,6 +311,7 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 		Source:      source.ReaderAt,
 		Size:        source.Size,
 		TargetPath:  opts.TargetPath,
+		HomePath:    opts.HomePath,
 		Resolutions: merged,
 	})
 	if err != nil {

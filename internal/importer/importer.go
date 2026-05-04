@@ -116,9 +116,11 @@ func checkStagingFilesystems(claudeHome *claude.Home, encodedProjectDir string) 
 // without owning archive lifecycle: callers open the source, hand it to
 // Run, and close it after Run returns.
 type Options struct {
-	Source      io.ReaderAt
-	Size        int64
-	TargetPath  string
+	Source     io.ReaderAt
+	Size       int64
+	TargetPath string
+	// HomePath is the recipient's home directory, supplied via cmd resolveHomeAnchor()
+	HomePath    string
 	Resolutions map[string]string
 
 	// renameHook lets tests inject promote-time failures. When nil, Run uses
@@ -187,7 +189,7 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 			return err
 		}
 
-		resolutions := withProjectPath(importOptions.Resolutions, importOptions.TargetPath)
+		resolutions := withImplicitAnchors(importOptions.Resolutions, importOptions.TargetPath, importOptions.HomePath)
 
 		if err := runPreflight(classification, metadata, resolutions); err != nil {
 			return err
@@ -294,16 +296,20 @@ func recordUndeclaredTokens(body []byte, declaredByKey, undeclaredTokens map[str
 	}
 }
 
-// withProjectPath returns a copy of resolutions that always contains an
-// entry for {{PROJECT_PATH}}, injecting targetPath when the caller did not
-// supply one explicitly. The original map is not mutated.
-func withProjectPath(resolutions map[string]string, targetPath string) map[string]string {
-	result := make(map[string]string, len(resolutions)+1)
+// withImplicitAnchors returns a copy of resolutions that always contains
+// entries for both implicit keys, injecting them from targetPath and
+// homePath when the caller did not supply them. The original map is not
+// mutated. Callers that already populated either key win.
+func withImplicitAnchors(resolutions map[string]string, targetPath, homePath string) map[string]string {
+	result := make(map[string]string, len(resolutions)+2)
 	for key, value := range resolutions {
 		result[key] = value
 	}
-	if _, hasProjectPath := result[projectPathKey]; !hasProjectPath {
+	if _, has := result[projectPathKey]; !has {
 		result[projectPathKey] = targetPath
+	}
+	if _, has := result[homePathKey]; !has {
+		result[homePathKey] = homePath
 	}
 	return result
 }

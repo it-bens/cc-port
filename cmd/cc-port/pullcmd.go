@@ -221,10 +221,16 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		return syncc.PullOptions{}, nil, "", err
 	}
 
+	homePath, err := resolveHomeAnchor()
+	if err != nil {
+		return syncc.PullOptions{}, nil, "", err
+	}
+
 	opts := syncc.PullOptions{
 		ClaudeHome:        claudeHome,
 		Name:              name,
 		TargetPath:        targetPath,
+		HomePath:          homePath,
 		Resolutions:       flagResolutions,
 		FromManifest:      fromManifest,
 		EncryptionEnabled: passphrase != "",
