@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/export"
 )
@@ -119,4 +120,19 @@ func TestAutoDetectPlaceholders_MultipleUnresolved(t *testing.T) {
 func TestAutoDetectPlaceholders_Empty(t *testing.T) {
 	suggestions := export.AutoDetectPlaceholders(nil, "/Users/test/project", "/Users/test")
 	assert.Empty(t, suggestions)
+}
+
+func TestDiscoverPlaceholders_EmitsBothAnchorsLongestFirst(t *testing.T) {
+	content := []byte(`session at /Users/tap-user/Software/homebrew-tap/Casks/cc-port.rb edited by /Users/tap-user`)
+	suggestions := export.DiscoverPlaceholders(
+		content,
+		"/Users/tap-user/Software/homebrew-tap",
+		"/Users/tap-user",
+	)
+
+	require.Len(t, suggestions, 2)
+	assert.Equal(t, "{{PROJECT_PATH}}", suggestions[0].Key)
+	assert.Equal(t, "/Users/tap-user/Software/homebrew-tap", suggestions[0].Original)
+	assert.Equal(t, "{{HOME}}", suggestions[1].Key)
+	assert.Equal(t, "/Users/tap-user", suggestions[1].Original)
 }
