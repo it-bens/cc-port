@@ -239,9 +239,11 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 
 // resolveAndReplan composes resolutions for every unresolved placeholder
 // via importer.ResolvePlaceholders, merges the result into opts.Resolutions,
-// and recomputes the plan against the same source. The second PlanPull call
-// is load-bearing: render and the apply-time guard both read
-// plan.UnresolvedPlaceholders, so they must reflect the merged resolutions.
+// and recomputes the plan against the same source. Unresolved non-implicit
+// keys after the manifest merge surface as MissingResolutionsError. The
+// second PlanPull call is load-bearing: render and the apply-time guard both
+// read plan.UnresolvedPlaceholders, so they must reflect the merged
+// resolutions.
 func resolveAndReplan(
 	ctx context.Context, opts *syncc.PullOptions, plan *syncc.PullPlan, source pipeline.Source,
 ) (*syncc.PullPlan, error) {

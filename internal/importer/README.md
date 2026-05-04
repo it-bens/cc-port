@@ -10,16 +10,15 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 
 - `Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*Result, error)`: import an archive end-to-end. Reads the archive via `zip.NewReader` on `Options.Source`. Wraps in `lock.WithLock`, validates resolutions, checks for conflicts, pre-resolves staging parents, reads the archive, classifies placeholders, stages, promotes, and rolls back on failure. Returns `Result.RulesReport` carrying the post-promote rules-file scan against `TargetPath`. Refuses a nil `Options.Source` with an error naming `MaterializeStage`; cmd-layer chains compose `pipeline.MaterializeStage` to satisfy the contract.
 - `Result`: success-path output of `Run`. `RulesReport scan.Report` carries the rules-file scan; cmd renders it via `cmd/cc-port`'s `renderRulesReport`.
-- `ResolvePlaceholders(unresolved []string, fromManifest *manifest.Metadata, prompter Prompter) (map[string]string, error)`: compose a resolution map from the plan's unresolved keys, optional `--from-manifest` metadata, and a caller-supplied `Prompter`. Filters implicit keys, merges manifest-known non-empty values, and delegates remaining keys to the prompter. The byte-level token substitution helper used inside `Run` is unexported.
-- `IsImplicitKey(key string) bool`: predicate exposing the implicit-key set without leaking the constant. Callers refuse user-supplied resolutions for these keys and treat them as already-resolved when computing unresolved sets.
-- `Prompter`: function type `func(unresolved []string) (map[string]string, error)` the orchestrator calls when keys remain after the manifest merge. cmd constructs one that delegates to `internal/ui`.
+- `ResolvePlaceholders(unresolved []string, fromManifest *manifest.Metadata) (map[string]string, error)`: compose a resolution map from the plan's unresolved keys and optional `--from-manifest` metadata. Filters implicit keys and merges manifest-known non-empty values. Any non-implicit key that remains unresolved after the merge surfaces as `MissingResolutionsError`. The byte-level token substitution helper used inside `Run` is unexported.
+- `IsImplicitKey(key string) bool`: predicate exposing the implicit-key set without leaking the constants. Covers `{{PROJECT_PATH}}` (supplied from the import target argument) and `{{HOME}}` (supplied via `resolveHomeAnchor` from `os.UserHomeDir()` on the import machine). Callers refuse user-supplied resolutions for these keys and treat them as already-resolved when computing unresolved sets.
 - `ClassifyPlaceholders(bodies [][]byte, declared []manifest.Placeholder, resolutions map[string]string) (missing, undeclared []string)`: diff the archive's declared placeholders against the caller's resolutions and the bodies' embedded tokens. Returns alphabetically sorted slices of missing declared keys and undeclared upper-snake tokens.
 - `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`: reader-to-writer placeholder substitution. Peak memory is bounded by the longest placeholder key, not by the body size. Used by the staging paths that write directly to a sibling temp (sessions, memory, session-keyed categories).
 - `ValidateResolutions(resolutions map[string]string) error`: syntactic validation of caller-supplied resolutions (non-empty, absolute paths only).
 - `CheckConflict(encodedProjectDir string) error`: refuse the import if the encoded target directory already exists. Also refuse when existence cannot be determined (e.g. a permission error on an intermediate component). Only a clean "does not exist" returns `nil`.
 - `BuildHistoryBytes(existing []byte, appends [][]byte) []byte`: pure byte concatenation used by staging to compute the merged history bytes before atomic promote. No I/O, no lock.
 - `MergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error)`: splice a project block into an existing `.claude.json` body. Preserves key order, indent, and trailing newlines via `sjson`. `configPath` is used only in error messages.
-- `Options`: import configuration. `Source io.ReaderAt` and `Size int64` describe the archive bytes; the importer constructs `*zip.Reader` directly and never opens files. `TargetPath`, `Resolutions`, and the unexported `renameHook` test seam stay as before. `Source` must be non-nil; cmd-layer chains compose `pipeline.MaterializeStage` to populate it.
+- `Options`: import configuration. `Source io.ReaderAt` and `Size int64` describe the archive bytes, and the importer constructs `*zip.Reader` directly and never opens files. `TargetPath`, `Resolutions`, and the unexported `renameHook` test seam stay as before. `HomePath string` is the recipient's home directory, supplied by the cmd layer via `resolveHomeAnchor`, and injected into the working resolution map by `withImplicitAnchors`. `Source` must be non-nil, and cmd-layer chains compose `pipeline.MaterializeStage` to populate it.
 
 ### Errors
 
@@ -58,22 +57,21 @@ Every destination is staged at a sibling `*.cc-port-import.tmp` path and promote
 
 - Refused import: no write has occurred and destination is untouched.
 - Promote failure after partial rename: `SafeRenamePromoter` reverses each already-promoted entry to its pre-import state.
-- `{{PROJECT_PATH}}`: resolved implicitly by `importer.Run` from the import target path. Treated as resolved even when absent from the caller's resolution map.
-- Placeholder marked `Resolvable: false`: allowed to survive on disk verbatim, even when no resolution is supplied. This is the escape hatch for "the sender acknowledges this path has no meaning on the recipient's machine".
+- Implicit anchors: `{{PROJECT_PATH}}` is supplied by `importer.Run` from the import target argument, and `{{HOME}}` is supplied by the cmd layer from the recipient machine's `os.UserHomeDir()` via `resolveHomeAnchor`. `IsImplicitKey` reports both. Both are treated as resolved even when absent from the caller's resolution map, and user-supplied resolutions for either key are refused at the cmd layer.
 
 #### Refused
 
 These paths abort before any write:
 
-- Archive embeds a declared placeholder in at least one body whose key has no matching resolution. `Resolvable` is unset or `true`, the key is absent from `Options.Resolutions`, and the key is not the implicit `{{PROJECT_PATH}}`. The error lists every missing key in alphabetical order.
-- Archive body contains a `{{KEY}}` that the manifest does not declare. The error lists every undeclared key in alphabetical order.
+- Archive embeds a declared placeholder in at least one body whose key has no matching resolution. The key is absent from `Options.Resolutions` and is not implicit. `MissingResolutionsError` lists every missing key in alphabetical order.
+- Archive body contains a `{{KEY}}` that the manifest does not declare. `UndeclaredTokensError` lists every undeclared key in alphabetical order.
 - Archive entries whose names escape the staging base (containing `..` components or an absolute-path prefix). The `os.Root` handle rejects any path that would land outside the base. No temp file is created.
 - Archive entries whose decompressed size exceeds `maxZipEntryBytes` (512 MiB). Both passes check the declared `UncompressedSize64` up front and the actual post-decode byte count after streaming. A misdeclared size does not slip through.
 - Archives whose aggregate decompressed payload exceeds `maxArchiveUncompressedBytes` (4 GiB). Enforced in both passes of `loadArchive` so an archive that misdeclares per-entry sizes between passes cannot slip through the cap.
 
 #### Not covered
 
-- **Pre-refactor archives with implicit unresolved keys.** Older archives whose manifest declared `{{KEY}}` (with `Resolvable: nil`, now meaning "must be resolved") without a caller-supplied resolution are refused. Migration: supply the resolution, or re-export with the key marked `Resolvable: false`.
+- **Pre-fix archives with declared but unresolved keys.** Archives produced before the resolver simplification are refused, regardless of any `resolvable` attribute the legacy manifest carried. Every declared key embedded in a body must resolve unless it is implicit. Migration: re-export with the fixed pipeline.
 - **Undeclared exotic token shapes in bodies.** The tamper-defense scan is grammar-bounded. It does not catch lowercase, punctuated, or whitespace-bearing tokens in bodies that the manifest fails to declare. See §Placeholder handling below.
 
 ### Placeholder handling
@@ -93,8 +91,7 @@ The manifest-is-authoritative design avoids that tradeoff entirely on the resolu
 #### Handled
 
 - Any declared key embedded in at least one body, with a matching resolution: substituted at resolve time.
-- Any declared key embedded in at least one body, with no resolution and `Resolvable` unset or `true`: flagged missing, archive refused.
-- Any declared key marked `Resolvable: false`: allowed to survive on disk verbatim even when no resolution is supplied.
+- Any declared key embedded in at least one body, with no resolution, that is not implicit: flagged missing, archive refused.
 - Any declared key that does not appear in any body: ignored. The archive may legitimately publish metadata about keys it considered but did not embed.
 - An upper-snake `{{UPPER_SNAKE}}` token embedded in a body that the manifest does not declare: reported as undeclared, archive refused.
 
@@ -201,7 +198,6 @@ Unit tests in `importer_test.go` and `resolve_test.go`. Coverage:
 - basic round-trip.
 - no staging temps left behind.
 - refusal on unresolved and undeclared keys.
-- acceptance of `Resolvable: false`.
 - atomic rollback on failure.
 - conflict refusal on pre-existing encoded directories.
 - zip-slip rejection (`..`-escaping entry).

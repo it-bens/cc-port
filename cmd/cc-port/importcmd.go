@@ -263,9 +263,11 @@ func parseResolutionFlags(raw []string) (map[string]string, error) {
 }
 
 // composeImportResolutions reads the archive's manifest, optionally loads a
-// --from-manifest override, and delegates the merge to
-// importer.ResolvePlaceholders. Flag values overlay the orchestrator's output
-// so they win for keys the manifest had populated.
+// --from-manifest override, merges manifest-declared defaults with flag
+// values, and delegates the merge to importer.ResolvePlaceholders. Refuses
+// imports with unresolved non-implicit keys via MissingResolutionsError.
+// Flag values overlay the orchestrator's output so they win for keys the
+// manifest had populated.
 func composeImportResolutions(
 	source pipeline.Source, fromManifest string, flagResolutions map[string]string,
 ) (map[string]string, error) {
