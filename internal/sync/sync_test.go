@@ -240,7 +240,6 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 	source := openSourceForTest(t, r, "k", "")
 	planB, err := PlanPull(context.Background(), PullOptions{
 		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
-		Resolutions: defaultResolutionsForTest(t),
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
@@ -250,7 +249,6 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 	}
 	if _, err := ExecutePull(context.Background(), PullOptions{
 		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
-		Resolutions: defaultResolutionsForTest(t),
 	}, planB, source); err != nil {
 		t.Fatalf("ExecutePull: %v", err)
 	}

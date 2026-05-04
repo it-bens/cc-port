@@ -65,10 +65,6 @@ func allCategoriesSet() manifest.CategorySet {
 	return set
 }
 
-func defaultResolutionsForTest(_ *testing.T) map[string]string {
-	return map[string]string{"{{HOME}}": "/Users/me"}
-}
-
 // injectArchiveWithPusher writes a minimal valid cc-port archive to r at
 // name with SyncPushedBy/SyncPushedAt set. The archive is plaintext.
 func injectArchiveWithPusher(t *testing.T, r *remote.Remote, name, pusher string, at time.Time) {

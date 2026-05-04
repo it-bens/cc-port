@@ -10,7 +10,6 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/encrypt"
-	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
@@ -94,7 +93,6 @@ func openArchiveSource(
 // decrypt-tempfile.
 func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error) {
 	apply, _ := cmd.Flags().GetBool("apply")
-	fromManifestPath, _ := cmd.Flags().GetString("from-manifest")
 
 	opts, r, passphrase, err := buildPullOptions(cmd, args[0], claudeDir)
 	if err != nil {
@@ -120,18 +118,6 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 	plan, err := syncc.PlanPull(ctx, opts, source)
 	if err != nil {
 		return err
-	}
-
-	// Without --from-manifest, the operator can resolve missing keys
-	// interactively. Re-plan with the same source after prompting so
-	// plan.Render and the apply-time refusal both reflect what the
-	// operator just supplied. pipeline.Source.ReaderAt is safely
-	// re-readable; one decrypt tempfile services every phase.
-	if fromManifestPath == "" && len(plan.UnresolvedPlaceholders) > 0 {
-		plan, err = resolveAndReplan(ctx, &opts, plan, source)
-		if err != nil {
-			return err
-		}
 	}
 
 	if err := plan.Render(cmd.OutOrStdout()); err != nil {
@@ -221,37 +207,8 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		Name:              name,
 		TargetPath:        targetPath,
 		HomePath:          homePath,
-		Resolutions:       map[string]string{},
 		FromManifest:      fromManifest,
 		EncryptionEnabled: passphrase != "",
 	}
 	return opts, r, passphrase, nil
-}
-
-// resolveAndReplan composes resolutions for every unresolved placeholder
-// via importer.ResolvePlaceholders, merges the result into opts.Resolutions,
-// and recomputes the plan against the same source. Unresolved non-implicit
-// keys after the manifest merge surface as MissingResolutionsError. The
-// second PlanPull call is load-bearing: render and the apply-time guard both
-// read plan.UnresolvedPlaceholders, so they must reflect the merged
-// resolutions.
-func resolveAndReplan(
-	ctx context.Context, opts *syncc.PullOptions, plan *syncc.PullPlan, source pipeline.Source,
-) (*syncc.PullPlan, error) {
-	resolutions, err := importer.ResolvePlaceholders(plan.UnresolvedPlaceholders, opts.FromManifest)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range resolutions {
-		if value == "" {
-			continue
-		}
-		opts.Resolutions[key] = value
-	}
-
-	refreshed, err := syncc.PlanPull(ctx, *opts, source)
-	if err != nil {
-		return nil, err
-	}
-	return refreshed, nil
 }

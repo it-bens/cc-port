@@ -57,7 +57,6 @@ type PullOptions struct {
 	TargetPath string
 	// HomePath is the recipient's home directory, supplied via cmd resolveHomeAnchor()
 	HomePath          string
-	Resolutions       map[string]string
 	FromManifest      *manifest.Metadata
 	EncryptionEnabled bool
 }
@@ -173,8 +172,6 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 // before calling, and owns the defer Close. The context.Context parameter is
 // unused today but kept on the public API to mirror ExecutePull and reserve
 // a cancellation seam for future readers.
-//
-//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
 func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*PullPlan, error) {
 	if opts.Name == "" {
 		return nil, errors.New("sync.PlanPull: Name is empty")
@@ -266,18 +263,14 @@ func computeUnresolved(
 // repeated reads, so manifest reads in Plan and body reads in importer.Run
 // share one materialized tempfile. The returned *importer.Result carries
 // the post-import rules-scan; cmd renders it through renderRulesReport.
-//
-//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
 func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source pipeline.Source) (*importer.Result, error) {
 	if plan == nil {
 		return nil, errors.New("sync.ExecutePull: plan is nil")
 	}
 
-	// Pure merge of manifest-derived defaults and the caller-supplied
-	// opts.Resolutions; flag/prompted values overlay manifest values per key.
-	// importer.ResolvePlaceholders is the wrong tool here: it does not know
-	// about opts.Resolutions and would error on keys covered only by --resolution
-	// (no --from-manifest) when no prompter is supplied. computeUnresolved
+	// Build the resolution map from --from-manifest's <resolve> values,
+	// filtering implicit keys (importer.Run injects them via
+	// withImplicitAnchors) and skipping empty values. computeUnresolved
 	// already enforced that every declared key is covered for --apply.
 	merged := make(map[string]string)
 	if opts.FromManifest != nil {
@@ -290,12 +283,6 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 			}
 			merged[placeholder.Key] = placeholder.Resolve
 		}
-	}
-	for key, value := range opts.Resolutions {
-		if value == "" {
-			continue
-		}
-		merged[key] = value
 	}
 
 	result, err := importer.Run(ctx, opts.ClaudeHome, importer.Options{
