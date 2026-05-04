@@ -135,7 +135,6 @@ func writeMetadataEntry(
 ) {
 	t.Helper()
 
-	trueVal := true
 	metadata := &manifest.Metadata{
 		Export: manifest.Info{
 			Created: time.Now(),
@@ -152,8 +151,8 @@ func writeMetadataEntry(
 			},
 		},
 		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: sourceProjectPath, Resolvable: &trueVal},
-			{Key: "{{HOME}}", Original: sourceHomeDir, Resolvable: &trueVal},
+			{Key: "{{PROJECT_PATH}}", Original: sourceProjectPath},
+			{Key: "{{HOME}}", Original: sourceHomeDir},
 		},
 	}
 	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
@@ -379,12 +378,17 @@ func TestImport_LeavesNoStagingTemps(t *testing.T) {
 	assertNoStagingTemps(t, destClaudeHome)
 }
 
+// Same shape as TestImport_RefusesUndeclaredKey by design: both refuse a
+// preflight failure and assert nothing on disk changed. The behaviors differ
+// only in which classifier error type they raise.
+//
+//nolint:dupl // distinct preflight error types under test
 func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	sourceClaudeHome := testutil.SetupFixture(t)
 
 	archivePath := filepath.Join(t.TempDir(), "export.zip")
 	buildArchiveWithExtraDeclaredKey(
-		t, sourceClaudeHome, archivePath, "{{EXTRA}}", true,
+		t, sourceClaudeHome, archivePath, "{{EXTRA}}",
 	)
 
 	destClaudeHome := buildEmptyDestClaudeHome(t)
@@ -412,42 +416,7 @@ func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
 }
 
-func TestImport_AllowsUnresolvableDeclaredKey(t *testing.T) {
-	sourceClaudeHome := testutil.SetupFixture(t)
-
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	// Declare {{LEGACY}} with Resolvable=false and inject a literal
-	// occurrence into the memory body. The caller supplies no resolution;
-	// the preflight gate must allow the import to succeed and the literal
-	// must survive on disk.
-	buildArchiveWithExtraDeclaredKey(
-		t, sourceClaudeHome, archivePath, "{{LEGACY}}", false,
-	)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destProjectPath := fixtureDestProjectPath
-
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: destProjectPath,
-		Resolutions: map[string]string{
-			"{{HOME}}": filepath.Join(t.TempDir(), "home"),
-		},
-	}
-	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
-	require.NoError(t, err)
-
-	memoryPath := filepath.Join(
-		destClaudeHome.ProjectDir(destProjectPath), "memory", "MEMORY.md",
-	)
-	data, err := os.ReadFile(memoryPath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "{{LEGACY}}",
-		"Resolvable=false placeholder must survive import verbatim")
-}
-
+//nolint:dupl // distinct preflight error types under test (see sibling test above)
 func TestImport_RefusesUndeclaredKey(t *testing.T) {
 	sourceClaudeHome := testutil.SetupFixture(t)
 
@@ -595,22 +564,20 @@ func assertNoStagingTemps(t *testing.T, destClaudeHome *claude.Home) {
 }
 
 // buildArchiveWithExtraDeclaredKey builds a test archive identical to
-// buildTestArchive but additionally declares extraKey in the manifest with
-// the given Resolvable value and injects one literal occurrence of extraKey
-// into the MEMORY.md body so it is guaranteed to show up in preflight.
+// buildTestArchive but additionally declares extraKey in the manifest and
+// injects one literal occurrence of extraKey into the MEMORY.md body so it
+// is guaranteed to show up in preflight.
 func buildArchiveWithExtraDeclaredKey(
 	t *testing.T,
 	sourceClaudeHome *claude.Home,
 	archivePath string,
 	extraKey string,
-	resolvable bool,
 ) {
 	t.Helper()
 	buildArchiveWithOverrides(t, archiveOverrides{
 		sourceClaudeHome: sourceClaudeHome,
 		archivePath:      archivePath,
 		extraDeclaredKey: extraKey,
-		extraResolvable:  &resolvable,
 		memoryInjection:  extraKey,
 	})
 }
@@ -639,7 +606,6 @@ type archiveOverrides struct {
 	sourceClaudeHome *claude.Home
 	archivePath      string
 	extraDeclaredKey string
-	extraResolvable  *bool
 	memoryInjection  string
 }
 
@@ -704,21 +670,18 @@ func buildArchiveWithOverrides(t *testing.T, overrides archiveOverrides) {
 }
 
 // writeMetadataEntryWithOverrides is the parameterised cousin of
-// writeMetadataEntry that honors archiveOverrides.extraDeclaredKey and
-// extraResolvable.
+// writeMetadataEntry that honors archiveOverrides.extraDeclaredKey.
 func writeMetadataEntryWithOverrides(t *testing.T, zipWriter *zip.Writer, overrides archiveOverrides) {
 	t.Helper()
 
-	trueVal := true
 	placeholders := []manifest.Placeholder{
-		{Key: "{{PROJECT_PATH}}", Original: fixtureSourceProjectPath, Resolvable: &trueVal},
-		{Key: "{{HOME}}", Original: fixtureSourceHomeDir, Resolvable: &trueVal},
+		{Key: "{{PROJECT_PATH}}", Original: fixtureSourceProjectPath},
+		{Key: "{{HOME}}", Original: fixtureSourceHomeDir},
 	}
 	if overrides.extraDeclaredKey != "" {
 		placeholders = append(placeholders, manifest.Placeholder{
-			Key:        overrides.extraDeclaredKey,
-			Original:   overrides.extraDeclaredKey,
-			Resolvable: overrides.extraResolvable,
+			Key:      overrides.extraDeclaredKey,
+			Original: overrides.extraDeclaredKey,
 		})
 	}
 

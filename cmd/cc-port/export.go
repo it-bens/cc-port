@@ -333,26 +333,22 @@ func gatherSessionKeyedContent(locations *claude.ProjectLocations) ([]byte, erro
 
 func resolveSuggestions(suggestions []export.PlaceholderSuggestion) []manifest.Placeholder {
 	placeholders := make([]manifest.Placeholder, 0, len(suggestions))
-	resolvable := true
 	for _, suggestion := range suggestions {
 		placeholders = append(placeholders, manifest.Placeholder{
-			Key:        suggestion.Key,
-			Original:   suggestion.Original,
-			Resolvable: &resolvable,
+			Key:      suggestion.Key,
+			Original: suggestion.Original,
 		})
 	}
 	return placeholders
 }
 
 func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {
-	resolvableTrue := true
 	placeholders := make([]manifest.Placeholder, 0, len(exportOptions.Placeholders))
 	for _, placeholder := range exportOptions.Placeholders {
 		placeholders = append(placeholders, manifest.Placeholder{
-			Key:        placeholder.Key,
-			Original:   placeholder.Original,
-			Resolvable: &resolvableTrue,
-			Resolve:    placeholder.Resolve,
+			Key:      placeholder.Key,
+			Original: placeholder.Original,
+			Resolve:  placeholder.Resolve,
 		})
 	}
 

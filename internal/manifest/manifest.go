@@ -34,12 +34,11 @@ type Category struct {
 }
 
 // Placeholder maps a key to its original value, and optionally carries a
-// resolved replacement and a flag indicating whether it is resolvable.
+// resolved replacement.
 type Placeholder struct {
-	Key        string `xml:"key,attr"`
-	Original   string `xml:"original,attr"`
-	Resolvable *bool  `xml:"resolvable,attr,omitempty"`
-	Resolve    string `xml:"resolve,attr,omitempty"`
+	Key      string `xml:"key,attr"`
+	Original string `xml:"original,attr"`
+	Resolve  string `xml:"resolve,attr,omitempty"`
 }
 
 // maxManifestBytes caps the size of metadata.xml when read from a path or

@@ -40,9 +40,8 @@ func IsImplicitKey(key string) bool {
 
 // applyResolutions replaces each placeholder token in content with its
 // resolved value. Tokens without a mapping are left verbatim — the import
-// pre-flight gate in Run is responsible for refusing archives with
-// unresolved declared keys before reaching this point, so surviving literals
-// here are exclusively ones the manifest explicitly marked Resolvable: false.
+// pre-flight gate in Run refuses archives with unresolved declared keys
+// before reaching this point.
 //
 // Substitution uses plain bytes.ReplaceAll rather than the boundary-aware
 // rewrite.ReplacePathInBytes. The token shape `{{KEY}}` is self-delimiting —
@@ -51,9 +50,7 @@ func IsImplicitKey(key string) bool {
 // the upper-snake key grammar). Boundary-awareness here would incorrectly
 // refuse to substitute when the byte after `}}` happens to be a path
 // component (e.g. `{{PROJECT_PATH}}.` in prose), leaving literal tokens on
-// disk. The pre-flight gate in Run enforces the "no unresolved tokens
-// survive unless marked Resolvable: false" contract so plain replacement is
-// safe here.
+// disk.
 func applyResolutions(content []byte, resolutions map[string]string) []byte {
 	for placeholder, value := range resolutions {
 		content = bytes.ReplaceAll(content, []byte(placeholder), []byte(value))
@@ -138,9 +135,8 @@ func ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[str
 }
 
 // ValidateResolutions checks that every resolution is a non-empty absolute
-// path. Empty values are always rejected: the pre-flight gate routes keys
-// marked Resolvable: false past Resolutions entirely, so empty values here
-// can only mean the caller forgot to fill one in.
+// path. Empty values are always rejected: a missing resolution means the
+// caller forgot to fill one in.
 func ValidateResolutions(resolutions map[string]string) error {
 	for placeholder, value := range resolutions {
 		if value == "" {
@@ -161,16 +157,14 @@ func ValidateResolutions(resolutions map[string]string) error {
 //     excluded). Order and length are irrelevant; only substring membership
 //     matters for the missing check, and only the union of upper-snake
 //     tokens matters for the undeclared check.
-//   - declared: the manifest's declared placeholders. Resolvable semantics —
-//     nil and *true both mean "must be resolved", *false means "explicitly
-//     allowed to remain symbolic".
+//   - declared: the manifest's declared placeholders. Every declared key
+//     embedded in a body must resolve unless it is implicit.
 //   - resolutions: the caller-supplied key → value map that Run will pass
 //     to applyResolutions.
 //
 // Returns two alphabetically sorted slices:
 //   - missing: declared keys that are embedded in at least one body, are
-//     subject to the resolution contract (Resolvable != *false, not the
-//     implicit PROJECT_PATH), and are absent from resolutions.
+//     not implicit (PROJECT_PATH), and are absent from resolutions.
 //   - undeclared: upper-snake `{{KEY}}` tokens that appear in at least one
 //     body but are not listed in declared at all.
 func ClassifyPlaceholders(
@@ -184,10 +178,6 @@ func ClassifyPlaceholders(
 	}
 
 	for _, placeholder := range declared {
-		if placeholder.Resolvable != nil && !*placeholder.Resolvable {
-			// Explicitly allowed to remain symbolic.
-			continue
-		}
 		if _, isResolved := resolutions[placeholder.Key]; isResolved {
 			continue
 		}

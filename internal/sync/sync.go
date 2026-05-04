@@ -258,9 +258,6 @@ func computeUnresolved(
 
 	var missing []string
 	for _, placeholder := range declared {
-		if placeholder.Resolvable != nil && !*placeholder.Resolvable {
-			continue
-		}
 		if !covered[placeholder.Key] {
 			missing = append(missing, placeholder.Key)
 		}

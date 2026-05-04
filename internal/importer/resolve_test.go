@@ -202,8 +202,8 @@ func classifyUpperSnakeCases() []classifyCase {
 			name:   "all present keys resolved",
 			bodies: [][]byte{[]byte(`cwd={{PROJECT_PATH}}, home={{HOME}}`)},
 			declared: []manifest.Placeholder{
-				{Key: "{{PROJECT_PATH}}", Resolvable: new(true)},
-				{Key: "{{HOME}}", Resolvable: new(true)},
+				{Key: "{{PROJECT_PATH}}"},
+				{Key: "{{HOME}}"},
 			},
 			resolutions: map[string]string{
 				"{{PROJECT_PATH}}": "/dest/project",
@@ -211,34 +211,23 @@ func classifyUpperSnakeCases() []classifyCase {
 			},
 		},
 		{
-			name:     "declared Resolvable=false + present + not resolved is clean",
-			bodies:   [][]byte{[]byte(`legacy={{UNRESOLVABLE}}`)},
-			declared: []manifest.Placeholder{{Key: "{{UNRESOLVABLE}}", Resolvable: new(false)}},
-		},
-		{
-			name:        "declared nil + not resolved is missing",
+			name:        "declared + present + not resolved is missing",
 			bodies:      [][]byte{[]byte(`extra={{EXTRA}}`)},
-			declared:    []manifest.Placeholder{{Key: "{{EXTRA}}", Resolvable: nil}},
-			wantMissing: []string{"{{EXTRA}}"},
-		},
-		{
-			name:        "declared true + not resolved is missing",
-			bodies:      [][]byte{[]byte(`extra={{EXTRA}}`)},
-			declared:    []manifest.Placeholder{{Key: "{{EXTRA}}", Resolvable: new(true)}},
+			declared:    []manifest.Placeholder{{Key: "{{EXTRA}}"}},
 			wantMissing: []string{"{{EXTRA}}"},
 		},
 		{
 			name:           "present but not declared is undeclared",
 			bodies:         [][]byte{[]byte(`leaked={{SECRET}}`)},
-			declared:       []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolvable: new(true)}},
+			declared:       []manifest.Placeholder{{Key: "{{PROJECT_PATH}}"}},
 			wantUndeclared: []string{"{{SECRET}}"},
 		},
 		{
 			name:   "both missing and undeclared populated and sorted",
 			bodies: [][]byte{[]byte(`{{ZETA}} {{ALPHA}} {{UNDECLARED_B}} {{UNDECLARED_A}}`)},
 			declared: []manifest.Placeholder{
-				{Key: "{{ZETA}}", Resolvable: new(true)},
-				{Key: "{{ALPHA}}", Resolvable: new(true)},
+				{Key: "{{ZETA}}"},
+				{Key: "{{ALPHA}}"},
 			},
 			wantMissing:    []string{"{{ALPHA}}", "{{ZETA}}"},
 			wantUndeclared: []string{"{{UNDECLARED_A}}", "{{UNDECLARED_B}}"},
@@ -246,13 +235,13 @@ func classifyUpperSnakeCases() []classifyCase {
 		{
 			name:     "declared but absent from bodies is clean",
 			bodies:   [][]byte{[]byte("no placeholder tokens here")},
-			declared: []manifest.Placeholder{{Key: "{{UNUSED}}", Resolvable: new(true)}},
+			declared: []manifest.Placeholder{{Key: "{{UNUSED}}"}},
 		},
 		{
 			// importer.Run pre-fills PROJECT_PATH unconditionally.
 			name:     "PROJECT_PATH resolved implicitly even without explicit resolution",
 			bodies:   [][]byte{[]byte(`cwd={{PROJECT_PATH}}`)},
-			declared: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolvable: new(true)}},
+			declared: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}"}},
 		},
 	}
 }
@@ -266,21 +255,16 @@ func classifyExoticShapeCases() []classifyCase {
 		{
 			name:        "exotic-shape declared key missing a resolution is flagged",
 			bodies:      [][]byte{[]byte(`path={{my-weird.key}}`)},
-			declared:    []manifest.Placeholder{{Key: "{{my-weird.key}}", Resolvable: new(true)}},
+			declared:    []manifest.Placeholder{{Key: "{{my-weird.key}}"}},
 			wantMissing: []string{"{{my-weird.key}}"},
 		},
 		{
 			name:   "exotic-shape declared key with a resolution is clean",
 			bodies: [][]byte{[]byte(`path={{my-weird.key}}`)},
 			declared: []manifest.Placeholder{
-				{Key: "{{my-weird.key}}", Resolvable: new(true)},
+				{Key: "{{my-weird.key}}"},
 			},
 			resolutions: map[string]string{"{{my-weird.key}}": "/dest/weird"},
-		},
-		{
-			name:     "exotic-shape declared key marked Resolvable=false is clean",
-			bodies:   [][]byte{[]byte(`legacy={{my-weird.key}}`)},
-			declared: []manifest.Placeholder{{Key: "{{my-weird.key}}", Resolvable: new(false)}},
 		},
 	}
 }

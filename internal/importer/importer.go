@@ -349,9 +349,6 @@ func classifyMissingResolutions(
 ) []string {
 	var missing []string
 	for _, placeholder := range metadata.Placeholders {
-		if placeholder.Resolvable != nil && !*placeholder.Resolvable {
-			continue
-		}
 		if _, isResolved := resolutions[placeholder.Key]; isResolved {
 			continue
 		}
