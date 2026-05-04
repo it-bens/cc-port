@@ -270,16 +270,13 @@ func discoverAndPromptPlaceholders(claudeHome *claude.Home, projectPath string) 
 		return nil, err
 	}
 
-	homePath, err := os.UserHomeDir()
+	homePath, err := resolveHomeAnchor()
 	if err != nil {
-		return nil, fmt.Errorf("determine home directory: %w", err)
+		return nil, err
 	}
 
-	paths := export.DiscoverPaths(contentBuffer)
-	prefixes := export.GroupPathPrefixes(paths)
-	suggestions := export.AutoDetectPlaceholders(prefixes, projectPath, homePath)
-
-	return resolveSuggestions(suggestions)
+	suggestions := export.DiscoverPlaceholders(contentBuffer, projectPath, homePath)
+	return resolveSuggestions(suggestions), nil
 }
 
 func gatherProjectContent(locations *claude.ProjectLocations) ([]byte, error) {
@@ -334,33 +331,17 @@ func gatherSessionKeyedContent(locations *claude.ProjectLocations) ([]byte, erro
 	return buf, nil
 }
 
-func resolveSuggestions(suggestions []export.PlaceholderSuggestion) ([]manifest.Placeholder, error) {
+func resolveSuggestions(suggestions []export.PlaceholderSuggestion) []manifest.Placeholder {
 	placeholders := make([]manifest.Placeholder, 0, len(suggestions))
+	resolvable := true
 	for _, suggestion := range suggestions {
-		if suggestion.Auto {
-			resolvable := true
-			placeholders = append(placeholders, manifest.Placeholder{
-				Key:        suggestion.Key,
-				Original:   suggestion.Original,
-				Resolvable: &resolvable,
-			})
-			continue
-		}
-
-		resolved, err := ui.ResolvePlaceholder(suggestion.Key, suggestion.Original, "")
-		if err != nil {
-			return nil, err
-		}
-
-		resolvable := resolved != ""
 		placeholders = append(placeholders, manifest.Placeholder{
 			Key:        suggestion.Key,
 			Original:   suggestion.Original,
 			Resolvable: &resolvable,
-			Resolve:    resolved,
 		})
 	}
-	return placeholders, nil
+	return placeholders
 }
 
 func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {
