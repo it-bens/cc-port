@@ -224,9 +224,10 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 	return nil
 }
 
-// parseResolutionFlags parses --resolution flag values into a map. {{PROJECT_PATH}} is
-// refused because importer.Run injects it unconditionally from the target
-// argument; a flag override would desync the two.
+// parseResolutionFlags parses --resolution flag values into a map. Implicit
+// keys ({{PROJECT_PATH}}, {{HOME}}) are refused because importer.Run injects
+// them unconditionally from the target argument and the import machine's
+// os.UserHomeDir(); a flag override would desync the two.
 func parseResolutionFlags(raw []string) (map[string]string, error) {
 	parsed := make(map[string]string, len(raw))
 	for _, entry := range raw {
@@ -250,7 +251,7 @@ func parseResolutionFlags(raw []string) (map[string]string, error) {
 		if importer.IsImplicitKey(key) {
 			return nil, fmt.Errorf(
 				"--resolution %s is not allowed: "+
-					"the import target argument supplies this key",
+					"this key is implicit and supplied by the import flow",
 				key,
 			)
 		}

@@ -21,7 +21,7 @@ func TestResolvePlaceholders_FiltersImplicitKey(t *testing.T) {
 		}
 		return out, nil
 	}
-	unresolved := []string{"{{PROJECT_PATH}}", "{{HOME}}"}
+	unresolved := []string{"{{PROJECT_PATH}}", "{{HOME}}", "{{ORG}}"}
 
 	resolutions, err := importer.ResolvePlaceholders(unresolved, nil, prompter)
 	require.NoError(t, err)
@@ -29,7 +29,7 @@ func TestResolvePlaceholders_FiltersImplicitKey(t *testing.T) {
 		assert.False(t, importer.IsImplicitKey(key),
 			"implicit key %q leaked into resolutions", key)
 	}
-	assert.Equal(t, "P-{{HOME}}", resolutions["{{HOME}}"])
+	assert.Equal(t, "P-{{ORG}}", resolutions["{{ORG}}"])
 	for _, key := range promptedKeys {
 		assert.False(t, importer.IsImplicitKey(key),
 			"implicit key %q reached the prompter", key)
@@ -48,15 +48,15 @@ func TestResolvePlaceholders_ManifestKnownMergedFirst(t *testing.T) {
 	}
 	fromManifest := &manifest.Metadata{
 		Placeholders: []manifest.Placeholder{
-			{Key: "{{HOME}}", Resolve: "/Users/me"},
+			{Key: "{{HOST}}", Resolve: "/srv/host"},
 			{Key: "{{ORG}}", Resolve: ""}, // empty ignored
 		},
 	}
-	unresolved := []string{"{{HOME}}", "{{ORG}}"}
+	unresolved := []string{"{{HOST}}", "{{ORG}}"}
 
 	resolutions, err := importer.ResolvePlaceholders(unresolved, fromManifest, prompter)
 	require.NoError(t, err)
-	assert.Equal(t, "/Users/me", resolutions["{{HOME}}"])
+	assert.Equal(t, "/srv/host", resolutions["{{HOST}}"])
 	assert.Equal(t, "FROM_PROMPT", resolutions["{{ORG}}"])
 	assert.Equal(t, []string{"{{ORG}}"}, promptedKeys)
 }
@@ -81,21 +81,21 @@ func TestResolvePlaceholders_PrompterErrorPropagates(t *testing.T) {
 	prompter := func(_ []string) (map[string]string, error) {
 		return nil, sentinelPrompterErr
 	}
-	_, err := importer.ResolvePlaceholders([]string{"{{HOME}}"}, nil, prompter)
+	_, err := importer.ResolvePlaceholders([]string{"{{ORG}}"}, nil, prompter)
 	require.ErrorIs(t, err, sentinelPrompterErr)
 }
 
 func TestResolvePlaceholders_NilPrompterRejectedWhenNeeded(t *testing.T) {
-	_, err := importer.ResolvePlaceholders([]string{"{{HOME}}"}, nil, nil)
+	_, err := importer.ResolvePlaceholders([]string{"{{ORG}}"}, nil, nil)
 	require.Error(t, err)
 }
 
 func TestResolvePlaceholders_NilPrompterAcceptedWhenNotNeeded(t *testing.T) {
 	fromManifest := &manifest.Metadata{
-		Placeholders: []manifest.Placeholder{{Key: "{{HOME}}", Resolve: "/x"}},
+		Placeholders: []manifest.Placeholder{{Key: "{{ORG}}", Resolve: "/x"}},
 	}
 	resolutions, err := importer.ResolvePlaceholders(
-		[]string{"{{HOME}}"}, fromManifest, nil)
+		[]string{"{{ORG}}"}, fromManifest, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "/x", resolutions["{{HOME}}"])
+	assert.Equal(t, "/x", resolutions["{{ORG}}"])
 }

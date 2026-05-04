@@ -355,7 +355,7 @@ func classifyMissingResolutions(
 		if _, isResolved := resolutions[placeholder.Key]; isResolved {
 			continue
 		}
-		if placeholder.Key == projectPathKey {
+		if IsImplicitKey(placeholder.Key) {
 			continue
 		}
 		if _, present := classification.presentDeclaredKeys[placeholder.Key]; !present {

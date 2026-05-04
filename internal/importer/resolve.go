@@ -26,15 +26,16 @@ const projectPathKey = "{{PROJECT_PATH}}"
 // covers it once Task 15 lands.
 const homePathKey = "{{HOME}}"
 
-// IsImplicitKey reports whether key is one of the placeholder keys importer.Run
-// supplies on its own. Callers refuse user-supplied resolutions for these keys
-// and treat them as already-resolved when computing unresolved sets.
-//
-// The set has one member today (projectPathKey). The predicate exists so
-// callers do not import the literal value; adding a second implicit key
-// requires only an edit here.
+// IsImplicitKey reports whether key is supplied by the import flow itself,
+// not by manifest <resolve>, --resolution flags, or interactive prompting.
+// The implicit set covers {{PROJECT_PATH}} (supplied from the import target
+// argument) and {{HOME}} (supplied from the import machine's
+// os.UserHomeDir() via resolveHomeAnchor). Callers refuse user-supplied
+// resolutions for these keys and treat them as already-resolved when
+// computing unresolved sets. Adding a new implicit key requires only an
+// edit here plus a corresponding cmd-layer wiring.
 func IsImplicitKey(key string) bool {
-	return key == projectPathKey
+	return key == projectPathKey || key == homePathKey
 }
 
 // applyResolutions replaces each placeholder token in content with its

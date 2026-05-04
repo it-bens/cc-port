@@ -21,19 +21,19 @@ func TestParseResolutionFlags_Empty(t *testing.T) {
 }
 
 func TestParseResolutionFlags_SingleEntry(t *testing.T) {
-	parsed, err := parseResolutionFlags([]string{"{{HOME}}=/Users/me"})
+	parsed, err := parseResolutionFlags([]string{"{{ORG}}=/Users/me"})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"{{HOME}}": "/Users/me"}, parsed)
+	assert.Equal(t, map[string]string{"{{ORG}}": "/Users/me"}, parsed)
 }
 
 func TestParseResolutionFlags_MultipleEntries(t *testing.T) {
 	parsed, err := parseResolutionFlags([]string{
-		"{{HOME}}=/Users/me",
+		"{{ORG}}=/Users/me",
 		"{{WORK}}=/opt/work",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{
-		"{{HOME}}": "/Users/me",
+		"{{ORG}}":  "/Users/me",
 		"{{WORK}}": "/opt/work",
 	}, parsed)
 }
@@ -61,15 +61,26 @@ func TestParseResolutionFlags_RejectsProjectPath(t *testing.T) {
 	_, err := parseResolutionFlags([]string{"{{PROJECT_PATH}}=/Users/me/project"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "{{PROJECT_PATH}}")
+	assert.Contains(t, err.Error(), "implicit")
+}
+
+func TestComposeImportResolutions_RejectsHomeOverride(t *testing.T) {
+	// {{HOME}} joins {{PROJECT_PATH}} as an implicit key. Accepting a flag
+	// override would desync the runtime resolution from the value
+	// importer.Run injects via withImplicitAnchors.
+	_, err := parseResolutionFlags([]string{"{{HOME}}=/x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "{{HOME}}")
+	assert.Contains(t, err.Error(), "implicit")
 }
 
 func TestParseResolutionFlags_RejectsDuplicateKey(t *testing.T) {
 	_, err := parseResolutionFlags([]string{
-		"{{HOME}}=/Users/alice",
-		"{{HOME}}=/Users/bob",
+		"{{ORG}}=/Users/alice",
+		"{{ORG}}=/Users/bob",
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "{{HOME}}")
+	assert.Contains(t, err.Error(), "{{ORG}}")
 }
 
 func TestParseResolutionFlags_SuggestsManifestWorkflow(t *testing.T) {

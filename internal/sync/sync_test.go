@@ -180,7 +180,7 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	r := newMemRemote(t)
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
 
 	source := openSourceForTest(t, r, "k", "")
@@ -190,19 +190,19 @@ func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
-	if len(plan.UnresolvedPlaceholders) != 1 || plan.UnresolvedPlaceholders[0] != "{{HOME}}" {
-		t.Fatalf("UnresolvedPlaceholders = %v, want [{{HOME}}]", plan.UnresolvedPlaceholders)
+	if len(plan.UnresolvedPlaceholders) != 1 || plan.UnresolvedPlaceholders[0] != "{{ORG}}" {
+		t.Fatalf("UnresolvedPlaceholders = %v, want [{{ORG}}]", plan.UnresolvedPlaceholders)
 	}
 }
 
 func TestPlanPull_ResolutionMapClearsUnresolved(t *testing.T) {
 	r := newMemRemote(t)
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
 	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
 		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
-		Resolutions: map[string]string{"{{HOME}}": "/Users/me"},
+		Resolutions: map[string]string{"{{ORG}}": "/Users/me"},
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
@@ -214,7 +214,7 @@ func TestPlanPull_ResolutionMapClearsUnresolved(t *testing.T) {
 
 func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 	r := newMemRemote(t)
-	injectArchiveWithSenderResolve(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	injectArchiveWithSenderResolve(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
 	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
@@ -285,7 +285,7 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 // opts.Resolutions and rejected the unresolved key when prompter was nil.
 func TestExecutePull_ResolutionsOnlyCoverDeclaredPlaceholder(t *testing.T) {
 	r := newMemRemote(t)
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	homeB := buildTestHomeBlank(t)
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 	source := openSourceForTest(t, r, "k", "")
@@ -293,7 +293,7 @@ func TestExecutePull_ResolutionsOnlyCoverDeclaredPlaceholder(t *testing.T) {
 		ClaudeHome:  homeB,
 		Name:        "k",
 		TargetPath:  targetPath,
-		Resolutions: map[string]string{"{{HOME}}": "/Users/me"},
+		Resolutions: map[string]string{"{{ORG}}": "/Users/me"},
 	}
 	plan, err := PlanPull(context.Background(), opts, source)
 	if err != nil {

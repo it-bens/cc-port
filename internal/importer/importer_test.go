@@ -1323,6 +1323,36 @@ func TestImporterRun_InjectsHomePathFromOptions(t *testing.T) {
 	assert.NotContains(t, string(body), "{{HOME}}")
 }
 
+func TestImporterRun_HomePathStaleManifestResolveIgnored(t *testing.T) {
+	// Sender's manifest declares {{HOME}} with stale Resolve="/Users/sender".
+	// Recipient must see /Users/recipient in the substituted body, not the
+	// sender's value. The orchestrator filters {{HOME}} as implicit before
+	// the manifest merge; importer.Run injects via withImplicitAnchors.
+	archiveBytes := buildArchiveWithSessionBody(t,
+		[]manifest.Placeholder{{
+			Key:      "{{HOME}}",
+			Original: "/Users/sender",
+			Resolve:  "/Users/sender",
+		}},
+		[]byte(`{"home":"{{HOME}}/.claude/projects"}`+"\n"),
+	)
+
+	claudeHome := stageEmptyClaudeHome(t)
+
+	_, err := importer.Run(t.Context(), claudeHome, importer.Options{
+		Source:      bytes.NewReader(archiveBytes),
+		Size:        int64(len(archiveBytes)),
+		TargetPath:  "/Users/recipient/Projects/myproj",
+		HomePath:    "/Users/recipient",
+		Resolutions: map[string]string{},
+	})
+	require.NoError(t, err)
+
+	body := readSingleSessionBody(t, claudeHome, "/Users/recipient/Projects/myproj")
+	assert.Contains(t, string(body), "/Users/recipient/.claude/projects")
+	assert.NotContains(t, string(body), "/Users/sender")
+}
+
 // buildArchiveWithSessionBody builds an in-memory cc-port-shaped ZIP carrying
 // metadata.xml that declares placeholders plus a single sessions/body.json
 // entry holding sessionBody verbatim. Returns the archive bytes so the caller

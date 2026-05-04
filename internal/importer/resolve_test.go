@@ -296,6 +296,14 @@ type classifyCase struct {
 	wantUndeclared []string
 }
 
+func TestIsImplicitKey_RecognizesHome(t *testing.T) {
+	assert.True(t, importer.IsImplicitKey("{{HOME}}"),
+		"{{HOME}} must be implicit so the orchestrator filters it from prompts and importer.Run injects it")
+	assert.True(t, importer.IsImplicitKey("{{PROJECT_PATH}}"),
+		"{{PROJECT_PATH}} stays implicit (regression guard)")
+	assert.False(t, importer.IsImplicitKey("{{ARBITRARY_KEY}}"))
+}
+
 func TestCheckConflict(t *testing.T) {
 	t.Run("no conflict when directory does not exist", func(t *testing.T) {
 		nonExistentDir := filepath.Join(t.TempDir(), "does-not-exist")
