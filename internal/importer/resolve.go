@@ -22,12 +22,11 @@ const projectPathKey = "{{PROJECT_PATH}}"
 
 // homePathKey is the manifest key cc-port supplies from the import
 // machine's os.UserHomeDir(). importer.Run injects it into the
-// resolution map via withImplicitAnchors. The IsImplicitKey predicate
-// covers it once Task 15 lands.
+// resolution map via withImplicitAnchors.
 const homePathKey = "{{HOME}}"
 
 // IsImplicitKey reports whether key is supplied by the import flow itself,
-// not by manifest <resolve>, --resolution flags, or interactive prompting.
+// not by manifest <resolve> in the archive or in --from-manifest.
 // The implicit set covers {{PROJECT_PATH}} (supplied from the import target
 // argument) and {{HOME}} (supplied from the import machine's
 // os.UserHomeDir() via resolveHomeAnchor). Callers refuse user-supplied
