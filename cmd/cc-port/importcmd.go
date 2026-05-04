@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -24,7 +23,6 @@ import (
 func newImportCmd(claudeDir *string) *cobra.Command {
 	var (
 		fromManifest   string
-		resolutionKV   []string
 		passphraseEnv  string
 		passphraseFile string
 	)
@@ -50,11 +48,6 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				return err
 			}
 
-			flagResolutions, err := parseResolutionFlags(resolutionKV)
-			if err != nil {
-				return err
-			}
-
 			passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)
 			if err != nil {
 				return err
@@ -74,7 +67,7 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				}
 			}()
 
-			resolutions, err := composeImportResolutions(source, fromManifest, flagResolutions)
+			resolutions, err := composeImportResolutions(source, fromManifest)
 			if err != nil {
 				return err
 			}
@@ -109,12 +102,6 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 	cmd.Flags().StringVar(
 		&fromManifest, "from-manifest", "",
 		"path to a manifest XML file with pre-filled resolutions",
-	)
-	cmd.Flags().StringArrayVar(
-		&resolutionKV, "resolution", nil,
-		"resolve a placeholder non-interactively (repeatable; KEY=VALUE, "+
-			"e.g. --resolution '{{HOME}}=/Users/me'). When combined with "+
-			"--from-manifest, flag values win per key.",
 	)
 	cmd.Flags().StringVar(
 		&passphraseEnv, "passphrase-env", "",
@@ -223,53 +210,12 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 	return nil
 }
 
-// parseResolutionFlags parses --resolution flag values into a map. Implicit
-// keys ({{PROJECT_PATH}}, {{HOME}}) are refused because importer.Run injects
-// them unconditionally from the target argument and the import machine's
-// os.UserHomeDir(); a flag override would desync the two.
-func parseResolutionFlags(raw []string) (map[string]string, error) {
-	parsed := make(map[string]string, len(raw))
-	for _, entry := range raw {
-		equalsIndex := strings.IndexByte(entry, '=')
-		if equalsIndex < 0 {
-			return nil, fmt.Errorf(
-				"--resolution %q: expected KEY=VALUE (no '=' found), "+
-					"or use `cc-port import manifest <archive>` to generate a manifest for hand-editing",
-				entry,
-			)
-		}
-		key := entry[:equalsIndex]
-		value := entry[equalsIndex+1:]
-		if key == "" {
-			return nil, fmt.Errorf(
-				"--resolution %q: empty key, "+
-					"or use `cc-port import manifest <archive>` to generate a manifest for hand-editing",
-				entry,
-			)
-		}
-		if importer.IsImplicitKey(key) {
-			return nil, fmt.Errorf(
-				"--resolution %s is not allowed: "+
-					"this key is implicit and supplied by the import flow",
-				key,
-			)
-		}
-		if _, duplicate := parsed[key]; duplicate {
-			return nil, fmt.Errorf("--resolution %q: duplicate key", key)
-		}
-		parsed[key] = value
-	}
-	return parsed, nil
-}
-
 // composeImportResolutions reads the archive's manifest, optionally loads a
-// --from-manifest override, merges manifest-declared defaults with flag
-// values, and delegates the merge to importer.ResolvePlaceholders. Refuses
-// imports with unresolved non-implicit keys via MissingResolutionsError.
-// Flag values overlay the orchestrator's output so they win for keys the
-// manifest had populated.
+// --from-manifest override, and delegates the merge to
+// importer.ResolvePlaceholders. Refuses imports with unresolved non-implicit
+// keys via MissingResolutionsError.
 func composeImportResolutions(
-	source pipeline.Source, fromManifest string, flagResolutions map[string]string,
+	source pipeline.Source, fromManifest string,
 ) (map[string]string, error) {
 	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
 	if err != nil {
@@ -289,13 +235,5 @@ func composeImportResolutions(
 		unresolved = append(unresolved, placeholder.Key)
 	}
 
-	resolutions, err := importer.ResolvePlaceholders(unresolved, fromManifestMeta)
-	if err != nil {
-		return nil, err
-	}
-	// Flag values overlay manifest-derived values per key.
-	for key, value := range flagResolutions {
-		resolutions[key] = value
-	}
-	return resolutions, nil
+	return importer.ResolvePlaceholders(unresolved, fromManifestMeta)
 }

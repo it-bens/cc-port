@@ -27,7 +27,6 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 		apply          bool
 		passphraseEnv  string
 		passphraseFile string
-		resolutionKV   []string
 		fromManifest   string
 	)
 	cmd := &cobra.Command{
@@ -60,8 +59,6 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 		"path to a file containing the encryption passphrase "+
 			"(mutually exclusive with --passphrase-env)")
 	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
-	cmd.Flags().StringArrayVar(&resolutionKV, "resolution", nil,
-		"resolve a placeholder non-interactively (repeatable; KEY=VALUE)")
 	cmd.Flags().StringVar(&fromManifest, "from-manifest", "",
 		"path to a manifest XML file with pre-filled resolutions")
 	return cmd
@@ -177,7 +174,6 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 	remoteURL, _ := cmd.Flags().GetString("remote")
 	passphraseEnv, _ := cmd.Flags().GetString("passphrase-env")
 	passphraseFile, _ := cmd.Flags().GetString("passphrase-file")
-	resolutionKV, _ := cmd.Flags().GetStringArray("resolution")
 	fromManifestPath, _ := cmd.Flags().GetString("from-manifest")
 
 	if toPath == "" {
@@ -198,11 +194,6 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 	}
 
 	claudeHome, err := claude.NewHome(claudeDir)
-	if err != nil {
-		return syncc.PullOptions{}, nil, "", err
-	}
-
-	flagResolutions, err := parseResolutionFlags(resolutionKV)
 	if err != nil {
 		return syncc.PullOptions{}, nil, "", err
 	}
@@ -230,7 +221,7 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		Name:              name,
 		TargetPath:        targetPath,
 		HomePath:          homePath,
-		Resolutions:       flagResolutions,
+		Resolutions:       map[string]string{},
 		FromManifest:      fromManifest,
 		EncryptionEnabled: passphrase != "",
 	}
