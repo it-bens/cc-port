@@ -1,6 +1,8 @@
 package export_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -234,6 +236,23 @@ func TestDiscoverPlaceholders_DropsProjectSubFragmentFromURLs(t *testing.T) {
 	suggestions := export.DiscoverPlaceholders(content, "/Users/tap-user/Software/homebrew-tap", "/Users/tap-user")
 
 	assertOnlyAnchorPlaceholders(t, suggestions, "/homebrew-tap.git")
+}
+
+func TestDiscoverPlaceholders_OnHomebrewTapNoiseCorpus(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("testdata", "discover", "noise-session.jsonl"))
+	require.NoError(t, err)
+
+	suggestions := export.DiscoverPlaceholders(
+		content,
+		"/Users/tap-user/Software/homebrew-tap",
+		"/Users/tap-user",
+	)
+
+	require.Len(t, suggestions, 2)
+	assert.Equal(t, "{{PROJECT_PATH}}", suggestions[0].Key)
+	assert.Equal(t, "/Users/tap-user/Software/homebrew-tap", suggestions[0].Original)
+	assert.Equal(t, "{{HOME}}", suggestions[1].Key)
+	assert.Equal(t, "/Users/tap-user", suggestions[1].Original)
 }
 
 // assertOnlyAnchorPlaceholders fails the test if suggestions contains anything
