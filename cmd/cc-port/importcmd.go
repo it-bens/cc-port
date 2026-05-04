@@ -15,7 +15,6 @@ import (
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
-	"github.com/it-bens/cc-port/internal/ui"
 )
 
 // newImportCmd returns the import subcommand with closure-scoped flag
@@ -264,10 +263,9 @@ func parseResolutionFlags(raw []string) (map[string]string, error) {
 }
 
 // composeImportResolutions reads the archive's manifest, optionally loads a
-// --from-manifest override, builds a Prompter that prefers --resolution flags
-// and manifest-declared defaults before falling back to ui.ResolvePlaceholder,
-// and delegates the merge to importer.ResolvePlaceholders. Flag values overlay
-// the orchestrator's output so they win for keys the manifest had populated.
+// --from-manifest override, and delegates the merge to
+// importer.ResolvePlaceholders. Flag values overlay the orchestrator's output
+// so they win for keys the manifest had populated.
 func composeImportResolutions(
 	source pipeline.Source, fromManifest string, flagResolutions map[string]string,
 ) (map[string]string, error) {
@@ -285,34 +283,11 @@ func composeImportResolutions(
 	}
 
 	unresolved := make([]string, 0, len(metadata.Placeholders))
-	declaredByKey := make(map[string]manifest.Placeholder, len(metadata.Placeholders))
 	for _, placeholder := range metadata.Placeholders {
 		unresolved = append(unresolved, placeholder.Key)
-		declaredByKey[placeholder.Key] = placeholder
 	}
 
-	prompter := func(stillUnresolved []string) (map[string]string, error) {
-		out := make(map[string]string, len(stillUnresolved))
-		for _, key := range stillUnresolved {
-			if value, ok := flagResolutions[key]; ok {
-				out[key] = value
-				continue
-			}
-			declared := declaredByKey[key]
-			if declared.Resolve != "" {
-				out[key] = declared.Resolve
-				continue
-			}
-			resolved, err := ui.ResolvePlaceholder(key, declared.Original, "")
-			if err != nil {
-				return nil, err
-			}
-			out[key] = resolved
-		}
-		return out, nil
-	}
-
-	resolutions, err := importer.ResolvePlaceholders(unresolved, fromManifestMeta, prompter)
+	resolutions, err := importer.ResolvePlaceholders(unresolved, fromManifestMeta)
 	if err != nil {
 		return nil, err
 	}

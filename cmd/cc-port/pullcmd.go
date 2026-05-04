@@ -15,7 +15,6 @@ import (
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
-	"github.com/it-bens/cc-port/internal/ui"
 )
 
 // newPullCmd returns the pull subcommand with closure-scoped flag locals.
@@ -242,31 +241,11 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 // via importer.ResolvePlaceholders, merges the result into opts.Resolutions,
 // and recomputes the plan against the same source. The second PlanPull call
 // is load-bearing: render and the apply-time guard both read
-// plan.UnresolvedPlaceholders, so they must reflect the prompted resolutions.
+// plan.UnresolvedPlaceholders, so they must reflect the merged resolutions.
 func resolveAndReplan(
 	ctx context.Context, opts *syncc.PullOptions, plan *syncc.PullPlan, source pipeline.Source,
 ) (*syncc.PullPlan, error) {
-	declaredByKey := make(map[string]manifest.Placeholder, len(plan.DeclaredPlaceholders))
-	for _, placeholder := range plan.DeclaredPlaceholders {
-		declaredByKey[placeholder.Key] = placeholder
-	}
-	prompter := func(stillUnresolved []string) (map[string]string, error) {
-		out := make(map[string]string, len(stillUnresolved))
-		for _, key := range stillUnresolved {
-			declared, ok := declaredByKey[key]
-			if !ok {
-				return nil, fmt.Errorf("placeholder %s reported unresolved but not declared in archive", key)
-			}
-			resolved, err := ui.ResolvePlaceholder(key, declared.Original, "")
-			if err != nil {
-				return nil, err
-			}
-			out[key] = resolved
-		}
-		return out, nil
-	}
-
-	resolutions, err := importer.ResolvePlaceholders(plan.UnresolvedPlaceholders, opts.FromManifest, prompter)
+	resolutions, err := importer.ResolvePlaceholders(plan.UnresolvedPlaceholders, opts.FromManifest)
 	if err != nil {
 		return nil, err
 	}

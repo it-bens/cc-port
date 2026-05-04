@@ -225,9 +225,9 @@ func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*Pul
 // no resolution, in alphabetical order.
 //
 // Honoring the sender's Resolve mirrors cc-port import's non-interactive
-// behavior: cmd/cc-port hands the same placeholder.Resolve into the
-// importer.ResolvePlaceholders prompter closure when no flag overrides it.
-// An operator can still override per key via --resolution.
+// behavior: importer.ResolvePlaceholders merges the same placeholder.Resolve
+// into the working resolution map when no flag overrides it. An operator
+// can still override per key via --resolution.
 func computeUnresolved(
 	declared []manifest.Placeholder,
 	resolutions map[string]string,
