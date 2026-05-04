@@ -200,8 +200,6 @@ func openPriorForTest(t *testing.T, r *remote.Remote, name, pass string) *PriorR
 // openSourceForTest opens the strict reader pipeline for pull tests. Returns
 // the opened pipeline.Source; t.Cleanup registers Close. t.Fatalf on any
 // error so test bodies stay flat.
-//
-//nolint:unparam // name and pass mirror openArchiveSource; reserved for future tests with varied names or passphrases.
 func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeline.Source {
 	t.Helper()
 	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{

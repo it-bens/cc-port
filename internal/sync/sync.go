@@ -210,27 +210,26 @@ func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*Pul
 	}
 
 	plan.UnresolvedPlaceholders = computeUnresolved(
-		metadata.Placeholders, opts.Resolutions, opts.FromManifest, opts.TargetPath,
+		metadata.Placeholders, opts.FromManifest, opts.TargetPath,
 	)
 
 	return plan, nil
 }
 
 // computeUnresolved diffs the archive's declared placeholders against
-// every available source of resolution: the caller's --resolution map,
-// the optional --from-manifest metadata, and the sender's own pre-filled
-// Resolve values inside the archive's manifest. Implicit keys (see
-// importer.IsImplicitKey) are always treated as resolved because
-// importer.Run supplies them. Returns the list of declared keys that have
-// no resolution, in alphabetical order.
+// every available source of resolution: the optional --from-manifest
+// metadata and the sender's own pre-filled Resolve values inside the
+// archive's manifest. Implicit keys (see importer.IsImplicitKey) are
+// always treated as resolved because importer.Run supplies them.
+// Returns the list of declared keys that have no resolution, in
+// alphabetical order.
 //
 // Honoring the sender's Resolve mirrors cc-port import's non-interactive
 // behavior: importer.ResolvePlaceholders merges the same placeholder.Resolve
-// into the working resolution map when no flag overrides it. An operator
-// can still override per key via --resolution.
+// into the working resolution map when no --from-manifest entry overrides
+// it.
 func computeUnresolved(
 	declared []manifest.Placeholder,
-	resolutions map[string]string,
 	fromManifest *manifest.Metadata,
 	_ string,
 ) []string {
@@ -241,11 +240,6 @@ func computeUnresolved(
 		}
 		if importer.IsImplicitKey(placeholder.Key) {
 			covered[placeholder.Key] = true
-		}
-	}
-	for key, value := range resolutions {
-		if value != "" {
-			covered[key] = true
 		}
 	}
 	if fromManifest != nil {
@@ -322,7 +316,7 @@ var (
 	ErrCrossMachineConflict  = errors.New("sync: remote was last pushed by a different machine")
 	ErrRemoteNotFound        = errors.New("sync: archive not found on remote")
 	ErrPassphraseRequired    = errors.New("sync: archive is encrypted; pass --passphrase-env or --passphrase-file")
-	ErrUnresolvedPlaceholder = errors.New("sync: archive declares placeholders not covered by --resolution or --from-manifest")
+	ErrUnresolvedPlaceholder = errors.New("sync: archive declares placeholders not covered by --from-manifest")
 )
 
 // selfPusher returns "hostname-username" for the current invocation.
