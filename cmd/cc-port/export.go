@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/file"
+	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/scan"
@@ -379,4 +381,28 @@ func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {
 		},
 		Placeholders: placeholders,
 	}
+}
+
+// resolveHomeAnchor mirrors claude.ResolveProjectPath: a symlinked HOME
+// must resolve to its target before the anchor filter compares against
+// project paths, otherwise every home-rooted candidate is silently
+// dropped. Rejecting `/` and non-absolute values prevents the anchor
+// from matching every absolute path in the corpus.
+func resolveHomeAnchor() (string, error) {
+	homePath, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determine home directory: %w", err)
+	}
+	if !filepath.IsAbs(homePath) {
+		return "", fmt.Errorf("invalid home directory %q: must be absolute", homePath)
+	}
+	resolved, err := fsutil.ResolveExistingAncestor(homePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	cleaned := filepath.Clean(resolved)
+	if !filepath.IsAbs(cleaned) || cleaned == "/" {
+		return "", fmt.Errorf("invalid home directory %q", cleaned)
+	}
+	return cleaned, nil
 }
