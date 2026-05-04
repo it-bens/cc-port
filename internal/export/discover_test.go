@@ -136,3 +136,18 @@ func TestDiscoverPlaceholders_EmitsBothAnchorsLongestFirst(t *testing.T) {
 	assert.Equal(t, "{{HOME}}", suggestions[1].Key)
 	assert.Equal(t, "/Users/tap-user", suggestions[1].Original)
 }
+
+func TestDiscoverPlaceholders_EmitsProjectPathWhenNestedUnderHome(t *testing.T) {
+	content := []byte(`opened /Users/tap-user/Software/homebrew-tap/Casks/cc-port.rb from /Users/tap-user`)
+
+	suggestions := export.DiscoverPlaceholders(
+		content,
+		"/Users/tap-user/Software/homebrew-tap",
+		"/Users/tap-user",
+	)
+
+	require.Len(t, suggestions, 2, "both anchors must be emitted independently when project is nested under home")
+	assert.Equal(t, "{{PROJECT_PATH}}", suggestions[0].Key)
+	assert.Greater(t, len(suggestions[0].Original), len(suggestions[1].Original),
+		"PROJECT_PATH must be longer than HOME so applyPlaceholders substitutes it first")
+}
