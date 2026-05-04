@@ -52,10 +52,11 @@ type PushPlan struct {
 // ExecutePull. Cmd opens the reader pipeline once and passes the
 // pipeline.Source to both Plan and Execute.
 type PullOptions struct {
-	ClaudeHome        *claude.Home
-	Name              string
-	TargetPath        string
-	Resolutions       map[string]string
+	ClaudeHome *claude.Home
+	Name       string
+	TargetPath string
+	// HomePath is the recipient's home directory, supplied via cmd resolveHomeAnchor()
+	HomePath          string
 	FromManifest      *manifest.Metadata
 	EncryptionEnabled bool
 }
@@ -206,27 +207,26 @@ func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*Pul
 	}
 
 	plan.UnresolvedPlaceholders = computeUnresolved(
-		metadata.Placeholders, opts.Resolutions, opts.FromManifest, opts.TargetPath,
+		metadata.Placeholders, opts.FromManifest, opts.TargetPath,
 	)
 
 	return plan, nil
 }
 
 // computeUnresolved diffs the archive's declared placeholders against
-// every available source of resolution: the caller's --resolution map,
-// the optional --from-manifest metadata, and the sender's own pre-filled
-// Resolve values inside the archive's manifest. Implicit keys (see
-// importer.IsImplicitKey) are always treated as resolved because
-// importer.Run supplies them. Returns the list of declared keys that have
-// no resolution, in alphabetical order.
+// every available source of resolution: the optional --from-manifest
+// metadata and the sender's own pre-filled Resolve values inside the
+// archive's manifest. Implicit keys (see importer.IsImplicitKey) are
+// always treated as resolved because importer.Run supplies them.
+// Returns the list of declared keys that have no resolution, in
+// alphabetical order.
 //
 // Honoring the sender's Resolve mirrors cc-port import's non-interactive
-// behavior: cmd/cc-port hands the same placeholder.Resolve into the
-// importer.ResolvePlaceholders prompter closure when no flag overrides it.
-// An operator can still override per key via --resolution.
+// behavior: importer.ResolvePlaceholders merges the same placeholder.Resolve
+// into the working resolution map when no --from-manifest entry overrides
+// it.
 func computeUnresolved(
 	declared []manifest.Placeholder,
-	resolutions map[string]string,
 	fromManifest *manifest.Metadata,
 	_ string,
 ) []string {
@@ -239,11 +239,6 @@ func computeUnresolved(
 			covered[placeholder.Key] = true
 		}
 	}
-	for key, value := range resolutions {
-		if value != "" {
-			covered[key] = true
-		}
-	}
 	if fromManifest != nil {
 		for _, placeholder := range fromManifest.Placeholders {
 			if placeholder.Resolve != "" {
@@ -254,9 +249,6 @@ func computeUnresolved(
 
 	var missing []string
 	for _, placeholder := range declared {
-		if placeholder.Resolvable != nil && !*placeholder.Resolvable {
-			continue
-		}
 		if !covered[placeholder.Key] {
 			missing = append(missing, placeholder.Key)
 		}
@@ -276,11 +268,9 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 		return nil, errors.New("sync.ExecutePull: plan is nil")
 	}
 
-	// Pure merge of manifest-derived defaults and the caller-supplied
-	// opts.Resolutions; flag/prompted values overlay manifest values per key.
-	// importer.ResolvePlaceholders is the wrong tool here: it does not know
-	// about opts.Resolutions and would error on keys covered only by --resolution
-	// (no --from-manifest) when no prompter is supplied. computeUnresolved
+	// Build the resolution map from --from-manifest's <resolve> values,
+	// filtering implicit keys (importer.Run injects them via
+	// withImplicitAnchors) and skipping empty values. computeUnresolved
 	// already enforced that every declared key is covered for --apply.
 	merged := make(map[string]string)
 	if opts.FromManifest != nil {
@@ -294,17 +284,12 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 			merged[placeholder.Key] = placeholder.Resolve
 		}
 	}
-	for key, value := range opts.Resolutions {
-		if value == "" {
-			continue
-		}
-		merged[key] = value
-	}
 
 	result, err := importer.Run(ctx, opts.ClaudeHome, importer.Options{
 		Source:      source.ReaderAt,
 		Size:        source.Size,
 		TargetPath:  opts.TargetPath,
+		HomePath:    opts.HomePath,
 		Resolutions: merged,
 	})
 	if err != nil {
@@ -318,7 +303,7 @@ var (
 	ErrCrossMachineConflict  = errors.New("sync: remote was last pushed by a different machine")
 	ErrRemoteNotFound        = errors.New("sync: archive not found on remote")
 	ErrPassphraseRequired    = errors.New("sync: archive is encrypted; pass --passphrase-env or --passphrase-file")
-	ErrUnresolvedPlaceholder = errors.New("sync: archive declares placeholders not covered by --resolution or --from-manifest")
+	ErrUnresolvedPlaceholder = errors.New("sync: archive declares placeholders not covered by --from-manifest")
 )
 
 // selfPusher returns "hostname-username" for the current invocation.

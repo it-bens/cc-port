@@ -12,6 +12,6 @@
 ## Navigation
 
 - Entry: `export.go:Run`.
-- Discovery: `discover.go:DiscoverPaths`, `discover.go:GroupPathPrefixes`, `discover.go:AutoDetectPlaceholders`.
+- Discovery: `discover.go:DiscoverPlaceholders` (entry point), `discover.go:DiscoverPaths` (regex extractor primitive).
 - Wire DTOs + manifest I/O: `internal/manifest`.
 - Tests: `*_test.go` in this directory.

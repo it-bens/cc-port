@@ -85,8 +85,8 @@ func (p *PullPlan) Render(w io.Writer) error {
 		}
 		for _, placeholder := range p.DeclaredPlaceholders {
 			if unresolvedSet[placeholder.Key] {
-				fmt.Fprintf(&b, "    %s     <unresolved>        (MISSING; pass --resolution %s=...)\n",
-					placeholder.Key, strings.Trim(placeholder.Key, "{}"))
+				fmt.Fprintf(&b, "    %s     <unresolved>        (MISSING; supply --from-manifest with <resolve> for %s)\n",
+					placeholder.Key, placeholder.Key)
 			} else {
 				fmt.Fprintf(&b, "    %s     <provided>          (resolved)\n", placeholder.Key)
 			}

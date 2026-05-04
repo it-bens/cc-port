@@ -180,7 +180,7 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	r := newMemRemote(t)
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
 
 	source := openSourceForTest(t, r, "k", "")
@@ -190,31 +190,14 @@ func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
-	if len(plan.UnresolvedPlaceholders) != 1 || plan.UnresolvedPlaceholders[0] != "{{HOME}}" {
-		t.Fatalf("UnresolvedPlaceholders = %v, want [{{HOME}}]", plan.UnresolvedPlaceholders)
-	}
-}
-
-func TestPlanPull_ResolutionMapClearsUnresolved(t *testing.T) {
-	r := newMemRemote(t)
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
-	home, _ := buildTestHomeAndProject(t)
-	source := openSourceForTest(t, r, "k", "")
-	plan, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
-		Resolutions: map[string]string{"{{HOME}}": "/Users/me"},
-	}, source)
-	if err != nil {
-		t.Fatalf("PlanPull: %v", err)
-	}
-	if len(plan.UnresolvedPlaceholders) != 0 {
-		t.Fatalf("UnresolvedPlaceholders = %v, want empty", plan.UnresolvedPlaceholders)
+	if len(plan.UnresolvedPlaceholders) != 1 || plan.UnresolvedPlaceholders[0] != "{{ORG}}" {
+		t.Fatalf("UnresolvedPlaceholders = %v, want [{{ORG}}]", plan.UnresolvedPlaceholders)
 	}
 }
 
 func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 	r := newMemRemote(t)
-	injectArchiveWithSenderResolve(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
+	injectArchiveWithSenderResolve(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
 	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
@@ -257,7 +240,6 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 	source := openSourceForTest(t, r, "k", "")
 	planB, err := PlanPull(context.Background(), PullOptions{
 		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
-		Resolutions: defaultResolutionsForTest(t),
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
@@ -267,43 +249,7 @@ func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
 	}
 	if _, err := ExecutePull(context.Background(), PullOptions{
 		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
-		Resolutions: defaultResolutionsForTest(t),
 	}, planB, source); err != nil {
-		t.Fatalf("ExecutePull: %v", err)
-	}
-
-	encodedDir := claude.EncodePath(targetPath)
-	if _, err := os.Stat(filepath.Join(homeB.Dir, "projects", encodedDir)); err != nil {
-		t.Fatalf("encoded project dir missing after pull: %v", err)
-	}
-}
-
-// TestExecutePull_ResolutionsOnlyCoverDeclaredPlaceholder is a regression
-// guard: a declared placeholder covered solely by opts.Resolutions (no
-// --from-manifest) must succeed. The earlier orchestrator-based body
-// errored here because importer.ResolvePlaceholders does not see
-// opts.Resolutions and rejected the unresolved key when prompter was nil.
-func TestExecutePull_ResolutionsOnlyCoverDeclaredPlaceholder(t *testing.T) {
-	r := newMemRemote(t)
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{HOME}}", "/Users/sender", "host-user")
-	homeB := buildTestHomeBlank(t)
-	targetPath := filepath.Join(t.TempDir(), "pulled-project")
-	source := openSourceForTest(t, r, "k", "")
-	opts := PullOptions{
-		ClaudeHome:  homeB,
-		Name:        "k",
-		TargetPath:  targetPath,
-		Resolutions: map[string]string{"{{HOME}}": "/Users/me"},
-	}
-	plan, err := PlanPull(context.Background(), opts, source)
-	if err != nil {
-		t.Fatalf("PlanPull: %v", err)
-	}
-	if len(plan.UnresolvedPlaceholders) != 0 {
-		t.Fatalf("UnresolvedPlaceholders = %v, want empty", plan.UnresolvedPlaceholders)
-	}
-
-	if _, err := ExecutePull(context.Background(), opts, plan, source); err != nil {
 		t.Fatalf("ExecutePull: %v", err)
 	}
 

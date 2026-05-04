@@ -9,7 +9,7 @@
 
 ## Navigation
 
-- Entry: `prompt.go:SelectCategories`, `prompt.go:ResolvePlaceholder`.
+- Entry: `prompt.go:SelectCategories`.
 - Preflight: `prompt.go:requireTTY`.
 - Banner: `prompt.go:showInteractiveBanner`.
 - Tests: `prompt_test.go` (README §Tests).

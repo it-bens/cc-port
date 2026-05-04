@@ -59,7 +59,6 @@ func TestPull_DryRunDoesNotImport(t *testing.T) {
 		"--claude-dir", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
-		"--resolution", "{{HOME}}=/Users/me",
 	})
 
 	err := rootCmd.Execute()
@@ -89,7 +88,6 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 		"--claude-dir", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
-		"--resolution", "{{HOME}}=/Users/me",
 		"--apply",
 	})
 

@@ -2,6 +2,7 @@ package importer_test
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -134,7 +135,6 @@ func writeMetadataEntry(
 ) {
 	t.Helper()
 
-	trueVal := true
 	metadata := &manifest.Metadata{
 		Export: manifest.Info{
 			Created: time.Now(),
@@ -151,8 +151,8 @@ func writeMetadataEntry(
 			},
 		},
 		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: sourceProjectPath, Resolvable: &trueVal},
-			{Key: "{{HOME}}", Original: sourceHomeDir, Resolvable: &trueVal},
+			{Key: "{{PROJECT_PATH}}", Original: sourceProjectPath},
+			{Key: "{{HOME}}", Original: sourceHomeDir},
 		},
 	}
 	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
@@ -378,12 +378,17 @@ func TestImport_LeavesNoStagingTemps(t *testing.T) {
 	assertNoStagingTemps(t, destClaudeHome)
 }
 
+// Same shape as TestImport_RefusesUndeclaredKey by design: both refuse a
+// preflight failure and assert nothing on disk changed. The behaviors differ
+// only in which classifier error type they raise.
+//
+//nolint:dupl // distinct preflight error types under test
 func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	sourceClaudeHome := testutil.SetupFixture(t)
 
 	archivePath := filepath.Join(t.TempDir(), "export.zip")
 	buildArchiveWithExtraDeclaredKey(
-		t, sourceClaudeHome, archivePath, "{{EXTRA}}", true,
+		t, sourceClaudeHome, archivePath, "{{EXTRA}}",
 	)
 
 	destClaudeHome := buildEmptyDestClaudeHome(t)
@@ -411,42 +416,7 @@ func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
 }
 
-func TestImport_AllowsUnresolvableDeclaredKey(t *testing.T) {
-	sourceClaudeHome := testutil.SetupFixture(t)
-
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	// Declare {{LEGACY}} with Resolvable=false and inject a literal
-	// occurrence into the memory body. The caller supplies no resolution;
-	// the preflight gate must allow the import to succeed and the literal
-	// must survive on disk.
-	buildArchiveWithExtraDeclaredKey(
-		t, sourceClaudeHome, archivePath, "{{LEGACY}}", false,
-	)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destProjectPath := fixtureDestProjectPath
-
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: destProjectPath,
-		Resolutions: map[string]string{
-			"{{HOME}}": filepath.Join(t.TempDir(), "home"),
-		},
-	}
-	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
-	require.NoError(t, err)
-
-	memoryPath := filepath.Join(
-		destClaudeHome.ProjectDir(destProjectPath), "memory", "MEMORY.md",
-	)
-	data, err := os.ReadFile(memoryPath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "{{LEGACY}}",
-		"Resolvable=false placeholder must survive import verbatim")
-}
-
+//nolint:dupl // distinct preflight error types under test (see sibling test above)
 func TestImport_RefusesUndeclaredKey(t *testing.T) {
 	sourceClaudeHome := testutil.SetupFixture(t)
 
@@ -594,22 +564,20 @@ func assertNoStagingTemps(t *testing.T, destClaudeHome *claude.Home) {
 }
 
 // buildArchiveWithExtraDeclaredKey builds a test archive identical to
-// buildTestArchive but additionally declares extraKey in the manifest with
-// the given Resolvable value and injects one literal occurrence of extraKey
-// into the MEMORY.md body so it is guaranteed to show up in preflight.
+// buildTestArchive but additionally declares extraKey in the manifest and
+// injects one literal occurrence of extraKey into the MEMORY.md body so it
+// is guaranteed to show up in preflight.
 func buildArchiveWithExtraDeclaredKey(
 	t *testing.T,
 	sourceClaudeHome *claude.Home,
 	archivePath string,
 	extraKey string,
-	resolvable bool,
 ) {
 	t.Helper()
 	buildArchiveWithOverrides(t, archiveOverrides{
 		sourceClaudeHome: sourceClaudeHome,
 		archivePath:      archivePath,
 		extraDeclaredKey: extraKey,
-		extraResolvable:  &resolvable,
 		memoryInjection:  extraKey,
 	})
 }
@@ -638,7 +606,6 @@ type archiveOverrides struct {
 	sourceClaudeHome *claude.Home
 	archivePath      string
 	extraDeclaredKey string
-	extraResolvable  *bool
 	memoryInjection  string
 }
 
@@ -703,21 +670,18 @@ func buildArchiveWithOverrides(t *testing.T, overrides archiveOverrides) {
 }
 
 // writeMetadataEntryWithOverrides is the parameterised cousin of
-// writeMetadataEntry that honors archiveOverrides.extraDeclaredKey and
-// extraResolvable.
+// writeMetadataEntry that honors archiveOverrides.extraDeclaredKey.
 func writeMetadataEntryWithOverrides(t *testing.T, zipWriter *zip.Writer, overrides archiveOverrides) {
 	t.Helper()
 
-	trueVal := true
 	placeholders := []manifest.Placeholder{
-		{Key: "{{PROJECT_PATH}}", Original: fixtureSourceProjectPath, Resolvable: &trueVal},
-		{Key: "{{HOME}}", Original: fixtureSourceHomeDir, Resolvable: &trueVal},
+		{Key: "{{PROJECT_PATH}}", Original: fixtureSourceProjectPath},
+		{Key: "{{HOME}}", Original: fixtureSourceHomeDir},
 	}
 	if overrides.extraDeclaredKey != "" {
 		placeholders = append(placeholders, manifest.Placeholder{
-			Key:        overrides.extraDeclaredKey,
-			Original:   overrides.extraDeclaredKey,
-			Resolvable: overrides.extraResolvable,
+			Key:      overrides.extraDeclaredKey,
+			Original: overrides.extraDeclaredKey,
 		})
 	}
 
@@ -1298,4 +1262,123 @@ func TestRun_NilSource(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, importer.ErrSourceNil)
+}
+
+func TestImporterRun_InjectsHomePathFromOptions(t *testing.T) {
+	archiveBytes := buildArchiveWithSessionBody(t,
+		[]manifest.Placeholder{{Key: "{{HOME}}", Original: "/Users/sender"}},
+		[]byte(`{"home":"{{HOME}}/.claude/projects"}`+"\n"),
+	)
+
+	claudeHome := stageEmptyClaudeHome(t)
+
+	_, err := importer.Run(t.Context(), claudeHome, importer.Options{
+		Source:      bytes.NewReader(archiveBytes),
+		Size:        int64(len(archiveBytes)),
+		TargetPath:  "/Users/recipient/Projects/myproj",
+		HomePath:    "/Users/recipient",
+		Resolutions: map[string]string{},
+	})
+	require.NoError(t, err)
+
+	body := readSingleSessionBody(t, claudeHome, "/Users/recipient/Projects/myproj")
+	assert.Contains(t, string(body), "/Users/recipient/.claude/projects")
+	assert.NotContains(t, string(body), "{{HOME}}")
+}
+
+func TestImporterRun_HomePathStaleManifestResolveIgnored(t *testing.T) {
+	// Sender's manifest declares {{HOME}} with stale Resolve="/Users/sender".
+	// Recipient must see /Users/recipient in the substituted body, not the
+	// sender's value. The orchestrator filters {{HOME}} as implicit before
+	// the manifest merge; importer.Run injects via withImplicitAnchors.
+	archiveBytes := buildArchiveWithSessionBody(t,
+		[]manifest.Placeholder{{
+			Key:      "{{HOME}}",
+			Original: "/Users/sender",
+			Resolve:  "/Users/sender",
+		}},
+		[]byte(`{"home":"{{HOME}}/.claude/projects"}`+"\n"),
+	)
+
+	claudeHome := stageEmptyClaudeHome(t)
+
+	_, err := importer.Run(t.Context(), claudeHome, importer.Options{
+		Source:      bytes.NewReader(archiveBytes),
+		Size:        int64(len(archiveBytes)),
+		TargetPath:  "/Users/recipient/Projects/myproj",
+		HomePath:    "/Users/recipient",
+		Resolutions: map[string]string{},
+	})
+	require.NoError(t, err)
+
+	body := readSingleSessionBody(t, claudeHome, "/Users/recipient/Projects/myproj")
+	assert.Contains(t, string(body), "/Users/recipient/.claude/projects")
+	assert.NotContains(t, string(body), "/Users/sender")
+}
+
+// buildArchiveWithSessionBody builds an in-memory cc-port-shaped ZIP carrying
+// metadata.xml that declares placeholders plus a single sessions/body.json
+// entry holding sessionBody verbatim. Returns the archive bytes so the caller
+// can wrap them in bytes.NewReader and pass Size = len(archiveBytes). Mirrors
+// the disk-backed buildMinimalSessionsArchive but writes to a bytes.Buffer
+// because the HomePath plumbing test wants a self-contained byte slice.
+func buildArchiveWithSessionBody(
+	t *testing.T, placeholders []manifest.Placeholder, sessionBody []byte,
+) []byte {
+	t.Helper()
+
+	var buffer bytes.Buffer
+	zipWriter := zip.NewWriter(&buffer)
+
+	metadata := manifest.Metadata{
+		Export: manifest.Info{
+			Created:    time.Now().UTC(),
+			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{Sessions: true}),
+		},
+		Placeholders: placeholders,
+	}
+	metadataBytes, err := xml.MarshalIndent(&metadata, "", "  ")
+	require.NoError(t, err)
+	metadataEntry, err := zipWriter.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = metadataEntry.Write(append([]byte(xml.Header), metadataBytes...))
+	require.NoError(t, err)
+
+	sessionEntry, err := zipWriter.Create("sessions/body.json")
+	require.NoError(t, err)
+	_, err = sessionEntry.Write(sessionBody)
+	require.NoError(t, err)
+
+	require.NoError(t, zipWriter.Close())
+	return buffer.Bytes()
+}
+
+// stageEmptyClaudeHome is buildEmptyDestClaudeHome under the name the
+// HomePath plumbing test refers to.
+func stageEmptyClaudeHome(t *testing.T) *claude.Home {
+	t.Helper()
+	return buildEmptyDestClaudeHome(t)
+}
+
+// readSingleSessionBody reads the one promoted session file under
+// claudeHome.ProjectDir(targetPath) and returns its bytes. Fails the test if
+// the project directory does not contain exactly one regular file. Used by
+// the HomePath plumbing test, which builds an archive with a single
+// sessions/body.json entry.
+func readSingleSessionBody(t *testing.T, claudeHome *claude.Home, targetPath string) []byte {
+	t.Helper()
+	projectDir := claudeHome.ProjectDir(targetPath)
+	entries, err := os.ReadDir(projectDir)
+	require.NoError(t, err)
+	var files []os.DirEntry
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		files = append(files, entry)
+	}
+	require.Len(t, files, 1, "expected exactly one promoted session file")
+	data, err := os.ReadFile(filepath.Join(projectDir, files[0].Name())) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err)
+	return data
 }

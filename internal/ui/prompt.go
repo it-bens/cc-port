@@ -115,42 +115,6 @@ func SelectCategories() (manifest.CategorySet, error) {
 	return result, nil
 }
 
-// ResolvePlaceholder prompts for one manifest placeholder; returned value is verbatim with no validation.
-func ResolvePlaceholder(key, original, autoValue string) (string, error) {
-	if err := requireTTY(
-		fmt.Sprintf(
-			"cannot prompt for placeholder %s; "+
-				"use the two-step manifest flow "+
-				"(export manifest / import --from-manifest) to supply resolutions non-interactively",
-			key,
-		),
-	); err != nil {
-		return "", err
-	}
-	showInteractiveBanner()
-
-	resolvedValue := autoValue
-
-	title := fmt.Sprintf("Resolve %s", key)
-	description := fmt.Sprintf("Original: %s", original)
-
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title(title).
-				Description(description).
-				Placeholder("Enter absolute path").
-				Value(&resolvedValue),
-		),
-	)
-
-	if err := runForm(form); err != nil {
-		return "", fmt.Errorf("resolution canceled: %w", err)
-	}
-
-	return resolvedValue, nil
-}
-
 // An unknown key means the form options literal in SelectCategories has
 // drifted out of sync with manifest.AllCategories; surface it rather than
 // silently dropping.

@@ -30,7 +30,7 @@ func TestMetadata_MarshalUnmarshal(t *testing.T) {
 		},
 		Placeholders: []manifest.Placeholder{
 			{Key: "HOME", Original: "/home/user"},
-			{Key: "PROJECT", Original: "/home/user/project", Resolvable: new(true)},
+			{Key: "PROJECT", Original: "/home/user/project"},
 		},
 	}
 
@@ -101,15 +101,9 @@ func TestManifest_PlaceholderFieldsSurviveXMLRoundTrip(t *testing.T) {
 		},
 		Placeholders: []manifest.Placeholder{
 			{
-				Key:        "HOME",
-				Original:   "/home/olduser",
-				Resolvable: new(true),
-				Resolve:    "/home/newuser",
-			},
-			{
-				Key:        "UNRESOLVABLE",
-				Original:   "/some/path",
-				Resolvable: new(false),
+				Key:      "HOME",
+				Original: "/home/olduser",
+				Resolve:  "/home/newuser",
 			},
 			{
 				Key:      "PLAIN",
@@ -124,7 +118,10 @@ func TestManifest_PlaceholderFieldsSurviveXMLRoundTrip(t *testing.T) {
 	roundTripped, err := manifest.ReadManifest(path)
 	require.NoError(t, err)
 
-	assertPlaceholderFields(t, roundTripped)
+	assert.Equal(t, "/home/newuser", roundTripped.Placeholders[0].Resolve,
+		"non-empty Resolve must round-trip")
+	assert.Empty(t, roundTripped.Placeholders[1].Resolve,
+		"omitted Resolve must round-trip as empty string")
 }
 
 func TestManifest_MetadataSurvivesZIPRoundTrip(t *testing.T) {
@@ -137,15 +134,9 @@ func TestManifest_MetadataSurvivesZIPRoundTrip(t *testing.T) {
 		},
 		Placeholders: []manifest.Placeholder{
 			{
-				Key:        "HOME",
-				Original:   "/home/olduser",
-				Resolvable: new(true),
-				Resolve:    "/home/newuser",
-			},
-			{
-				Key:        "UNRESOLVABLE",
-				Original:   "/some/path",
-				Resolvable: new(false),
+				Key:      "HOME",
+				Original: "/home/olduser",
+				Resolve:  "/home/newuser",
 			},
 			{
 				Key:      "PLAIN",
@@ -166,39 +157,6 @@ func TestManifest_MetadataSurvivesZIPRoundTrip(t *testing.T) {
 	}
 
 	assertZIPRoundTrip(t, original, temporaryDirectory, path, opts)
-}
-
-// assertPlaceholderFields verifies the Resolvable and Resolve fields on each
-// placeholder in the round-tripped metadata.
-func assertPlaceholderFields(t *testing.T, roundTripped *manifest.Metadata) {
-	t.Helper()
-
-	// Verify Resolvable and Resolve are present for the first placeholder.
-	first := roundTripped.Placeholders[0]
-	if first.Resolvable == nil || !*first.Resolvable {
-		t.Errorf("expected Resolvable=true for HOME placeholder, got %v", first.Resolvable)
-	}
-	if first.Resolve != "/home/newuser" {
-		t.Errorf("expected Resolve=/home/newuser, got %q", first.Resolve)
-	}
-
-	// Verify Resolve is empty and Resolvable is false for the second placeholder.
-	second := roundTripped.Placeholders[1]
-	if second.Resolvable == nil || *second.Resolvable {
-		t.Errorf("expected Resolvable=false for UNRESOLVABLE placeholder, got %v", second.Resolvable)
-	}
-	if second.Resolve != "" {
-		t.Errorf("expected empty Resolve for UNRESOLVABLE placeholder, got %q", second.Resolve)
-	}
-
-	// Verify Resolvable and Resolve are absent for the third placeholder.
-	third := roundTripped.Placeholders[2]
-	if third.Resolvable != nil {
-		t.Errorf("expected nil Resolvable for PLAIN placeholder, got %v", third.Resolvable)
-	}
-	if third.Resolve != "" {
-		t.Errorf("expected empty Resolve for PLAIN placeholder, got %q", third.Resolve)
-	}
 }
 
 // assertZIPRoundTrip verifies the metadata survives a ZIP round-trip.

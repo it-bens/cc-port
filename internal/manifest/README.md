@@ -13,7 +13,7 @@ command modules agree on the wire contract through a neutral third party.
   - `Metadata`: root XML element (`<cc-port>`) wrapping `Info`, placeholders, and the optional `SyncPushedBy` / `SyncPushedAt` sync fields. The two sync fields are written only by `cc-port push` (via `internal/sync`); `cc-port export` archives omit them. `SyncPushedAt` is RFC3339-formatted. Both are strings because `encoding/xml` does not honor `omitempty` for `time.Time`'s zero value.
   - `Info`: export timestamp plus the per-category include list.
   - `Category`: one `<category name="..." included="..."/>` entry.
-  - `Placeholder`: one `<placeholder key="..." original="..." [resolvable="..."] [resolve="..."]/>` entry. `resolvable` and `resolve` are omitted from the XML when unset (`*bool` nil / empty string).
+  - `Placeholder`: one `<placeholder key="..." original="..." [resolve="..."]/>` entry. `resolve` is omitted from the XML when the value is empty.
 - **Category enum table**
   - `CategorySet`: in-memory bool struct (one field per category) used by callers and by `Options.Categories` in `internal/export`.
   - `CategorySpec`: one entry in the enum table: wire name plus `Value func(*CategorySet) bool` and `Apply func(*CategorySet, bool)` hooks onto the matching `CategorySet` field.

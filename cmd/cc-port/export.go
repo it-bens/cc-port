@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/file"
+	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/scan"
@@ -268,16 +270,13 @@ func discoverAndPromptPlaceholders(claudeHome *claude.Home, projectPath string) 
 		return nil, err
 	}
 
-	homePath, err := os.UserHomeDir()
+	homePath, err := resolveHomeAnchor()
 	if err != nil {
-		return nil, fmt.Errorf("determine home directory: %w", err)
+		return nil, err
 	}
 
-	paths := export.DiscoverPaths(contentBuffer)
-	prefixes := export.GroupPathPrefixes(paths)
-	suggestions := export.AutoDetectPlaceholders(prefixes, projectPath, homePath)
-
-	return resolveSuggestions(suggestions)
+	suggestions := export.DiscoverPlaceholders(contentBuffer, projectPath, homePath)
+	return resolveSuggestions(suggestions), nil
 }
 
 func gatherProjectContent(locations *claude.ProjectLocations) ([]byte, error) {
@@ -332,44 +331,24 @@ func gatherSessionKeyedContent(locations *claude.ProjectLocations) ([]byte, erro
 	return buf, nil
 }
 
-func resolveSuggestions(suggestions []export.PlaceholderSuggestion) ([]manifest.Placeholder, error) {
+func resolveSuggestions(suggestions []export.PlaceholderSuggestion) []manifest.Placeholder {
 	placeholders := make([]manifest.Placeholder, 0, len(suggestions))
 	for _, suggestion := range suggestions {
-		if suggestion.Auto {
-			resolvable := true
-			placeholders = append(placeholders, manifest.Placeholder{
-				Key:        suggestion.Key,
-				Original:   suggestion.Original,
-				Resolvable: &resolvable,
-			})
-			continue
-		}
-
-		resolved, err := ui.ResolvePlaceholder(suggestion.Key, suggestion.Original, "")
-		if err != nil {
-			return nil, err
-		}
-
-		resolvable := resolved != ""
 		placeholders = append(placeholders, manifest.Placeholder{
-			Key:        suggestion.Key,
-			Original:   suggestion.Original,
-			Resolvable: &resolvable,
-			Resolve:    resolved,
+			Key:      suggestion.Key,
+			Original: suggestion.Original,
 		})
 	}
-	return placeholders, nil
+	return placeholders
 }
 
 func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {
-	resolvableTrue := true
 	placeholders := make([]manifest.Placeholder, 0, len(exportOptions.Placeholders))
 	for _, placeholder := range exportOptions.Placeholders {
 		placeholders = append(placeholders, manifest.Placeholder{
-			Key:        placeholder.Key,
-			Original:   placeholder.Original,
-			Resolvable: &resolvableTrue,
-			Resolve:    placeholder.Resolve,
+			Key:      placeholder.Key,
+			Original: placeholder.Original,
+			Resolve:  placeholder.Resolve,
 		})
 	}
 
@@ -379,4 +358,28 @@ func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {
 		},
 		Placeholders: placeholders,
 	}
+}
+
+// resolveHomeAnchor mirrors claude.ResolveProjectPath: a symlinked HOME
+// must resolve to its target before the anchor filter compares against
+// project paths, otherwise every home-rooted candidate is silently
+// dropped. Rejecting `/` and non-absolute values prevents the anchor
+// from matching every absolute path in the corpus.
+func resolveHomeAnchor() (string, error) {
+	homePath, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determine home directory: %w", err)
+	}
+	if !filepath.IsAbs(homePath) {
+		return "", fmt.Errorf("invalid home directory %q: must be absolute", homePath)
+	}
+	resolved, err := fsutil.ResolveExistingAncestor(homePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	cleaned := filepath.Clean(resolved)
+	if !filepath.IsAbs(cleaned) || cleaned == "/" {
+		return "", fmt.Errorf("invalid home directory %q", cleaned)
+	}
+	return cleaned, nil
 }

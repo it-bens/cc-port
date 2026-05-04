@@ -44,7 +44,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Malformed `history.jsonl` lines preserved, not repaired | [`internal/move/README.md`](../internal/move/README.md)                          |
 | `history.jsonl` lines bounded at 16 MiB, oversized fail  | [`internal/claude/README.md`](../internal/claude/README.md) §History line cap    |
 | Archives are a closed placeholder contract              | [`internal/importer/README.md`](../internal/importer/README.md) §Import contract |
-| Placeholder resolution composition (implicit-key filter, manifest-known merge, prompter delegation) | [`internal/importer/README.md`](../internal/importer/README.md) §Public API (`ResolvePlaceholders`, `IsImplicitKey`) |
+| Placeholder resolution composition (implicit-key filter, manifest-known merge) | [`internal/importer/README.md`](../internal/importer/README.md) §Public API (`ResolvePlaceholders`, `IsImplicitKey`) |
 | Every export declares all categories; unknown refused   | [`internal/manifest/README.md`](../internal/manifest/README.md) §Category manifest |
 | Import writes are atomic with rollback                  | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
 | Mutating commands lock + refuse during live sessions    | [`internal/lock/README.md`](../internal/lock/README.md)                          |

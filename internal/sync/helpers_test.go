@@ -65,10 +65,6 @@ func allCategoriesSet() manifest.CategorySet {
 	return set
 }
 
-func defaultResolutionsForTest(_ *testing.T) map[string]string {
-	return map[string]string{"{{HOME}}": "/Users/me"}
-}
-
 // injectArchiveWithPusher writes a minimal valid cc-port archive to r at
 // name with SyncPushedBy/SyncPushedAt set. The archive is plaintext.
 func injectArchiveWithPusher(t *testing.T, r *remote.Remote, name, pusher string, at time.Time) {
@@ -200,8 +196,6 @@ func openPriorForTest(t *testing.T, r *remote.Remote, name, pass string) *PriorR
 // openSourceForTest opens the strict reader pipeline for pull tests. Returns
 // the opened pipeline.Source; t.Cleanup registers Close. t.Fatalf on any
 // error so test bodies stay flat.
-//
-//nolint:unparam // name and pass mirror openArchiveSource; reserved for future tests with varied names or passphrases.
 func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeline.Source {
 	t.Helper()
 	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{

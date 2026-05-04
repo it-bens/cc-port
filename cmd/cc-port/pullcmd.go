@@ -10,12 +10,10 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/encrypt"
-	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
-	"github.com/it-bens/cc-port/internal/ui"
 )
 
 // newPullCmd returns the pull subcommand with closure-scoped flag locals.
@@ -28,7 +26,6 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 		apply          bool
 		passphraseEnv  string
 		passphraseFile string
-		resolutionKV   []string
 		fromManifest   string
 	)
 	cmd := &cobra.Command{
@@ -61,8 +58,6 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 		"path to a file containing the encryption passphrase "+
 			"(mutually exclusive with --passphrase-env)")
 	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
-	cmd.Flags().StringArrayVar(&resolutionKV, "resolution", nil,
-		"resolve a placeholder non-interactively (repeatable; KEY=VALUE)")
 	cmd.Flags().StringVar(&fromManifest, "from-manifest", "",
 		"path to a manifest XML file with pre-filled resolutions")
 	return cmd
@@ -98,7 +93,6 @@ func openArchiveSource(
 // decrypt-tempfile.
 func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error) {
 	apply, _ := cmd.Flags().GetBool("apply")
-	fromManifestPath, _ := cmd.Flags().GetString("from-manifest")
 
 	opts, r, passphrase, err := buildPullOptions(cmd, args[0], claudeDir)
 	if err != nil {
@@ -124,18 +118,6 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 	plan, err := syncc.PlanPull(ctx, opts, source)
 	if err != nil {
 		return err
-	}
-
-	// Without --from-manifest, the operator can resolve missing keys
-	// interactively. Re-plan with the same source after prompting so
-	// plan.Render and the apply-time refusal both reflect what the
-	// operator just supplied. pipeline.Source.ReaderAt is safely
-	// re-readable; one decrypt tempfile services every phase.
-	if fromManifestPath == "" && len(plan.UnresolvedPlaceholders) > 0 {
-		plan, err = resolveAndReplan(ctx, &opts, plan, source)
-		if err != nil {
-			return err
-		}
 	}
 
 	if err := plan.Render(cmd.OutOrStdout()); err != nil {
@@ -178,7 +160,6 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 	remoteURL, _ := cmd.Flags().GetString("remote")
 	passphraseEnv, _ := cmd.Flags().GetString("passphrase-env")
 	passphraseFile, _ := cmd.Flags().GetString("passphrase-file")
-	resolutionKV, _ := cmd.Flags().GetStringArray("resolution")
 	fromManifestPath, _ := cmd.Flags().GetString("from-manifest")
 
 	if toPath == "" {
@@ -203,11 +184,6 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		return syncc.PullOptions{}, nil, "", err
 	}
 
-	flagResolutions, err := parseResolutionFlags(resolutionKV)
-	if err != nil {
-		return syncc.PullOptions{}, nil, "", err
-	}
-
 	var fromManifest *manifest.Metadata
 	if fromManifestPath != "" {
 		fromManifest, err = manifest.ReadManifest(fromManifestPath)
@@ -221,59 +197,18 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		return syncc.PullOptions{}, nil, "", err
 	}
 
+	homePath, err := resolveHomeAnchor()
+	if err != nil {
+		return syncc.PullOptions{}, nil, "", err
+	}
+
 	opts := syncc.PullOptions{
 		ClaudeHome:        claudeHome,
 		Name:              name,
 		TargetPath:        targetPath,
-		Resolutions:       flagResolutions,
+		HomePath:          homePath,
 		FromManifest:      fromManifest,
 		EncryptionEnabled: passphrase != "",
 	}
 	return opts, r, passphrase, nil
-}
-
-// resolveAndReplan composes resolutions for every unresolved placeholder
-// via importer.ResolvePlaceholders, merges the result into opts.Resolutions,
-// and recomputes the plan against the same source. The second PlanPull call
-// is load-bearing: render and the apply-time guard both read
-// plan.UnresolvedPlaceholders, so they must reflect the prompted resolutions.
-func resolveAndReplan(
-	ctx context.Context, opts *syncc.PullOptions, plan *syncc.PullPlan, source pipeline.Source,
-) (*syncc.PullPlan, error) {
-	declaredByKey := make(map[string]manifest.Placeholder, len(plan.DeclaredPlaceholders))
-	for _, placeholder := range plan.DeclaredPlaceholders {
-		declaredByKey[placeholder.Key] = placeholder
-	}
-	prompter := func(stillUnresolved []string) (map[string]string, error) {
-		out := make(map[string]string, len(stillUnresolved))
-		for _, key := range stillUnresolved {
-			declared, ok := declaredByKey[key]
-			if !ok {
-				return nil, fmt.Errorf("placeholder %s reported unresolved but not declared in archive", key)
-			}
-			resolved, err := ui.ResolvePlaceholder(key, declared.Original, "")
-			if err != nil {
-				return nil, err
-			}
-			out[key] = resolved
-		}
-		return out, nil
-	}
-
-	resolutions, err := importer.ResolvePlaceholders(plan.UnresolvedPlaceholders, opts.FromManifest, prompter)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range resolutions {
-		if value == "" {
-			continue
-		}
-		opts.Resolutions[key] = value
-	}
-
-	refreshed, err := syncc.PlanPull(ctx, *opts, source)
-	if err != nil {
-		return nil, err
-	}
-	return refreshed, nil
 }

@@ -92,7 +92,7 @@ func TestPullPlan_RenderWithUnresolvedPlaceholders(t *testing.T) {
 		"Categories:  all",
 		"{{HOME}}",
 		"{{CACHE}}",
-		"MISSING; pass --resolution",
+		"MISSING; supply --from-manifest",
 		"1 placeholder unresolved",
 	} {
 		if !strings.Contains(got, want) {

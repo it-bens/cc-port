@@ -1,8 +1,6 @@
 package export
 
 import (
-	"fmt"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -12,7 +10,6 @@ import (
 type PlaceholderSuggestion struct {
 	Key      string // e.g., "{{PROJECT_PATH}}"
 	Original string // e.g., "/Users/test/Projects/myproject"
-	Auto     bool   // true if auto-detected
 }
 
 // pathPattern rejects trailing dots and slashes so cleaned paths always end at
@@ -41,148 +38,99 @@ func DiscoverPaths(content []byte) []string {
 	return paths
 }
 
-// GroupPathPrefixes finds meaningful common path prefixes from a list of paths,
-// sorted longest first. A path is excluded if it is a sub-path of another
-// prefix in the result.
-func GroupPathPrefixes(paths []string) []string {
-	if len(paths) == 0 {
-		return nil
-	}
-
-	parentCoverage := countParentCoverage(paths)
-	winningPrefixes := findWinningPrefixes(parentCoverage)
-
-	// Start with the winning prefix set. Sort shortest first so that
-	// more-general prefixes are accepted before their sub-paths, allowing
-	// sub-paths to be filtered out as redundant.
-	sort.Slice(winningPrefixes, func(i, j int) bool {
-		return len(winningPrefixes[i]) < len(winningPrefixes[j])
-	})
-
-	seenPaths := make(map[string]struct{})
-	var result []string
-
-	for _, prefix := range winningPrefixes {
-		if _, alreadyAdded := seenPaths[prefix]; alreadyAdded {
-			continue
-		}
-		coveredByExistingPrefix := false
-		for _, kept := range result {
-			if strings.HasPrefix(prefix, kept+"/") {
-				coveredByExistingPrefix = true
-				break
-			}
-		}
-		if !coveredByExistingPrefix {
-			seenPaths[prefix] = struct{}{}
-			result = append(result, prefix)
-		}
-	}
-
-	for _, path := range paths {
-		if _, alreadyAdded := seenPaths[path]; alreadyAdded {
-			continue
-		}
-		coveredByPrefix := false
-		for _, prefix := range winningPrefixes {
-			if strings.HasPrefix(path, prefix+"/") || path == prefix {
-				coveredByPrefix = true
-				break
-			}
-		}
-		if !coveredByPrefix {
-			seenPaths[path] = struct{}{}
-			result = append(result, path)
-		}
-	}
-
-	// Sort result longest first for the return value.
-	sort.Slice(result, func(i, j int) bool {
-		return len(result[i]) > len(result[j])
-	})
-
-	return result
-}
-
-// countParentCoverage counts how many input paths each ancestor directory covers.
-func countParentCoverage(paths []string) map[string]int {
-	parentCoverage := make(map[string]int)
-	for _, path := range paths {
-		parent := filepath.Dir(path)
-		for parent != "/" && parent != "." && parent != "" {
-			parentCoverage[parent]++
-			parent = filepath.Dir(parent)
-		}
-	}
-	return parentCoverage
-}
-
-// findWinningPrefixes returns the most specific qualifying parents: those with
-// coverage >= 2 and no equally covering child.
-func findWinningPrefixes(parentCoverage map[string]int) []string {
-	var qualifyingParents []string
-	for parent, count := range parentCoverage {
-		if count >= 2 {
-			qualifyingParents = append(qualifyingParents, parent)
-		}
-	}
-
-	// Sort longest first so we can check children efficiently.
-	sort.Slice(qualifyingParents, func(i, j int) bool {
-		return len(qualifyingParents[i]) > len(qualifyingParents[j])
-	})
-
-	// A qualifying parent is "winning" if no more-specific qualifying parent
-	// covers ALL of the same paths (i.e., has the same coverage count).
-	var winningPrefixes []string
-	for _, parent := range qualifyingParents {
-		parentCount := parentCoverage[parent]
-		hasEquallyCoveringChild := false
-		for _, other := range qualifyingParents {
-			if len(other) > len(parent) &&
-				strings.HasPrefix(other, parent+"/") &&
-				parentCoverage[other] == parentCount {
-				hasEquallyCoveringChild = true
-				break
-			}
-		}
-		if !hasEquallyCoveringChild {
-			winningPrefixes = append(winningPrefixes, parent)
-		}
-	}
-	return winningPrefixes
-}
-
-// AutoDetectPlaceholders assigns placeholder names to a list of path prefixes.
-// projectPath maps to {{PROJECT_PATH}}, homePath maps to {{HOME}}, and all
-// remaining prefixes receive {{UNRESOLVED_N}} names starting from 1.
+// AutoDetectPlaceholders maps each prefix that exactly matches projectPath
+// or homePath to its placeholder name. Unknown prefixes are dropped: with
+// the strict anchor filter upstream, only the two anchors ever survive.
 func AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion {
 	suggestions := make([]PlaceholderSuggestion, 0, len(prefixes))
-	unresolvedCounter := 1
-
 	for _, prefix := range prefixes {
 		switch prefix {
 		case projectPath:
 			suggestions = append(suggestions, PlaceholderSuggestion{
 				Key:      "{{PROJECT_PATH}}",
 				Original: prefix,
-				Auto:     true,
 			})
 		case homePath:
 			suggestions = append(suggestions, PlaceholderSuggestion{
 				Key:      "{{HOME}}",
 				Original: prefix,
-				Auto:     true,
 			})
-		default:
-			suggestions = append(suggestions, PlaceholderSuggestion{
-				Key:      fmt.Sprintf("{{UNRESOLVED_%d}}", unresolvedCounter),
-				Original: prefix,
-				Auto:     false,
-			})
-			unresolvedCounter++
 		}
 	}
-
 	return suggestions
+}
+
+// DiscoverPlaceholders returns placeholder suggestions for path references
+// in content, anchored under projectPath and homePath. Both anchors must be
+// cleaned absolute non-root paths; the CLI layer enforces this via
+// resolveHomeAnchor and claude.ResolveProjectPath.
+func DiscoverPlaceholders(content []byte, projectPath, homePath string) []PlaceholderSuggestion {
+	candidates := DiscoverPaths(content)
+	filtered := filterAnchored(candidates, projectPath, homePath)
+	prefixes := referencedAnchors(filtered, projectPath, homePath)
+	return AutoDetectPlaceholders(prefixes, projectPath, homePath)
+}
+
+// filterAnchored keeps only candidates that equal one of the anchors or
+// sit under it (anchor + "/" boundary). Empty anchors are skipped so a
+// missing input never matches everything.
+func filterAnchored(candidates []string, projectPath, homePath string) []string {
+	anchors := [2]string{projectPath, homePath}
+	var result []string
+	for _, candidate := range candidates {
+		for _, anchor := range anchors {
+			if anchor == "" {
+				continue
+			}
+			if candidate == anchor || strings.HasPrefix(candidate, anchor+"/") {
+				result = append(result, candidate)
+				break
+			}
+		}
+	}
+	return result
+}
+
+// referencedAnchors returns the subset of {projectPath, homePath} that has
+// at least one hit in candidates. Sorted longest-first so applyPlaceholders'
+// longest-first substitution emits the longer match before the shorter one.
+// Deduped: when projectPath == homePath, the single anchor is emitted once
+// (project takes precedence in AutoDetectPlaceholders' switch).
+func referencedAnchors(candidates []string, projectPath, homePath string) []string {
+	hasProject, hasHome := false, false
+	for _, candidate := range candidates {
+		if !hasProject && projectPath != "" &&
+			(candidate == projectPath || strings.HasPrefix(candidate, projectPath+"/")) {
+			hasProject = true
+		}
+		if !hasHome && homePath != "" &&
+			(candidate == homePath || strings.HasPrefix(candidate, homePath+"/")) {
+			hasHome = true
+		}
+		if hasProject && hasHome {
+			break
+		}
+	}
+	seen := map[string]struct{}{}
+	var result []string
+	add := func(value string) {
+		if value == "" {
+			return
+		}
+		if _, dup := seen[value]; dup {
+			return
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	if hasProject {
+		add(projectPath)
+	}
+	if hasHome {
+		add(homePath)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return len(result[i]) > len(result[j])
+	})
+	return result
 }

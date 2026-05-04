@@ -2,43 +2,40 @@
 
 ## Purpose
 
-Interactive terminal prompts for the CLI's `export`, `export manifest`, and `import` surfaces. Backed by `charm.land/huh/v2` forms.
+Interactive terminal prompts for the CLI's `export` and `export manifest` surfaces. Backed by `charm.land/huh/v2` forms.
 
-Not a general UI layer. The only prompts this package exposes are the two listed below, and callers with a non-interactive alternative should skip this package entirely.
+Not a general UI layer. The only prompt this package exposes is the one listed below, and callers with a non-interactive alternative should skip this package entirely.
 
 ## Public API
 
 - **Prompt entry points**
-  - `SelectCategories() (manifest.CategorySet, error)`: interactive category picker for `export` / `export manifest`.
-  - `ResolvePlaceholder(key, original, autoValue string) (string, error)`: prompts for one manifest placeholder and returns the user's input verbatim. The prompt does not validate. `import` rejects an empty return value via `importer.ValidateResolutions` and `export` marks the placeholder `Resolvable: false`.
+  - `SelectCategories() (manifest.CategorySet, error)`: interactive multi-select category picker for `export` / `export manifest`. Iterates `manifest.AllCategories`, presents each with the description from the unexported `categoryOptionMeta` table, and folds the user's selection into a `manifest.CategorySet` via `manifest.SpecByName`.
 
 ## Contracts
 
 ### Interactive banner
 
-Both prompt entry points call `showInteractiveBanner` after `requireTTY` returns nil and before constructing the form. The banner renders `internal/logo` through the `bannerWriter` seam (default `os.Stdout`) behind a package-scoped `sync.Once`, so `import` flows that prompt categories and then one or more placeholders print the logo exactly once. The banner is cosmetic; `logo.Render` already suppresses itself on non-terminal writers and under `NO_COLOR`.
+`SelectCategories` calls `showInteractiveBanner` after `requireTTY` returns nil and before constructing the form. The banner renders `internal/logo` through the `bannerWriter` seam (default `os.Stdout`) behind a package-scoped `sync.Once`, so a process that prompts more than once still prints the logo at most once. The banner is cosmetic, and `logo.Render` already suppresses itself on non-terminal writers and under `NO_COLOR`.
 
 ### Interactive prompts require a TTY
 
-Callers: `export`, `export manifest`, `import` (via `internal/export` and `internal/importer`).
+Callers: `export`, `export manifest` (via `internal/export`).
 
 #### Handled
 
-`prompt.go:requireTTY` runs at the top of every prompt entry point. It checks `term.IsTerminal(os.Stdin.Fd())` before any form is constructed. On non-TTY stdin the function returns a typed error naming the missing input and the non-interactive alternative for that surface. The terminal state is never perturbed.
+`prompt.go:requireTTY` runs at the top of `SelectCategories`. It checks `term.IsTerminal(os.Stdin.Fd())` before any form is constructed. On non-TTY stdin the function returns a typed error naming the missing input and the non-interactive alternative. The terminal state is never perturbed.
 
 These invocations satisfy the invariant because no form runs at all:
 
 - Any category-flag combination on `export` / `export manifest`. The interactive picker is skipped in `resolveExportCategories` before `SelectCategories` is reached.
-- `export --from-manifest` and `import --from-manifest`. The manifest already carries every category and every placeholder resolution.
-- `import` of an archive whose every declared placeholder is either `{{PROJECT_PATH}}` (resolved implicitly from the target path), pre-supplied via `--resolution KEY=VALUE`, or already carries a non-empty `<resolve>` in the manifest.
+- `export --from-manifest`. The manifest already carries every category.
 - Any invocation with stdin attached to a real terminal. `requireTTY` returns nil and the form runs unchanged.
 
 #### Refused
 
-Non-TTY stdin triggers the preflight abort with a surface-specific remediation message before any form is constructed:
+Non-TTY stdin triggers the preflight abort with a remediation message before any form is constructed:
 
 - `SelectCategories` (interactive category picker for `export` / `export manifest`): refused with a pointer to `--all` or the per-category flags (`--sessions`, `--memory`, `--history`, `--file-history`, `--config`, `--todos`, `--usage-data`, `--plugins-data`, `--tasks`).
-- `ResolvePlaceholder` (used by `export` for non-auto-detected path suggestions and by `import` for manifest keys with no pre-filled `<resolve>`): refused with a pointer to the two-step manifest flow (`export manifest` / `import --from-manifest`) or, on `import`, `--resolution KEY=VALUE`.
 
 #### Not covered
 
@@ -47,4 +44,4 @@ Non-TTY stdin triggers the preflight abort with a surface-specific remediation m
 
 ## Tests
 
-`prompt_test.go` covers the TTY preflight path and the runner-error path for both `SelectCategories` and `ResolvePlaceholder`, plus every entry of `manifest.AllCategories` through `categoriesFromSelections`. A drift-guard test asserts every `manifest.AllCategories` entry has UI option metadata in the unexported `categoryOptionMeta` map. Tests can override four package-level seams (`isTerminal`, `runForm`, `bannerWriter`, `interactiveBannerOnce`) to bypass the terminal requirement, the `huh` event loop, banner output on stdout, and the once-guard that would otherwise silence the banner path after the first test runs it. The path where the user submits a real selection is not exercised under `go test`; it currently runs only when the CLI is driven interactively.
+`prompt_test.go` covers the TTY preflight path and the runner-error path for `SelectCategories`, plus every entry of `manifest.AllCategories` through `categoriesFromSelections`. A drift-guard test asserts every `manifest.AllCategories` entry has UI option metadata in the unexported `categoryOptionMeta` map. Tests can override four package-level seams (`isTerminal`, `runForm`, `bannerWriter`, `interactiveBannerOnce`) to bypass the terminal requirement, the `huh` event loop, banner output on stdout, and the once-guard that would otherwise silence the banner path after the first test runs it. The path where the user submits a real selection is not exercised under `go test`, and runs only when the CLI is driven interactively.

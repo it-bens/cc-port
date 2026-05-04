@@ -61,7 +61,7 @@ cc-port export manifest /Users/me/project --output /tmp/project.xml
 
 `cc-port import <archive.zip> <target-path>`
 
-Apply an archive to `<target-path>`. Placeholder resolutions come from `--resolution KEY=VALUE` flags or from a manifest via `--from-manifest`. When both are passed, `--resolution` values win per key.
+Apply an archive to `<target-path>`. Non-implicit placeholders are resolved via `--from-manifest`. The implicit keys (`{{PROJECT_PATH}}` and `{{HOME}}`) are supplied by the import flow.
 
 Optional passphrase decryption via `--passphrase-env` or `--passphrase-file` (mutually exclusive). Plaintext stays the default. The read side detects encryption from the archive's magic bytes.
 
@@ -93,12 +93,12 @@ cc-port push /Users/me/project --as project --remote s3://bucket?region=us-east-
 
 ### `cc-port pull`
 
-`cc-port pull <name> --to <target-path> --remote <url> [--apply] [--passphrase-env <NAME> | --passphrase-file <PATH>] [--resolution KEY=VALUE ...] [--from-manifest <path>]`
+`cc-port pull <name> --to <target-path> --remote <url> [--apply] [--passphrase-env <NAME> | --passphrase-file <PATH>] [--from-manifest <path>]`
 
-Pull the archive named `<name>` from `<url>` and apply it to `<target-path>`. Dry-run by default. `--apply` commits the import. `--resolution` and `--from-manifest` follow the same contract as `cc-port import`.
+Pull the archive named `<name>` from `<url>` and apply it to `<target-path>`. Dry-run by default. `--apply` commits the import. `--from-manifest` follows the same contract as `cc-port import`.
 
 ```
-cc-port pull project --to /Users/me/teammate-project --remote s3://bucket?region=us-east-1 --apply --resolution HOME=/Users/me
+cc-port pull project --to /Users/me/teammate-project --remote s3://bucket?region=us-east-1 --apply
 ```
 
 ## Development
