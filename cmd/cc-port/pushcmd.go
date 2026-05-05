@@ -34,7 +34,8 @@ func newPushCmd(claudeDir *string) *cobra.Command {
 		Short: "Push a project archive to a remote",
 		Long: "Pushes a cc-port export of <project-path> to a remote storage backend " +
 			"(file:// or s3://). Dry-run by default; pass --apply to commit. " +
-			"Refuses cross-machine conflicts without --force.",
+			"Refuses cross-machine conflicts without --force.\n\n" +
+			remote.URLDoc,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return &usageError{err: err}
@@ -48,7 +49,7 @@ func newPushCmd(claudeDir *string) *cobra.Command {
 	cmd.Flags().StringVar(&asName, "as", "",
 		"stable name for the archive on the remote")
 	cmd.Flags().StringVar(&remoteURL, "remote", "",
-		"remote URL (file://path or s3://bucket?region=...)")
+		"remote URL (file:// or s3://; see --help for examples and provider setup)")
 	cmd.Flags().BoolVar(&apply, "apply", false,
 		"commit the upload (default is dry-run)")
 	cmd.Flags().BoolVar(&force, "force", false,

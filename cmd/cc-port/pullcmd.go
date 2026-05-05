@@ -34,7 +34,8 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 		Long: "Pulls a cc-port archive from a remote storage backend " +
 			"(file:// or s3://) and applies it to the local target path. " +
 			"Dry-run by default; pass --apply to commit. " +
-			"Refuses to apply when declared placeholders remain unresolved.",
+			"Refuses to apply when declared placeholders remain unresolved.\n\n" +
+			remote.URLDoc,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return &usageError{err: err}
@@ -48,7 +49,7 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 	cmd.Flags().StringVar(&toPath, "to", "",
 		"local target path for the pulled project")
 	cmd.Flags().StringVar(&remoteURL, "remote", "",
-		"remote URL (file://path or s3://bucket?region=...)")
+		"remote URL (file:// or s3://; see --help for examples and provider setup)")
 	cmd.Flags().BoolVar(&apply, "apply", false,
 		"commit the import (default is dry-run)")
 	cmd.Flags().StringVar(&passphraseEnv, "passphrase-env", "",

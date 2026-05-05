@@ -15,6 +15,7 @@ Wraps `gocloud.dev/blob` with a narrow consumer-defined surface. Exposes a `Remo
 - `Attributes`: struct with Size and ModTime.
 - `Reader`: typed handle returned by `Remote.Open`. Implements `io.Reader` and `io.Closer`; `Size() int64` reports the bucket's content length.
 - `ErrNotFound`: sentinel for missing keys (translated from `gcerrors.NotFound`).
+- `URLDoc`: curated `--help` text describing the URL formats accepted by `New` (`file://`, AWS S3, S3-compatible providers). The `push` and `pull` commands concatenate this string into their Long help.
 - `Source{Remote, Key}`: pipeline.ReaderStage. Returns the gocloud bucket reader as a streaming `View{Reader, Size}` and reports `Size` from `Reader.Size()` without a stat round trip. Random-access materialization is the downstream `pipeline.MaterializeStage`'s responsibility.
 - `Sink{Remote, Key}`: pipeline.WriterStage. Returns the bucket writer as both writer and closer; closing commits the upload.
 
