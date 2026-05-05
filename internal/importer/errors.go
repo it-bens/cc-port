@@ -28,8 +28,9 @@ var ErrEntryCapExceeded = errors.New("archive entry exceeds per-entry size limit
 
 // ErrAggregateCapExceeded is returned when the sum of decompressed bytes
 // across all archive entries exceeds maxArchiveUncompressedBytes. Fires
-// from both classifyArchive (pass one) and stageArchiveEntries (pass two);
-// pass two re-checks against actual observed bytes, not declared sizes.
+// from both classifyPresentDeclaredKeys (pass one) and stageArchiveEntries
+// (pass two); pass two re-checks against actual observed bytes, not declared
+// sizes.
 var ErrAggregateCapExceeded = errors.New("archive aggregate decompressed size exceeds limit")
 
 // UnknownArchiveEntryError reports an archive entry whose name does not

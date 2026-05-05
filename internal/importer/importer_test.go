@@ -1076,10 +1076,10 @@ func TestReadZipFile_RejectsOversizedEntry_SmallCap(t *testing.T) {
 }
 
 // TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap exercises
-// the pass-1 aggregate-cap guard in classifyArchive under a 2 MiB test
-// override, using three 1 MiB entries instead of multi-GiB payloads. The
-// scale sibling in importer_large_test.go materializes the real multi-GiB
-// archive and runs only under `-tags large`.
+// the pass-1 aggregate-cap guard in classifyPresentDeclaredKeys under a
+// 2 MiB test override, using three 1 MiB entries instead of multi-GiB
+// payloads. The scale sibling in importer_large_test.go materializes the
+// real multi-GiB archive and runs only under `-tags large`.
 func TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap(t *testing.T) {
 	importer.SetMaxArchiveBytes(t, 2<<20)
 
