@@ -2,7 +2,7 @@
 
 ## Before editing
 
-- Refuse any archive with an unresolved declared key or an undeclared `{{UPPER_SNAKE}}` token. No best-effort fallback (README §Import contract).
+- Refuse any archive with an unresolved declared key. Undeclared `{{UPPER_SNAKE}}` tokens in bodies are content; preserve them verbatim (README §Import contract).
 - Read the manifest first when classifying placeholders. Never fall back to parsing tokens from ZIP entry content (README §Placeholder handling).
 - Form every staging temp via `fsutil.ResolveExistingAncestor`. Never use the raw parent path when the parent may be a symlink (README §Atomic staging).
 - Drive all-or-nothing promotion through `SafeRenamePromoter`. Do not bypass it on partial failure (README §Atomic staging and `internal/rewrite/README.md` §Boundary rules).
@@ -14,7 +14,7 @@
 
 - Entry: `importer.go:Run`.
 - Resolution orchestrator: `resolve_orchestrator.go:ResolvePlaceholders`.
-- Classification: `resolve.go:ClassifyPlaceholders`, `resolve.go:ValidateResolutions`.
+- Classification: `resolve.go:ValidateResolutions`.
 - Staging preflight: `importer.go:stagingTempPath`, `importer.go:checkStagingFilesystems`.
 - Conflict check: `resolve.go:CheckConflict`.
 - Tests: `importer_test.go`, `resolve_test.go`, `resolve_fuzz_test.go`, `resolve_orchestrator_test.go`.
