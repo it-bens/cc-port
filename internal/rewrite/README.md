@@ -85,7 +85,7 @@ Unit tests in `rewrite_test.go` cover `StreamHistoryJSONL`, `ReplacePathInBytes`
 `SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
 `ContainsBoundedPath`, and `SafeWriteFile`.
 
-Fuzz targets in `rewrite_fuzz_test.go`. `FuzzReplacePathInBytes` asserts
+Fuzz target in `rewrite_fuzz_test.go`. `FuzzReplacePathInBytes` asserts
 empty-`oldPath` no-op, identity-rewrite byte equality, and the length
 invariant. Seed inputs run as deterministic subtests under `go test ./...`.
 See `DEVELOPMENT.md §Tests and lint` for the unbounded-mutation invocation.

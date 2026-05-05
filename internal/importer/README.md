@@ -64,7 +64,7 @@ These paths abort before any write:
 - Archive embeds a declared placeholder in at least one body whose key has no matching resolution. The key is absent from `Options.Resolutions` and is not implicit. `MissingResolutionsError` lists every missing key in alphabetical order.
 - Archive entries whose names escape the staging base (containing `..` components or an absolute-path prefix). The `os.Root` handle rejects any path that would land outside the base. No temp file is created.
 - Archive entries whose decompressed size exceeds `maxZipEntryBytes` (512 MiB). Both passes check the declared `UncompressedSize64` up front and the actual post-decode byte count after streaming. A misdeclared size does not slip through.
-- Archives whose aggregate decompressed payload exceeds `maxArchiveUncompressedBytes` (4 GiB). Enforced in both passes of `loadArchive` so an archive that misdeclares per-entry sizes between passes cannot slip through the cap.
+- Archives whose aggregate decompressed payload exceeds `maxArchiveUncompressedBytes` (4 GiB). Enforced in both passes (`classifyPresentDeclaredKeys` and `stageArchiveEntries`) so an archive that misdeclares per-entry sizes between passes cannot slip through the cap.
 
 #### Not covered
 

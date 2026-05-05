@@ -17,14 +17,14 @@ func TestRunPreflight_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	}
 	metadata := &manifest.Metadata{
 		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: "/Users/example/project"},
-			{Key: "{{HOME}}", Original: "/Users/example"},
+			{Key: projectPathKey, Original: "/Users/example/project"},
+			{Key: homePathKey, Original: "/Users/example"},
 			{Key: nonImplicitKey, Original: "/some/path"},
 		},
 	}
 	resolutions := map[string]string{
-		"{{PROJECT_PATH}}": "/Users/recipient/project",
-		"{{HOME}}":         "/Users/recipient",
+		projectPathKey: "/Users/recipient/project",
+		homePathKey:    "/Users/recipient",
 		// nonImplicitKey deliberately omitted.
 	}
 
