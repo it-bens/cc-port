@@ -1,0 +1,12 @@
+session log fragment with chat content about placeholders:
+the {{KEY}} convention is just an example
+{{ALPHA}} and {{ZETA}} are illustrative names
+numbered: {{UNRESOLVED_1}} and {{UNRESOLVED_1216}}
+compound: {{ARBITRARY_KEY}} {{ORG}} {{TOKEN}} {{HOST}}
+JSON line: {"path":"{{KEY}}","escaped":"\\{\\{KEY\\}\\}"}
+markdown code fence:
+```
+inside fence: {{KEY}} stays literal
+```
+adjacent: {{KEY}}{{HOME}}
+trailing

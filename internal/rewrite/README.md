@@ -16,8 +16,6 @@ Every path-rewriting command routes through this package so the boundary contrac
   - `StreamHistoryJSONL(ctx context.Context, src io.Reader, dst io.Writer, oldProject, newProject string) (int, []int, error)`: streams `history.jsonl` line by line, writing the rewritten output to dst; returns changed-line count, malformed-line numbers, and error. Caps one line at `claude.MaxHistoryLine`. Routes through `ReplacePathInBytesWithJSONEscape` so escape-form slashes in emitted JSON are rewritten.
   - `SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites a session JSON file. Uses the JSON-escape variant for the same reason.
   - `UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites `~/.claude.json`. The raw-block pass uses the JSON-escape variant.
-- **Placeholder scanning**
-  - `FindPlaceholderTokens(data []byte) []string`: tamper-defense scan for undeclared `{{UPPER_SNAKE}}` tokens.
 - **Atomic rename**
   - `NewSafeRenamePromoter() *SafeRenamePromoter`: constructor for the staged-write promoter used by `import`.
   - `SafeRenamePromoter` type with methods:
@@ -80,43 +78,14 @@ one-byte boundary checking alone. These names are pathological on Unix and
 forbidden on Windows. cc-port accepts this trade-off in favour of correctly
 rewriting sentence-ending prose references.
 
-### Placeholder scanning
-
-`FindPlaceholderTokens` is the tamper-defense scan used by the importer to
-refuse archives whose bodies carry `{{UPPER_SNAKE}}` tokens the manifest never
-declared. See `internal/importer/README.md §Placeholder handling` for the
-full role.
-
-#### Handled
-
-`FindPlaceholderTokens` matches tokens of the form `{{[A-Z0-9_]{1,64}}}` in
-first-occurrence order, returning each token with its surrounding braces
-(e.g. `{{PROJECT_PATH}}`).
-
-#### Refused
-
-Tokens outside the upper-snake grammar are ignored: lowercase keys,
-punctuation, whitespace inside braces, nested braces, multi-line keys.
-cc-port's export path only writes upper-snake keys. Matching anything wider
-produces false positives on legitimate `{{...}}` content in transcripts
-(Handlebars, Mustache, Jinja).
-
-#### Not covered
-
-Hand-crafted archives that embed placeholder keys in non-upper-snake shapes
-must list every embedded key in the manifest. Tool-produced archives are not
-affected because cc-port's export path declares every key it embeds.
-
 ## Tests
 
 Unit tests in `rewrite_test.go` cover `StreamHistoryJSONL`, `ReplacePathInBytes`
 (including dot-boundary lookahead), `SessionFile`, `UserConfig`,
-`FindPlaceholderTokens`, `SafeRenamePromoter` (files, dirs, rollback path),
-`EscapeSJSONKey`, `ContainsBoundedPath`, and `SafeWriteFile`.
+`SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
+`ContainsBoundedPath`, and `SafeWriteFile`.
 
-Fuzz targets in `rewrite_fuzz_test.go`. `FuzzReplacePathInBytes` asserts
+Fuzz target in `rewrite_fuzz_test.go`. `FuzzReplacePathInBytes` asserts
 empty-`oldPath` no-op, identity-rewrite byte equality, and the length
-invariant. `FuzzFindPlaceholderTokens` asserts distinct tokens, conformance to
-`{{[A-Z0-9_]{1,64}}}`, and substring presence in the input. Seed inputs run
-as deterministic subtests under `go test ./...`. See `DEVELOPMENT.md §Tests
-and lint` for the unbounded-mutation invocation.
+invariant. Seed inputs run as deterministic subtests under `go test ./...`.
+See `DEVELOPMENT.md §Tests and lint` for the unbounded-mutation invocation.

@@ -591,62 +591,6 @@ func TestSafeWriteFile(t *testing.T) {
 	})
 }
 
-func TestFindPlaceholderTokens(t *testing.T) {
-	t.Run("finds distinct upper-snake tokens", func(t *testing.T) {
-		data := []byte(`cwd={{PROJECT_PATH}}, home={{HOME}}, extra={{UNRESOLVED_1}}`)
-		tokens := rewrite.FindPlaceholderTokens(data)
-		assert.Equal(t, []string{"{{PROJECT_PATH}}", "{{HOME}}", "{{UNRESOLVED_1}}"}, tokens)
-	})
-
-	t.Run("deduplicates repeated occurrences", func(t *testing.T) {
-		data := []byte(`{{KEY}} {{KEY}} and {{KEY}} again`)
-		assert.Equal(t, []string{"{{KEY}}"}, rewrite.FindPlaceholderTokens(data))
-	})
-
-	t.Run("ignores whitespace inside braces", func(t *testing.T) {
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{ }}`)))
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{ KEY }}`)))
-	})
-
-	t.Run("ignores lowercase keys", func(t *testing.T) {
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{lower}}`)))
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{MixedCase}}`)))
-	})
-
-	t.Run("ignores empty braces and unclosed sequences", func(t *testing.T) {
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{}}`)))
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{KEY`)))
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{KEY}`)))
-	})
-
-	t.Run("requires close immediately after key bytes", func(t *testing.T) {
-		// `{{KEY!}}` has a non-key byte before the close — rejected.
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte(`{{KEY!}}`)))
-	})
-
-	t.Run("bounds key length to avoid pathological scans", func(t *testing.T) {
-		// 65 A's followed by }} — beyond the 64-byte cap, so not accepted.
-		long := append([]byte(`{{`), bytes.Repeat([]byte("A"), 65)...)
-		long = append(long, []byte(`}}`)...)
-		assert.Empty(t, rewrite.FindPlaceholderTokens(long))
-	})
-
-	t.Run("handles adjacent tokens", func(t *testing.T) {
-		data := []byte(`{{A}}{{B}}`)
-		assert.Equal(t, []string{"{{A}}", "{{B}}"}, rewrite.FindPlaceholderTokens(data))
-	})
-
-	t.Run("handles token-before-text-before-token", func(t *testing.T) {
-		data := []byte(`{{A}} middle {{B}}`)
-		assert.Equal(t, []string{"{{A}}", "{{B}}"}, rewrite.FindPlaceholderTokens(data))
-	})
-
-	t.Run("returns nil on empty input", func(t *testing.T) {
-		assert.Empty(t, rewrite.FindPlaceholderTokens(nil))
-		assert.Empty(t, rewrite.FindPlaceholderTokens([]byte{}))
-	})
-}
-
 func TestSafeRenamePromoter_Files(t *testing.T) {
 	t.Run("promotes a file onto a non-existent final", func(t *testing.T) {
 		dir := t.TempDir()

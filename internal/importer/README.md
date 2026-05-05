@@ -12,7 +12,6 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `Result`: success-path output of `Run`. `RulesReport scan.Report` carries the rules-file scan; cmd renders it via `cmd/cc-port`'s `renderRulesReport`.
 - `ResolvePlaceholders(unresolved []string, fromManifest *manifest.Metadata) (map[string]string, error)`: compose a resolution map from the plan's unresolved keys and optional `--from-manifest` metadata. Filters implicit keys and merges manifest-known non-empty values. Any non-implicit key that remains unresolved after the merge surfaces as `MissingResolutionsError`. The byte-level token substitution helper used inside `Run` is unexported.
 - `IsImplicitKey(key string) bool`: predicate exposing the implicit-key set without leaking the constants. Covers `{{PROJECT_PATH}}` (supplied from the import target argument) and `{{HOME}}` (supplied via `resolveHomeAnchor` from `os.UserHomeDir()` on the import machine). Callers refuse user-supplied resolutions for these keys and treat them as already-resolved when computing unresolved sets.
-- `ClassifyPlaceholders(bodies [][]byte, declared []manifest.Placeholder, resolutions map[string]string) (missing, undeclared []string)`: diff the archive's declared placeholders against the caller's resolutions and the bodies' embedded tokens. Returns alphabetically sorted slices of missing declared keys and undeclared upper-snake tokens.
 - `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`: reader-to-writer placeholder substitution. Peak memory is bounded by the longest placeholder key, not by the body size. Used by the staging paths that write directly to a sibling temp (sessions, memory, session-keyed categories).
 - `ValidateResolutions(resolutions map[string]string) error`: syntactic validation of caller-supplied resolutions (non-empty, absolute paths only).
 - `CheckConflict(encodedProjectDir string) error`: refuse the import if the encoded target directory already exists. Also refuse when existence cannot be determined (e.g. a permission error on an intermediate component). Only a clean "does not exist" returns `nil`.
@@ -31,7 +30,6 @@ The reverse direction lives in `internal/export`. This module assumes the cc-por
 - `ErrStagingFailed`: returned by `Run` when the staging jail cannot be established (staging-base mkdir or os.OpenRoot failure). Distinct from `ErrZipSlip`: signals destination-side I/O failure, not a containment violation.
 - `ErrSourceNil`: returned by `Run` when `Options.Source` is nil. The wrapping message hints that the caller's pipeline likely missed `MaterializeStage`.
 - `MissingResolutionsError`: typed error reporting declared placeholder keys present in the archive that the caller did not resolve. `Keys` carries the offending key list, alphabetically sorted; tests assert via `errors.As`.
-- `UndeclaredTokensError`: typed error reporting `{{UPPER_SNAKE}}` tokens that appear in the archive but are not listed in the manifest's placeholders. `Tokens` carries the offending token list, alphabetically sorted.
 - `InvalidConfigJSONError`: typed error returned by `MergeProjectConfigBytes` when `existingData` is not valid JSON. `Path` carries the config file path the caller passed.
 
 ## Contracts
@@ -64,45 +62,35 @@ Every destination is staged at a sibling `*.cc-port-import.tmp` path and promote
 These paths abort before any write:
 
 - Archive embeds a declared placeholder in at least one body whose key has no matching resolution. The key is absent from `Options.Resolutions` and is not implicit. `MissingResolutionsError` lists every missing key in alphabetical order.
-- Archive body contains a `{{KEY}}` that the manifest does not declare. `UndeclaredTokensError` lists every undeclared key in alphabetical order.
 - Archive entries whose names escape the staging base (containing `..` components or an absolute-path prefix). The `os.Root` handle rejects any path that would land outside the base. No temp file is created.
 - Archive entries whose decompressed size exceeds `maxZipEntryBytes` (512 MiB). Both passes check the declared `UncompressedSize64` up front and the actual post-decode byte count after streaming. A misdeclared size does not slip through.
-- Archives whose aggregate decompressed payload exceeds `maxArchiveUncompressedBytes` (4 GiB). Enforced in both passes of `loadArchive` so an archive that misdeclares per-entry sizes between passes cannot slip through the cap.
+- Archives whose aggregate decompressed payload exceeds `maxArchiveUncompressedBytes` (4 GiB). Enforced in both passes (`classifyPresentDeclaredKeys` and `stageArchiveEntries`) so an archive that misdeclares per-entry sizes between passes cannot slip through the cap.
 
 #### Not covered
 
 - **Pre-fix archives with declared but unresolved keys.** Archives produced before the resolver simplification are refused, regardless of any `resolvable` attribute the legacy manifest carried. Every declared key embedded in a body must resolve unless it is implicit. Migration: re-export with the fixed pipeline.
-- **Undeclared exotic token shapes in bodies.** The tamper-defense scan is grammar-bounded. It does not catch lowercase, punctuated, or whitespace-bearing tokens in bodies that the manifest fails to declare. See §Placeholder handling below.
+- **Undeclared `{{UPPER_SNAKE}}` tokens in bodies.** All `{{X}}`-shaped substrings the manifest does not declare are treated as ordinary content. The export pipeline emits exactly `{{PROJECT_PATH}}` and `{{HOME}}`; any other `{{KEY}}` in a body is chat content, mustache/handlebars syntax, or sample code. Tamper detection is not the importer's responsibility.
 
 ### Placeholder handling
 
-`resolve.go:ClassifyPlaceholders` decides which keys the archive embeds, which still need a resolution, and which tokens the archive embeds without declaring them.
-
 The manifest is authoritative. Every key cc-port's export path embeds is also written into `metadata.xml` as a `<placeholder>` entry. The importer iterates the declared set and tests presence with a literal `bytes.Contains` per key.
 
-No body grammar is parsed on the resolution path. The exporter's key shape is correctly classified by construction.
-
-`internal/rewrite/rewrite.go:FindPlaceholderTokens` is retained only as a tamper-defense scan. Upper-snake `{{KEY}}` tokens in bodies that are absent from the manifest are reported as undeclared, and such an archive is refused before any write.
-
-A scanner that parsed placeholder tokens directly out of body bytes would have to commit to a grammar. Any grammar narrow enough to avoid false positives on JSON or Markdown `{{...}}` would miss exotic keys a future exporter might emit.
-
-The manifest-is-authoritative design avoids that tradeoff entirely on the resolution path. The tamper-defense scan accepts the grammar bound as a deliberate residual risk.
+No body grammar is parsed. The two-pass classify / stage flow records which declared keys appear in any body (pass one), then resolves them in-stream during staging (pass two). `{{UPPER_SNAKE}}` substrings the manifest does not declare are content and round-trip verbatim.
 
 #### Handled
 
 - Any declared key embedded in at least one body, with a matching resolution: substituted at resolve time.
 - Any declared key embedded in at least one body, with no resolution, that is not implicit: flagged missing, archive refused.
 - Any declared key that does not appear in any body: ignored. The archive may legitimately publish metadata about keys it considered but did not embed.
-- An upper-snake `{{UPPER_SNAKE}}` token embedded in a body that the manifest does not declare: reported as undeclared, archive refused.
+- Any `{{UPPER_SNAKE}}` substring the manifest does not declare: preserved byte-for-byte. The importer treats it as content.
 
 #### Refused
 
 - Missing resolutions for declared keys (see §Import contract §Refused).
-- Archive body contains an undeclared upper-snake token (tamper-defense scan trigger).
 
 #### Not covered
 
-- **Undeclared exotic-shape tokens in bodies.** A body token with a lowercase, punctuated, or whitespace-bearing key (e.g. `{{my-weird.key}}`) that is not declared in `metadata.xml` is invisible to the tamper-defense scan. It survives verbatim on disk: neither flagged nor substituted. Widening the scanner's grammar to catch these would produce false positives on `{{...}}` content in transcripts (Handlebars, Mustache, Jinja). Tool-produced archives are not affected since cc-port's export path publishes every key it embeds. Hand-crafted archives that want the full contract must declare every embedded key in the manifest.
+- **Hand-crafted archives that embed a key without declaring it.** Such an archive's body contains a `{{KEY}}` the importer cannot resolve; the importer preserves the literal bytes verbatim. Tool-produced archives are not affected: cc-port's export path declares every key it embeds.
 
 ### Atomic staging
 
@@ -197,7 +185,8 @@ Unit tests in `importer_test.go` and `resolve_test.go`. Coverage:
 
 - basic round-trip.
 - no staging temps left behind.
-- refusal on unresolved and undeclared keys.
+- refusal on unresolved declared keys.
+- lookalike-token preservation: an archive whose bodies contain content shaped like `{{UPPER_SNAKE}}` (chat about placeholders, quoted output of older buggy exports) round-trips byte-for-byte through import.
 - atomic rollback on failure.
 - conflict refusal on pre-existing encoded directories.
 - zip-slip rejection (`..`-escaping entry).

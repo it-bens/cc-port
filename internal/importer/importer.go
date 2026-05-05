@@ -128,16 +128,6 @@ type Options struct {
 	renameHook func(oldpath, newpath string) error
 }
 
-// archiveClassification captures the data runPreflight needs without
-// retaining entry bodies: which declared keys appear in the archive (so the
-// missing-resolution check can skip keys the archive never embeds), and
-// which undeclared upper-snake tokens appear (so a tampered archive
-// carrying an unlisted placeholder is rejected).
-type archiveClassification struct {
-	presentDeclaredKeys map[string]struct{}
-	undeclaredTokens    map[string]struct{}
-}
-
 // Result summarizes the observable outcome of a successful import. The
 // rules-file scan runs against TargetPath after staging promotion;
 // warnings reflect post-import state.
@@ -184,14 +174,14 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 			return fmt.Errorf("manifest categories: %w", err)
 		}
 
-		classification, err := classifyArchive(ctx, importOptions.Source, importOptions.Size, metadata)
+		presentDeclaredKeys, err := classifyPresentDeclaredKeys(ctx, importOptions.Source, importOptions.Size, metadata)
 		if err != nil {
 			return err
 		}
 
 		resolutions := withImplicitAnchors(importOptions.Resolutions, importOptions.TargetPath, importOptions.HomePath)
 
-		if err := runPreflight(classification, metadata, resolutions); err != nil {
+		if err := runPreflight(presentDeclaredKeys, metadata, resolutions); err != nil {
 			return err
 		}
 
@@ -222,19 +212,48 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 	return &Result{RulesReport: report}, nil
 }
 
-// classifyArchive is pass one of the two-pass archive read. It walks each
-// non-metadata entry on the supplied zip reader and builds an
-// archiveClassification (which declared keys appear, which undeclared
-// upper-snake tokens appear) without retaining any entry body. Enforces both
-// the per-entry cap (maxZipEntryBytes) and the aggregate cap
-// (maxArchiveUncompressedBytes).
-func classifyArchive(
-	ctx context.Context, src io.ReaderAt, size int64, metadata *manifest.Metadata,
-) (archiveClassification, error) {
-	classification := archiveClassification{
-		presentDeclaredKeys: make(map[string]struct{}),
-		undeclaredTokens:    make(map[string]struct{}),
+// forEachNonMetadataEntry iterates each non-metadata entry on zipReader,
+// honoring ctx cancellation and enforcing the archive aggregate cap. fn
+// reports the uncompressed byte count it observed for an entry; the running
+// total is checked against maxArchiveUncompressedBytes after each call so a
+// crafted archive that misdeclares per-entry sizes cannot slip through.
+func forEachNonMetadataEntry(
+	ctx context.Context,
+	zipReader *zip.Reader,
+	fn func(zipFile *zip.File) (entryBytes int64, err error),
+) error {
+	var aggregate int64
+	for _, zipFile := range zipReader.File {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if zipFile.Name == "metadata.xml" {
+			continue
+		}
+		entryBytes, err := fn(zipFile)
+		if err != nil {
+			return err
+		}
+		aggregate += entryBytes
+		if aggregate > maxArchiveUncompressedBytes {
+			return fmt.Errorf(
+				"%w: aggregate %d > limit %d",
+				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
+			)
+		}
 	}
+	return nil
+}
+
+// classifyPresentDeclaredKeys is pass one of the two-pass archive read.
+// It walks each non-metadata entry on the supplied zip reader and records
+// which declared keys appear as literal substrings in any body, without
+// retaining any entry body. Enforces both the per-entry cap
+// (maxZipEntryBytes) and the aggregate cap (maxArchiveUncompressedBytes).
+func classifyPresentDeclaredKeys(
+	ctx context.Context, src io.ReaderAt, size int64, metadata *manifest.Metadata,
+) (map[string]struct{}, error) {
+	presentDeclaredKeys := make(map[string]struct{})
 	declaredByKey := make(map[string]struct{}, len(metadata.Placeholders))
 	for _, placeholder := range metadata.Placeholders {
 		declaredByKey[placeholder.Key] = struct{}{}
@@ -242,38 +261,27 @@ func classifyArchive(
 
 	zipReader, err := zip.NewReader(src, size)
 	if err != nil {
-		return classification, fmt.Errorf("open archive: %w", err)
+		return nil, fmt.Errorf("open archive: %w", err)
 	}
 
-	var aggregate int64
-	for _, zipFile := range zipReader.File {
-		if err := ctx.Err(); err != nil {
-			return classification, err
+	err = forEachNonMetadataEntry(ctx, zipReader, func(zipFile *zip.File) (int64, error) {
+		content, readErr := readZipFile(zipFile)
+		if readErr != nil {
+			return 0, fmt.Errorf("read zip entry %q: %w", zipFile.Name, readErr)
 		}
-		if zipFile.Name == "metadata.xml" {
-			continue
-		}
-		content, err := readZipFile(zipFile)
-		if err != nil {
-			return classification, fmt.Errorf("read zip entry %q: %w", zipFile.Name, err)
-		}
-		aggregate += int64(len(content))
-		if aggregate > maxArchiveUncompressedBytes {
-			return classification, fmt.Errorf(
-				"%w: aggregate %d > limit %d",
-				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
-			)
-		}
-		recordPresentDeclaredKeys(content, declaredByKey, classification.presentDeclaredKeys)
-		recordUndeclaredTokens(content, declaredByKey, classification.undeclaredTokens)
+		recordPresentDeclaredKeys(content, declaredByKey, presentDeclaredKeys)
+		return int64(len(content)), nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	return classification, nil
+	return presentDeclaredKeys, nil
 }
 
 // recordPresentDeclaredKeys marks each declared key that appears as a
-// literal substring in body. Mirrors anyBodyContains but updates a shared
-// set directly so the archive body can be discarded after each entry.
+// literal substring in body. Updates a shared set directly so the archive
+// body can be discarded after each entry.
 func recordPresentDeclaredKeys(body []byte, declaredByKey, presentKeys map[string]struct{}) {
 	for key := range declaredByKey {
 		if _, already := presentKeys[key]; already {
@@ -282,17 +290,6 @@ func recordPresentDeclaredKeys(body []byte, declaredByKey, presentKeys map[strin
 		if bytes.Contains(body, []byte(key)) {
 			presentKeys[key] = struct{}{}
 		}
-	}
-}
-
-// recordUndeclaredTokens scans body for `{{UPPER_SNAKE}}` tokens and marks
-// each that is not in declaredByKey.
-func recordUndeclaredTokens(body []byte, declaredByKey, undeclaredTokens map[string]struct{}) {
-	for _, token := range rewrite.FindPlaceholderTokens(body) {
-		if _, isDeclared := declaredByKey[token]; isDeclared {
-			continue
-		}
-		undeclaredTokens[token] = struct{}{}
 	}
 }
 
@@ -314,38 +311,29 @@ func withImplicitAnchors(resolutions map[string]string, targetPath, homePath str
 	return result
 }
 
-// runPreflight fails the import if any placeholder token classified in
-// pass one is either declared-but-unresolved or present-but-undeclared. No
-// write has occurred at this point — aborting here leaves the destination
-// untouched.
+// runPreflight fails the import if any declared placeholder key embedded in a
+// body lacks a resolution. No write has occurred at this point — aborting
+// here leaves the destination untouched.
 func runPreflight(
-	classification archiveClassification, metadata *manifest.Metadata, resolutions map[string]string,
+	presentDeclaredKeys map[string]struct{},
+	metadata *manifest.Metadata,
+	resolutions map[string]string,
 ) error {
-	missing := classifyMissingResolutions(classification, metadata, resolutions)
-	undeclared := sortedKeys(classification.undeclaredTokens)
-	if len(missing) == 0 && len(undeclared) == 0 {
+	missing := classifyMissingResolutions(presentDeclaredKeys, metadata, resolutions)
+	if len(missing) == 0 {
 		return nil
 	}
-
-	var errs []error
-	if len(missing) > 0 {
-		errs = append(errs, &MissingResolutionsError{Keys: missing})
-	}
-	if len(undeclared) > 0 {
-		errs = append(errs, &UndeclaredTokensError{Tokens: undeclared})
-	}
-	if len(errs) == 1 {
-		return fmt.Errorf("archive preflight: %w", errs[0])
-	}
-	return fmt.Errorf("archive preflight: %w; %w", errs[0], errs[1])
+	return fmt.Errorf("archive preflight: %w", &MissingResolutionsError{Keys: missing})
 }
 
-// classifyMissingResolutions mirrors ClassifyPlaceholders's missing-key
-// logic over the streamed classification rather than retained bodies.
-// Declared keys the archive never embeds stay out of the result even when
-// the caller did not provide a resolution for them.
+// classifyMissingResolutions returns the declared keys present in any body
+// that have no entry in resolutions and are not implicit. Declared keys the
+// archive never embeds stay out of the result even when the caller did not
+// provide a resolution for them. Result is alphabetically sorted.
 func classifyMissingResolutions(
-	classification archiveClassification, metadata *manifest.Metadata, resolutions map[string]string,
+	presentDeclaredKeys map[string]struct{},
+	metadata *manifest.Metadata,
+	resolutions map[string]string,
 ) []string {
 	var missing []string
 	for _, placeholder := range metadata.Placeholders {
@@ -355,26 +343,13 @@ func classifyMissingResolutions(
 		if IsImplicitKey(placeholder.Key) {
 			continue
 		}
-		if _, present := classification.presentDeclaredKeys[placeholder.Key]; !present {
+		if _, present := presentDeclaredKeys[placeholder.Key]; !present {
 			continue
 		}
 		missing = append(missing, placeholder.Key)
 	}
 	sort.Strings(missing)
 	return missing
-}
-
-// sortedKeys returns the keys of set in deterministic, alphabetical order.
-func sortedKeys(set map[string]struct{}) []string {
-	if len(set) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(set))
-	for key := range set {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // importPlan records every staged artifact and the final destination it
@@ -493,29 +468,19 @@ func stageArchiveEntries(
 		return nil, nil, fmt.Errorf("open archive: %w", err)
 	}
 
-	var aggregate int64
-	for _, zipFile := range zipReader.File {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, nil, ctxErr
-		}
-		if zipFile.Name == "metadata.xml" {
-			continue
-		}
+	err = forEachNonMetadataEntry(ctx, zipReader, func(zipFile *zip.File) (int64, error) {
 		entryBytes, newAppends, newConfig, routeErr := routeArchiveEntry(
 			claudeHome, plan, zipFile, resolutions, historyAppends, configBlock,
 		)
 		if routeErr != nil {
-			return nil, nil, routeErr
+			return 0, routeErr
 		}
 		historyAppends = newAppends
 		configBlock = newConfig
-		aggregate += entryBytes
-		if aggregate > maxArchiveUncompressedBytes {
-			return nil, nil, fmt.Errorf(
-				"%w: aggregate %d > limit %d",
-				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
-			)
-		}
+		return entryBytes, nil
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 	return historyAppends, configBlock, nil
 }

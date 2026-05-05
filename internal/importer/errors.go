@@ -28,8 +28,9 @@ var ErrEntryCapExceeded = errors.New("archive entry exceeds per-entry size limit
 
 // ErrAggregateCapExceeded is returned when the sum of decompressed bytes
 // across all archive entries exceeds maxArchiveUncompressedBytes. Fires
-// from both classifyArchive (pass one) and stageArchiveEntries (pass two);
-// pass two re-checks against actual observed bytes, not declared sizes.
+// from both classifyPresentDeclaredKeys (pass one) and stageArchiveEntries
+// (pass two); pass two re-checks against actual observed bytes, not declared
+// sizes.
 var ErrAggregateCapExceeded = errors.New("archive aggregate decompressed size exceeds limit")
 
 // UnknownArchiveEntryError reports an archive entry whose name does not
@@ -68,17 +69,6 @@ type MissingResolutionsError struct {
 
 func (e *MissingResolutionsError) Error() string {
 	return fmt.Sprintf("missing resolutions for declared placeholder(s) %s", strings.Join(e.Keys, ", "))
-}
-
-// UndeclaredTokensError reports {{UPPER_SNAKE}} tokens that appear in the
-// archive but are not listed in the manifest's placeholders. Tokens carries
-// the offending token list, alphabetically sorted.
-type UndeclaredTokensError struct {
-	Tokens []string
-}
-
-func (e *UndeclaredTokensError) Error() string {
-	return fmt.Sprintf("archive contains undeclared placeholder(s) %s", strings.Join(e.Tokens, ", "))
 }
 
 // InvalidConfigJSONError reports that MergeProjectConfigBytes rejected

@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/importer"
-	"github.com/it-bens/cc-port/internal/manifest"
 )
 
 func TestResolvePlaceholdersStream_PassesThroughWhenNoResolutions(t *testing.T) {
@@ -173,111 +172,6 @@ func TestValidateResolutions(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-}
-
-func TestClassifyPlaceholders(t *testing.T) {
-	for _, testCase := range classifyPlaceholderCases() {
-		t.Run(testCase.name, func(t *testing.T) {
-			missing, undeclared := importer.ClassifyPlaceholders(
-				testCase.bodies, testCase.declared, testCase.resolutions,
-			)
-			assert.Equal(t, testCase.wantMissing, missing)
-			assert.Equal(t, testCase.wantUndeclared, undeclared)
-		})
-	}
-}
-
-// classifyPlaceholderCases returns the table feeding TestClassifyPlaceholders.
-// Kept as a helper so the test body stays under funlen while all cases live
-// in one place.
-func classifyPlaceholderCases() []classifyCase {
-	cases := classifyUpperSnakeCases()
-	cases = append(cases, classifyExoticShapeCases()...)
-	return cases
-}
-
-func classifyUpperSnakeCases() []classifyCase {
-	return []classifyCase{
-		{
-			name:   "all present keys resolved",
-			bodies: [][]byte{[]byte(`cwd={{PROJECT_PATH}}, home={{HOME}}`)},
-			declared: []manifest.Placeholder{
-				{Key: "{{PROJECT_PATH}}"},
-				{Key: "{{HOME}}"},
-			},
-			resolutions: map[string]string{
-				"{{PROJECT_PATH}}": "/dest/project",
-				"{{HOME}}":         "/dest",
-			},
-		},
-		{
-			name:        "declared + present + not resolved is missing",
-			bodies:      [][]byte{[]byte(`extra={{EXTRA}}`)},
-			declared:    []manifest.Placeholder{{Key: "{{EXTRA}}"}},
-			wantMissing: []string{"{{EXTRA}}"},
-		},
-		{
-			name:           "present but not declared is undeclared",
-			bodies:         [][]byte{[]byte(`leaked={{SECRET}}`)},
-			declared:       []manifest.Placeholder{{Key: "{{PROJECT_PATH}}"}},
-			wantUndeclared: []string{"{{SECRET}}"},
-		},
-		{
-			name:   "both missing and undeclared populated and sorted",
-			bodies: [][]byte{[]byte(`{{ZETA}} {{ALPHA}} {{UNDECLARED_B}} {{UNDECLARED_A}}`)},
-			declared: []manifest.Placeholder{
-				{Key: "{{ZETA}}"},
-				{Key: "{{ALPHA}}"},
-			},
-			wantMissing:    []string{"{{ALPHA}}", "{{ZETA}}"},
-			wantUndeclared: []string{"{{UNDECLARED_A}}", "{{UNDECLARED_B}}"},
-		},
-		{
-			name:     "declared but absent from bodies is clean",
-			bodies:   [][]byte{[]byte("no placeholder tokens here")},
-			declared: []manifest.Placeholder{{Key: "{{UNUSED}}"}},
-		},
-		{
-			// importer.Run pre-fills PROJECT_PATH unconditionally.
-			name:     "PROJECT_PATH resolved implicitly even without explicit resolution",
-			bodies:   [][]byte{[]byte(`cwd={{PROJECT_PATH}}`)},
-			declared: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}"}},
-		},
-	}
-}
-
-// classifyExoticShapeCases exercises manifest-driven resolution against key
-// shapes the upper-snake scanner cannot see (punctuation, lowercase).
-// Resolution is now driven by literal substring search over declared keys,
-// so grammar does not affect classification.
-func classifyExoticShapeCases() []classifyCase {
-	return []classifyCase{
-		{
-			name:        "exotic-shape declared key missing a resolution is flagged",
-			bodies:      [][]byte{[]byte(`path={{my-weird.key}}`)},
-			declared:    []manifest.Placeholder{{Key: "{{my-weird.key}}"}},
-			wantMissing: []string{"{{my-weird.key}}"},
-		},
-		{
-			name:   "exotic-shape declared key with a resolution is clean",
-			bodies: [][]byte{[]byte(`path={{my-weird.key}}`)},
-			declared: []manifest.Placeholder{
-				{Key: "{{my-weird.key}}"},
-			},
-			resolutions: map[string]string{"{{my-weird.key}}": "/dest/weird"},
-		},
-	}
-}
-
-// classifyCase captures one expected outcome of ClassifyPlaceholders for the
-// table-driven TestClassifyPlaceholders.
-type classifyCase struct {
-	name           string
-	bodies         [][]byte
-	declared       []manifest.Placeholder
-	resolutions    map[string]string
-	wantMissing    []string
-	wantUndeclared []string
 }
 
 func TestIsImplicitKey_RecognizesHome(t *testing.T) {
