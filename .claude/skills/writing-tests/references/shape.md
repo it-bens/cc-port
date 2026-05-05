@@ -1,32 +1,10 @@
----
-paths:
-  - "**/*_test.go"
----
+# Test Shape (reference)
 
-# Tests: Shape on the Page
+Loaded from `writing-tests` SKILL.md when the workflow needs the deep technical detail behind the *Structure the body* step.
 
-**CRITICAL**: A test MUST be readable top-to-bottom in one pass. Conditionals that select between assertions, assertions threaded through setup, and multi-behavior assertion blocks force the reader to reconstruct intent.
+## CONV-014 — AAA structure
 
-## Project baseline
-
-- testify `require`/`assert` is the assertion library. `require` for preconditions, `assert` for behavioral claims after the act.
-- Table-driven tests via `t.Run(tc.name, func(t *testing.T) {...})` are the idiom for parameterized coverage.
-- `if tc.wantErr { require.Error(t, err); return }` is the accepted pattern for error/success dispatch in tables. Use it; do not invent new conditional shapes.
-- No `t.Parallel()` today; this guide assumes sequential tests.
-
-## Decision Test
-
-Before finishing a test body:
-
-> **"If the test name and signature were stripped, could a reviewer still identify the three phases (arrange, act, assert) and the one behavioral claim?"**
-
-If no, restructure.
-
----
-
-## CONV-014 — AAA Structure
-
-Tests with 5+ statements MUST separate arrange, act, and assert phases. Assertions live after the final act, not interspersed.
+Tests with 5+ statements separate arrange, act, and assert phases. Assertions live after the final act, not interspersed.
 
 ### Skip
 
@@ -63,11 +41,9 @@ func TestApplyRelocatesProjectDir(t *testing.T) {
 
 Comment banners are optional; blank lines between phases are enough when sections are short.
 
----
+## DESIGN-001 — No conditional logic in tests
 
-## DESIGN-001 — No Conditional Logic in Tests
-
-Test bodies MUST NOT contain conditional logic that picks between assertions.
+Test bodies do not contain conditional logic that picks between assertions.
 
 ### Prohibited
 
@@ -163,21 +139,21 @@ for _, tc := range cases {
 }
 ```
 
----
-
-## DESIGN-005 — Assertion Scope
+## DESIGN-005 — Assertion scope
 
 Multiple assertions in a test body are acceptable only when they verify a single logical behavior. Unrelated claims belong in separate tests.
 
 Acceptable clusters:
+
 - Multiple properties of one returned object
 - Before/after state of one operation
 - Related aspects of one behavior
 
 Not acceptable:
+
 - Create + persistence + logging + metric in one test
 
-DESIGN-002 asks *what am I testing*; DESIGN-005 asks *given the behavior is fixed, how many assertions do I need and what do they cover*. Both can flag the same test for different reasons.
+DESIGN-002 (in `behavior.md`) asks *what am I testing*; DESIGN-005 asks *given the behavior is fixed, how many assertions do I need and what do they cover*. Both can flag the same test for different reasons.
 
 ```go
 // WRONG: four unrelated behaviors in one test
@@ -205,11 +181,9 @@ func TestImportRekeysConfigBlock(t *testing.T) { /* ... */ }
 func TestImportRestoresAllSessionFiles(t *testing.T) { /* ... */ }
 ```
 
----
+## Naming and ordering
 
-## Style notes
-
-### Name tests in business language (absorbs CONV-010)
+### Business-language names (CONV-010)
 
 Name after what the code does, not how.
 
@@ -223,7 +197,7 @@ func TestSetupFixtureStagesConfigUnderTempDir(t *testing.T) { }
 func TestLoadManifestRejectsMalformedJSON(t *testing.T)     { }
 ```
 
-### Order tests happy → edge → error (absorbs CONV-005)
+### Order: happy → variation → config → edge → error (CONV-005)
 
 Within a file, order functions and table rows happy → variation → config → edge → error. Soft convention; reorder only when adding new tests, not as a cleanup pass.
 
@@ -235,14 +209,6 @@ Within a file, order functions and table rows happy → variation → config →
 | Edge | `Empty`, `Null`, `Zero`, `Max`, `Min`, `Boundary` |
 | Error | `Rejects`, `Fails`, `Invalid`, `Error` |
 
-### Execution time (absorbs ISOLATION-005)
+### Execution time (ISOLATION-005)
 
-If a test is noticeably slow, check for unintended external calls, oversized fixtures, or unbounded iteration. Tests here should complete in milliseconds; a test that takes seconds is a signal, not a feature.
-
----
-
-## Related
-
-- `test-behavior-under-test.md` — what the test claims
-- `test-independence.md` — environmental independence
-- `test-data-and-fixtures.md` — where arrange data comes from
+If a test is noticeably slow, check for unintended external calls, oversized fixtures, or unbounded iteration. Tests here complete in milliseconds; a test that takes seconds is a signal, not a feature.
