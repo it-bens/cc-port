@@ -378,11 +378,6 @@ func TestImport_LeavesNoStagingTemps(t *testing.T) {
 	assertNoStagingTemps(t, destClaudeHome)
 }
 
-// Same shape as TestImport_RefusesUndeclaredKey by design: both refuse a
-// preflight failure and assert nothing on disk changed. The behaviors differ
-// only in which classifier error type they raise.
-//
-//nolint:dupl // distinct preflight error types under test
 func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	sourceClaudeHome := testutil.SetupFixture(t)
 
@@ -416,39 +411,50 @@ func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
 }
 
-//nolint:dupl // distinct preflight error types under test (see sibling test above)
-func TestImport_RefusesUndeclaredKey(t *testing.T) {
+func TestImport_PreservesPlaceholderLookalikesInBodies(t *testing.T) {
+	// Arrange
 	sourceClaudeHome := testutil.SetupFixture(t)
-
 	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	// Inject {{SECRET}} into a body WITHOUT declaring it in the manifest.
-	buildArchiveWithUndeclaredBodyToken(
-		t, sourceClaudeHome, archivePath, "{{SECRET}}",
-	)
+	fixtureBytes, err := os.ReadFile(filepath.Join("testdata", "lookalike-tokens.txt"))
+	require.NoError(t, err)
+	buildArchiveWithOverrides(t, archiveOverrides{
+		sourceClaudeHome: sourceClaudeHome,
+		archivePath:      archivePath,
+		memoryInjection:  string(fixtureBytes),
+	})
 
 	destClaudeHome := buildEmptyDestClaudeHome(t)
 	destProjectPath := fixtureDestProjectPath
-
-	preConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
-	require.NoError(t, err)
+	destHomeDir := filepath.Join(t.TempDir(), "home")
 
 	source, size := openArchive(t, archivePath)
 	importOptions := importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: destProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destProjectPath,
-			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
-		},
+		HomePath:   destHomeDir,
 	}
-	_, err = importer.Run(t.Context(), destClaudeHome, importOptions)
-	require.Error(t, err, "import must refuse an archive carrying an undeclared token")
-	var undeclaredErr *importer.UndeclaredTokensError
-	require.ErrorAs(t, err, &undeclaredErr)
-	assert.Equal(t, []string{"{{SECRET}}"}, undeclaredErr.Tokens)
 
-	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
+	var expected bytes.Buffer
+	require.NoError(t, importer.ResolvePlaceholdersStream(
+		bytes.NewReader(fixtureBytes), &expected,
+		map[string]string{
+			"{{HOME}}":         destHomeDir,
+			"{{PROJECT_PATH}}": destProjectPath,
+		},
+	))
+
+	// Act
+	_, err = importer.Run(t.Context(), destClaudeHome, importOptions)
+
+	// Assert
+	require.NoError(t, err)
+	importedMemory, err := os.ReadFile(filepath.Join(
+		destClaudeHome.ProjectDir(destProjectPath), "memory", "MEMORY.md",
+	))
+	require.NoError(t, err)
+	assert.Contains(t, string(importedMemory), expected.String(),
+		"lookalike content survives import; declared keys substitute, undeclared tokens round-trip")
 }
 
 func TestImport_AtomicRollbackOnFailure(t *testing.T) {
@@ -579,22 +585,6 @@ func buildArchiveWithExtraDeclaredKey(
 		archivePath:      archivePath,
 		extraDeclaredKey: extraKey,
 		memoryInjection:  extraKey,
-	})
-}
-
-// buildArchiveWithUndeclaredBodyToken injects tokenInBody into the memory
-// body without declaring it in the manifest.
-func buildArchiveWithUndeclaredBodyToken(
-	t *testing.T,
-	sourceClaudeHome *claude.Home,
-	archivePath string,
-	tokenInBody string,
-) {
-	t.Helper()
-	buildArchiveWithOverrides(t, archiveOverrides{
-		sourceClaudeHome: sourceClaudeHome,
-		archivePath:      archivePath,
-		memoryInjection:  tokenInBody,
 	})
 }
 
