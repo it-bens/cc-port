@@ -1,39 +1,29 @@
----
-paths:
-  - "**/README.md"
-  - "docs/architecture.md"
----
-# Anti-AI-Slop Rules
+# Anti-AI-Slop (reference)
 
-**Scope**: only the two surfaces declared in the `paths:` frontmatter above, `**/README.md` and `docs/architecture.md`. That list is authoritative, not a pair of examples. Any `.md` file outside it is out of scope by default. These rules do **not** apply to AGENTS.md (pointer-only, LLM-targeted), code comments (terse by design), `.claude/` rule files (LLM-targeted), or `docs/superpowers/plans/` and `docs/superpowers/specs/` (LLM-targeted procedural artifacts, untracked per `no-committing-plans.md`, read by an executor agent or an engineer following steps).
+Loaded from `writing-docs` SKILL.md on the human-prose branch of the *Anti-slop pass* step. Skip for AGENTS.md — bullet pointers, not prose.
 
+LLMs produce text with a statistical fingerprint: uniform sentence lengths, predictable vocabulary, formulaic structures, absence of human texture. The lists below target the most common patterns in LLM-generated technical writing. All checks apply to the three human-prose surfaces in scope (root README, module READMEs, `docs/architecture.md`).
 
-> **HARD BAN: no em dashes (—) or en dashes (–) anywhere in output.** This is the single most common anti-slop violation. Replace with: period + new sentence, comma, parentheses, or delete the aside entirely.
+## Hard ban: em and en dashes
 
-LLMs produce text with a statistical fingerprint: uniform sentence lengths, predictable vocabulary, formulaic structures, and absence of human texture. All written output must read like it was written by a developer, not generated. These rules target the most common patterns in LLM-generated technical writing.
+> **No em dashes (—) or en dashes (–) anywhere in output.** This is the single most common anti-slop violation. Replace with: period + new sentence, comma, parentheses, or delete the aside entirely.
 
-## Punctuation Patterns
-
-### Em dashes
-
-Do not use em dashes (—). LLMs use them as a universal connector, substituting for commas, parentheses, colons, and periods. Typical AI density: one em dash every 50-80 words. Human baseline: roughly one per 500 words. Em dash overuse is the most visually obvious surface-level tell.
-
-Replace with:
-- A period and a new sentence (most common fix)
-- Parentheses for genuine asides
-- A comma
-- Delete the aside entirely if it isn't essential
+LLMs use em dashes as a universal connector, substituting for commas, parentheses, colons, and periods. Typical AI density: one em dash every 50-80 words. Human baseline: roughly one per 500 words. Em dash overuse is the most visually obvious surface-level tell.
 
 Bad: "The dispatch sites had `Context` in scope — but didn't pass it to the event constructors."
+
 Better: "The dispatch sites had `Context` in scope but didn't pass it to the event constructors."
+
+## Other punctuation patterns
 
 ### Colon overuse
 
 LLMs insert colons before nearly every explanation. Combined with phrases like "Here's the key point:" and "The answer is simple:", it creates a lecturing cadence.
 
 Replace with:
-- Weave the explanation into the sentence without a colon
-- Lead with the interesting part instead of the setup
+
+- Weave the explanation into the sentence without a colon.
+- Lead with the interesting part instead of the setup.
 - Delete the setup clause. If you're writing "The key takeaway is: X," just write X.
 
 ### Semicolons
@@ -42,7 +32,7 @@ LLMs use semicolons to stitch together simple declarative sentences that don't s
 
 Replace with "and", "but", or separate sentences.
 
-## Banned Vocabulary
+## Banned vocabulary
 
 Never use these words. They appear at 12-182x their normal frequency in LLM output and are immediate tells:
 
@@ -54,7 +44,7 @@ Never use these words. They appear at 12-182x their normal frequency in LLM outp
 
 Use the plain word instead: utilize → use, leverage → use, comprehensive → full, robust → strong. Or delete the word entirely. Most are filler.
 
-## Banned Sentence Patterns
+## Banned sentence patterns
 
 - **Contrastive reframe:** "It's not just X, it's Y" / "not only X but also Y". State the fact directly.
 - **Hedging filler:** "It's worth noting that," "It's important to understand," "It should be mentioned". Delete and state the fact.
@@ -65,47 +55,52 @@ Use the plain word instead: utilize → use, leverage → use, comprehensive →
 - **"This" + abstract noun:** "This approach enables...", "This methodology provides...", "This framework ensures...". Name the actual thing. Instead of "This approach enables," write "The caching layer enables" or merge with the previous sentence.
 - **Rule of three:** LLMs compulsively group items in threes ("speed, accuracy, and scalability"). If you have two things, list two. If you have four, list four. Don't pad to three and don't trim to three.
 
-## Banned Description Formats
+## Banned description formats
 
 - **AI-copilot style:** Category headers ("Refactor and Centralization", "API Enhancements", "Error Handling Improvements") with bullet lists that restate the diff. This format describes WHAT without WHY.
 - **Checklist features:** Emoji bullet lists (checkmark + feature name). Reads like a product launch, not a code change.
 - **Diff link references:** `[[1]](diffhunk://...)` style references auto-generated by tools. They're unclickable outside GitHub's diff view.
 
-## Sentence Rhythm
+## Sentence rhythm
 
 Vary sentence lengths. LLMs produce sentences that cluster around 15-20 words, creating a metronomic rhythm. Mix short sentences (5-8 words) with longer ones (25-30 words). A short sentence after a long one creates emphasis. Uniform length creates suspicion.
 
 Bad (metronomic):
+
 > The system now validates input before processing. This prevents invalid data from reaching the database. The validation uses the same rules as the API layer.
 
 Better (varied):
+
 > Input validation now runs before processing, using the same rules as the API. Invalid data never reaches the database.
 
-## Concreteness Over Abstraction
+## Concreteness over abstraction
 
 Never write "improved performance" when you can write "eliminated redundant child category fetch from SEO URL updater." Never write "better error handling" when you can name the exception class and the condition that triggers it. Developers want specifics: class names, config keys, method signatures, version numbers. Abstraction is filler.
 
 Don't mistake counts for concreteness. Prefer omitting numbers entirely. A count that restates what the text already shows (e.g., "nine events" when the text lists all nine) is noise, not specificity. If a number isn't needed, leave it out. If imprecision is acceptable, use wording like "additional" or "several." Use a specific number only when the value itself matters for understanding the change AND isn't deducible from the rest of the text: percentages, thresholds, version numbers, limits.
 
 Bad: "This enhancement significantly improves the developer experience."
+
 Better: "The `quantityStart` and `quantityEnd` fields now require a minimum value of `1`."
 
 Bad: "Nine events now implement `ShopwareEvent`."
+
 Better: "Events dispatched during import/export, media validation, SEO URL persistence, and theme changes now implement `ShopwareEvent`."
 
-## Don't Assume Intent
+## Don't assume intent
 
 Never attribute motivation or intent to the original authors of code you're describing. "This was an oversight" or "the original developer forgot to..." are assumptions. You don't know why the code was written the way it was. Describe what the code does and what you changed, not why someone else made a past decision.
 
 Bad: "This was an oversight. The dispatch just didn't pass Context in."
+
 Better: "The dispatch sites had `Context` in scope but didn't pass it to the event constructors."
 
-## Formatting Discipline
+## Formatting discipline
 
-- Write prose paragraphs, not bold-keyword-colon lists
+- Write prose paragraphs, not bold-keyword-colon lists.
 - Do not bold every other sentence. Bold only key behavioral changes, sparingly.
-- Do not use numbered lists unless items have a genuine sequence
-- Match the formatting density of existing content in the target context
+- Do not use numbered lists unless items have a genuine sequence.
+- Match the formatting density of existing content in the target context.
 
 ## Tone
 

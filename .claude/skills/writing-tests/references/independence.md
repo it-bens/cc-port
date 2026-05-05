@@ -1,34 +1,14 @@
----
-paths:
-  - "**/*_test.go"
----
+# Test Independence (reference)
 
-# Tests: Independence
+Loaded from `writing-tests` SKILL.md when the workflow needs the deep technical detail behind the *Guard independence* step.
 
-**CRITICAL**: A test's outcome MUST depend only on its own body and the values it constructs. Package globals, process singletons, the clock, and the PRNG are shared resources that silently break test ordering, `-run` filters, `-shuffle`, and any future `t.Parallel()` adoption.
+cc-port uses `t.TempDir` per test for filesystem state. No `t.Parallel()` today. No package-level mutable vars in test files. `TestMain` is not used. `time.Now()` appears only inside `manifest.Info{Created: time.Now()}` fixture constructors, never as an asserted value. No UUID generation in test assertions; session UUIDs in `testdata/` are fixed strings.
 
-## Project baseline
+These rules are insurance against drifting away from that baseline, not flags for current code.
 
-- Tests use `t.TempDir` per test for filesystem state. No `t.Parallel()` today.
-- No package-level mutable vars in test files. `TestMain` is not used.
-- `time.Now()` appears only inside `manifest.Info{Created: time.Now()}` fixture constructors, never as an asserted value.
-- No UUID generation in test assertions; session UUIDs in `testdata/` are fixed strings.
+## ISOLATION-001 — Shared mutable state
 
-These rules are insurance policies against drifting away from that baseline, not flags for current code.
-
-## Decision Test
-
-Before merging a test:
-
-> **"If I ran this test with `-shuffle=on`, `-run=TheOtherTest`, or after `t.Parallel()` adoption, would the outcome change?"**
-
-If yes, the test depends on state outside its own body.
-
----
-
-## ISOLATION-001 — Shared Mutable State
-
-Go tests MUST NOT share mutable state across test functions or subtests. Four real leak vectors:
+Go tests do not share mutable state across test functions or subtests. Four real leak vectors:
 
 1. **Package-level `var`** written by one test, read by another
 2. **`TestMain` initialized values** subsequently mutated by tests
@@ -76,11 +56,9 @@ func TestCustom(t *testing.T) {
 
 `t.Parallel()` amplifies the risk: two parallel tests racing on the same global produce nondeterministic outcomes. Prefer injection over global mutation.
 
----
+## ISOLATION-002 — Non-deterministic inputs
 
-## ISOLATION-002 — Non-Deterministic Inputs
-
-Values that change each run MUST NOT feed into assertions.
+Values that change each run do not feed into assertions.
 
 ### Flag
 
@@ -126,11 +104,3 @@ func TestManifestCreatedIsPopulated(t *testing.T) {
     assert.False(t, info.Created.IsZero())
 }
 ```
-
----
-
-## Related
-
-- `test-behavior-under-test.md` — what the test claims to verify
-- `test-data-and-fixtures.md` — deterministic arrange data
-- `test-shape.md` — structural rules

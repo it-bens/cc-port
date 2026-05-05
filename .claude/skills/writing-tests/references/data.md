@@ -1,32 +1,10 @@
----
-paths:
-  - "**/*_test.go"
----
+# Test Data and Fixtures (reference)
 
-# Tests: Data and Fixtures
+Loaded from `writing-tests` SKILL.md when the workflow needs the deep technical detail behind the *Source the arrange data* step.
 
-**CRITICAL**: Arrange data MUST come from sources the reader can see. External files pulled from unknown paths, opaque hex identifiers, and inline blobs duplicated across tests all obscure what the test is exercising.
+## ISOLATION-003 — File dependency must be locatable from the test
 
-## Project baseline
-
-- `testutil.SetupFixture(t)` stages `testdata/dotclaude/` under `t.TempDir` and returns a `*claude.Home`. This is the canonical fixture entry point for integration-flavored tests.
-- `testdata/` fixture **file** names may be UUID-style hex (`a1b2c3d4-…-000001.jsonl`) because Claude Code's real on-disk shapes are that format. Test **identifiers in code** (variables, assertion arguments) must be descriptive.
-- Inline fixtures (byte literals, short heredoc-style strings) are preferred for narrow unit tests exercising one parser path. Real fixture files are preferred for end-to-end flows.
-- Per-test helpers already wire up repeated construction (`testutil.SetupFixture`, local `newRewriter`-style functions). Extend those before inventing new patterns.
-
-## Decision Test
-
-Before writing arrange code:
-
-> **"Can a reader of only this test tell what the inputs are and where they came from?"**
-
-If the answer requires opening another file outside `testdata/`, a helper in a sibling package, or a cross-test fixture borrow, simplify.
-
----
-
-## ISOLATION-003 — Mystery Guest File Dependency
-
-External file dependencies (`os.ReadFile`, `os.Open`, `//go:embed`) MUST point to a fixture the reader can locate from the test file.
+External file dependencies (`os.ReadFile`, `os.Open`, `//go:embed`) point to a fixture the reader can locate from the test file.
 
 ### Acceptable
 
@@ -55,11 +33,9 @@ data, err := os.ReadFile(filepath.Join("testdata", "session.jsonl"))
 home := testutil.SetupFixture(t)   // home.ConfigFile points into t.TempDir
 ```
 
----
+## ISOLATION-004 — Descriptive identifiers in code
 
-## ISOLATION-004 — Opaque Test Data Identifiers
-
-String literals used as identifiers in assertions MUST be descriptive. Hex blobs make failure messages unreadable.
+String literals used as identifiers in assertions are descriptive. Hex blobs make failure messages unreadable.
 
 ### Flag
 
@@ -96,23 +72,21 @@ assert.Equal(t, "primary-session", got.ID)
 | File-history keys | `"edited-file"`, `"deleted-file"` |
 | Manifest entries | `"first-snapshot"`, `"later-snapshot"` |
 
----
+## ISOLATION-006 — Real fixture files for parsers and complex I/O
 
-## ISOLATION-006 — Real Fixture Files
-
-Tests exercising file parsing or complex I/O SHOULD read real fixture files from `testdata/` rather than build content inline.
+Tests exercising file parsing or complex I/O read real fixture files from `testdata/` rather than build content inline.
 
 ### Applies when
 
 - Test writes a multi-line blob to disk, then reads it back
 - Test builds a file via heredoc-style string concatenation longer than ~10 lines
-- Test exercises a parser/importer/exporter/scanner against representative input
+- Test exercises a parser, importer, exporter, or scanner against representative input
 
 ### Does not apply when
 
 - Blob is a single line (`{"key":"value"}`)
 - Test specifically exercises a malformed input shape (inline is clearer than a dedicated fixture per malformation)
-- Content isn't written to any file or stream
+- Content is not written to any file or stream
 
 ```go
 // WRONG: 40-line heredoc builds a synthetic session file inline
@@ -135,9 +109,7 @@ func TestScanSession(t *testing.T) {
 }
 ```
 
----
-
-## DESIGN-009 — Duplicated Inline Arrange Code
+## DESIGN-009 — Helper extraction for repeated arrange code
 
 If two or more tests repeat 5+ consecutive lines of construction with identical types and arguments, extract a helper.
 
@@ -183,11 +155,3 @@ func newRewriter(t *testing.T) (fsRoot string, r *rewrite.Replacer) {
 - Helper names start lowercase (package-local).
 - `*testing.T` is the first parameter; `t.Helper()` is line 1.
 - Cleanup lives in `t.Cleanup` inside the helper, not in a returned `func()`.
-
----
-
-## Related
-
-- `test-independence.md` — why external files and globals leak across tests
-- `test-behavior-under-test.md` — what the fixture is actually there to verify
-- `test-shape.md` — structure of the test body
