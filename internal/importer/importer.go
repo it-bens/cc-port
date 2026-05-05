@@ -212,6 +212,39 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 	return &Result{RulesReport: report}, nil
 }
 
+// forEachNonMetadataEntry iterates each non-metadata entry on zipReader,
+// honoring ctx cancellation and enforcing the archive aggregate cap. fn
+// reports the uncompressed byte count it observed for an entry; the running
+// total is checked against maxArchiveUncompressedBytes after each call so a
+// crafted archive that misdeclares per-entry sizes cannot slip through.
+func forEachNonMetadataEntry(
+	ctx context.Context,
+	zipReader *zip.Reader,
+	fn func(zipFile *zip.File) (entryBytes int64, err error),
+) error {
+	var aggregate int64
+	for _, zipFile := range zipReader.File {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if zipFile.Name == "metadata.xml" {
+			continue
+		}
+		entryBytes, err := fn(zipFile)
+		if err != nil {
+			return err
+		}
+		aggregate += entryBytes
+		if aggregate > maxArchiveUncompressedBytes {
+			return fmt.Errorf(
+				"%w: aggregate %d > limit %d",
+				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
+			)
+		}
+	}
+	return nil
+}
+
 // classifyPresentDeclaredKeys is pass one of the two-pass archive read.
 // It walks each non-metadata entry on the supplied zip reader and records
 // which declared keys appear as literal substrings in any body, without
@@ -231,26 +264,16 @@ func classifyPresentDeclaredKeys(
 		return nil, fmt.Errorf("open archive: %w", err)
 	}
 
-	var aggregate int64
-	for _, zipFile := range zipReader.File {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if zipFile.Name == "metadata.xml" {
-			continue
-		}
-		content, err := readZipFile(zipFile)
-		if err != nil {
-			return nil, fmt.Errorf("read zip entry %q: %w", zipFile.Name, err)
-		}
-		aggregate += int64(len(content))
-		if aggregate > maxArchiveUncompressedBytes {
-			return nil, fmt.Errorf(
-				"%w: aggregate %d > limit %d",
-				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
-			)
+	err = forEachNonMetadataEntry(ctx, zipReader, func(zipFile *zip.File) (int64, error) {
+		content, readErr := readZipFile(zipFile)
+		if readErr != nil {
+			return 0, fmt.Errorf("read zip entry %q: %w", zipFile.Name, readErr)
 		}
 		recordPresentDeclaredKeys(content, declaredByKey, presentDeclaredKeys)
+		return int64(len(content)), nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return presentDeclaredKeys, nil
@@ -445,29 +468,19 @@ func stageArchiveEntries(
 		return nil, nil, fmt.Errorf("open archive: %w", err)
 	}
 
-	var aggregate int64
-	for _, zipFile := range zipReader.File {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, nil, ctxErr
-		}
-		if zipFile.Name == "metadata.xml" {
-			continue
-		}
+	err = forEachNonMetadataEntry(ctx, zipReader, func(zipFile *zip.File) (int64, error) {
 		entryBytes, newAppends, newConfig, routeErr := routeArchiveEntry(
 			claudeHome, plan, zipFile, resolutions, historyAppends, configBlock,
 		)
 		if routeErr != nil {
-			return nil, nil, routeErr
+			return 0, routeErr
 		}
 		historyAppends = newAppends
 		configBlock = newConfig
-		aggregate += entryBytes
-		if aggregate > maxArchiveUncompressedBytes {
-			return nil, nil, fmt.Errorf(
-				"%w: aggregate %d > limit %d",
-				ErrAggregateCapExceeded, aggregate, maxArchiveUncompressedBytes,
-			)
-		}
+		return entryBytes, nil
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 	return historyAppends, configBlock, nil
 }

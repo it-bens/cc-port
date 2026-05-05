@@ -455,6 +455,7 @@ func TestImport_PreservesPlaceholderLookalikesInBodies(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(importedMemory), expected.String(),
 		"lookalike content survives import; declared keys substitute, undeclared tokens round-trip")
+	assertNoStagingTemps(t, destClaudeHome)
 }
 
 func TestImport_AtomicRollbackOnFailure(t *testing.T) {
