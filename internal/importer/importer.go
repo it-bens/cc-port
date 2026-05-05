@@ -257,8 +257,8 @@ func classifyPresentDeclaredKeys(
 }
 
 // recordPresentDeclaredKeys marks each declared key that appears as a
-// literal substring in body. Mirrors anyBodyContains but updates a shared
-// set directly so the archive body can be discarded after each entry.
+// literal substring in body. Updates a shared set directly so the archive
+// body can be discarded after each entry.
 func recordPresentDeclaredKeys(body []byte, declaredByKey, presentKeys map[string]struct{}) {
 	for key := range declaredByKey {
 		if _, already := presentKeys[key]; already {
@@ -303,10 +303,10 @@ func runPreflight(
 	return fmt.Errorf("archive preflight: %w", &MissingResolutionsError{Keys: missing})
 }
 
-// classifyMissingResolutions mirrors ClassifyPlaceholders's missing-key
-// logic over the streamed classification rather than retained bodies.
-// Declared keys the archive never embeds stay out of the result even when
-// the caller did not provide a resolution for them.
+// classifyMissingResolutions returns the declared keys present in any body
+// that have no entry in resolutions and are not implicit. Declared keys the
+// archive never embeds stay out of the result even when the caller did not
+// provide a resolution for them. Result is alphabetically sorted.
 func classifyMissingResolutions(
 	presentDeclaredKeys map[string]struct{},
 	metadata *manifest.Metadata,
