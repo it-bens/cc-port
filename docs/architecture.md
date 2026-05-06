@@ -54,6 +54,11 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Cross-machine push refuses without `--force`              | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
 | `--from-manifest` exclusivity with `--all` and per-category flags | [`cmd/cc-port/README.md`](../cmd/cc-port/README.md) §Category selection |
 | Tempfile materialization for random-access consumers | [`internal/pipeline/README.md`](../internal/pipeline/README.md) §Public API |
+| Layered AWS credential resolution (file > env > prompt) | [`internal/credentials/README.md`](../internal/credentials/README.md) §Source layering and precedence |
+
+### TTY-prompt ownership split
+
+Two modules own TTY-required prompts because the input shapes differ. `internal/ui` wraps `huh` forms (multi-field, banner, event loop); `internal/credentials` runs single-field echo-suppressed reads with a context-cancellation seam that closes `/dev/tty` on cancel. Neither module re-implements the other's path. New TTY work picks the owner whose shape matches; do not extend one to cover the other.
 
 ## Session-UUID-keyed user-wide data (cross-cutting)
 
