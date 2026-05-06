@@ -29,6 +29,7 @@ Tests verify observable behavior of the exported API.
 - `require.NoError(t, err)` before the act step is a **precondition**, not a trivial assertion on the act's return.
 - `assert.IsType` or `assert.Implements` on a function with one concrete return type is trivially true. Delete it or replace with a behavior assertion.
 - `package foo` internal tests are allowed when the invariant genuinely cannot be observed externally (file-history contract, lock handoffs). Prefer `package foo_test` when the exported surface suffices.
+- Drift-guard tests that iterate two registries and assert index-alignment or set-equality are valid behavior tests of the registry contract, not implementation tests. The behavior under test is "registry A and registry B stay in sync as new entries land." Keep them in `package foo_test`; assert via the exported registry surface, not unexported state.
 
 ### When accessor / constructor tests ARE valid
 
@@ -68,6 +69,19 @@ func TestEncodePathReplacesSlashesAndDots(t *testing.T) {
     assert.Equal(t, "-tmp-cc-port-test-foo", got)
 }
 ```
+
+### Seam introduction patterns when behavior is not observable
+
+When the behavior is real but the current exported API hides it, four production-code seams have surfaced as legitimate paths to observability. Each survives in production for reasons unrelated to the test — real injection points the production caller already wants. Choose the seam that matches what production wants; if none fits without contorting production code, the behavior is implementation detail and the test should be reframed or deleted instead.
+
+| Pattern | Production-code shape | Test usage |
+|---|---|---|
+| `io.Writer` parameter | Function takes `out io.Writer` instead of writing to `os.Stdout`; cobra wires the live default via `cmd.OutOrStdout()`. | Test passes `&bytes.Buffer{}` and asserts on its contents. |
+| `WithX` option | `Run` takes `opts ...RunOption`; `WithArchiveOpener(fn)` swaps a previously package-global function. | Test passes `WithX(fakeFn)` instead of mutating a global. |
+| Exported pure helper | Inline merge or build logic is extracted into an exported pure function (`BuildHistoryBytes`, `MergeProjectConfigBytes`) that the production caller and the test both invoke. | Test exercises the helper directly without staging the surrounding pipeline. |
+| Package-level fn-var seam | `var findActive = lock.FindActive`; production calls through the indirection. | Test reassigns the var inside the test body and restores via `t.Cleanup`. |
+
+Anti-pattern: introducing a seam that no production caller actually needs, only to make the test pass. That is the same `package foo` internal-test smell, dressed in a `With*` option.
 
 ## DESIGN-002 — Single behavior per test
 

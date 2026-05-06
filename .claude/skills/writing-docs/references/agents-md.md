@@ -63,12 +63,20 @@ Line numbers shift the moment anyone reformats the file. Section names survive h
 
 ## Decision Test (per bullet)
 
-> Does this bullet end with `(README §<heading name>)` pointing at a real heading, and does it avoid explaining *why*?
+Three questions, one bullet at a time:
 
-- Yes → proceed.
+1. **Shape.** Does the bullet end with `(README §<heading name>)` pointing at a real heading, and avoid explaining *why* in the bullet itself?
+2. **Provenance.** Can the rule trace to a specific cleanup incident, a recurring class of bug the module already corrected, or a load-bearing test invariant? "We might want this someday" is not provenance.
+3. **Visibility.** If the rule were violated tomorrow, would the failure be visible — a test breaks, a guarantee voids, a contract refuses — or invisible (a stylistic preference)? Invisible rules are noise.
+
+Outcomes:
+
+- All three pass → proceed.
 - No pointer → delete the bullet, or rewrite as a pointer.
 - Explains motivation → move the motivation to the README; leave only the rule + pointer.
 - Pointer targets a vague or missing heading → fix the README heading first (heading-predicts-content discipline), then repoint.
+- No traceable provenance → do not add the rule. Wait for evidence to surface.
+- Violation would be invisible → drop the rule; AGENTS.md is for warnings, not preferences.
 
 ## CLAUDE.md companion
 
