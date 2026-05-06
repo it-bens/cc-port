@@ -1,9 +1,10 @@
 // Package remote wraps gocloud.dev/blob with a narrow consumer-defined
 // surface. The Remote type exposes Open, Create, Stat, and Close. URL
-// dispatch is delegated to gocloud.dev (file:// for local filesystem,
-// s3:// for AWS S3 and S3-compatible stores). Backend-native
-// authentication (e.g. the AWS SDK credential chain) is the operator's
-// environment responsibility, not cc-port state.
+// dispatch is owned by buildMux (mux.go), which registers a
+// BucketURLOpener per scheme: file:// via the stock fileblob opener,
+// s3:// via cc-port's s3Opener (opener_s3.go) which threads an
+// optional aws.CredentialsProvider through Deps. Falls back to the
+// AWS SDK default chain when Deps.Credentials is nil.
 package remote
 
 import (
