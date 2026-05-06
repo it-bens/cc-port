@@ -128,6 +128,74 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	}
 }
 
+func TestPull_AcceptsCredentialsFile(t *testing.T) {
+	tmpHome, _ := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	credsPath := filepath.Join(t.TempDir(), "creds.env")
+	require.NoError(t, os.WriteFile(credsPath,
+		[]byte("AWS_ACCESS_KEY_ID=AKIATEST\nAWS_SECRET_ACCESS_KEY=secrettest\n"), 0o600))
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-dir", claudeFixtureDir,
+		"--to", targetPath,
+		"--remote", url,
+		"--credentials-file", credsPath,
+	})
+
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+}
+
+func TestPull_AcceptsNoPrompt(t *testing.T) {
+	tmpHome, _ := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-dir", claudeFixtureDir,
+		"--to", targetPath,
+		"--remote", url,
+		"--no-prompt",
+	})
+
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+}
+
+func TestPull_RejectsMalformedCredentialsFile(t *testing.T) {
+	tmpHome, _ := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	badCredsPath := filepath.Join(t.TempDir(), "bad.env")
+	require.NoError(t, os.WriteFile(badCredsPath, []byte("BROKEN_NO_EQUALS\n"), 0o600))
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-dir", claudeFixtureDir,
+		"--to", targetPath,
+		"--remote", url,
+		"--credentials-file", badCredsPath,
+	})
+
+	err := rootCmd.Execute()
+
+	require.Error(t, err)
+}
+
 func TestOpenArchiveSource_MissingObjectReturnsErrRemoteNotFound(t *testing.T) {
 	url := "file://" + t.TempDir()
 	r, err := remote.New(context.Background(), url, remote.Deps{})

@@ -42,6 +42,71 @@ func TestStripS3BlobParams_S3ForcePathStyleAlias(t *testing.T) {
 	assert.True(t, options.usePathStyle, "s3ForcePathStyle must alias to use_path_style")
 }
 
+func TestStripS3BlobParams_OnlyDisableHTTPS_LeavesOthersZero(t *testing.T) {
+	values := url.Values{}
+	values.Set("disable_https", "true")
+
+	stripped, options := stripS3BlobParams(values)
+
+	assert.True(t, options.disableHTTPS)
+	assert.False(t, options.accelerate)
+	assert.False(t, options.usePathStyle)
+	assert.Empty(t, options.encryptionType)
+	assert.Empty(t, options.kmsKeyID)
+	assert.Empty(t, stripped.Get("disable_https"), "consumed param must not pass through")
+}
+
+func TestStripS3BlobParams_OnlyAccelerate_LeavesOthersZero(t *testing.T) {
+	values := url.Values{}
+	values.Set("accelerate", "true")
+
+	stripped, options := stripS3BlobParams(values)
+
+	assert.True(t, options.accelerate)
+	assert.False(t, options.disableHTTPS)
+	assert.False(t, options.usePathStyle)
+	assert.Empty(t, stripped.Get("accelerate"))
+}
+
+func TestStripS3BlobParams_OnlyEncryption_PassesAesKeysIntoOptions(t *testing.T) {
+	values := url.Values{}
+	values.Set("ssetype", "AES256")
+	values.Set("kmskeyid", "alias/my-key")
+
+	stripped, options := stripS3BlobParams(values)
+
+	assert.Equal(t, "AES256", options.encryptionType)
+	assert.Equal(t, "alias/my-key", options.kmsKeyID)
+	assert.Empty(t, stripped.Get("ssetype"))
+	assert.Empty(t, stripped.Get("kmskeyid"))
+}
+
+func TestStripS3BlobParams_UnknownParams_PassThroughUntouched(t *testing.T) {
+	values := url.Values{}
+	values.Set("region", "us-east-1")
+	values.Set("profile", "archive")
+	values.Set("hostname_immutable", "true")
+
+	stripped, options := stripS3BlobParams(values)
+
+	assert.False(t, options.accelerate)
+	assert.False(t, options.usePathStyle)
+	assert.False(t, options.disableHTTPS)
+	assert.Equal(t, "us-east-1", stripped.Get("region"))
+	assert.Equal(t, "archive", stripped.Get("profile"))
+	assert.Equal(t, "true", stripped.Get("hostname_immutable"))
+}
+
+func TestStripS3BlobParams_NonTrueAccelerate_TreatedAsFalse(t *testing.T) {
+	values := url.Values{}
+	values.Set("accelerate", "yes")
+
+	stripped, options := stripS3BlobParams(values)
+
+	assert.False(t, options.accelerate, "any non-'true' value reads as disabled")
+	assert.Empty(t, stripped.Get("accelerate"), "key is still consumed regardless of value")
+}
+
 func TestS3Opener_AWSConfigFromURL_OverridesCredentialsWhenProvided(t *testing.T) {
 	static := credentials.NewStaticCredentialsProvider("test-akid", "test-secret", "")
 	opener := newS3Opener(Deps{Credentials: static})

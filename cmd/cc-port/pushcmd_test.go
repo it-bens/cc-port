@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -189,6 +190,84 @@ func TestPush_ForceOverridesCrossMachineRefusal(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.NoError(t, err)
+}
+
+// writeTestCredsFile writes a 0600 .env-style credentials file holding
+// the two required AWS_* keys and returns its path. The credentials are
+// dummy because file:// remotes ignore them; the test exercises only
+// that the resolver runs and the provider reaches remote.Deps.
+func writeTestCredsFile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "creds.env")
+	contents := "AWS_ACCESS_KEY_ID=AKIATEST\nAWS_SECRET_ACCESS_KEY=secrettest\n"
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+	return path
+}
+
+func TestPush_AcceptsCredentialsFile(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	manifestPath := pushTestManifestPath(t)
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
+	credsPath := writeTestCredsFile(t)
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"push", projectPath,
+		"--claude-dir", claudeFixtureDir,
+		"--as", "myproj",
+		"--remote", remoteURL,
+		"--from-manifest", manifestPath,
+		"--credentials-file", credsPath,
+	})
+
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+}
+
+func TestPush_AcceptsNoPrompt(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	manifestPath := pushTestManifestPath(t)
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"push", projectPath,
+		"--claude-dir", claudeFixtureDir,
+		"--as", "myproj",
+		"--remote", remoteURL,
+		"--from-manifest", manifestPath,
+		"--no-prompt",
+	})
+
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+}
+
+func TestPush_RejectsMalformedCredentialsFile(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	manifestPath := pushTestManifestPath(t)
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
+	badCredsPath := filepath.Join(t.TempDir(), "bad.env")
+	require.NoError(t, os.WriteFile(badCredsPath, []byte("BROKEN_NO_EQUALS\n"), 0o600))
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"push", projectPath,
+		"--claude-dir", claudeFixtureDir,
+		"--as", "myproj",
+		"--remote", remoteURL,
+		"--from-manifest", manifestPath,
+		"--credentials-file", badCredsPath,
+	})
+
+	err := rootCmd.Execute()
+
+	require.Error(t, err)
 }
 
 func TestOpenPriorRead_NoObjectReturnsNil(t *testing.T) {
