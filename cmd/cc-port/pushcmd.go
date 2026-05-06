@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
@@ -141,8 +142,19 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		return err
 	}
 
+	credentialsFile, _ := cmd.Flags().GetString("credentials-file")
+	noPrompt, _ := cmd.Flags().GetBool("no-prompt")
+
+	credentialsProvider, err := credentials.Resolve(cmd.Context(), credentials.ResolveOptions{
+		Path:   credentialsFile,
+		Prompt: !noPrompt,
+	})
+	if err != nil {
+		return err
+	}
+
 	ctx := cmd.Context()
-	r, err := remote.New(ctx, remoteURL, remote.Deps{})
+	r, err := remote.New(ctx, remoteURL, remote.Deps{Credentials: credentialsProvider})
 	if err != nil {
 		return err
 	}

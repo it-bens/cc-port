@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
@@ -200,7 +201,18 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		}
 	}
 
-	r, err := remote.New(cmd.Context(), remoteURL, remote.Deps{})
+	credentialsFile, _ := cmd.Flags().GetString("credentials-file")
+	noPrompt, _ := cmd.Flags().GetBool("no-prompt")
+
+	credentialsProvider, err := credentials.Resolve(cmd.Context(), credentials.ResolveOptions{
+		Path:   credentialsFile,
+		Prompt: !noPrompt,
+	})
+	if err != nil {
+		return syncc.PullOptions{}, nil, "", err
+	}
+
+	r, err := remote.New(cmd.Context(), remoteURL, remote.Deps{Credentials: credentialsProvider})
 	if err != nil {
 		return syncc.PullOptions{}, nil, "", err
 	}
