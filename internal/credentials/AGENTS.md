@@ -4,7 +4,7 @@
 
 - Every new error is a sentinel or typed error; assertion shape goes in the inventory (README §Errors).
 - Prompt path obeys the cancellation contract (README §Quirks).
-- The credentials file mode check refuses anything more permissive than 0600 before parsing (README §Source layering and precedence).
+- Do not relax the 0600 file-mode ceiling on credentials files (README §Source layering and precedence).
 - When adding a new credential source, extend the resolver's source list in source-precedence order; do not bypass `mergePreferLeft` (README §Source layering and precedence).
 
 ## Navigation

@@ -8,15 +8,10 @@ import (
 	"github.com/charmbracelet/x/term"
 )
 
-// osTTYPrompter reads from /dev/tty using github.com/charmbracelet/x/term so
-// piped stdin is unaffected by the prompt. The cancellation seam closes the
-// tty handle when ctx fires, which causes the blocked ReadPassword to return;
-// the helper translates the resulting error into context.Canceled wrapped via
-// fmt.Errorf("canceled: %w", ctx.Err()).
+// osTTYPrompter is the production ttyPrompter backed by /dev/tty.
 type osTTYPrompter struct{}
 
-// Prompt opens /dev/tty, races ctx.Done against term.ReadPassword by closing
-// the tty handle on cancellation, and returns the secret with echo suppressed.
+// Prompt reads a single secret from /dev/tty with echo suppressed.
 func (osTTYPrompter) Prompt(ctx context.Context, label string) (string, error) {
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
