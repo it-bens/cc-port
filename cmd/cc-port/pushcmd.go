@@ -135,7 +135,7 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 	}
 
 	ctx := cmd.Context()
-	r, err := remote.New(ctx, remoteURL)
+	r, err := remote.New(ctx, remoteURL, remote.Deps{})
 	if err != nil {
 		return err
 	}

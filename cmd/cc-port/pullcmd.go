@@ -193,7 +193,7 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		}
 	}
 
-	r, err := remote.New(cmd.Context(), remoteURL)
+	r, err := remote.New(cmd.Context(), remoteURL, remote.Deps{})
 	if err != nil {
 		return syncc.PullOptions{}, nil, "", err
 	}

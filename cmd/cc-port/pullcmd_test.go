@@ -130,7 +130,7 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 
 func TestOpenArchiveSource_MissingObjectReturnsErrRemoteNotFound(t *testing.T) {
 	url := "file://" + t.TempDir()
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -144,7 +144,7 @@ func TestOpenArchiveSource_MissingObjectReturnsErrRemoteNotFound(t *testing.T) {
 func TestOpenArchiveSource_EncryptedNoPassphraseReturnsErrPassphraseRequired(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -158,7 +158,7 @@ func TestOpenArchiveSource_EncryptedNoPassphraseReturnsErrPassphraseRequired(t *
 func TestOpenArchiveSource_PlaintextWithPassphraseReturnsErrUnencryptedInput(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "k", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -172,7 +172,7 @@ func TestOpenArchiveSource_PlaintextWithPassphraseReturnsErrUnencryptedInput(t *
 func TestOpenArchiveSource_PlaintextNoPassphraseSucceeds(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "k", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 

@@ -18,7 +18,7 @@ func TestSource_RejectsNilRemote(t *testing.T) {
 }
 
 func TestSource_RejectsEmptyKey(t *testing.T) {
-	r, _ := remote.New(context.Background(), memURL)
+	r, _ := remote.New(context.Background(), memURL, remote.Deps{})
 	defer func() { _ = r.Close() }()
 	_, _, _, err := (&remote.Source{Remote: r, Key: ""}).Open(context.Background(), pipeline.View{})
 	if err == nil {
@@ -27,7 +27,7 @@ func TestSource_RejectsEmptyKey(t *testing.T) {
 }
 
 func TestSource_OpenStreamsBucketReaderDirectly(t *testing.T) {
-	r, _ := remote.New(context.Background(), memURL)
+	r, _ := remote.New(context.Background(), memURL, remote.Deps{})
 	defer func() { _ = r.Close() }()
 
 	want := []byte("source stage round trip")
@@ -68,7 +68,7 @@ func TestSink_RejectsNilRemote(t *testing.T) {
 }
 
 func TestSink_RejectsEmptyKey(t *testing.T) {
-	r, _ := remote.New(context.Background(), memURL)
+	r, _ := remote.New(context.Background(), memURL, remote.Deps{})
 	defer func() { _ = r.Close() }()
 	_, _, err := (&remote.Sink{Remote: r, Key: ""}).Open(context.Background(), nil)
 	if err == nil {
@@ -77,7 +77,7 @@ func TestSink_RejectsEmptyKey(t *testing.T) {
 }
 
 func TestSink_OpenRoundTripCommitsOnClose(t *testing.T) {
-	r, _ := remote.New(context.Background(), memURL)
+	r, _ := remote.New(context.Background(), memURL, remote.Deps{})
 	defer func() { _ = r.Close() }()
 
 	w, closer, err := (&remote.Sink{Remote: r, Key: "sinktest"}).Open(context.Background(), nil)

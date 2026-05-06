@@ -26,7 +26,7 @@ import (
 
 func newMemRemote(t *testing.T) *remote.Remote {
 	t.Helper()
-	r, err := remote.New(context.Background(), "mem://")
+	r, err := remote.New(context.Background(), "mem://", remote.Deps{})
 	if err != nil {
 		t.Fatalf("remote.New: %v", err)
 	}

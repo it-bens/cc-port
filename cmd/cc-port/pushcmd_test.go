@@ -114,7 +114,7 @@ func TestPush_DryRunDoesNotUpload(t *testing.T) {
 	if !strings.Contains(buf.String(), "(no changes; pass --apply to commit)") {
 		t.Fatalf("expected apply hint:\n%s", buf.String())
 	}
-	r, err := remote.New(context.Background(), "mem://")
+	r, err := remote.New(context.Background(), "mem://", remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 	if _, openErr := r.Open(context.Background(), "myproj"); !errors.Is(openErr, remote.ErrNotFound) {
@@ -141,7 +141,7 @@ func TestPush_ApplyCommitsToRemote(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.NoError(t, err)
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 	if _, statErr := r.Stat(context.Background(), "myproj"); statErr != nil {
@@ -198,7 +198,7 @@ func TestPush_ForceOverridesCrossMachineRefusal(t *testing.T) {
 
 func TestOpenPriorRead_NoObjectReturnsNil(t *testing.T) {
 	url := "file://" + t.TempDir()
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -213,7 +213,7 @@ func TestOpenPriorRead_NoObjectReturnsNil(t *testing.T) {
 func TestOpenPriorRead_EncryptedNoPassphraseNoForceReturnsErrPassphraseRequired(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -227,7 +227,7 @@ func TestOpenPriorRead_EncryptedNoPassphraseNoForceReturnsErrPassphraseRequired(
 func TestOpenPriorRead_EncryptedNoPassphraseWithForceReturnsNil(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -242,7 +242,7 @@ func TestOpenPriorRead_EncryptedNoPassphraseWithForceReturnsNil(t *testing.T) {
 func TestOpenPriorRead_PlaintextReturnsPriorReadWithoutEncryptedFlag(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "k", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 

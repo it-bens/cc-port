@@ -13,7 +13,9 @@ import (
 	"io"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"gocloud.dev/blob"
+
 	// Blank-imported so blob.OpenBucket dispatches file:// URLs to the
 	// filesystem driver. Adding a backend means blank-importing it here.
 	_ "gocloud.dev/blob/fileblob"
@@ -23,14 +25,21 @@ import (
 	"gocloud.dev/gcerrors"
 )
 
-// New opens a Remote for the given URL. Supported schemes:
-//   - file:///path/to/dir
-//   - s3://bucket/optional-prefix?region=<region>
-func New(ctx context.Context, rawURL string) (*Remote, error) {
+// Deps carries dependencies the Remote needs from the cmd layer.
+// Credentials may be nil, signaling SDK default chain for s3:// URLs.
+type Deps struct {
+	Credentials aws.CredentialsProvider
+}
+
+// New opens a Remote for the given URL using the cc-port-owned mux.
+// deps.Credentials is nil-permitted; the s3 opener falls back to the
+// SDK default chain when nil.
+func New(ctx context.Context, rawURL string, deps Deps) (*Remote, error) {
 	bucket, err := blob.OpenBucket(ctx, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("remote: open bucket %q: %w", rawURL, err)
 	}
+	_ = deps // reserved for the upcoming explicit-mux refactor.
 	return &Remote{bucket: bucket, url: rawURL}, nil
 }
 
