@@ -2,6 +2,8 @@ package credentials
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -29,7 +31,7 @@ const credentialsFileMaxMode os.FileMode = 0o600
 // rather than silently truncating.
 const maxScannerLine = 64 << 10
 
-func parseFile(path string) (credentialFields, error) {
+func parseFile(path string) (fields credentialFields, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return credentialFields{}, &FileParseError{Path: path, Line: 0, Err: err}
@@ -42,9 +44,12 @@ func parseFile(path string) (credentialFields, error) {
 	if err != nil {
 		return credentialFields{}, &FileParseError{Path: path, Line: 0, Err: err}
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close credentials file: %w", closeErr))
+		}
+	}()
 
-	var fields credentialFields
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 4<<10), maxScannerLine)
 	lineNumber := 0
