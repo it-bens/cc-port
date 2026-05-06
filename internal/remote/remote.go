@@ -1,9 +1,10 @@
 // Package remote wraps gocloud.dev/blob with a narrow consumer-defined
 // surface. The Remote type exposes Open, Create, Stat, and Close. URL
-// dispatch is delegated to gocloud.dev (file:// for local filesystem,
-// s3:// for AWS S3 and S3-compatible stores). Backend-native
-// authentication (e.g. the AWS SDK credential chain) is the operator's
-// environment responsibility, not cc-port state.
+// dispatch is owned by buildMux (mux.go), which registers a
+// BucketURLOpener per scheme: file:// via the stock fileblob opener,
+// s3:// via cc-port's s3Opener (opener_s3.go) which threads an
+// optional aws.CredentialsProvider through Deps. Falls back to the
+// AWS SDK default chain when Deps.Credentials is nil.
 package remote
 
 import (
@@ -13,21 +14,33 @@ import (
 	"io"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"gocloud.dev/blob"
-	// Blank-imported so blob.OpenBucket dispatches file:// URLs to the
-	// filesystem driver. Adding a backend means blank-importing it here.
-	_ "gocloud.dev/blob/fileblob"
-	// Blank-imported so blob.OpenBucket dispatches s3:// URLs to the
-	// AWS S3 driver. Authentication uses the AWS SDK credential chain.
-	_ "gocloud.dev/blob/s3blob"
 	"gocloud.dev/gcerrors"
 )
 
-// New opens a Remote for the given URL. Supported schemes:
-//   - file:///path/to/dir
-//   - s3://bucket/optional-prefix?region=<region>
-func New(ctx context.Context, rawURL string) (*Remote, error) {
-	bucket, err := blob.OpenBucket(ctx, rawURL)
+// Deps carries dependencies the Remote needs from the cmd layer.
+// Credentials may be nil, signaling SDK default chain for s3:// URLs.
+type Deps struct {
+	Credentials aws.CredentialsProvider
+}
+
+// New opens a Remote for the given URL using the cc-port-owned mux.
+// deps.Credentials is nil-permitted; the s3 opener falls back to the
+// SDK default chain when nil.
+func New(ctx context.Context, rawURL string, deps Deps) (*Remote, error) {
+	return NewWithMux(ctx, rawURL, buildMux(deps))
+}
+
+// NewWithMux opens a Remote against a caller-supplied mux. Production
+// callers use New, which builds the cc-port-owned mux. NewWithMux is
+// the test seam for exercising drivers (e.g. memblob) the production
+// mux deliberately does not register; tests in package remote_test
+// construct a *blob.URLMux with whatever drivers they need and pass
+// it here. The seam is exported because internal/remote tests are
+// black-box (package remote_test).
+func NewWithMux(ctx context.Context, rawURL string, mux *blob.URLMux) (*Remote, error) {
+	bucket, err := mux.OpenBucket(ctx, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("remote: open bucket %q: %w", rawURL, err)
 	}

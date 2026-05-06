@@ -4,23 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
-
-	// memblob registers the "mem" scheme so TestPush_DryRunDoesNotUpload
-	// can target an in-memory bucket. Each blob.OpenBucket("mem://") call
-	// returns a fresh bucket, so the post-dry-run verification by opening
-	// a second mem:// remote does not share storage with the cobra
-	// command's bucket. The dry-run header and apply hint are the
-	// load-bearing assertions; the ErrNotFound check is structural.
-	_ "gocloud.dev/blob/memblob"
 )
 
 // pushTestManifestPath writes a manifest XML enabling every category
@@ -46,11 +40,12 @@ func pushTestManifestPath(t *testing.T) string {
 }
 
 func TestPush_RejectsFromManifestWithCategoryFlag(t *testing.T) {
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
 	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{
 		"push", "/Users/test/Projects/myproject",
 		"--as", "myproj",
-		"--remote", "mem://",
+		"--remote", remoteURL,
 		"--from-manifest", "/tmp/m.xml",
 		"--sessions",
 	})
@@ -64,8 +59,9 @@ func TestPush_RejectsFromManifestWithCategoryFlag(t *testing.T) {
 }
 
 func TestPush_RejectsMissingAsFlag(t *testing.T) {
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
 	rootCmd := newRootCmd()
-	rootCmd.SetArgs([]string{"push", "/tmp/x", "--remote", "mem://"})
+	rootCmd.SetArgs([]string{"push", "/tmp/x", "--remote", remoteURL})
 
 	err := rootCmd.Execute()
 
@@ -93,6 +89,7 @@ func TestPush_DryRunDoesNotUpload(t *testing.T) {
 	tmpHome, projectPath := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
 	manifestPath := pushTestManifestPath(t)
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
 
 	rootCmd := newRootCmd()
 	var buf bytes.Buffer
@@ -101,7 +98,7 @@ func TestPush_DryRunDoesNotUpload(t *testing.T) {
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
 		"--as", "myproj",
-		"--remote", "mem://",
+		"--remote", remoteURL,
 		"--from-manifest", manifestPath,
 	})
 
@@ -114,11 +111,11 @@ func TestPush_DryRunDoesNotUpload(t *testing.T) {
 	if !strings.Contains(buf.String(), "(no changes; pass --apply to commit)") {
 		t.Fatalf("expected apply hint:\n%s", buf.String())
 	}
-	r, err := remote.New(context.Background(), "mem://")
+	r, err := remote.New(context.Background(), remoteURL, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 	if _, openErr := r.Open(context.Background(), "myproj"); !errors.Is(openErr, remote.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound on mem:// after dry-run, got %v", openErr)
+		t.Fatalf("expected ErrNotFound after dry-run, got %v", openErr)
 	}
 }
 
@@ -141,7 +138,7 @@ func TestPush_ApplyCommitsToRemote(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.NoError(t, err)
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 	if _, statErr := r.Stat(context.Background(), "myproj"); statErr != nil {
@@ -196,9 +193,115 @@ func TestPush_ForceOverridesCrossMachineRefusal(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// writeTestCredentialsFile writes a .env-style credentials file holding
+// the two required AWS_* keys at the requested mode and returns its
+// path. The credentials are dummy because file:// remotes ignore them;
+// tests use this helper to exercise the credentials.Resolve path.
+func writeTestCredentialsFile(t *testing.T, mode os.FileMode) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "credentials.env")
+	contents := "AWS_ACCESS_KEY_ID=AKIATEST\nAWS_SECRET_ACCESS_KEY=secrettest\n"
+	require.NoError(t, os.WriteFile(path, []byte(contents), mode))
+	return path
+}
+
+func TestPush_AcceptsValidCredentialsFile(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	manifestPath := pushTestManifestPath(t)
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
+	credentialsPath := writeTestCredentialsFile(t, 0o600)
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"push", projectPath,
+		"--claude-dir", claudeFixtureDir,
+		"--as", "myproj",
+		"--remote", remoteURL,
+		"--from-manifest", manifestPath,
+		"--credentials-file", credentialsPath,
+	})
+
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+}
+
+func TestPush_AcceptsNoPromptFlag(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	manifestPath := pushTestManifestPath(t)
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"push", projectPath,
+		"--claude-dir", claudeFixtureDir,
+		"--as", "myproj",
+		"--remote", remoteURL,
+		"--from-manifest", manifestPath,
+		"--no-prompt",
+	})
+
+	err := rootCmd.Execute()
+
+	require.NoError(t, err)
+}
+
+// TestPush_RejectsTooPermissiveCredentialsFile pins the wiring between
+// the --credentials-file flag and credentials.Resolve. A 0644-mode file
+// would parse fine but the resolver refuses it before reading; the
+// test passes only when ErrFilePermissionsTooPermissive surfaces from
+// the cmd boundary, proving the resolver was actually invoked.
+func TestPush_RejectsTooPermissiveCredentialsFile(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	manifestPath := pushTestManifestPath(t)
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
+	credentialsPath := writeTestCredentialsFile(t, 0o644)
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"push", projectPath,
+		"--claude-dir", claudeFixtureDir,
+		"--as", "myproj",
+		"--remote", remoteURL,
+		"--from-manifest", manifestPath,
+		"--credentials-file", credentialsPath,
+	})
+
+	err := rootCmd.Execute()
+
+	require.ErrorIs(t, err, credentials.ErrFilePermissionsTooPermissive)
+}
+
+func TestPush_RejectsMalformedCredentialsFile(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	manifestPath := pushTestManifestPath(t)
+	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
+	malformedCredentialsPath := filepath.Join(t.TempDir(), "malformed.env")
+	require.NoError(t, os.WriteFile(malformedCredentialsPath, []byte("BROKEN_NO_EQUALS\n"), 0o600))
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"push", projectPath,
+		"--claude-dir", claudeFixtureDir,
+		"--as", "myproj",
+		"--remote", remoteURL,
+		"--from-manifest", manifestPath,
+		"--credentials-file", malformedCredentialsPath,
+	})
+
+	err := rootCmd.Execute()
+
+	var parseErr *credentials.FileParseError
+	require.ErrorAs(t, err, &parseErr)
+}
+
 func TestOpenPriorRead_NoObjectReturnsNil(t *testing.T) {
 	url := "file://" + t.TempDir()
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -213,7 +316,7 @@ func TestOpenPriorRead_NoObjectReturnsNil(t *testing.T) {
 func TestOpenPriorRead_EncryptedNoPassphraseNoForceReturnsErrPassphraseRequired(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -227,7 +330,7 @@ func TestOpenPriorRead_EncryptedNoPassphraseNoForceReturnsErrPassphraseRequired(
 func TestOpenPriorRead_EncryptedNoPassphraseWithForceReturnsNil(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 
@@ -242,7 +345,7 @@ func TestOpenPriorRead_EncryptedNoPassphraseWithForceReturnsNil(t *testing.T) {
 func TestOpenPriorRead_PlaintextReturnsPriorReadWithoutEncryptedFlag(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "k", "host-user")
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
 

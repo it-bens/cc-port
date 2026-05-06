@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
@@ -21,13 +22,15 @@ import (
 // exclusivity guard with --all and per-category flags.
 func newPushCmd(claudeDir *string) *cobra.Command {
 	var (
-		asName         string
-		remoteURL      string
-		apply          bool
-		force          bool
-		passphraseEnv  string
-		passphraseFile string
-		fromManifest   string
+		asName          string
+		remoteURL       string
+		apply           bool
+		force           bool
+		passphraseEnv   string
+		passphraseFile  string
+		fromManifest    string
+		credentialsFile string
+		noPrompt        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "push <project-path>",
@@ -62,6 +65,11 @@ func newPushCmd(claudeDir *string) *cobra.Command {
 			"(mutually exclusive with --passphrase-env)")
 	cmd.Flags().StringVar(&fromManifest, "from-manifest", "",
 		"path to a manifest XML with categories and placeholder declarations")
+	cmd.Flags().StringVar(&credentialsFile, "credentials-file", "",
+		"path to a .env-style AWS credentials file (AWS_ACCESS_KEY_ID, "+
+			"AWS_SECRET_ACCESS_KEY, optional AWS_SESSION_TOKEN; mode 0600)")
+	cmd.Flags().BoolVar(&noPrompt, "no-prompt", false,
+		"disable the interactive prompt fallback for missing credentials")
 	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
 	registerCategoryFlags(cmd, "push")
 	return cmd
@@ -134,8 +142,19 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		return err
 	}
 
+	credentialsFile, _ := cmd.Flags().GetString("credentials-file")
+	noPrompt, _ := cmd.Flags().GetBool("no-prompt")
+
+	credentialsProvider, err := credentials.Resolve(cmd.Context(), credentials.ResolveOptions{
+		Path:   credentialsFile,
+		Prompt: !noPrompt,
+	})
+	if err != nil {
+		return err
+	}
+
 	ctx := cmd.Context()
-	r, err := remote.New(ctx, remoteURL)
+	r, err := remote.New(ctx, remoteURL, remote.Deps{Credentials: credentialsProvider})
 	if err != nil {
 		return err
 	}

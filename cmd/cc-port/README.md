@@ -14,6 +14,8 @@ This package owns flag parsing, stdout formatting, and exit-code mapping. Busine
 - `push`: uploads a project archive to a remote under a stable name, with cross-machine conflict refusal overridable by `--force`.
 - `pull`: downloads a named archive from a remote and applies it to a target path, sharing the placeholder-resolution contract with `import`.
 
+The `push` and `pull` subcommands accept `--credentials-file` (path to a `.env`-style AWS credentials file) and `--no-prompt` (disable the interactive prompt fallback). Authentication details: see the `--help` output's §Authentication block.
+
 See the root `README.md` §Commands for one-line syntax and worked examples. Run `cc-port <subcommand> --help` for the full flag reference.
 
 ## Constructor pattern

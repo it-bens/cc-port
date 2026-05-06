@@ -27,6 +27,11 @@ AWS S3
       ssetype values: AES256, aws:kms, aws:kms:dsse.
   s3://bucket?region=us-east-1&accelerate=true
       Use S3 Transfer Acceleration endpoints.
+  s3://bucket?region=us-east-1
+      With --credentials-file ~/.config/cc-port/aws.env: a separate
+      .env-style file holds AWS_ACCESS_KEY_ID and
+      AWS_SECRET_ACCESS_KEY, keeping secrets out of the URL and out
+      of process env.
 
 S3-compatible (Cloudflare R2, Backblaze B2, MinIO, Ceph, DigitalOcean
 Spaces, Wasabi, Hetzner Object Storage, etc.)
@@ -40,10 +45,17 @@ Spaces, Wasabi, Hetzner Object Storage, etc.)
       Self-hosted endpoint over plain HTTP, path-style addressing.
 
 Authentication
-  Every s3:// URL uses the AWS SDK credential chain. Set
-  AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (or the access keys
-  your provider issues), or pick a profile via ?profile=<name>, or
-  attach an IAM role. cc-port reads no credentials of its own.
+  cc-port resolves credentials in this order before handing them to
+  the SDK:
+    1. --credentials-file <path> (.env-style, AWS_* keys, mode 0600)
+    2. AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars
+    3. Interactive TTY prompt for any required field still missing
+       (suppressed by --no-prompt; hard error when no TTY)
+  When --credentials-file is set, the file's fields take precedence
+  over env on conflicts; env fills any field the file does not
+  supply. With none of these set, falls through to the AWS SDK
+  default chain: ~/.aws/credentials (?profile=<name>), IAM role on
+  EC2, IMDS, ECS task role.
 
 Query parameter reference
   region              AWS region or provider equivalent.

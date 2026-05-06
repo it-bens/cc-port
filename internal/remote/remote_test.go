@@ -9,21 +9,17 @@ import (
 	"runtime"
 	"testing"
 
-	_ "gocloud.dev/blob/memblob"
-
 	"github.com/it-bens/cc-port/internal/remote"
 )
 
-const memURL = "mem://"
-
 func TestNew_GarbageURLReturnsError(t *testing.T) {
-	if _, err := remote.New(context.Background(), "::not-a-url::"); err == nil {
+	if _, err := remote.New(context.Background(), "::not-a-url::", remote.Deps{}); err == nil {
 		t.Fatal("expected error on malformed URL")
 	}
 }
 
 func TestRemote_OpenMissingReturnsErrNotFound(t *testing.T) {
-	r, err := remote.New(context.Background(), memURL)
+	r, err := newForTest(context.Background())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -35,7 +31,7 @@ func TestRemote_OpenMissingReturnsErrNotFound(t *testing.T) {
 }
 
 func TestRemote_StatMissingReturnsErrNotFound(t *testing.T) {
-	r, err := remote.New(context.Background(), memURL)
+	r, err := newForTest(context.Background())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -47,7 +43,7 @@ func TestRemote_StatMissingReturnsErrNotFound(t *testing.T) {
 }
 
 func TestRemote_CreateThenOpenRoundTrip(t *testing.T) {
-	r, err := remote.New(context.Background(), memURL)
+	r, err := newForTest(context.Background())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -80,7 +76,7 @@ func TestRemote_CreateThenOpenRoundTrip(t *testing.T) {
 }
 
 func TestRemote_StatAfterCreateReturnsSize(t *testing.T) {
-	r, err := remote.New(context.Background(), memURL)
+	r, err := newForTest(context.Background())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -109,7 +105,7 @@ func TestRemote_FileBackendRoundTrip(t *testing.T) {
 	}
 	tempDir := t.TempDir()
 	url := "file://" + filepath.ToSlash(tempDir)
-	r, err := remote.New(context.Background(), url)
+	r, err := remote.New(context.Background(), url, remote.Deps{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
