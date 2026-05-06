@@ -15,13 +15,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"gocloud.dev/blob"
-
-	// Blank-imported so blob.OpenBucket dispatches file:// URLs to the
-	// filesystem driver. Adding a backend means blank-importing it here.
-	_ "gocloud.dev/blob/fileblob"
-	// Blank-imported so blob.OpenBucket dispatches s3:// URLs to the
-	// AWS S3 driver. Authentication uses the AWS SDK credential chain.
-	_ "gocloud.dev/blob/s3blob"
 	"gocloud.dev/gcerrors"
 )
 
@@ -35,11 +28,21 @@ type Deps struct {
 // deps.Credentials is nil-permitted; the s3 opener falls back to the
 // SDK default chain when nil.
 func New(ctx context.Context, rawURL string, deps Deps) (*Remote, error) {
-	bucket, err := blob.OpenBucket(ctx, rawURL)
+	return NewWithMux(ctx, rawURL, buildMux(deps))
+}
+
+// NewWithMux opens a Remote against a caller-supplied mux. Production
+// callers use New, which builds the cc-port-owned mux. NewWithMux is
+// the test seam for exercising drivers (e.g. memblob) the production
+// mux deliberately does not register; tests in package remote_test
+// construct a *blob.URLMux with whatever drivers they need and pass
+// it here. The seam is exported because internal/remote tests are
+// black-box (package remote_test).
+func NewWithMux(ctx context.Context, rawURL string, mux *blob.URLMux) (*Remote, error) {
+	bucket, err := mux.OpenBucket(ctx, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("remote: open bucket %q: %w", rawURL, err)
 	}
-	_ = deps // reserved for the upcoming explicit-mux refactor.
 	return &Remote{bucket: bucket, url: rawURL}, nil
 }
 
