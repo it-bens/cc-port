@@ -25,7 +25,7 @@ func TestReadEnv_NoVarsSet_ReturnsZeroFields(t *testing.T) {
 
 	fields := readEnv()
 
-	assert.Zero(t, fields.accessKeyID)
-	assert.Zero(t, fields.secretAccessKey)
-	assert.Zero(t, fields.sessionToken)
+	assert.Empty(t, fields.accessKeyID)
+	assert.Empty(t, fields.secretAccessKey)
+	assert.Empty(t, fields.sessionToken)
 }
