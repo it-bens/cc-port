@@ -9,8 +9,6 @@ import (
 	"runtime"
 	"testing"
 
-	_ "gocloud.dev/blob/memblob"
-
 	"github.com/it-bens/cc-port/internal/remote"
 )
 
@@ -23,7 +21,7 @@ func TestNew_GarbageURLReturnsError(t *testing.T) {
 }
 
 func TestRemote_OpenMissingReturnsErrNotFound(t *testing.T) {
-	r, err := remote.New(context.Background(), memURL, remote.Deps{})
+	r, err := newForTest(context.Background(), memURL)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -35,7 +33,7 @@ func TestRemote_OpenMissingReturnsErrNotFound(t *testing.T) {
 }
 
 func TestRemote_StatMissingReturnsErrNotFound(t *testing.T) {
-	r, err := remote.New(context.Background(), memURL, remote.Deps{})
+	r, err := newForTest(context.Background(), memURL)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -47,7 +45,7 @@ func TestRemote_StatMissingReturnsErrNotFound(t *testing.T) {
 }
 
 func TestRemote_CreateThenOpenRoundTrip(t *testing.T) {
-	r, err := remote.New(context.Background(), memURL, remote.Deps{})
+	r, err := newForTest(context.Background(), memURL)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -80,7 +78,7 @@ func TestRemote_CreateThenOpenRoundTrip(t *testing.T) {
 }
 
 func TestRemote_StatAfterCreateReturnsSize(t *testing.T) {
-	r, err := remote.New(context.Background(), memURL, remote.Deps{})
+	r, err := newForTest(context.Background(), memURL)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
