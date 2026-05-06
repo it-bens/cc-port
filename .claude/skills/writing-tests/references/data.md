@@ -1,7 +1,5 @@
 # Test Data and Fixtures (reference)
 
-Loaded from `writing-tests` SKILL.md when the workflow needs the deep technical detail behind the *Source the arrange data* step.
-
 ## ISOLATION-003 — File dependency must be locatable from the test
 
 External file dependencies (`os.ReadFile`, `os.Open`, `//go:embed`) point to a fixture the reader can locate from the test file.
@@ -155,3 +153,41 @@ func newRewriter(t *testing.T) (fsRoot string, r *rewrite.Replacer) {
 - Helper names start lowercase (package-local).
 - `*testing.T` is the first parameter; `t.Helper()` is line 1.
 - Cleanup lives in `t.Cleanup` inside the helper, not in a returned `func()`.
+
+## Production-scale gating with `//go:build large`
+
+Tests that materialize hundreds of MiB or multi-GiB fixtures to exercise cap-rejection guards, aggregate-size limits, or stream-buffer overflow do not belong in CI. Two-test pattern:
+
+- The production-scale test lives in a sibling file gated by `//go:build large`. The maintainer runs it locally before merging changes to cap-guarded code: `go test -tags large ./internal/<pkg>/...`.
+- A small-cap CI variant exercises the same branches at 1-2 MiB by overriding the cap variable through a test-only seam (`SetMaxEntryBytes(t, 1<<20)`), restored via `t.Cleanup`.
+
+Neither test replaces the other. The small-cap variant is the regression guard CI runs on every PR and confirms that the rejection branch fires. The large-tag variant confirms the threshold actually holds at production scale and that no hidden buffer (default `bufio.Scanner`, intermediate slice) breaks before the cap. CI workflows do not pass `-tags large`; the local Makefile target opts in.
+
+### Pattern
+
+```go
+// In the package under test, expose the cap as a var with an override seam.
+var maxArchiveBytes int64 = 1 << 32 // 4 GiB
+
+func SetMaxArchiveBytes(t *testing.T, n int64) {
+    t.Helper()
+    prev := maxArchiveBytes
+    t.Cleanup(func() { maxArchiveBytes = prev })
+    maxArchiveBytes = n
+}
+
+// CI variant: small cap, fast.
+func TestRejectsAggregateAtSmallCap(t *testing.T) {
+    SetMaxArchiveBytes(t, 2<<20) // 2 MiB
+    // build a 3 MiB archive; assert rejection
+}
+
+// large-tag variant: production cap, slow, local-only.
+//go:build large
+
+func TestRejectsAggregateAtProductionCap(t *testing.T) {
+    // build a 5 GiB archive; assert rejection at 4 GiB
+}
+```
+
+If the small-cap variant cannot exercise a branch the production-scale variant exercises (e.g. behavior that only manifests at the GiB scale of the real `bufio.Reader` chunking), document the gap in the production-scale test's leading comment so a maintainer reading only CI output knows what `large` adds.

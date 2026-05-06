@@ -58,6 +58,8 @@ digraph docs_workflow {
     gate_pass -> agents_shape [label="single-surface fails\n(AGENTS.md)"];
     gate_pass -> prose_write [label="cross-ref fails\n(prose surface)"];
     gate_pass -> agents_write [label="cross-ref fails\n(AGENTS.md)"];
+    gate_pass -> prose_write [label="drift fails\n(prose surface)"];
+    gate_pass -> agents_write [label="drift fails\n(AGENTS.md)"];
 }
 ```
 
@@ -76,7 +78,7 @@ The next steps branch by surface type. Apply only the branch that matches.
 
 ### Apply the surface shape
 
-**Human prose surfaces** (root README / module README / `docs/architecture.md`). Each has a fixed shape that is not yours to refine mid-edit. Load `references/surface-shapes.md` for the Module README §Contracts skeleton (Handled / Refused / Not covered, residual-risk lists verbatim), the short README shape for modules with no owned invariant, the `docs/architecture.md` layout (cross-module narrative, invariant-to-owner table, cross-cutting policies framing), and the root README structure.
+**Human prose surfaces** (root README / module README / `docs/architecture.md`). Each has a fixed shape that is not yours to refine mid-edit. Load `references/surface-shapes.md` for the Module README §Contracts skeleton (Handled / Refused / Not covered, residual-risk lists verbatim), the §Limitations anti-pattern (constraints enforced by code belong under §Contracts, not §Limitations), the short README shape for modules with no owned invariant, the `docs/architecture.md` layout (cross-module narrative, invariant-to-owner table, cross-cutting policies framing), and the root README structure.
 
 **AGENTS.md.** Before touching the file at all, verify the module owns at least one hard cross-cutting constraint that an editor must know before changing code. A module without one gets no AGENTS.md — a ceremonial AGENTS.md is noise. If the file should not exist, STOP and propose its deletion. Otherwise, load `references/agents-md.md` for the pointer-bullet skeleton (`## Before editing` section, 3-8 bullets, ≤30 lines hard ceiling) and the CLAUDE.md companion convention.
 
@@ -102,10 +104,12 @@ Rewrite affected text and re-check. Do not exit this step until the draft passes
 
 ### Final quality gate
 
-Two cross-surface checks. Run them after the surface-specific work above is complete:
+Three cross-surface checks. Run them after the surface-specific work above is complete:
 
 **Single-surface principle.** No sentence appears on more than one surface. For each paragraph (human prose) or bullet (AGENTS.md) in the diff, scan whether the same content already lives on another surface (root README / module README / `docs/architecture.md` / AGENTS.md / code comments). If it does, replace this one with a `(README §X)` or `(architecture.md §Y)` pointer, or delete the duplicate at the other surface — keep the version on the surface that already owns the invariant. Common drifts: a module README §Contracts row restated as a code comment above the enforcing line; a cross-cutting policy in `docs/architecture.md` repeated in the owning module's README; an AGENTS.md bullet that summarizes its README pointer instead of pointing at it.
 
 **Cross-ref integrity.** If you renamed any heading on this surface, search for `§<old name>` across every surface type and update every cross-ref in the same edit. Module AGENTS.md files cross-ref README headings by name, so a heading rename without an AGENTS.md sweep silently breaks the pointer map. Module READMEs and `docs/architecture.md` index rows cross-ref each other the same way.
 
-If single-surface fails, return to *Apply the surface shape*: keep the content on the surface that already owns the invariant, delete the duplicate, and replace it with a pointer at the second site. If cross-ref integrity fails, return to *Write the content* and update every `§<old name>` cross-ref in the same edit.
+**Code-vs-claim sweep.** For each contract row or behavior claim in the diff (this surface or any cross-ref'd surface), verify the code currently enforces it. A contract that says "X is rewritten through Y" must match what the function the contract names actually does; an AGENTS.md bullet that says "wrap Z in W before any write" must match the function bodies the bullet points at. A claim drifted from the code is a half-fixed doc — either fix the doc to match current code, or fix the code to match the contract — but a doc edit that ships drifted is a regression, not a doc fix.
+
+If single-surface fails, return to *Apply the surface shape*: keep the content on the surface that already owns the invariant, delete the duplicate, and replace it with a pointer at the second site. If cross-ref integrity fails, return to *Write the content* and update every `§<old name>` cross-ref in the same edit. If code-vs-claim drift fails, return to *Write the content* and reconcile the doc with current code; escalate to a code change if the contract is intended to drive the implementation rather than describe it.

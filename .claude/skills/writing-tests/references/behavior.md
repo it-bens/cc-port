@@ -1,7 +1,5 @@
 # Behavior Under Test (reference)
 
-Loaded from `writing-tests` SKILL.md when the workflow needs the deep technical detail behind the *Identify the single behavior* step or the *Final quality gate*.
-
 ## UNIT-001 — Behavior, not implementation, trivial, or internal
 
 Tests verify observable behavior of the exported API.
@@ -18,25 +16,18 @@ Tests verify observable behavior of the exported API.
 - Calls into dependencies. The return value already verifies the call happened.
 - Unexported helpers via a `package foo` internal test when the exported API covers the behavior.
 - Internal call order or algorithmic decomposition.
-- Logic-free constructors (only `self.field = param`).
+- Logic-free constructors (only `self.field = param`); test when the constructor validates input or transforms/normalizes.
 - Exported fields via round-trip (`s.Field = x; assert.Equal(x, s.Field)`).
-- Accessor methods that return a field directly.
-- Setter methods that only assign a field.
-- Pure delegation: method forwards to a dependency without transforming input or output.
+- Accessor methods that return a field directly; test when the accessor computes a derived value.
+- Setter methods that only assign a field; test when the setter has side effects or validation.
+- Pure delegation: method forwards to a dependency without transforming input or output; test when delegation transforms input/output or includes conditional logic.
 
 ### Go-specific carve-outs
 
 - `require.NoError(t, err)` before the act step is a **precondition**, not a trivial assertion on the act's return.
 - `assert.IsType` or `assert.Implements` on a function with one concrete return type is trivially true. Delete it or replace with a behavior assertion.
 - `package foo` internal tests are allowed when the invariant genuinely cannot be observed externally (file-history contract, lock handoffs). Prefer `package foo_test` when the exported surface suffices.
-
-### When accessor / constructor tests ARE valid
-
-- Constructor validates input and returns an error on violation
-- Constructor transforms input (normalizes paths, computes a derived field)
-- Accessor computes a derived value
-- Setter has side effects or validation
-- Delegation transforms input or output, or includes conditional logic
+- Drift-guard tests that iterate two registries and assert index-alignment or set-equality are valid behavior tests of the registry contract, not implementation tests. The behavior under test is "registry A and registry B stay in sync as new entries land." Keep them in `package foo_test`; assert via the exported registry surface, not unexported state.
 
 ### Worked examples
 
@@ -68,6 +59,19 @@ func TestEncodePathReplacesSlashesAndDots(t *testing.T) {
     assert.Equal(t, "-tmp-cc-port-test-foo", got)
 }
 ```
+
+### Seam introduction patterns when behavior is not observable
+
+When the behavior is real but the current exported API hides it, four production-code seams have surfaced as legitimate paths to observability. Each survives in production for reasons unrelated to the test — real injection points the production caller already wants. Choose the seam that matches what production wants; if none fits without contorting production code, the behavior is implementation detail and the test should be reframed or deleted instead.
+
+| Pattern | Production-code shape | Test usage |
+|---|---|---|
+| `io.Writer` parameter | Function takes `out io.Writer` instead of writing to `os.Stdout`; cobra wires the live default via `cmd.OutOrStdout()`. | Test passes `&bytes.Buffer{}` and asserts on its contents. |
+| `WithX` option | `Run` takes `opts ...RunOption`; `WithArchiveOpener(fn)` swaps a previously package-global function. | Test passes `WithX(fakeFn)` instead of mutating a global. |
+| Exported pure helper | Inline merge or build logic is extracted into an exported pure function (`BuildHistoryBytes`, `MergeProjectConfigBytes`) that the production caller and the test both invoke. | Test exercises the helper directly without staging the surrounding pipeline. |
+| Package-level fn-var seam | `var findActive = lock.FindActive`; production calls through the indirection. | Test reassigns the var inside the test body and restores via `t.Cleanup`. |
+
+Anti-pattern: introducing a seam that no production caller actually needs, only to make the test pass. That is the same `package foo` internal-test smell, dressed in a `With*` option.
 
 ## DESIGN-002 — Single behavior per test
 

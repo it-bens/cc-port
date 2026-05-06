@@ -1,10 +1,6 @@
 # Test Independence (reference)
 
-Loaded from `writing-tests` SKILL.md when the workflow needs the deep technical detail behind the *Guard independence* step.
-
 cc-port uses `t.TempDir` per test for filesystem state. No `t.Parallel()` today. No package-level mutable vars in test files. `TestMain` is not used. `time.Now()` appears only inside `manifest.Info{Created: time.Now()}` fixture constructors, never as an asserted value. No UUID generation in test assertions; session UUIDs in `testdata/` are fixed strings.
-
-These rules are insurance against drifting away from that baseline, not flags for current code.
 
 ## ISOLATION-001 — Shared mutable state
 

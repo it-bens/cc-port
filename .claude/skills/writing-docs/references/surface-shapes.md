@@ -1,7 +1,5 @@
 # Surface Shapes (reference)
 
-Loaded from `writing-docs` SKILL.md on the human-prose branch of the *Apply the surface shape* step.
-
 Three human-prose surfaces in scope here. Each has a fixed shape that is not yours to refine mid-edit. AGENTS.md is covered by `references/agents-md.md`; code comments live with `writing-go-code`.
 
 ## Module README
@@ -41,6 +39,29 @@ Before writing or editing a §Contracts section: does every invariant in this mo
 
 - A case missing from all three buckets → add it; the three buckets are the contract.
 - The skeleton headings were renamed or rewritten → restore verbatim.
+
+### §Limitations anti-pattern
+
+A §Limitations heading is a §Contracts entry in disguise whenever the named constraint is actively enforced by code. The signal: a paragraph that says "cc-port does not handle X" right next to a function that detects, refuses, or rewrites X. The detection is the contract; "limitation" is the wrong frame.
+
+Promote to §Contracts using the H/R/NC skeleton:
+
+- the case the code refuses → §Contracts §<invariant> *Refused* (with the error or panic the caller sees)
+- the case the code handles around → §Contracts §<invariant> *Handled*
+- the case the code genuinely does not address → §Contracts §<invariant> *Not covered* (with the consequence if the caller hits it)
+
+§Limitations remains correct only when the named case is genuinely out of scope: no code path detects it, no contract addresses it, the caller carries the residual risk unconditionally. If any function in the module reacts to the case, the section belongs in §Contracts.
+
+```
+WRONG:   ## Limitations
+         - cc-port does not import archives that contain {{UNRESOLVED_N}} placeholders.
+
+CORRECT: ## Contracts
+         ### Placeholder resolution
+         **Refused.** Archives whose manifest declares placeholders without
+         supplied resolutions fail with `MissingResolutionsError` before any
+         temp file is written.
+```
 
 ## docs/architecture.md
 

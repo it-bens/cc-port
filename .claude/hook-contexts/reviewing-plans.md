@@ -35,6 +35,20 @@ Module layout for invariant lookups:
 - Per-module agent rules: `internal/<name>/AGENTS.md`.
 - Per-module narrative: `internal/<name>/README.md`.
 
+## Step 3 §Task-keyed design rules
+
+`docs/design-rules.md` carries right-way / failure-modes pairings for tasks that don't condense to a single primitive — path-rewrite surface enumeration, opacity decisions, mutating command body shape, pipeline composition, host-system assumptions, shape extraction. Read it before evaluating any plan content; consult the matching entry whenever the plan proposes covered work.
+
+## Pre-Step-4 §Per-surface skill ladder
+
+**Invocation is per plan, not per file.** Determine the set of applicable skills once from the plan's overall surface signature, invoke each up-front before evaluating plan content, and rely on the loaded standards through the rest of the review. A plan editing twelve `*.go` files invokes `writing-go-code` exactly once.
+
+| Plan content includes | Invoke once |
+|---|---|
+| Any `**/*.go` file | `writing-go-code` |
+| Any `**/*_test.go` file | `writing-go-code` and `writing-tests` |
+| Any `README.md`, `AGENTS.md`, or `docs/architecture.md` | `writing-docs` |
+
 ## Step 4 §Scope and guardrail skepticism: cc-port posture is non-negotiable
 
 CLAUDE.md commits cc-port to no BC promise, no extension-point budget, and no risk-mitigation budget. The plugin skill's posture-silent edge case does not apply here; findings against this posture are `block-class`, not `multi-option`.
