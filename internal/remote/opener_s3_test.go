@@ -33,39 +33,45 @@ func TestStripS3BlobParams_ExtractsKnownKeys(t *testing.T) {
 	assert.Empty(t, stripped.Get("disable_https"))
 }
 
-func TestStripS3BlobParams_S3ForcePathStyleAlias(t *testing.T) {
-	values := url.Values{}
-	values.Set("s3ForcePathStyle", "true")
+// TestStripS3BlobParams_BoolKey covers the bool-flag query keys. Each
+// row pins one key, asserts only the row-named field flips true, and
+// confirms the key is consumed from the residue. The s3ForcePathStyle
+// row shares the use_path_style target field on purpose: stripper
+// folds the alias into the same field via an OR.
+func TestStripS3BlobParams_BoolKey(t *testing.T) {
+	type extractor func(s3BlobOptionsFromURL) bool
+	tests := map[string]struct {
+		key   string
+		field extractor
+	}{
+		"accelerate sets options.accelerate": {
+			key:   "accelerate",
+			field: func(o s3BlobOptionsFromURL) bool { return o.accelerate },
+		},
+		"disable_https sets options.disableHTTPS": {
+			key:   "disable_https",
+			field: func(o s3BlobOptionsFromURL) bool { return o.disableHTTPS },
+		},
+		"use_path_style sets options.usePathStyle": {
+			key:   "use_path_style",
+			field: func(o s3BlobOptionsFromURL) bool { return o.usePathStyle },
+		},
+		"s3ForcePathStyle aliases to options.usePathStyle": {
+			key:   "s3ForcePathStyle",
+			field: func(o s3BlobOptionsFromURL) bool { return o.usePathStyle },
+		},
+	}
+	for name, testCase := range tests {
+		t.Run(name, func(t *testing.T) {
+			values := url.Values{}
+			values.Set(testCase.key, "true")
 
-	_, options := stripS3BlobParams(values)
+			stripped, options := stripS3BlobParams(values)
 
-	assert.True(t, options.usePathStyle, "s3ForcePathStyle must alias to use_path_style")
-}
-
-func TestStripS3BlobParams_OnlyDisableHTTPS_LeavesOthersZero(t *testing.T) {
-	values := url.Values{}
-	values.Set("disable_https", "true")
-
-	stripped, options := stripS3BlobParams(values)
-
-	assert.True(t, options.disableHTTPS)
-	assert.False(t, options.accelerate)
-	assert.False(t, options.usePathStyle)
-	assert.Empty(t, options.encryptionType)
-	assert.Empty(t, options.kmsKeyID)
-	assert.Empty(t, stripped.Get("disable_https"), "consumed param must not pass through")
-}
-
-func TestStripS3BlobParams_OnlyAccelerate_LeavesOthersZero(t *testing.T) {
-	values := url.Values{}
-	values.Set("accelerate", "true")
-
-	stripped, options := stripS3BlobParams(values)
-
-	assert.True(t, options.accelerate)
-	assert.False(t, options.disableHTTPS)
-	assert.False(t, options.usePathStyle)
-	assert.Empty(t, stripped.Get("accelerate"))
+			assert.True(t, testCase.field(options), "row's field must flip true")
+			assert.Empty(t, stripped.Get(testCase.key), "key must be consumed")
+		})
+	}
 }
 
 func TestStripS3BlobParams_OnlyEncryption_PassesAesKeysIntoOptions(t *testing.T) {
