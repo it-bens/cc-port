@@ -9,7 +9,6 @@ import (
 // Sentinels.
 var (
 	ErrFilePermissionsTooPermissive = errors.New("credentials: file mode more permissive than 0600")
-	ErrPromptCanceled               = errors.New("credentials: prompt canceled")
 	ErrPromptUnavailable            = errors.New("credentials: prompt requested but no TTY available")
 )
 
