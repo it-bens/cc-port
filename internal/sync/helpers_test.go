@@ -17,16 +17,16 @@ import (
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
 	"github.com/it-bens/cc-port/internal/testutil"
-
-	// memblob registers the "mem" scheme so newMemRemote can open
-	// "mem://" without touching disk. Test-only; production code paths
-	// declare s3:// and file:// in internal/remote/remote.go.
-	_ "gocloud.dev/blob/memblob"
 )
 
-func newMemRemote(t *testing.T) *remote.Remote {
+// newFileRemote opens a Remote against a per-test file:// directory.
+// Replaces the prior memblob-backed helper after the cc-port mux
+// stopped registering mem://.
+func newFileRemote(t *testing.T) *remote.Remote {
 	t.Helper()
-	r, err := remote.New(context.Background(), "mem://", remote.Deps{})
+	dir := t.TempDir()
+	rawURL := "file://" + filepath.ToSlash(dir)
+	r, err := remote.New(context.Background(), rawURL, remote.Deps{})
 	if err != nil {
 		t.Fatalf("remote.New: %v", err)
 	}

@@ -46,7 +46,7 @@ func TestSelfPusher_EmptyUsernameReturnsError(t *testing.T) {
 }
 
 func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
-	r := newMemRemote(t)
+	r := newFileRemote(t)
 	home, projectPath := buildTestHomeAndProject(t)
 
 	prior := openPriorForTest(t, r, "fresh-name", "")
@@ -68,7 +68,7 @@ func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
 }
 
 func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
-	r := newMemRemote(t)
+	r := newFileRemote(t)
 	home, projectPath := buildTestHomeAndProject(t)
 
 	priorA := openPriorForTest(t, r, "k", "")
@@ -107,7 +107,7 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 }
 
 func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
-	r := newMemRemote(t)
+	r := newFileRemote(t)
 	injectArchiveWithPusher(t, r, "k", "different-host-different-user", time.Now().UTC().Add(-1*time.Hour))
 
 	home, projectPath := buildTestHomeAndProject(t)
@@ -126,7 +126,7 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 }
 
 func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
-	r := newMemRemote(t)
+	r := newFileRemote(t)
 	home, projectPath := buildTestHomeAndProject(t)
 
 	prior := openPriorForTest(t, r, "k", "")
@@ -179,7 +179,7 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 }
 
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
-	r := newMemRemote(t)
+	r := newFileRemote(t)
 	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
 
@@ -196,7 +196,7 @@ func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 }
 
 func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
-	r := newMemRemote(t)
+	r := newFileRemote(t)
 	injectArchiveWithSenderResolve(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	home, _ := buildTestHomeAndProject(t)
 	source := openSourceForTest(t, r, "k", "")
@@ -211,8 +211,8 @@ func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 	}
 }
 
-func TestExecutePull_RoundTripFromMemRemote(t *testing.T) {
-	r := newMemRemote(t)
+func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
+	r := newFileRemote(t)
 	homeA, projectPathA := buildTestHomeAndProject(t)
 
 	priorA := openPriorForTest(t, r, "k", "")
