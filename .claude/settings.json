@@ -13,6 +13,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq --rawfile ctx .claude/hook-contexts/reviewing-plans.md 'if (.prompt // \"\" | startswith(\"/superpowers-additions:reviewing-plans\")) then {hookSpecificOutput: {hookEventName: \"UserPromptSubmit\", additionalContext: $ctx}} else empty end'"
+          }
+        ]
+      }
     ]
   }
 }
