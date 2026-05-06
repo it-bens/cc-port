@@ -113,6 +113,52 @@ func TestStripS3BlobParams_NonTrueAccelerate_TreatedAsFalse(t *testing.T) {
 	assert.Empty(t, stripped.Get("accelerate"), "key is still consumed regardless of value")
 }
 
+// TestNormalizeEndpointScheme covers each branch of the helper: bare
+// host takes https, bare host with disable_https takes http, and an
+// already-schemed URL takes the early-return path. Empty endpoint
+// lives in its own top-level test because the assertion is different
+// (no key inserted, not a value comparison).
+func TestNormalizeEndpointScheme(t *testing.T) {
+	tests := map[string]struct {
+		endpoint     string
+		disableHTTPS bool
+		want         string
+	}{
+		"bare host gets https prefix": {
+			endpoint: "hel1.your-objectstorage.com",
+			want:     "https://hel1.your-objectstorage.com",
+		},
+		"bare host gets http prefix when disable_https set": {
+			endpoint:     "minio.example.test:9000",
+			disableHTTPS: true,
+			want:         "http://minio.example.test:9000",
+		},
+		"already-schemed endpoint passes through unchanged": {
+			endpoint: "https://hel1.your-objectstorage.com",
+			want:     "https://hel1.your-objectstorage.com",
+		},
+	}
+	for name, testCase := range tests {
+		t.Run(name, func(t *testing.T) {
+			values := url.Values{}
+			values.Set("endpoint", testCase.endpoint)
+
+			normalizeEndpointScheme(values, testCase.disableHTTPS)
+
+			assert.Equal(t, testCase.want, values.Get("endpoint"))
+		})
+	}
+}
+
+func TestNormalizeEndpointScheme_EmptyEndpoint_NoKeyInserted(t *testing.T) {
+	values := url.Values{}
+
+	normalizeEndpointScheme(values, false)
+
+	_, present := values["endpoint"]
+	assert.False(t, present, "must not insert an endpoint key when none was set")
+}
+
 func TestS3Opener_AWSConfigFromURL_OverridesCredentialsWhenProvided(t *testing.T) {
 	static := credentials.NewStaticCredentialsProvider("test-akid", "test-secret", "")
 	opener := newS3Opener(Deps{Credentials: static})

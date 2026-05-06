@@ -70,6 +70,24 @@ func stripS3BlobParams(values url.Values) (url.Values, s3BlobOptionsFromURL) {
 	return stripped, options
 }
 
+// normalizeEndpointScheme exists because gocloud's V2ConfigFromURLParams
+// passes endpoint verbatim into aws.Endpoint{URL}, and the AWS SDK
+// refuses to dispatch when that URL has no scheme ("unsupported
+// protocol scheme"). URLDoc advertises endpoint=<host> and
+// endpoint=<host>:<port> as accepted forms, so the opener fills in the
+// scheme: https by default, http when disable_https=true.
+func normalizeEndpointScheme(stripped url.Values, disableHTTPS bool) {
+	endpoint := stripped.Get("endpoint")
+	if endpoint == "" || strings.Contains(endpoint, "://") {
+		return
+	}
+	scheme := "https://"
+	if disableHTTPS {
+		scheme = "http://"
+	}
+	stripped.Set("endpoint", scheme+endpoint)
+}
+
 // awsConfigFromURL parses query parameters via gocloud's
 // V2ConfigFromURLParams and applies the credentials override from
 // o.credentials when non-nil.
@@ -86,6 +104,7 @@ func (o *s3Opener) awsConfigFromURL(ctx context.Context, stripped url.Values) (a
 
 func (o *s3Opener) OpenBucketURL(ctx context.Context, u *url.URL) (*blob.Bucket, error) {
 	stripped, options := stripS3BlobParams(u.Query())
+	normalizeEndpointScheme(stripped, options.disableHTTPS)
 
 	config, err := o.awsConfigFromURL(ctx, stripped)
 	if err != nil {
