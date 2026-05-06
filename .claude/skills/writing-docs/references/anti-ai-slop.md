@@ -1,14 +1,12 @@
 # Anti-AI-Slop (reference)
 
-Loaded from `writing-docs` SKILL.md on the human-prose branch of the *Anti-slop pass* step. Skip for AGENTS.md — bullet pointers, not prose.
-
-LLMs produce text with a statistical fingerprint: uniform sentence lengths, predictable vocabulary, formulaic structures, absence of human texture. The lists below target the most common patterns in LLM-generated technical writing. All checks apply to the three human-prose surfaces in scope (root README, module READMEs, `docs/architecture.md`).
+LLMs produce text with a statistical fingerprint: uniform sentence lengths, predictable vocabulary, formulaic structures, absence of human texture.
 
 ## Hard ban: em and en dashes
 
 > **No em dashes (—) or en dashes (–) anywhere in output.** This is the single most common anti-slop violation. Replace with: period + new sentence, comma, parentheses, or delete the aside entirely.
 
-LLMs use em dashes as a universal connector, substituting for commas, parentheses, colons, and periods. Typical AI density: one em dash every 50-80 words. Human baseline: roughly one per 500 words. Em dash overuse is the most visually obvious surface-level tell.
+LLMs use em dashes as a universal connector, substituting for commas, parentheses, colons, and periods.
 
 Bad: "The dispatch sites had `Context` in scope — but didn't pass it to the event constructors."
 
@@ -77,15 +75,9 @@ Better (varied):
 
 Never write "improved performance" when you can write "eliminated redundant child category fetch from SEO URL updater." Never write "better error handling" when you can name the exception class and the condition that triggers it. Developers want specifics: class names, config keys, method signatures, version numbers. Abstraction is filler.
 
-Don't mistake counts for concreteness. Prefer omitting numbers entirely. A count that restates what the text already shows (e.g., "nine events" when the text lists all nine) is noise, not specificity. If a number isn't needed, leave it out. If imprecision is acceptable, use wording like "additional" or "several." Use a specific number only when the value itself matters for understanding the change AND isn't deducible from the rest of the text: percentages, thresholds, version numbers, limits.
-
 Bad: "This enhancement significantly improves the developer experience."
 
 Better: "The `quantityStart` and `quantityEnd` fields now require a minimum value of `1`."
-
-Bad: "Nine events now implement `ShopwareEvent`."
-
-Better: "Events dispatched during import/export, media validation, SEO URL persistence, and theme changes now implement `ShopwareEvent`."
 
 ## Don't assume intent
 

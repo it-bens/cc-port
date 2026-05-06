@@ -1,7 +1,5 @@
 # Test Data and Fixtures (reference)
 
-Loaded from `writing-tests` SKILL.md when the workflow needs the deep technical detail behind the *Source the arrange data* step.
-
 ## ISOLATION-003 — File dependency must be locatable from the test
 
 External file dependencies (`os.ReadFile`, `os.Open`, `//go:embed`) point to a fixture the reader can locate from the test file.

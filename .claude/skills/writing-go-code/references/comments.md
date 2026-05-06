@@ -1,7 +1,5 @@
 # Code Comments (reference)
 
-Loaded from `writing-go-code` SKILL.md when the workflow needs the deep technical detail behind the *Classify each comment* step.
-
 ## Classification table
 
 | Bucket | Action |
@@ -48,9 +46,3 @@ CORRECT: stageFile(...)   // README is adjacent; the pointer is noise
 WRONG:   see internal/importer/README.md:147
 CORRECT: see internal/importer/README.md §Atomic staging
 ```
-
-## When the comment seems redundant but feels load-bearing
-
-If removal subtracts no information from an experienced Go reader, remove it. The instinct that "feels risky" is usually a paraphrase of the function name, not a hidden invariant. Test by asking: what failure mode does this comment warn the next editor about? If the answer is "none, it explains what the code does", delete.
-
-For exported symbols, godoc is non-negotiable (revive enforces it). Compress pure paraphrase to one identifier-prefixed line — never remove the doc itself.

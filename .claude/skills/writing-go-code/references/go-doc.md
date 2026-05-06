@@ -1,7 +1,5 @@
 # go doc Consultation (reference)
 
-Loaded from `writing-go-code` SKILL.md when the workflow needs the deep technical detail behind the *Confirm the API call* step.
-
 ## Query shapes — pick the narrowest that answers the question
 
 | Need | Command | Typical size |

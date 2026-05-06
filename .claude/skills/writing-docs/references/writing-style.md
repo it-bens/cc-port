@@ -1,9 +1,5 @@
 # Writing Style (reference)
 
-Loaded from `writing-docs` SKILL.md on the human-prose branch of the *Write the content* step.
-
-Audience for all three human-prose surfaces: an experienced Go developer reading for task-fit. The constraints below calibrate prose to that audience.
-
 ## Sentence and paragraph constraints
 
 - Sentences ≤25 words, averaging 12 to 17.

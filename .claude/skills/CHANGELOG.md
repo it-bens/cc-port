@@ -15,6 +15,15 @@ change lands.
 
 ## writing-docs
 
+### v3
+
+Reference files trimmed for context bloat.
+
+- All four references drop the "Loaded from SKILL.md when..." intro; the SKILL.md routing already gates the load.
+- `anti-ai-slop.md` drops the meta + scope sentences after the fingerprint paragraph, the em-dash density numbers, and the numbers paragraph from §Concreteness over abstraction. Numbers guidance stays owned by `writing-style.md`.
+- `writing-style.md` drops the audience line that the SKILL.md already states.
+- `agents-md.md` §Existence check leads with the cc-port examples; the rule restatement and "ceremonial = noise" sentence move out (SKILL.md owns both). The "next AGENTS.md carries less weight" rationale stays.
+
 ### v2
 
 - *Apply the surface shape* (prose branch) loads `references/surface-shapes.md`
@@ -41,6 +50,14 @@ Placeholder for the initial committed shape. Backfill the entry when the next
 change lands.
 
 ## writing-go-code
+
+### v3
+
+Reference files trimmed for context bloat.
+
+- All three references drop the "Loaded from SKILL.md when..." intro. `in-repo-primitives.md` keeps the wrapper-invariants framing sentence.
+- `comments.md` removes §"When the comment seems redundant but feels load-bearing"; the decision procedure restated the §Classification table's load-bearing-why bucket and the godoc paragraph restated its exported-godoc row.
+- `in-repo-primitives.md` removes §"Why this lookup precedes `go doc`"; the SKILL.md already carries the framing.
 
 ### v2
 
@@ -89,6 +106,14 @@ Placeholder for the initial committed shape. Backfill the entry when the next
 change lands.
 
 ## writing-tests
+
+### v3
+
+Reference files trimmed for context bloat.
+
+- All four references drop the "Loaded from SKILL.md when..." intro.
+- `behavior.md` merges §"When accessor / constructor tests ARE valid" inline into §"Do NOT test" as carve-out parentheticals; the standalone inverse list is removed.
+- `independence.md` drops the meta-instruction telling the LLM how to read the file. The baseline snapshot stays.
 
 ### v2
 

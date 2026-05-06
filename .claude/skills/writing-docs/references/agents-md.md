@@ -1,14 +1,12 @@
 # AGENTS.md (reference)
 
-Loaded from `writing-docs` SKILL.md when the workflow branches into the AGENTS.md surface — for both *Apply the surface shape* and *Write the content*.
-
 AGENTS.md is a pointer-only map into the adjacent module README. No summaries; summaries drift. Every bullet is a pointer `(README §X)` or it gets deleted. Hard ceiling: 30 lines, 3 to 8 bullets per section.
 
 ## Existence check
 
-A module gets an AGENTS.md only when it owns at least one hard cross-cutting constraint that an editor must know before changing code. Examples in the current cc-port tree: `internal/lock` (concurrency guard around mutating commands), `internal/importer` (`os.Root` and `io.LimitReader` containment), `internal/rewrite` (no `strings.ReplaceAll` on user paths).
+Hard cross-cutting constraints in the current cc-port tree: `internal/lock` (concurrency guard around mutating commands), `internal/importer` (`os.Root` and `io.LimitReader` containment), `internal/rewrite` (no `strings.ReplaceAll` on user paths).
 
-A module without such a constraint gets **no** AGENTS.md. A ceremonial AGENTS.md is noise — the agent loads it expecting a warning and finds none, so the next AGENTS.md it loads carries less weight too.
+A ceremonial AGENTS.md is noise — the agent loads it expecting a warning and finds none, so the next AGENTS.md it loads carries less weight too.
 
 ## Skeleton
 

@@ -1,9 +1,6 @@
 # In-Repo Primitives (reference)
 
-Loaded from `writing-go-code` SKILL.md when the *Confirm the API call* step
-identifies a domain mutation: a call that touches data the codebase has already
-taken responsibility for. Stdlib calls that look right in isolation often
-violate an invariant the project enforces only through a wrapper.
+Stdlib calls that look right in isolation often violate an invariant the project enforces only through a wrapper.
 
 ## Lookup table
 
@@ -29,13 +26,6 @@ Before writing the stdlib call, ask:
 - yes, helper exists → use the helper
 - yes, no helper exists → flag and propose adding one rather than reaching past the missing wrapper
 - no → stdlib is fine
-
-## Why this lookup precedes `go doc`
-
-`go doc` confirms the stdlib call works the way you remember. The in-repo
-lookup confirms the stdlib call is the right call to make at all. Both run
-before writing — `go doc` for *correctness of the call*, in-repo for
-*fitness of the call*.
 
 ## What the lookup is not
 

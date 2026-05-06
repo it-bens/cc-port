@@ -1,7 +1,5 @@
 # Test Shape (reference)
 
-Loaded from `writing-tests` SKILL.md when the workflow needs the deep technical detail behind the *Structure the body* step.
-
 ## CONV-014 — AAA structure
 
 Tests with 5+ statements separate arrange, act, and assert phases. Assertions live after the final act, not interspersed.

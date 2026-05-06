@@ -1,7 +1,5 @@
 # Surface Shapes (reference)
 
-Loaded from `writing-docs` SKILL.md on the human-prose branch of the *Apply the surface shape* step.
-
 Three human-prose surfaces in scope here. Each has a fixed shape that is not yours to refine mid-edit. AGENTS.md is covered by `references/agents-md.md`; code comments live with `writing-go-code`.
 
 ## Module README
