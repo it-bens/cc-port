@@ -100,7 +100,7 @@ func (o *s3Opener) OpenBucketURL(ctx context.Context, u *url.URL) (*blob.Bucket,
 			opts.UseAccelerate = true
 		}
 		if options.disableHTTPS {
-			opts.EndpointOptions = awss3.EndpointResolverOptions{DisableHTTPS: true}
+			opts.EndpointOptions.DisableHTTPS = true
 		}
 	})
 

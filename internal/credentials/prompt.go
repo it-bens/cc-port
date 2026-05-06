@@ -20,7 +20,7 @@ type osTTYPrompter struct{}
 func (osTTYPrompter) Prompt(ctx context.Context, label string) (string, error) {
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", ErrPromptUnavailable, err.Error())
+		return "", fmt.Errorf("%w: %w", ErrPromptUnavailable, err)
 	}
 	defer func() { _ = tty.Close() }()
 
