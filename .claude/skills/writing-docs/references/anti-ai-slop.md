@@ -6,7 +6,7 @@ LLMs produce text with a statistical fingerprint: uniform sentence lengths, pred
 
 > **No em dashes (—) or en dashes (–) anywhere in output.** This is the single most common anti-slop violation. Replace with: period + new sentence, comma, parentheses, or delete the aside entirely.
 
-LLMs use em dashes as a universal connector, substituting for commas, parentheses, colons, and periods.
+LLMs use em dashes as a universal connector, substituting for commas, parentheses, colons, and periods. Typical AI density: one em dash every 50-80 words. Human baseline: roughly one per 500 words. Em dash overuse is the most visually obvious surface-level tell.
 
 Bad: "The dispatch sites had `Context` in scope — but didn't pass it to the event constructors."
 
