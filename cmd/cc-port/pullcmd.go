@@ -21,12 +21,14 @@ import (
 // it via *claudeDir at call time.
 func newPullCmd(claudeDir *string) *cobra.Command {
 	var (
-		toPath         string
-		remoteURL      string
-		apply          bool
-		passphraseEnv  string
-		passphraseFile string
-		fromManifest   string
+		toPath          string
+		remoteURL       string
+		apply           bool
+		passphraseEnv   string
+		passphraseFile  string
+		fromManifest    string
+		credentialsFile string
+		noPrompt        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "pull <name>",
@@ -61,6 +63,11 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
 	cmd.Flags().StringVar(&fromManifest, "from-manifest", "",
 		"path to a manifest XML file with pre-filled resolutions")
+	cmd.Flags().StringVar(&credentialsFile, "credentials-file", "",
+		"path to a .env-style AWS credentials file (AWS_ACCESS_KEY_ID, "+
+			"AWS_SECRET_ACCESS_KEY, optional AWS_SESSION_TOKEN; mode 0600)")
+	cmd.Flags().BoolVar(&noPrompt, "no-prompt", false,
+		"disable the interactive prompt fallback for missing credentials")
 	return cmd
 }
 

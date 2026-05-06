@@ -21,13 +21,15 @@ import (
 // exclusivity guard with --all and per-category flags.
 func newPushCmd(claudeDir *string) *cobra.Command {
 	var (
-		asName         string
-		remoteURL      string
-		apply          bool
-		force          bool
-		passphraseEnv  string
-		passphraseFile string
-		fromManifest   string
+		asName          string
+		remoteURL       string
+		apply           bool
+		force           bool
+		passphraseEnv   string
+		passphraseFile  string
+		fromManifest    string
+		credentialsFile string
+		noPrompt        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "push <project-path>",
@@ -62,6 +64,11 @@ func newPushCmd(claudeDir *string) *cobra.Command {
 			"(mutually exclusive with --passphrase-env)")
 	cmd.Flags().StringVar(&fromManifest, "from-manifest", "",
 		"path to a manifest XML with categories and placeholder declarations")
+	cmd.Flags().StringVar(&credentialsFile, "credentials-file", "",
+		"path to a .env-style AWS credentials file (AWS_ACCESS_KEY_ID, "+
+			"AWS_SECRET_ACCESS_KEY, optional AWS_SESSION_TOKEN; mode 0600)")
+	cmd.Flags().BoolVar(&noPrompt, "no-prompt", false,
+		"disable the interactive prompt fallback for missing credentials")
 	cmd.MarkFlagsMutuallyExclusive("passphrase-env", "passphrase-file")
 	registerCategoryFlags(cmd, "push")
 	return cmd
