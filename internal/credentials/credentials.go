@@ -37,6 +37,6 @@ type ResolveOptions struct {
 // during the prompt aborts within one read cycle and the function
 // returns context.Canceled wrapped via fmt.Errorf("canceled: %w",
 // ctx.Err()).
-func Resolve(_ context.Context, _ ResolveOptions) (aws.CredentialsProvider, error) {
-	return nil, nil
+func Resolve(ctx context.Context, opts ResolveOptions) (aws.CredentialsProvider, error) {
+	return resolveWith(ctx, opts, osTTYPrompter{})
 }

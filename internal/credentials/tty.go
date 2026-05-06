@@ -7,8 +7,6 @@ import "context"
 // because exporting it would widen the public API to support tests
 // only; tests live in package credentials and construct fakes
 // directly.
-//
-//nolint:unused // referenced by resolver in subsequent task
 type ttyPrompter interface {
 	// Prompt reads a single secret value from the TTY using label as
 	// the prompt text. Echo is suppressed. Implementations honor

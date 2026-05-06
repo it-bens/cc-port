@@ -13,14 +13,10 @@ import (
 // tty handle when ctx fires, which causes the blocked ReadPassword to return;
 // the helper translates the resulting error into context.Canceled wrapped via
 // fmt.Errorf("canceled: %w", ctx.Err()).
-//
-//nolint:unused // referenced by resolver in subsequent task
 type osTTYPrompter struct{}
 
 // Prompt opens /dev/tty, races ctx.Done against term.ReadPassword by closing
 // the tty handle on cancellation, and returns the secret with echo suppressed.
-//
-//nolint:unused // referenced by resolver in subsequent task
 func (osTTYPrompter) Prompt(ctx context.Context, label string) (string, error) {
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
