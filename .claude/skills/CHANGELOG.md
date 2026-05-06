@@ -10,8 +10,14 @@ Newest version first within each skill.
 
 ### v1
 
-Placeholder for the initial committed shape. Backfill the entry when the next
-change lands.
+Initial committed shape. One 13-step workflow covers three modes (staged,
+squash, rewrite), differing only in the git range passed to the gather
+script. `scripts/gather.sh` writes all git output to a single `/tmp` file
+and prints a section TOC; subsequent steps issue targeted Read and Grep
+calls against that file rather than streaming diffs through context.
+Three references: `scope-detection.md`, `type-detection.md`,
+`writing-rules-anti-ai-slop.md`. The run ends with a clipboard offer
+(`pbcopy` / `xclip`) and tmp-file cleanup as the final action.
 
 ## writing-docs
 
@@ -46,8 +52,15 @@ Reference files trimmed for context bloat.
 
 ### v1
 
-Placeholder for the initial committed shape. Backfill the entry when the next
-change lands.
+Initial committed shape. Workflow branches by surface (root `README.md` /
+module `README.md` / `docs/architecture.md` vs. `AGENTS.md`), applies the
+matching surface skeleton, writes the content, runs an anti-slop pass for
+human-prose surfaces, then closes with a two-check final quality gate
+(single-surface principle, cross-ref integrity). The AGENTS.md branch
+short-circuits when the module owns no hard cross-cutting constraint.
+Four references: `agents-md.md`, `anti-ai-slop.md`, `surface-shapes.md`,
+`writing-style.md`. Each reference opens with a "Loaded from SKILL.md
+when..." intro.
 
 ## writing-go-code
 
@@ -88,22 +101,45 @@ Reference files trimmed for context bloat.
 
 ### v1
 
-Placeholder for the initial committed shape. Backfill the entry when the next
-change lands.
+Initial committed shape. Two-step workflow: *Confirm the API call* (consult
+`go doc <pkg>.<Symbol>` before any non-builtin Go library call, with
+mechanical-idiom and already-passing-test exceptions) and *Classify each
+comment* (six-bucket table — redundant-with-README, explains-what,
+tutorial, over-specified why, load-bearing why, exported godoc — each
+mapped to a delete / compress / keep action). Two references:
+`comments.md`, `go-doc.md`. Each reference opens with a "Loaded from
+SKILL.md when..." intro.
 
 ## writing-pr-descriptions
 
 ### v1
 
-Placeholder for the initial committed shape. Backfill the entry when the next
-change lands.
+Initial committed shape. Workflow gathers the PR via gh-tooling
+(`pr_view`, `pr_files`, `pr_diff`, `pr_commits`), classifies the changed
+files into cc-port modules (CLI, command modules, primitives, tests, CI,
+build, docs, config), detects the conventional-commit type with a
+confidence level, flags dependency-update and breaking-change special
+cases, filters auxiliary tests/docs, then routes to one of five
+templates: Standard, CI-only, Build/Release, Documentation-only,
+Dependency. Closes with an anti-slop pass and a clipboard offer. Two
+references: `type-detection.md`, `writing-rules-anti-ai-slop.md`.
+Read-only — never mutates the PR.
 
 ## writing-release-notes
 
 ### v1
 
-Placeholder for the initial committed shape. Backfill the entry when the next
-change lands.
+Initial committed shape. Workflow resolves a tag range (with first-release
+fallback to `<initial-commit>..HEAD` and a confirm prompt when the target
+tag does not exist locally), lists merged PRs from `git log <range>`,
+fetches each PR's title / body / labels via gh-tooling `pr_view`
+(`commit_pulls` covers direct pushes), categorises by
+conventional-commit prefix and changed paths, filters version-bump and
+dep-bump noise, flags breaking changes, drafts notes against a fixed
+skeleton (Summary / Changes / Breaking Changes / Upgrade Notes), and runs
+an anti-slop pass that explicitly rewrites `- **Title**: description.`
+bullets into plain prose. One reference: `writing-rules-anti-ai-slop.md`.
+Read-only — never mutates the release.
 
 ## writing-tests
 
@@ -143,5 +179,15 @@ Reference files trimmed for context bloat.
 
 ### v1
 
-Placeholder for the initial committed shape. Backfill the entry when the next
-change lands.
+Initial committed shape. Five-step workflow: *Identify the single behavior*
+(do-test / don't-test classification, exported-API observability gate
+with reframe-or-delete branch), *Source the arrange data* (four sources:
+`testutil.SetupFixture`, `testdata/<name>` sibling or `//go:embed`,
+inline literal, `t.TempDir`), *Structure the body* (AAA for 5+
+statements, table-driven for shorter, `wantErr` carve-out for
+conditional assertions), *Guard independence* (four leak vectors:
+package-level vars, subtest closure capture, unrestored globals,
+wall-clock / randomness in asserted values), *Final quality gate* (two
+checks: redundancy and guard-clause isolation). Four references:
+`behavior.md`, `data.md`, `independence.md`, `shape.md`. Each reference
+opens with a "Loaded from SKILL.md when..." intro.
