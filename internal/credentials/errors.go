@@ -14,8 +14,6 @@ var (
 )
 
 // Internal sentinels wrapped by FileParseError.Err.
-//
-//nolint:unused // referenced by file parser added in a subsequent task
 var (
 	errEmptyFile     = errors.New("file contributes no recognized credential fields")
 	errMalformedLine = errors.New("malformed line: expected KEY=VALUE")
