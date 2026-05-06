@@ -111,15 +111,15 @@ func TestS3Opener_AWSConfigFromURL_OverridesCredentialsWhenProvided(t *testing.T
 	static := credentials.NewStaticCredentialsProvider("test-akid", "test-secret", "")
 	opener := newS3Opener(Deps{Credentials: static})
 
-	cfg, err := opener.awsConfigFromURL(context.Background(), url.Values{
+	config, err := opener.awsConfigFromURL(context.Background(), url.Values{
 		"region": {"us-east-1"},
 	})
 	require.NoError(t, err)
 
-	creds, err := cfg.Credentials.Retrieve(context.Background())
+	resolved, err := config.Credentials.Retrieve(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, "test-akid", creds.AccessKeyID)
-	assert.Equal(t, "test-secret", creds.SecretAccessKey)
+	assert.Equal(t, "test-akid", resolved.AccessKeyID)
+	assert.Equal(t, "test-secret", resolved.SecretAccessKey)
 }
 
 func TestS3Opener_AWSConfigFromURL_LeavesGocloudDefaultWhenDepsEmpty(t *testing.T) {

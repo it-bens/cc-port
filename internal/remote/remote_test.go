@@ -12,8 +12,6 @@ import (
 	"github.com/it-bens/cc-port/internal/remote"
 )
 
-const memURL = "mem://"
-
 func TestNew_GarbageURLReturnsError(t *testing.T) {
 	if _, err := remote.New(context.Background(), "::not-a-url::", remote.Deps{}); err == nil {
 		t.Fatal("expected error on malformed URL")
@@ -21,7 +19,7 @@ func TestNew_GarbageURLReturnsError(t *testing.T) {
 }
 
 func TestRemote_OpenMissingReturnsErrNotFound(t *testing.T) {
-	r, err := newForTest(context.Background(), memURL)
+	r, err := newForTest(context.Background())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -33,7 +31,7 @@ func TestRemote_OpenMissingReturnsErrNotFound(t *testing.T) {
 }
 
 func TestRemote_StatMissingReturnsErrNotFound(t *testing.T) {
-	r, err := newForTest(context.Background(), memURL)
+	r, err := newForTest(context.Background())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -45,7 +43,7 @@ func TestRemote_StatMissingReturnsErrNotFound(t *testing.T) {
 }
 
 func TestRemote_CreateThenOpenRoundTrip(t *testing.T) {
-	r, err := newForTest(context.Background(), memURL)
+	r, err := newForTest(context.Background())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -78,7 +76,7 @@ func TestRemote_CreateThenOpenRoundTrip(t *testing.T) {
 }
 
 func TestRemote_StatAfterCreateReturnsSize(t *testing.T) {
-	r, err := newForTest(context.Background(), memURL)
+	r, err := newForTest(context.Background())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

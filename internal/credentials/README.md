@@ -55,9 +55,9 @@ These paths abort with no provider returned and no further source attempted:
 
 ## Quirks
 
-The cancellation seam closes the `/dev/tty` handle when `ctx.Done` fires, which causes the blocked `term.ReadPassword` call (from `github.com/charmbracelet/x/term`) to return; the helper then returns `fmt.Errorf("canceled: %w", ctx.Err())`. This preserves the cancellation contract introduced by commit `cdcb4e2` (Ctrl-C aborts within one read cycle). The trailing newline write (so the next CLI line does not run into the masked prompt) is `defer`-best-effort: a failed newline does not invalidate the secret already read.
+The cancellation seam closes the `/dev/tty` handle when `ctx.Done` fires, which causes the blocked `term.ReadPassword` call (from `github.com/charmbracelet/x/term`) to return; the helper then returns `fmt.Errorf("canceled: %w", ctx.Err())`. The seam preserves the cancellation contract introduced by commit `cdcb4e2` (Ctrl-C aborts within one read cycle). The trailing newline write (so the next CLI line does not run into the masked prompt) is `defer`-best-effort: a failed newline does not invalidate the secret already read.
 
-This module owns echo-suppressed single-field secret prompts; `internal/ui` owns the form-prompt path. See [`docs/architecture.md`](../../docs/architecture.md) §TTY-prompt ownership split.
+`internal/credentials` owns echo-suppressed single-field secret prompts; `internal/ui` owns the form-prompt path. See [`docs/architecture.md`](../../docs/architecture.md) §TTY-prompt ownership split.
 
 ## Tests
 

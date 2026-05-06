@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/remote"
@@ -128,15 +129,13 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	}
 }
 
-func TestPull_AcceptsCredentialsFile(t *testing.T) {
+func TestPull_AcceptsValidCredentialsFile(t *testing.T) {
 	tmpHome, _ := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
-	credsPath := filepath.Join(t.TempDir(), "creds.env")
-	require.NoError(t, os.WriteFile(credsPath,
-		[]byte("AWS_ACCESS_KEY_ID=AKIATEST\nAWS_SECRET_ACCESS_KEY=secrettest\n"), 0o600))
+	credentialsPath := writeTestCredentialsFile(t, 0o600)
 
 	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{
@@ -144,7 +143,7 @@ func TestPull_AcceptsCredentialsFile(t *testing.T) {
 		"--claude-dir", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
-		"--credentials-file", credsPath,
+		"--credentials-file", credentialsPath,
 	})
 
 	err := rootCmd.Execute()
@@ -152,7 +151,7 @@ func TestPull_AcceptsCredentialsFile(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPull_AcceptsNoPrompt(t *testing.T) {
+func TestPull_AcceptsNoPromptFlag(t *testing.T) {
 	tmpHome, _ := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
 	url := "file://" + t.TempDir()
@@ -173,14 +172,17 @@ func TestPull_AcceptsNoPrompt(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPull_RejectsMalformedCredentialsFile(t *testing.T) {
+// TestPull_RejectsTooPermissiveCredentialsFile pins the wiring between
+// the --credentials-file flag and credentials.Resolve on the pull side.
+// A 0644-mode file is rejected by the resolver before any parse work;
+// the test passes only when ErrFilePermissionsTooPermissive surfaces.
+func TestPull_RejectsTooPermissiveCredentialsFile(t *testing.T) {
 	tmpHome, _ := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
-	badCredsPath := filepath.Join(t.TempDir(), "bad.env")
-	require.NoError(t, os.WriteFile(badCredsPath, []byte("BROKEN_NO_EQUALS\n"), 0o600))
+	credentialsPath := writeTestCredentialsFile(t, 0o644)
 
 	rootCmd := newRootCmd()
 	rootCmd.SetArgs([]string{
@@ -188,12 +190,36 @@ func TestPull_RejectsMalformedCredentialsFile(t *testing.T) {
 		"--claude-dir", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
-		"--credentials-file", badCredsPath,
+		"--credentials-file", credentialsPath,
 	})
 
 	err := rootCmd.Execute()
 
-	require.Error(t, err)
+	require.ErrorIs(t, err, credentials.ErrFilePermissionsTooPermissive)
+}
+
+func TestPull_RejectsMalformedCredentialsFile(t *testing.T) {
+	tmpHome, _ := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	malformedCredentialsPath := filepath.Join(t.TempDir(), "malformed.env")
+	require.NoError(t, os.WriteFile(malformedCredentialsPath, []byte("BROKEN_NO_EQUALS\n"), 0o600))
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-dir", claudeFixtureDir,
+		"--to", targetPath,
+		"--remote", url,
+		"--credentials-file", malformedCredentialsPath,
+	})
+
+	err := rootCmd.Execute()
+
+	var parseErr *credentials.FileParseError
+	require.ErrorAs(t, err, &parseErr)
 }
 
 func TestOpenArchiveSource_MissingObjectReturnsErrRemoteNotFound(t *testing.T) {
