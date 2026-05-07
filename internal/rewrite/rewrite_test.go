@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -647,6 +648,44 @@ func TestSafeRenamePromoter_Dirs(t *testing.T) {
 	})
 
 	t.Run("rollback restores an overwritten directory", assertRollbackRestoresDir)
+}
+
+func TestSafeRenamePromoter_PreservesMtimeOnFileAndDirRenames(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// File-rename case: a temp file with a known mtime promoted via StageFile.
+	fileMtime := time.Date(2024, 7, 15, 9, 0, 0, 0, time.UTC)
+	fileTemp := filepath.Join(tempDir, "file.tmp")
+	fileFinal := filepath.Join(tempDir, "file.final")
+	require.NoError(t, os.WriteFile(fileTemp, []byte("body"), 0o600), "write file temp")
+	require.NoError(t, os.Chtimes(fileTemp, fileMtime, fileMtime), "set file temp mtime")
+
+	// Dir-rename case: a temp directory containing a file with a known mtime
+	// promoted via StageDir. The per-file mtime inside the directory is what
+	// pattern-A staging relies on.
+	dirMtime := time.Date(2024, 7, 16, 10, 0, 0, 0, time.UTC)
+	dirTemp := filepath.Join(tempDir, "dir.tmp")
+	dirFinal := filepath.Join(tempDir, "dir.final")
+	require.NoError(t, os.MkdirAll(dirTemp, 0o750), "create dir temp")
+	nestedFile := filepath.Join(dirTemp, "nested")
+	require.NoError(t, os.WriteFile(nestedFile, []byte("body"), 0o600), "write nested file")
+	require.NoError(t, os.Chtimes(nestedFile, dirMtime, dirMtime), "set nested file mtime")
+
+	promoter := rewrite.NewSafeRenamePromoter()
+	promoter.StageFile(fileTemp, fileFinal)
+	promoter.StageDir(dirTemp, dirFinal)
+	require.NoError(t, promoter.Promote(), "promote both stages")
+
+	fileStat, err := os.Stat(fileFinal)
+	require.NoError(t, err, "stat promoted file")
+	require.WithinDuration(t, fileMtime, fileStat.ModTime(), time.Second,
+		"StageFile must preserve mtime on the renamed file")
+
+	nestedFinal := filepath.Join(dirFinal, "nested")
+	nestedStat, err := os.Stat(nestedFinal)
+	require.NoError(t, err, "stat nested file under promoted dir")
+	require.WithinDuration(t, dirMtime, nestedStat.ModTime(), time.Second,
+		"StageDir must preserve mtime on files inside the renamed directory")
 }
 
 func assertRollbackRestoresFile(t *testing.T) {
