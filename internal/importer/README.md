@@ -179,6 +179,22 @@ File-history snapshots are opaque byte streams. See [`docs/architecture.md`](../
 
 - None at runtime. The opaque-bytes policy means content interpretation is out of scope.
 
+### Source mtime preservation
+
+Used by `cc-port import` and `cc-port pull`. The export side at [`internal/export/README.md`](../export/README.md) §Source mtime preservation populates the archive's `FileHeader.Modified` from the source file's `os.Stat`.
+
+#### Handled
+
+Every verbatim archive entry whose `FileHeader.Modified` is non-zero lands on disk with that mtime. The four staging helpers (`stageProjectFileFromZip`, `stageMemoryFileFromZip`, `stageFileHistoryFromZip`, `stageSessionKeyedFileFromZip`) call `applyMtime` on the staged path after the streaming write completes. The call lands before `SafeRenamePromoter` records the file for promotion. `os.Rename` preserves per-file mtime, so the destination on disk matches the archive's `Modified` value at whole-second precision.
+
+#### Refused
+
+None at runtime. `os.Chtimes` failure aborts staging and the existing rollback unwinds partial work.
+
+#### Not covered
+
+Entries whose `FileHeader.Modified` is zero (the merge/synth trio `metadata.xml`, `history.jsonl`, `config.json`) inherit the natural import-time mtime. `applyMtime` is a no-op when the timestamp is zero.
+
 ## Tests
 
 Unit tests in `importer_test.go` and `resolve_test.go`. Coverage:

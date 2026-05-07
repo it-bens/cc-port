@@ -168,7 +168,7 @@ func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions *Options, resul
 	if err != nil {
 		return fmt.Errorf("build metadata XML: %w", err)
 	}
-	size, err := writeToZip(archiveWriter, "metadata.xml", metadataXMLData)
+	size, err := writeToZip(archiveWriter, "metadata.xml", metadataXMLData, time.Time{})
 	if err != nil {
 		return fmt.Errorf("write metadata.xml: %w", err)
 	}
@@ -251,6 +251,11 @@ func streamJSONLEntry(
 	}
 	defer func() { _ = source.Close() }()
 
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source for %s: %w", sourcePath, err)
+	}
+
 	size, err := writeJSONLToZip(ctx, archiveWriter, zipName, source, func(line []byte) []byte {
 		// Preserve blank lines: applyPlaceholders on an empty body routes
 		// through rewrite.ReplacePathInBytes which returns nil for empty
@@ -259,7 +264,7 @@ func streamJSONLEntry(
 			return line
 		}
 		return applyPlaceholders(line, placeholders)
-	})
+	}, sourceInfo.ModTime())
 	if err != nil {
 		return err
 	}
@@ -356,7 +361,7 @@ func exportHistory(
 			return nil
 		}
 		return applyPlaceholders(trimmed, placeholders)
-	})
+	}, time.Time{})
 	if err != nil {
 		return fmt.Errorf("write history/history.jsonl: %w", err)
 	}
@@ -423,13 +428,38 @@ func applyPlaceholders(data []byte, placeholders []manifest.Placeholder) []byte 
 	return data
 }
 
+// createZipEntry returns an io.Writer for a new ZIP entry. When mtime is
+// zero, it uses (*zip.Writer).Create — yielding an entry whose Modified
+// field reads back as the MS-DOS epoch, which existing tests treat as "no
+// mtime carried." When mtime is non-zero, it uses CreateHeader so
+// archive/zip writes the Info-ZIP extended-timestamp (extTimeExtraID)
+// extra field at whole-second precision (the resolution the stdlib writer
+// emits for FileHeader.Modified).
+func createZipEntry(archiveWriter *zip.Writer, name string, mtime time.Time) (io.Writer, error) {
+	if mtime.IsZero() {
+		writer, err := archiveWriter.Create(name)
+		if err != nil {
+			return nil, fmt.Errorf("create zip entry %s: %w", name, err)
+		}
+		return writer, nil
+	}
+	header := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: mtime}
+	writer, err := archiveWriter.CreateHeader(header)
+	if err != nil {
+		return nil, fmt.Errorf("create zip entry %s: %w", name, err)
+	}
+	return writer, nil
+}
+
 // writeToZip creates and writes one archive entry. It returns the entry's
 // size (the length of data in bytes) so callers can record an ArchiveEntry
-// in the matching Result slice.
-func writeToZip(archiveWriter *zip.Writer, name string, data []byte) (int64, error) {
-	writer, err := archiveWriter.Create(name)
+// in the matching Result slice. A zero mtime omits the timestamp field
+// (Create-equivalent); a non-zero mtime is written via CreateHeader so the
+// archive carries it in the Info-ZIP extended-timestamp extra field.
+func writeToZip(archiveWriter *zip.Writer, name string, data []byte, mtime time.Time) (int64, error) {
+	writer, err := createZipEntry(archiveWriter, name, mtime)
 	if err != nil {
-		return 0, fmt.Errorf("create zip entry %s: %w", name, err)
+		return 0, err
 	}
 	if _, err := writer.Write(data); err != nil {
 		return 0, fmt.Errorf("write zip entry %s: %w", name, err)
@@ -447,10 +477,11 @@ func writeReaderToZip(
 	archiveWriter *zip.Writer,
 	name string,
 	src io.Reader,
+	mtime time.Time,
 ) (int64, error) {
-	entry, err := archiveWriter.Create(name)
+	entry, err := createZipEntry(archiveWriter, name, mtime)
 	if err != nil {
-		return 0, fmt.Errorf("create zip entry %s: %w", name, err)
+		return 0, err
 	}
 	var written int64
 	buffer := make([]byte, 64<<10)
@@ -492,10 +523,11 @@ func writeJSONLToZip(
 	name string,
 	src io.Reader,
 	lineTransform func([]byte) []byte,
+	mtime time.Time,
 ) (int64, error) {
-	entry, err := archiveWriter.Create(name)
+	entry, err := createZipEntry(archiveWriter, name, mtime)
 	if err != nil {
-		return 0, fmt.Errorf("create zip entry %s: %w", name, err)
+		return 0, err
 	}
 	reader := bufio.NewReaderSize(src, 64<<10)
 	var written int64
@@ -558,7 +590,7 @@ func splitJSONLTerminator(line []byte) (body, terminator []byte) {
 func writeCategoryEntry(
 	archiveWriter *zip.Writer, result *Result, category, name string, data []byte,
 ) error {
-	size, err := writeToZip(archiveWriter, name, data)
+	size, err := writeToZip(archiveWriter, name, data, time.Time{})
 	if err != nil {
 		return err
 	}
@@ -651,7 +683,12 @@ func streamVerbatimEntry(
 	}
 	defer func() { _ = source.Close() }()
 
-	size, err := writeReaderToZip(ctx, archiveWriter, zipName, source)
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source for %s: %w", sourcePath, err)
+	}
+
+	size, err := writeReaderToZip(ctx, archiveWriter, zipName, source, sourceInfo.ModTime())
 	if err != nil {
 		return err
 	}

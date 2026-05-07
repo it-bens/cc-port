@@ -1373,3 +1373,226 @@ func readSingleSessionBody(t *testing.T, claudeHome *claude.Home, targetPath str
 	require.NoError(t, err)
 	return data
 }
+
+func TestImport_PreservesSessionMtimeFromArchive(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceHome, archivePath)
+
+	// buildTestArchive uses (*zip.Writer).Create, which leaves Modified
+	// zero. Reissue one session entry with a known non-zero Modified so the
+	// stager-level mtime path is exercised.
+	expectedMtime := time.Date(2025, 4, 1, 10, 30, 0, 0, time.UTC)
+	rewriteOneEntryWithMtime(t, archivePath, "sessions/99999.json", expectedMtime)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destHomeDir := filepath.Join(t.TempDir(), "home")
+	source, size := openArchive(t, archivePath)
+	importOptions := importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: fixtureDestProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": fixtureDestProjectPath,
+			"{{HOME}}":         destHomeDir,
+		},
+	}
+	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	require.NoError(t, err, "import")
+
+	encodedDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
+	importedPath := filepath.Join(encodedDir, "99999.json")
+	stat, err := os.Stat(importedPath)
+	require.NoError(t, err, "stat imported session")
+	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
+		"imported session should carry archive mtime through promotion")
+}
+
+func TestImport_PreservesMemoryMtimeFromArchive(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceHome, archivePath)
+
+	expectedMtime := time.Date(2025, 4, 2, 14, 45, 0, 0, time.UTC)
+	rewriteOneEntryWithMtime(t, archivePath, "memory/MEMORY.md", expectedMtime)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destHomeDir := filepath.Join(t.TempDir(), "home")
+	source, size := openArchive(t, archivePath)
+	importOptions := importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: fixtureDestProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": fixtureDestProjectPath,
+			"{{HOME}}":         destHomeDir,
+		},
+	}
+	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	require.NoError(t, err, "import")
+
+	encodedDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
+	importedPath := filepath.Join(encodedDir, "memory", "MEMORY.md")
+	stat, err := os.Stat(importedPath)
+	require.NoError(t, err, "stat imported memory")
+	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
+		"imported memory file should carry archive mtime through promotion")
+}
+
+// rewriteOneEntryWithMtime opens archivePath, copies all entries to a fresh
+// archive but reissues entryName via CreateHeader with the given Modified
+// value, and replaces the original archive in place. Used to inject a known
+// non-zero Modified into a fixture-built archive whose entries default to
+// the MS-DOS epoch.
+func rewriteOneEntryWithMtime(t *testing.T, archivePath, entryName string, mtime time.Time) {
+	t.Helper()
+	original, err := zip.OpenReader(archivePath)
+	require.NoError(t, err, "open original archive")
+	defer func() { _ = original.Close() }()
+
+	rewritten := &bytes.Buffer{}
+	zipWriter := zip.NewWriter(rewritten)
+	for _, file := range original.File {
+		if file.Name == entryName {
+			header := &zip.FileHeader{Name: file.Name, Method: zip.Deflate, Modified: mtime}
+			writer, err := zipWriter.CreateHeader(header)
+			require.NoError(t, err, "create header for %s", file.Name)
+			reader, err := file.Open()
+			require.NoError(t, err, "open %s", file.Name)
+			_, err = io.Copy(writer, reader) //nolint:gosec // G110: test-built archive
+			require.NoError(t, err, "copy %s", file.Name)
+			require.NoError(t, reader.Close(), "close source")
+			continue
+		}
+		writer, err := zipWriter.Create(file.Name)
+		require.NoError(t, err, "create %s", file.Name)
+		reader, err := file.Open()
+		require.NoError(t, err, "open %s", file.Name)
+		_, err = io.Copy(writer, reader) //nolint:gosec // G110: test-built archive
+		require.NoError(t, err, "copy %s", file.Name)
+		require.NoError(t, reader.Close(), "close source")
+	}
+	require.NoError(t, zipWriter.Close(), "close rewritten zip")
+	require.NoError(t, os.WriteFile(archivePath, rewritten.Bytes(), 0o600), "rewrite archive")
+}
+
+func TestImport_PreservesFileHistoryMtimeFromArchive(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceHome, archivePath)
+
+	entryName := findFirstZipEntryWithPrefix(t, archivePath, "file-history/")
+	require.NotEmpty(t, entryName, "fixture must include at least one file-history entry")
+
+	expectedMtime := time.Date(2025, 1, 7, 8, 9, 10, 0, time.UTC)
+	rewriteOneEntryWithMtime(t, archivePath, entryName, expectedMtime)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destHomeDir := filepath.Join(t.TempDir(), "home")
+	source, size := openArchive(t, archivePath)
+	importOptions := importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: fixtureDestProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": fixtureDestProjectPath,
+			"{{HOME}}":         destHomeDir,
+		},
+	}
+	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	require.NoError(t, err, "import")
+
+	importedPath := filepath.Join(destClaudeHome.FileHistoryDir(),
+		strings.TrimPrefix(entryName, "file-history/"))
+	stat, err := os.Stat(importedPath)
+	require.NoError(t, err, "stat imported file-history snapshot")
+	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
+		"imported file-history snapshot should carry archive mtime")
+}
+
+func TestImport_PreservesSessionKeyedMtimeFromArchive(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	expectedMtime := time.Date(2025, 4, 3, 18, 20, 0, 0, time.UTC)
+	todosEntryName := "todos/test-id-agent-test-id.json"
+	buildSingleTodosArchive(t, archivePath, todosEntryName, expectedMtime)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destHomeDir := filepath.Join(t.TempDir(), "home")
+	source, size := openArchive(t, archivePath)
+	importOptions := importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: fixtureDestProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": fixtureDestProjectPath,
+			"{{HOME}}":         destHomeDir,
+		},
+	}
+	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	require.NoError(t, err, "import")
+
+	importedPath := filepath.Join(destClaudeHome.TodosDir(),
+		strings.TrimPrefix(todosEntryName, "todos/"))
+	stat, err := os.Stat(importedPath)
+	require.NoError(t, err, "stat imported todos entry")
+	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
+		"imported session-keyed entry should carry archive mtime through promotion")
+}
+
+// buildSingleTodosArchive writes a minimal cc-port archive declaring only the
+// todos category and a single todos/ entry whose Modified is the given mtime.
+// Self-contained because buildTestArchive omits session-keyed entries.
+func buildSingleTodosArchive(t *testing.T, archivePath, entryName string, mtime time.Time) {
+	t.Helper()
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, err, "create archive file")
+	defer func() { _ = archiveFile.Close() }()
+
+	zipWriter := zip.NewWriter(archiveFile)
+
+	metadata := &manifest.Metadata{
+		Export: manifest.Info{
+			Created: time.Now(),
+			Categories: []manifest.Category{
+				{Name: "sessions", Included: false},
+				{Name: "memory", Included: false},
+				{Name: "history", Included: false},
+				{Name: "file-history", Included: false},
+				{Name: "config", Included: false},
+				{Name: "todos", Included: true},
+				{Name: "usage-data", Included: false},
+				{Name: "plugins-data", Included: false},
+				{Name: "tasks", Included: false},
+			},
+		},
+	}
+	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
+	require.NoError(t, manifest.WriteManifest(metadataPath, metadata), "write temp metadata")
+	metadataData, err := os.ReadFile(metadataPath) //nolint:gosec // G304: test helper
+	require.NoError(t, err, "read temp metadata")
+	metadataEntry, err := zipWriter.Create("metadata.xml")
+	require.NoError(t, err, "create metadata.xml entry")
+	_, err = metadataEntry.Write(metadataData)
+	require.NoError(t, err, "write metadata.xml")
+
+	header := &zip.FileHeader{Name: entryName, Method: zip.Deflate, Modified: mtime}
+	todosEntry, err := zipWriter.CreateHeader(header)
+	require.NoError(t, err, "create todos entry")
+	_, err = todosEntry.Write([]byte("[]\n"))
+	require.NoError(t, err, "write todos body")
+
+	require.NoError(t, zipWriter.Close(), "close zip")
+}
+
+func findFirstZipEntryWithPrefix(t *testing.T, archivePath, prefix string) string {
+	t.Helper()
+	zipReader, err := zip.OpenReader(archivePath)
+	require.NoError(t, err, "open archive")
+	defer func() { _ = zipReader.Close() }()
+	for _, file := range zipReader.File {
+		if strings.HasPrefix(file.Name, prefix) {
+			return file.Name
+		}
+	}
+	return ""
+}

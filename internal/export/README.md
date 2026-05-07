@@ -85,6 +85,24 @@ Inspecting or rewriting snapshot bytes is refused. Snapshots are opaque user-fil
 
 Privacy of exported snapshots. An archive shared with someone else carries literal project paths inside any snapshot that quoted them. Excluding the category up front (`--file-history=false`, or omitting it when other categories are explicitly selected) is the entire opt-out surface.
 
+### Source mtime preservation
+
+Used by `cc-port import` and `cc-port pull` to restore the chronological ordering of imported files (Claude Code's `/resume` picker orders sessions by mtime).
+
+#### Handled
+
+Every verbatim archive entry carries the source file's mtime in `FileHeader.Modified`. `streamJSONLEntry` and `streamVerbatimEntry` stat their open source and pass `ModTime()` through to the zip-write helpers. Five categories are covered: session JSONLs, memory files, sub-agent files, every session-keyed group (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`), and file-history snapshots.
+
+The encoding is Go's `archive/zip` Info-ZIP `extTimeExtraID` extra field at whole-second precision. Sub-second source mtimes are truncated. The import side at [`internal/importer/README.md`](../importer/README.md) §Source mtime preservation reads `Modified` back and applies it to the staged file.
+
+#### Refused
+
+None at runtime. A `Stat` failure on the open source aborts the entry write.
+
+#### Not covered
+
+`metadata.xml`, `history.jsonl`, and `config.json` carry no per-file timestamp. Each is synthesized or merged at export time, so the archive entry's `Modified` is left zero. The import side reads zero as "no mtime carried" and the staged file inherits its natural import-time mtime.
+
 ## Tests
 
 Unit tests in `export_test.go`, `discover_test.go`, `close_error_test.go`, and `file_history_errors_test.go`. Coverage: all-categories export, path anonymisation (order-independence, boundary collisions), selective category export, history-inclusion rules, file-history pipeline, zip-finalize and per-entry write fault injection via the caller-supplied `Options.Output`, path discovery, anchored placeholder discovery, auto-placeholder detection.
