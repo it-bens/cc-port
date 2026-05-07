@@ -657,6 +657,9 @@ func stageFileHistoryFromZip(
 	if err != nil {
 		return stagedFile{}, bytesRead, err
 	}
+	if err := applyMtime(tempPath, zipFile.Modified); err != nil {
+		return stagedFile{}, bytesRead, err
+	}
 	return stagedFile{finalPath: finalPath, tempPath: tempPath}, bytesRead, nil
 }
 
@@ -679,6 +682,9 @@ func stageSessionKeyedFileFromZip(
 	}
 	bytesRead, err := streamResolveToTemp(tempPath, zipFile, resolutions, filePerm)
 	if err != nil {
+		return stagedFile{}, bytesRead, err
+	}
+	if err := applyMtime(tempPath, zipFile.Modified); err != nil {
 		return stagedFile{}, bytesRead, err
 	}
 	return stagedFile{group: target.Group, finalPath: finalPath, tempPath: tempPath}, bytesRead, nil
