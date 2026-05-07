@@ -621,7 +621,9 @@ func stageProjectFileFromZip(
 	tempProjectDir string, zipFile *zip.File, zipPrefix string, resolutions map[string]string,
 ) (int64, error) {
 	relativePath := strings.TrimPrefix(zipFile.Name, zipPrefix)
-	return streamResolveIntoRoot(tempProjectDir, relativePath, zipFile, resolutions, secretFilePerm)
+	return streamResolveIntoRoot(
+		tempProjectDir, relativePath, zipFile, resolutions, secretFilePerm, zipFile.Modified,
+	)
 }
 
 // stageMemoryFileFromZip streams one memory/ entry directly into the
@@ -631,7 +633,7 @@ func stageMemoryFileFromZip(
 ) (int64, error) {
 	relativePath := strings.TrimPrefix(zipFile.Name, "memory/")
 	return streamResolveIntoRoot(
-		tempProjectDir, filepath.Join("memory", relativePath), zipFile, resolutions, filePerm,
+		tempProjectDir, filepath.Join("memory", relativePath), zipFile, resolutions, filePerm, zipFile.Modified,
 	)
 }
 
@@ -688,7 +690,8 @@ func stageSessionKeyedFileFromZip(
 // absolute-path prefixes before any write, so a malicious zip entry name
 // cannot land outside baseDir.
 func streamResolveIntoRoot(
-	baseDir, relativePath string, zipFile *zip.File, resolutions map[string]string, perm os.FileMode,
+	baseDir, relativePath string, zipFile *zip.File,
+	resolutions map[string]string, perm os.FileMode, mtime time.Time,
 ) (int64, error) {
 	relativePath = filepath.Clean(relativePath)
 	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
@@ -718,6 +721,9 @@ func streamResolveIntoRoot(
 	}
 	if err := writer.Close(); err != nil {
 		return bytesRead, fmt.Errorf("close staged %q: %w", relativePath, err)
+	}
+	if err := applyMtime(filepath.Join(baseDir, relativePath), mtime); err != nil {
+		return bytesRead, err
 	}
 	return bytesRead, nil
 }

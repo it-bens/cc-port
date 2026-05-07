@@ -1373,3 +1373,105 @@ func readSingleSessionBody(t *testing.T, claudeHome *claude.Home, targetPath str
 	require.NoError(t, err)
 	return data
 }
+
+func TestImport_PreservesSessionMtimeFromArchive(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceHome, archivePath)
+
+	// buildTestArchive uses (*zip.Writer).Create, which leaves Modified
+	// zero. Reissue one session entry with a known non-zero Modified so the
+	// stager-level mtime path is exercised.
+	expectedMtime := time.Date(2025, 4, 1, 10, 30, 0, 0, time.UTC)
+	rewriteOneEntryWithMtime(t, archivePath, "sessions/99999.json", expectedMtime)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destHomeDir := filepath.Join(t.TempDir(), "home")
+	source, size := openArchive(t, archivePath)
+	importOptions := importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: fixtureDestProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": fixtureDestProjectPath,
+			"{{HOME}}":         destHomeDir,
+		},
+	}
+	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	require.NoError(t, err, "import")
+
+	encodedDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
+	importedPath := filepath.Join(encodedDir, "99999.json")
+	stat, err := os.Stat(importedPath)
+	require.NoError(t, err, "stat imported session")
+	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
+		"imported session should carry archive mtime through promotion")
+}
+
+func TestImport_PreservesMemoryMtimeFromArchive(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	buildTestArchive(t, sourceHome, archivePath)
+
+	expectedMtime := time.Date(2025, 4, 2, 14, 45, 0, 0, time.UTC)
+	rewriteOneEntryWithMtime(t, archivePath, "memory/MEMORY.md", expectedMtime)
+
+	destClaudeHome := buildEmptyDestClaudeHome(t)
+	destHomeDir := filepath.Join(t.TempDir(), "home")
+	source, size := openArchive(t, archivePath)
+	importOptions := importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: fixtureDestProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": fixtureDestProjectPath,
+			"{{HOME}}":         destHomeDir,
+		},
+	}
+	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	require.NoError(t, err, "import")
+
+	encodedDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
+	importedPath := filepath.Join(encodedDir, "memory", "MEMORY.md")
+	stat, err := os.Stat(importedPath)
+	require.NoError(t, err, "stat imported memory")
+	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
+		"imported memory file should carry archive mtime through promotion")
+}
+
+// rewriteOneEntryWithMtime opens archivePath, copies all entries to a fresh
+// archive but reissues entryName via CreateHeader with the given Modified
+// value, and replaces the original archive in place. Used to inject a known
+// non-zero Modified into a fixture-built archive whose entries default to
+// the MS-DOS epoch.
+func rewriteOneEntryWithMtime(t *testing.T, archivePath, entryName string, mtime time.Time) {
+	t.Helper()
+	original, err := zip.OpenReader(archivePath)
+	require.NoError(t, err, "open original archive")
+	defer func() { _ = original.Close() }()
+
+	rewritten := &bytes.Buffer{}
+	zipWriter := zip.NewWriter(rewritten)
+	for _, file := range original.File {
+		if file.Name == entryName {
+			header := &zip.FileHeader{Name: file.Name, Method: zip.Deflate, Modified: mtime}
+			writer, err := zipWriter.CreateHeader(header)
+			require.NoError(t, err, "create header for %s", file.Name)
+			reader, err := file.Open()
+			require.NoError(t, err, "open %s", file.Name)
+			_, err = io.Copy(writer, reader) //nolint:gosec // G110: test-built archive
+			require.NoError(t, err, "copy %s", file.Name)
+			require.NoError(t, reader.Close(), "close source")
+			continue
+		}
+		writer, err := zipWriter.Create(file.Name)
+		require.NoError(t, err, "create %s", file.Name)
+		reader, err := file.Open()
+		require.NoError(t, err, "open %s", file.Name)
+		_, err = io.Copy(writer, reader) //nolint:gosec // G110: test-built archive
+		require.NoError(t, err, "copy %s", file.Name)
+		require.NoError(t, reader.Close(), "close source")
+	}
+	require.NoError(t, zipWriter.Close(), "close rewritten zip")
+	require.NoError(t, os.WriteFile(archivePath, rewritten.Bytes(), 0o600), "rewrite archive")
+}
