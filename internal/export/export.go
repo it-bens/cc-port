@@ -251,6 +251,11 @@ func streamJSONLEntry(
 	}
 	defer func() { _ = source.Close() }()
 
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source for %s: %w", sourcePath, err)
+	}
+
 	size, err := writeJSONLToZip(ctx, archiveWriter, zipName, source, func(line []byte) []byte {
 		// Preserve blank lines: applyPlaceholders on an empty body routes
 		// through rewrite.ReplacePathInBytes which returns nil for empty
@@ -259,7 +264,7 @@ func streamJSONLEntry(
 			return line
 		}
 		return applyPlaceholders(line, placeholders)
-	}, time.Time{})
+	}, sourceInfo.ModTime())
 	if err != nil {
 		return err
 	}
@@ -678,7 +683,12 @@ func streamVerbatimEntry(
 	}
 	defer func() { _ = source.Close() }()
 
-	size, err := writeReaderToZip(ctx, archiveWriter, zipName, source, time.Time{})
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source for %s: %w", sourcePath, err)
+	}
+
+	size, err := writeReaderToZip(ctx, archiveWriter, zipName, source, sourceInfo.ModTime())
 	if err != nil {
 		return err
 	}

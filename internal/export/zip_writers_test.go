@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +79,30 @@ func TestWriteReaderToZip_PreservesNonZeroMtime(t *testing.T) {
 	require.Len(t, zipReader.File, 1, "one entry")
 	require.WithinDuration(t, mtime, zipReader.File[0].Modified, zipMtimeRoundTripTolerance,
 		"FileHeader.Modified should round-trip")
+}
+
+func TestStreamJSONLEntry_PreservesSourceMtime(t *testing.T) {
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "source.jsonl")
+	require.NoError(t, os.WriteFile(sourcePath, []byte("{\"a\":1}\n"), 0o600), "write source")
+
+	expectedMtime := time.Date(2024, 3, 14, 15, 9, 26, 0, time.UTC)
+	require.NoError(t, os.Chtimes(sourcePath, expectedMtime, expectedMtime), "set source mtime")
+
+	buffer := &bytes.Buffer{}
+	zipWriter := zip.NewWriter(buffer)
+	result := &Result{}
+
+	err := streamJSONLEntry(context.Background(), zipWriter, result,
+		"sessions", "sessions/test.jsonl", sourcePath, nil)
+	require.NoError(t, err, "streamJSONLEntry")
+	require.NoError(t, zipWriter.Close(), "close zip")
+
+	zipReader, err := zip.NewReader(bytes.NewReader(buffer.Bytes()), int64(buffer.Len()))
+	require.NoError(t, err, "open zip")
+	require.Len(t, zipReader.File, 1, "one entry")
+	require.WithinDuration(t, expectedMtime, zipReader.File[0].Modified, time.Second,
+		"streamJSONLEntry should propagate source mtime to archive")
 }
 
 func TestWriteJSONLToZip_PreservesNonZeroMtime(t *testing.T) {
