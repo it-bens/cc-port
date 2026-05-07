@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -958,6 +959,20 @@ func readExistingOrEmpty(path string) ([]byte, error) {
 		return nil, err
 	}
 	return data, nil
+}
+
+// applyMtime sets path's atime and mtime to mtime. A zero mtime is a
+// no-op — callers pass zip.FileHeader.Modified directly, so entries
+// that carry no timestamp leave the staged file at its natural
+// import-time mtime.
+func applyMtime(path string, mtime time.Time) error {
+	if mtime.IsZero() {
+		return nil
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		return fmt.Errorf("set mtime on %q: %w", path, err)
+	}
+	return nil
 }
 
 func writeStagedFile(path string, content []byte, perm os.FileMode) error {
