@@ -425,10 +425,11 @@ func applyPlaceholders(data []byte, placeholders []manifest.Placeholder) []byte 
 
 // createZipEntry returns an io.Writer for a new ZIP entry. When mtime is
 // zero, it uses (*zip.Writer).Create — yielding an entry whose Modified
-// field reads back as the MS-DOS epoch (1980), which existing tests treat
-// as "no mtime carried." When mtime is non-zero, it uses CreateHeader so
-// archive/zip writes the NTFS extended-timestamp extra field with full
-// nanosecond UTC precision.
+// field reads back as the MS-DOS epoch, which existing tests treat as "no
+// mtime carried." When mtime is non-zero, it uses CreateHeader so
+// archive/zip writes the Info-ZIP extended-timestamp (extTimeExtraID)
+// extra field at whole-second precision (the resolution the stdlib writer
+// emits for FileHeader.Modified).
 func createZipEntry(archiveWriter *zip.Writer, name string, mtime time.Time) (io.Writer, error) {
 	if mtime.IsZero() {
 		writer, err := archiveWriter.Create(name)
@@ -449,7 +450,7 @@ func createZipEntry(archiveWriter *zip.Writer, name string, mtime time.Time) (io
 // size (the length of data in bytes) so callers can record an ArchiveEntry
 // in the matching Result slice. A zero mtime omits the timestamp field
 // (Create-equivalent); a non-zero mtime is written via CreateHeader so the
-// archive carries it in the NTFS extended-timestamp extra field.
+// archive carries it in the Info-ZIP extended-timestamp extra field.
 func writeToZip(archiveWriter *zip.Writer, name string, data []byte, mtime time.Time) (int64, error) {
 	writer, err := createZipEntry(archiveWriter, name, mtime)
 	if err != nil {
