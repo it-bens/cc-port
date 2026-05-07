@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -489,4 +490,152 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 		"import from decrypted source should succeed")
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
+}
+
+// firstFileUnder returns the first non-directory descendant of root, in walk
+// order. Used by the mtime round-trip test to pick a representative source
+// file under file-history/ and todos/ without hard-coding a fixture-specific
+// filename.
+func firstFileUnder(t *testing.T, root string) string {
+	t.Helper()
+	var found string
+	require.NoError(t,
+		filepath.WalkDir(root, func(path string, dirEntry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if !dirEntry.IsDir() && found == "" {
+				found = path
+			}
+			return nil
+		}),
+		"walk %s", root,
+	)
+	require.NotEmpty(t, found, "fixture must include at least one file under %s", root)
+	return found
+}
+
+// assertImportedMtime stats path and asserts its mtime is within one second of
+// want. One-second tolerance matches the Info-ZIP extTimeExtraID (0x5455) field
+// archive/zip writes — that extra field carries whole-second precision.
+func assertImportedMtime(t *testing.T, path string, want time.Time, label string) {
+	t.Helper()
+	stat, err := os.Stat(path)
+	require.NoError(t, err, "stat %s", label)
+	assert.WithinDuration(t, want, stat.ModTime(), time.Second,
+		"%s should carry source mtime", label)
+}
+
+// TestIntegration_ExportImportRoundTrip_PreservesMtime stamps known mtimes on
+// one representative source file per in-scope verbatim staging path
+// (session JSONL, memory file, file-history snapshot, todos entry), runs an
+// export → import round-trip into a fresh target, and asserts the mtimes
+// survive promotion. The merge-result files (history.jsonl, .claude.json) are
+// asserted not to carry source mtimes — their mtime reflects import time.
+func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+	encodedSourceProjectDir := sourceHome.ProjectDir(fixtureProjectPath)
+
+	// Pin known mtimes on one representative source file per in-scope
+	// staging path. Each instant is unique within the test so a regression
+	// where one file's mtime overwrites another's fails with a clear
+	// assertion. Whole-second precision matches the Info-ZIP extTimeExtraID
+	// (0x5455) extra field that archive/zip writes.
+	sessionMtime := time.Date(2025, 5, 1, 10, 0, 0, 0, time.UTC)
+	memoryMtime := time.Date(2025, 5, 2, 11, 0, 0, 0, time.UTC)
+	fileHistoryMtime := time.Date(2025, 5, 3, 12, 0, 0, 0, time.UTC)
+	todosMtime := time.Date(2025, 5, 4, 13, 0, 0, 0, time.UTC)
+
+	// fixtureSessionFile is a session JSONL the testutil fixture stages
+	// under the encoded project dir. Use its real filename so the source
+	// file the export reads — and the destination file we re-stat — agree.
+	const fixtureSessionFile = "a1b2c3d4-0000-0000-0000-000000000001.jsonl"
+
+	sessionPath := filepath.Join(encodedSourceProjectDir, fixtureSessionFile)
+	require.NoError(t, os.Chtimes(sessionPath, sessionMtime, sessionMtime),
+		"set source session mtime")
+
+	memoryPath := filepath.Join(encodedSourceProjectDir, "memory", "MEMORY.md")
+	require.NoError(t, os.Chtimes(memoryPath, memoryMtime, memoryMtime),
+		"set source memory mtime")
+
+	fileHistoryRoot := sourceHome.FileHistoryDir()
+	snapshotPath := firstFileUnder(t, fileHistoryRoot)
+	require.NoError(t, os.Chtimes(snapshotPath, fileHistoryMtime, fileHistoryMtime),
+		"set source file-history mtime")
+
+	// Stamping a todos source file exercises stageSessionKeyedFileFromZip end-to-end.
+	todosRoot := sourceHome.TodosDir()
+	todosPath := firstFileUnder(t, todosRoot)
+	require.NoError(t, os.Chtimes(todosPath, todosMtime, todosMtime),
+		"set source todos mtime")
+
+	roundTripStartedAt := time.Now()
+
+	// Inline export.Options so Categories.Todos can be enabled — the shared
+	// runExportRoundTrip helper fixes the category set without todos.
+	archivePath := filepath.Join(t.TempDir(), "export.zip")
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err, "create archive file")
+
+	_, err = export.Run(t.Context(), sourceHome, &export.Options{
+		ProjectPath: fixtureProjectPath,
+		Output:      archiveFile,
+		Categories: manifest.CategorySet{
+			Sessions:    true,
+			Memory:      true,
+			History:     true,
+			FileHistory: true,
+			Config:      true,
+			Todos:       true,
+		},
+		Placeholders: []manifest.Placeholder{
+			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
+			{Key: "{{HOME}}", Original: fixtureHomeDir},
+		},
+	})
+	require.NoError(t, err, "export should succeed")
+	require.NoError(t, archiveFile.Close(), "close archive after export")
+
+	destinationHome := setupDestinationHome(t)
+	source, size := openArchive(t, archivePath)
+	_, err = importer.Run(t.Context(), destinationHome, importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: destinationProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destinationProjectPath,
+			"{{HOME}}":         destinationHomeDir,
+		},
+	})
+	require.NoError(t, err, "import")
+
+	// Positive cases — verbatim entries carry source mtime through promotion.
+	encodedDestProjectDir := destinationHome.ProjectDir(destinationProjectPath)
+
+	assertImportedMtime(t,
+		filepath.Join(encodedDestProjectDir, fixtureSessionFile),
+		sessionMtime, "session JSONL")
+	assertImportedMtime(t,
+		filepath.Join(encodedDestProjectDir, "memory", "MEMORY.md"),
+		memoryMtime, "memory file")
+	assertImportedMtime(t,
+		filepath.Join(destinationHome.FileHistoryDir(),
+			strings.TrimPrefix(snapshotPath, fileHistoryRoot+string(filepath.Separator))),
+		fileHistoryMtime, "file-history snapshot")
+	assertImportedMtime(t,
+		filepath.Join(destinationHome.TodosDir(),
+			strings.TrimPrefix(todosPath, todosRoot+string(filepath.Separator))),
+		todosMtime, "todos entry")
+
+	// Negative cases — merged/synth files reflect import time, not source mtime.
+	historyStat, err := os.Stat(destinationHome.HistoryFile())
+	require.NoError(t, err, "stat imported history.jsonl")
+	assert.False(t, historyStat.ModTime().Before(roundTripStartedAt),
+		"history.jsonl is a merge result; its mtime should be at or after round-trip start")
+
+	configStat, err := os.Stat(destinationHome.ConfigFile)
+	require.NoError(t, err, "stat imported .claude.json")
+	assert.False(t, configStat.ModTime().Before(roundTripStartedAt),
+		".claude.json is a merge result; its mtime should be at or after round-trip start")
 }
