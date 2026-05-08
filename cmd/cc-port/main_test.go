@@ -10,13 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// captureRootCmd builds a fresh rootCmd via newRootCmd(), redirects its
-// output and error streams to a shared buffer, and sets the arg vector.
-// Each test owns its rootCmd, so flag state cannot leak across tests.
+// captureRootCmd builds a fresh rootCmd via newRootCmd(noopBanner{}),
+// redirects its output and error streams to a shared buffer, and sets
+// the arg vector. Each test owns its rootCmd, so flag state cannot
+// leak across tests.
 func captureRootCmd(t *testing.T, args []string) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 	var buffer bytes.Buffer
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetOut(&buffer)
 	rootCmd.SetErr(&buffer)
 	rootCmd.SetArgs(args)
@@ -24,13 +25,13 @@ func captureRootCmd(t *testing.T, args []string) (*cobra.Command, *bytes.Buffer)
 }
 
 func TestRootCommand_SilenceUsageOnRuntimeError(t *testing.T) {
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	require.True(t, rootCmd.SilenceUsage, "rootCmd must silence usage on runtime errors")
 	require.True(t, rootCmd.SilenceErrors, "rootCmd must silence error print (main owns it)")
 }
 
 func TestRootCommand_VersionFlagPresent(t *testing.T) {
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	assert.NotEmpty(t, rootCmd.Version, "rootCmd.Version must be set so --version registers")
 }
 

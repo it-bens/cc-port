@@ -29,7 +29,7 @@ func TestStreamRouting_ExportManifestSuccessLineRoutedToCobraStdout(t *testing.T
 
 	var stdout, stderr bytes.Buffer
 	claudeDir := home.Dir
-	cmd := newExportManifestCmd(&claudeDir)
+	cmd := newExportManifestCmd(&claudeDir, noopBanner{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 

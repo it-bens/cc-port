@@ -8,8 +8,6 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-
-	"github.com/it-bens/cc-port/internal/logo"
 )
 
 // Set by goreleaser ldflags.
@@ -28,7 +26,7 @@ func (e *usageError) Unwrap() error { return e.err }
 // var; persistent flag binding uses the same closure local. Subcommand
 // constructors take a *string so their RunE closures can dereference the
 // flag value at call time, after cobra's flag parse has populated it.
-func newRootCmd() *cobra.Command {
+func newRootCmd(banner Banner) *cobra.Command {
 	var claudeDir string
 	rootCmd := &cobra.Command{
 		Use:   "cc-port",
@@ -46,7 +44,7 @@ func newRootCmd() *cobra.Command {
 	defaultHelp := rootCmd.HelpFunc()
 	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
 		// Capture cobra's help output into a buffer by swapping the
-		// command's out writer, then render the logo beside it. The
+		// command's out writer, then render the banner beside it. The
 		// defer restores the original writer so subsequent help calls
 		// are unaffected.
 		originalOut := cmd.OutOrStdout()
@@ -54,39 +52,48 @@ func newRootCmd() *cobra.Command {
 		cmd.SetOut(&helpBuffer)
 		defer cmd.SetOut(originalOut)
 		defaultHelp(cmd, args)
-		_ = logo.RenderBeside(originalOut, helpBuffer.String())
+		// Cosmetic banner+help write: SetHelpFunc has no error return,
+		// and a failure to write here cannot be retried meaningfully
+		// (the original help text is already in helpBuffer, not on the
+		// terminal). Swallow rather than log.
+		_ = banner.RenderBeside(originalOut, helpBuffer.String())
 	})
 
 	// Cobra writes the version template to stdout for the --version flag.
-	// The template func cannot receive a writer, so BesideString gates
-	// on os.Stdout directly to match what cobra will write to.
+	// The template func cannot receive a writer; closing over the cobra
+	// command lets it read OutOrStdout at template-eval time and pass
+	// it explicitly to BesideString.
 	cobra.AddTemplateFunc("ccPortVersionBanner", func() string {
-		return logo.BesideString(fmt.Sprintf("cc-port %s\n", rootCmd.Version))
+		return banner.BesideString(rootCmd.OutOrStdout(), fmt.Sprintf("cc-port %s\n", rootCmd.Version))
 	})
 	rootCmd.SetVersionTemplate("{{ccPortVersionBanner}}")
 
-	rootCmd.AddCommand(newVersionCmd())
+	rootCmd.AddCommand(newVersionCmd(banner))
 	rootCmd.AddCommand(newMoveCmd(&claudeDir))
-	rootCmd.AddCommand(newExportCmd(&claudeDir))
+	rootCmd.AddCommand(newExportCmd(&claudeDir, banner))
 	rootCmd.AddCommand(newImportCmd(&claudeDir))
-	rootCmd.AddCommand(newPushCmd(&claudeDir))
+	rootCmd.AddCommand(newPushCmd(&claudeDir, banner))
 	rootCmd.AddCommand(newPullCmd(&claudeDir))
 
 	return rootCmd
 }
 
-func newVersionCmd() *cobra.Command {
+func newVersionCmd(banner Banner) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
 		Run: func(cmd *cobra.Command, _ []string) {
-			_ = logo.RenderBeside(cmd.OutOrStdout(), fmt.Sprintf("cc-port %s\n", version))
+			// Cosmetic version-line write: cobra's Run has no error
+			// return, and a failed write to the version surface has no
+			// recovery path the caller could take. Swallow rather than
+			// log.
+			_ = banner.RenderBeside(cmd.OutOrStdout(), fmt.Sprintf("cc-port %s\n", version))
 		},
 	}
 }
 
 func main() {
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(bannerImpl)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var usage *usageError

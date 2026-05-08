@@ -13,6 +13,26 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
+type countingBanner struct{ calls int }
+
+func (c *countingBanner) Render(io.Writer) error {
+	c.calls++
+	return nil
+}
+
+func TestShowInteractiveBannerCallsRenderOncePerProcess(t *testing.T) {
+	withSeams(t, seamOverrides{
+		bannerOnce: &sync.Once{},
+	})
+	banner := &countingBanner{}
+
+	showInteractiveBanner(banner)
+	showInteractiveBanner(banner)
+	showInteractiveBanner(banner)
+
+	assert.Equal(t, 1, banner.calls, "banner.Render must be called exactly once across multiple showInteractiveBanner invocations")
+}
+
 func TestCategoriesFromSelections(t *testing.T) {
 	t.Run("empty input", func(t *testing.T) {
 		got, err := categoriesFromSelections(nil)
@@ -54,7 +74,7 @@ func TestSelectCategoriesRejectsNonInteractiveStdin(t *testing.T) {
 		isTerminalFunc: func(uintptr) bool { return false },
 	})
 
-	_, err := SelectCategories()
+	_, err := SelectCategories(&countingBanner{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--all")
@@ -66,11 +86,10 @@ func TestSelectCategoriesWrapsFormError(t *testing.T) {
 	withSeams(t, seamOverrides{
 		isTerminalFunc: func(uintptr) bool { return true },
 		runFormFunc:    func(*huh.Form) error { return sentinel },
-		banner:         io.Discard,
 		bannerOnce:     &sync.Once{},
 	})
 
-	_, err := SelectCategories()
+	_, err := SelectCategories(&countingBanner{})
 
 	require.Error(t, err)
 	require.ErrorIs(t, err, sentinel)
@@ -96,7 +115,6 @@ func TestCategoryOptionMeta_CoversAllManifestCategories(t *testing.T) {
 type seamOverrides struct {
 	isTerminalFunc func(uintptr) bool
 	runFormFunc    func(*huh.Form) error
-	banner         io.Writer
 	bannerOnce     *sync.Once
 }
 
@@ -104,12 +122,10 @@ func withSeams(t *testing.T, opts seamOverrides) {
 	t.Helper()
 	origIsTerminal := isTerminal
 	origRunForm := runForm
-	origBannerWriter := bannerWriter
 	origBannerOnce := interactiveBannerOnce
 	t.Cleanup(func() {
 		isTerminal = origIsTerminal
 		runForm = origRunForm
-		bannerWriter = origBannerWriter
 		interactiveBannerOnce = origBannerOnce
 	})
 	if opts.isTerminalFunc != nil {
@@ -117,9 +133,6 @@ func withSeams(t *testing.T, opts seamOverrides) {
 	}
 	if opts.runFormFunc != nil {
 		runForm = opts.runFormFunc
-	}
-	if opts.banner != nil {
-		bannerWriter = opts.banner
 	}
 	if opts.bannerOnce != nil {
 		interactiveBannerOnce = opts.bannerOnce

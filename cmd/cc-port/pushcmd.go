@@ -20,7 +20,7 @@ import (
 // it via *claudeDir at call time. applyCategorySelection (shared with
 // newExportCmd) reads --from-manifest via cmd.Flags() and owns the
 // exclusivity guard with --all and per-category flags.
-func newPushCmd(claudeDir *string) *cobra.Command {
+func newPushCmd(claudeDir *string, banner Banner) *cobra.Command {
 	var (
 		asName          string
 		remoteURL       string
@@ -46,7 +46,7 @@ func newPushCmd(claudeDir *string) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPushCmd(cmd, args, *claudeDir)
+			return runPushCmd(cmd, args, *claudeDir, banner)
 		},
 	}
 	cmd.Flags().StringVar(&asName, "as", "",
@@ -107,7 +107,7 @@ func openPriorRead(
 // runPushCmd is the push subcommand body. The named return + deferred
 // closes pattern is load-bearing: prior.Source.Close releases the
 // decrypt-tempfile, and writer.Close commits the upload via remote.Sink.
-func runPushCmd(cmd *cobra.Command, args []string, claudeDir string) (err error) {
+func runPushCmd(cmd *cobra.Command, args []string, claudeDir string, banner Banner) (err error) {
 	asName, _ := cmd.Flags().GetString("as")
 	remoteURL, _ := cmd.Flags().GetString("remote")
 	apply, _ := cmd.Flags().GetBool("apply")
@@ -137,7 +137,7 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		return err
 	}
 
-	categories, placeholders, err := applyCategorySelection(cmd, claudeHome, projectPath)
+	categories, placeholders, err := applyCategorySelection(cmd, claudeHome, projectPath, banner)
 	if err != nil {
 		return err
 	}
