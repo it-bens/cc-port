@@ -244,3 +244,38 @@ func ansiCode(c color, darkBackground bool) string {
 	}
 	return ansiNavyOnLightBg
 }
+
+// Banner is the public entry point for the gantry-crane logo. The zero
+// value is ready to use; the type carries no state because all rendering
+// inputs (terminal detection, color, dark-background) are queried from
+// the writer or environment at render time.
+type Banner struct{}
+
+// Render writes the logo plus a trailing blank line to w when w is a
+// terminal file with NO_COLOR unset (colored) or set (plain ASCII).
+// Writes nothing when w is a pipe, file, or bytes.Buffer.
+func (Banner) Render(w io.Writer) error {
+	return Render(w)
+}
+
+// RenderBeside writes the logo and text side by side to w. Falls back
+// to stacked layout on narrow terminals; writes only text on non-
+// terminal writers.
+func (Banner) RenderBeside(w io.Writer, text string) error {
+	return RenderBeside(w, text)
+}
+
+// BesideString returns the side-by-side composition for callers that
+// cannot pass a writer through to RenderBeside (e.g. cobra version
+// templates). The out parameter is used only to gate terminal-vs-text
+// behavior; nothing is written to it. On non-terminal writers, returns
+// text unchanged.
+func (Banner) BesideString(out io.Writer, text string) string {
+	if !IsTerminal(out) {
+		return text
+	}
+	if terminalWidth(out) < minSideBySideWidth {
+		return String(HasDarkBackground(), ColorEnabled()) + text
+	}
+	return composeBeside(text, HasDarkBackground(), ColorEnabled())
+}

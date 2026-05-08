@@ -100,3 +100,27 @@ func TestRenderBesideToNonTerminalWritesTextOnly(t *testing.T) {
 
 	assert.Equal(t, "cc-port 1.2.3\n", buffer.String())
 }
+
+func TestBannerRenderToNonTerminalWritesNothing(t *testing.T) {
+	var buffer bytes.Buffer
+
+	require.NoError(t, Banner{}.Render(&buffer))
+
+	assert.Empty(t, buffer.Bytes())
+}
+
+func TestBannerRenderBesideToNonTerminalWritesTextOnly(t *testing.T) {
+	var buffer bytes.Buffer
+
+	require.NoError(t, Banner{}.RenderBeside(&buffer, "cc-port 1.2.3\n"))
+
+	assert.Equal(t, "cc-port 1.2.3\n", buffer.String())
+}
+
+func TestBannerBesideStringWithNonTerminalReturnsTextUnchanged(t *testing.T) {
+	var buffer bytes.Buffer
+
+	got := Banner{}.BesideString(&buffer, "cc-port 1.2.3\n")
+
+	assert.Equal(t, "cc-port 1.2.3\n", got)
+}
