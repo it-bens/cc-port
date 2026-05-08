@@ -21,6 +21,15 @@ go install github.com/it-bens/cc-port/cmd/cc-port@latest
 
 Prebuilt releases (macOS / Linux tarballs, checksums) are published under [GitHub Releases](https://github.com/it-bens/cc-port/releases).
 
+## Builds
+
+cc-port ships as two binaries built from the same source:
+
+- `cc-port` — default. No banner output. `go build ./cmd/cc-port` or `brew install it-bens/tap/cc-port`.
+- `cc-port-logo` — variant. Renders a colored gantry-crane logo on `--help`, `--version`, and the interactive picker. `go build -tags logo -o cc-port-logo ./cmd/cc-port` or `brew install it-bens/tap/cc-port-logo`.
+
+Functionally identical otherwise; pick whichever you prefer. Pre-built tarballs of both are attached to every [GitHub release](https://github.com/it-bens/cc-port/releases).
+
 ## Commands
 
 Full flag reference: `cc-port <subcommand> --help`. `cc-port --version` prints the build version.
