@@ -11,7 +11,7 @@ import (
 )
 
 func TestStringColoredOnLightBgUsesBrandNavy(t *testing.T) {
-	got := String(false, true)
+	got := composedString(false, true)
 
 	assert.Contains(t, got, ansiNavyOnLightBg)
 	assert.NotContains(t, got, ansiNavyOnDarkBg)
@@ -20,7 +20,7 @@ func TestStringColoredOnLightBgUsesBrandNavy(t *testing.T) {
 }
 
 func TestStringColoredOnDarkBgUsesLightenedNavy(t *testing.T) {
-	got := String(true, true)
+	got := composedString(true, true)
 
 	assert.Contains(t, got, ansiNavyOnDarkBg)
 	assert.NotContains(t, got, ansiNavyOnLightBg)
@@ -28,13 +28,13 @@ func TestStringColoredOnDarkBgUsesLightenedNavy(t *testing.T) {
 }
 
 func TestStringPlainHasNoAnsi(t *testing.T) {
-	got := String(false, false)
+	got := composedString(false, false)
 
 	assert.NotContains(t, got, "\x1b[")
 }
 
 func TestStringRowsHaveUniformRuneWidth(t *testing.T) {
-	plain := String(false, false)
+	plain := composedString(false, false)
 	lines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
 
 	require.Len(t, lines, len(art))
@@ -43,18 +43,10 @@ func TestStringRowsHaveUniformRuneWidth(t *testing.T) {
 	}
 }
 
-func TestRenderToNonTerminalWritesNothing(t *testing.T) {
-	var buffer bytes.Buffer
-
-	require.NoError(t, Render(&buffer))
-
-	assert.Empty(t, buffer.Bytes())
-}
-
 func TestIsTerminalNonFileWriterIsFalse(t *testing.T) {
 	var buffer bytes.Buffer
 
-	assert.False(t, IsTerminal(&buffer))
+	assert.False(t, isTerminal(&buffer))
 }
 
 func TestComposeBesidePairsLogoRowsWithText(t *testing.T) {
@@ -93,10 +85,26 @@ func TestComposeBesideCentersLogoInsideLongerText(t *testing.T) {
 	}
 }
 
-func TestRenderBesideToNonTerminalWritesTextOnly(t *testing.T) {
+func TestBannerRenderToNonTerminalWritesNothing(t *testing.T) {
 	var buffer bytes.Buffer
 
-	require.NoError(t, RenderBeside(&buffer, "cc-port 1.2.3\n"))
+	require.NoError(t, Banner{}.Render(&buffer))
+
+	assert.Empty(t, buffer.Bytes())
+}
+
+func TestBannerRenderBesideToNonTerminalWritesTextOnly(t *testing.T) {
+	var buffer bytes.Buffer
+
+	require.NoError(t, Banner{}.RenderBeside(&buffer, "cc-port 1.2.3\n"))
 
 	assert.Equal(t, "cc-port 1.2.3\n", buffer.String())
+}
+
+func TestBannerBesideStringWithNonTerminalReturnsTextUnchanged(t *testing.T) {
+	var buffer bytes.Buffer
+
+	got := Banner{}.BesideString(&buffer, "cc-port 1.2.3\n")
+
+	assert.Equal(t, "cc-port 1.2.3\n", got)
 }

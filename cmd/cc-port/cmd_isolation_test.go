@@ -20,9 +20,9 @@ func TestCommandConstructorsAreIsolated(t *testing.T) {
 		value string // valid value for the flag's type
 	}
 	cases := []pair{
-		{"export", newExportCmd, "from-manifest", "/tmp/m.xml"},
+		{"export", func(d *string) *cobra.Command { return newExportCmd(d, noopBanner{}) }, "from-manifest", "/tmp/m.xml"},
 		{"import", newImportCmd, "from-manifest", "/tmp/m.xml"},
-		{"push", newPushCmd, "from-manifest", "/tmp/m.xml"},
+		{"push", func(d *string) *cobra.Command { return newPushCmd(d, noopBanner{}) }, "from-manifest", "/tmp/m.xml"},
 		{"pull", newPullCmd, "from-manifest", "/tmp/m.xml"},
 		{"move", newMoveCmd, "apply", "true"},
 	}

@@ -20,7 +20,7 @@ See the root `README.md` §Commands for one-line syntax and worked examples. Run
 
 ## Constructor pattern
 
-Every cobra command is a constructor `newXCmd(claudeDir *string) *cobra.Command`. The root constructor `newRootCmd` owns the persistent `--claude-dir` local and threads its address into each subcommand. Flag-value locals live as closure variables inside the constructor body, never as package-level `var`. No `init()` block wires flags. Tests construct an isolated command per case and confirm flag state cannot leak between two instances of the same constructor.
+Every cobra command is a constructor of one of two shapes: `newXCmd(claudeDir *string) *cobra.Command` for commands that don't reach the interactive picker (`newMoveCmd`, `newImportCmd`, `newPullCmd`), or `newXCmd(claudeDir *string, banner Banner) *cobra.Command` for the help/version/picker surfaces (`newRootCmd`, `newVersionCmd`, `newExportCmd`, `newPushCmd`, `newExportManifestCmd`). The root constructor `newRootCmd` owns the persistent `--claude-dir` local and threads its address (and the banner, where applicable) into each subcommand. Flag-value locals live as closure variables inside the constructor body, never as package-level `var`. No `init()` block wires flags. Tests construct an isolated command per case and confirm flag state cannot leak between two instances of the same constructor.
 
 The carve-out is `move.go:findActive`, a package-level seam swapping `lock.FindActive` for tests via `withMoveSeams` with `t.Cleanup` discipline. The seam is injection for an external dependency, not the per-cmd shared mutable state the constructor pattern targets.
 
@@ -28,9 +28,15 @@ The carve-out is `move.go:findActive`, a package-level seam swapping `lock.FindA
 
 `applyCategorySelection` (in `category_selection.go`) is the single owner of `--from-manifest` exclusivity with `--all` and per-category flags. Both `newExportCmd` and `newPushCmd` route their flag-to-`CategorySet` plus placeholder discovery through it. The helper reads `--from-manifest` and the category flags via `cmd.Flags()`, so callers do not need a closure-scoped `fromManifest` variable just to forward it.
 
-When `--from-manifest` is set, the helper rejects `--all` or any per-category flag with one error message naming the conflicts. When the flag is empty, the helper falls through to `resolveCategoriesFromCmd`; a zero `CategorySet` triggers the interactive `ui.SelectCategories()` prompt.
+When `--from-manifest` is set, `applyCategorySelection` rejects `--all` or any per-category flag with one error message naming the conflicts. When the flag is empty, it delegates to `resolveCategoriesAndPlaceholders`, which runs `resolveCategoriesFromCmd` and falls through to the interactive `ui.SelectCategories(banner)` prompt when no categories are set, then calls `discoverAndPromptPlaceholders`.
 
-`runExportManifest` is the only command body that does not call `applyCategorySelection`. It runs the same fall-through logic inline because it skips `export.Run` and the prompt path is the only one that applies (the manifest subcommand has no `--from-manifest` flag).
+`runExportManifest` calls `resolveCategoriesAndPlaceholders` directly (it skips `applyCategorySelection` because the manifest subcommand registers no `--from-manifest` flag, so the exclusivity branch is dead code on that path). One helper backs both surfaces.
+
+## Banner DI
+
+`bannerImpl` is a build-tag-selected unexported package var declared in `banner_default.go` (`//go:build !logo`, set to `noopBanner{}`) and `banner_logo.go` (`//go:build logo`, set to `logo.Banner{}`). `main()` reads it once and threads it through `newRootCmd(banner)`. The default `cc-port` binary embeds `noopBanner` (writes nothing); the `cc-port-logo` binary embeds `logo.Banner` (renders the gantry-crane logo). No runtime flag selects between the two — the choice is made by the build tag at the composition root.
+
+`Banner` is declared in `banner.go` as the cmd-local interface, embedding `ui.Banner` and adding `RenderBeside` and `BesideString`. The embedding lets the same banner value pass to `ui.SelectCategories(banner ui.Banner)` without losing `Render` through interface narrowing. `noopBanner` satisfies both interfaces structurally.
 
 ## Rules-warning routing
 

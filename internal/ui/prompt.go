@@ -11,9 +11,16 @@ import (
 	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/term"
 
-	"github.com/it-bens/cc-port/internal/logo"
 	"github.com/it-bens/cc-port/internal/manifest"
 )
+
+// Banner is the consumer-defined interface for the interactive-prompt
+// banner. The single Render method matches what showInteractiveBanner
+// needs; the implementation chooses whether to draw the gantry-crane
+// logo (cc-port-logo build) or no-op (default cc-port build).
+type Banner interface {
+	Render(io.Writer) error
+}
 
 // Interactive flows can call into each other (export prompts categories
 // then may prompt placeholders); sync.Once keeps the banner to a single
@@ -22,17 +29,19 @@ import (
 // without tripping copylocks.
 var interactiveBannerOnce = &sync.Once{}
 
-// Test seams. Production behavior is unchanged; every seam defaults to the
-// real dependency it replaces.
+// Test seams. Production behavior is unchanged; every seam defaults to
+// the real dependency it replaces.
 var (
-	isTerminal             = term.IsTerminal
-	runForm                = (*huh.Form).Run
-	bannerWriter io.Writer = os.Stdout
+	isTerminal = term.IsTerminal
+	runForm    = (*huh.Form).Run
 )
 
-func showInteractiveBanner() {
+func showInteractiveBanner(banner Banner) {
 	interactiveBannerOnce.Do(func() {
-		_ = logo.Render(bannerWriter)
+		// Cosmetic banner write: failure is unrecoverable (no retry,
+		// no caller signal that wants it), so swallow the error here
+		// rather than propagate through every prompt entry point.
+		_ = banner.Render(os.Stdout)
 	})
 }
 
@@ -75,11 +84,11 @@ func categoryFlagsHelpText() string {
 }
 
 // SelectCategories presents an interactive multi-select for export categories.
-func SelectCategories() (manifest.CategorySet, error) {
+func SelectCategories(banner Banner) (manifest.CategorySet, error) {
 	if err := requireTTY(categoryFlagsHelpText()); err != nil {
 		return manifest.CategorySet{}, err
 	}
-	showInteractiveBanner()
+	showInteractiveBanner(banner)
 
 	options := make([]huh.Option[string], 0, len(manifest.AllCategories))
 	for _, spec := range manifest.AllCategories {

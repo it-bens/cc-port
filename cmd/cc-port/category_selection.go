@@ -11,16 +11,39 @@ import (
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
-// applyCategorySelection translates cmd flags into a category set plus a
-// placeholder slice. It enforces --from-manifest exclusivity with --all
-// and per-category flags, reads the manifest when --from-manifest is set,
-// and falls through to flag-derived selection or the interactive prompt
-// otherwise.
-//
-// Used by both newExportCmd and newPushCmd. Reads --from-manifest via
-// cmd.Flags().GetString so neither caller needs a package-level flag var.
+// resolveCategoriesAndPlaceholders consumes flag-derived category selection
+// (or interactive prompt fall-through) and discovers placeholders. Shared
+// by applyCategorySelection (after the --from-manifest branch) and by
+// runExportManifest (whose subcommand has no --from-manifest flag).
+func resolveCategoriesAndPlaceholders(
+	cmd *cobra.Command, claudeHome *claude.Home, projectPath string, banner ui.Banner,
+) (manifest.CategorySet, []manifest.Placeholder, error) {
+	categories, err := resolveCategoriesFromCmd(cmd)
+	if err != nil {
+		return manifest.CategorySet{}, nil, err
+	}
+	anySet := false
+	for _, spec := range manifest.AllCategories {
+		if spec.Value(&categories) {
+			anySet = true
+			break
+		}
+	}
+	if !anySet {
+		categories, err = ui.SelectCategories(banner)
+		if err != nil {
+			return manifest.CategorySet{}, nil, err
+		}
+	}
+	placeholders, err := discoverAndPromptPlaceholders(claudeHome, projectPath)
+	if err != nil {
+		return manifest.CategorySet{}, nil, err
+	}
+	return categories, placeholders, nil
+}
+
 func applyCategorySelection(
-	cmd *cobra.Command, claudeHome *claude.Home, projectPath string,
+	cmd *cobra.Command, claudeHome *claude.Home, projectPath string, banner ui.Banner,
 ) (manifest.CategorySet, []manifest.Placeholder, error) {
 	fromManifest, _ := cmd.Flags().GetString("from-manifest")
 
@@ -51,26 +74,5 @@ func applyCategorySelection(
 		return categories, metadata.Placeholders, nil
 	}
 
-	categories, err := resolveCategoriesFromCmd(cmd)
-	if err != nil {
-		return manifest.CategorySet{}, nil, err
-	}
-	anySet := false
-	for _, spec := range manifest.AllCategories {
-		if spec.Value(&categories) {
-			anySet = true
-			break
-		}
-	}
-	if !anySet {
-		categories, err = ui.SelectCategories()
-		if err != nil {
-			return manifest.CategorySet{}, nil, err
-		}
-	}
-	placeholders, err := discoverAndPromptPlaceholders(claudeHome, projectPath)
-	if err != nil {
-		return manifest.CategorySet{}, nil, err
-	}
-	return categories, placeholders, nil
+	return resolveCategoriesAndPlaceholders(cmd, claudeHome, projectPath, banner)
 }

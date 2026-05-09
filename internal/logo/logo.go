@@ -78,57 +78,44 @@ const (
 	fallbackTermColumns = 80
 )
 
-// Render writes the logo followed by a trailing blank line to w. Output
+// render writes the logo followed by a trailing blank line to w. Output
 // carries ANSI color when w is a terminal file and NO_COLOR is unset;
 // plain ASCII when w is a terminal but NO_COLOR suppresses color;
 // nothing at all when w is not a terminal (pipe, file, bytes.Buffer).
 // Navy is picked from the dark or light palette based on the detected
 // terminal background.
-func Render(w io.Writer) error {
-	if !IsTerminal(w) {
+func render(w io.Writer) error {
+	if !isTerminal(w) {
 		return nil
 	}
-	_, err := io.WriteString(w, String(HasDarkBackground(), ColorEnabled()))
+	_, err := io.WriteString(w, composedString(hasDarkBackground(), colorEnabled()))
 	return err
 }
 
-// RenderBeside writes the logo and text side by side to w. Both logo
+// renderBeside writes the logo and text side by side to w. Both logo
 // and text center vertically inside the taller of the two: short text
 // sits in the middle of the logo; long text surrounds the logo above
 // and below at a stable left indent. On non-terminal writers, only
 // text is written. On terminals narrower than minSideBySideWidth,
 // falls back to stacked layout (logo, blank line, text).
-func RenderBeside(w io.Writer, text string) error {
-	if !IsTerminal(w) {
+func renderBeside(w io.Writer, text string) error {
+	if !isTerminal(w) {
 		_, err := io.WriteString(w, text)
 		return err
 	}
 	if terminalWidth(w) < minSideBySideWidth {
-		if err := Render(w); err != nil {
+		if err := render(w); err != nil {
 			return err
 		}
 		_, err := io.WriteString(w, text)
 		return err
 	}
-	_, err := io.WriteString(w, composeBeside(text, HasDarkBackground(), ColorEnabled()))
+	_, err := io.WriteString(w, composeBeside(text, hasDarkBackground(), colorEnabled()))
 	return err
 }
 
-// BesideString returns the side-by-side composition for callers that
-// cannot pass a writer (cobra version template). Gating keys off
-// os.Stdout to match what the template will ultimately be written to.
-func BesideString(text string) string {
-	if !IsTerminal(os.Stdout) {
-		return text
-	}
-	if terminalWidth(os.Stdout) < minSideBySideWidth {
-		return String(HasDarkBackground(), ColorEnabled()) + text
-	}
-	return composeBeside(text, HasDarkBackground(), ColorEnabled())
-}
-
 func composeBeside(text string, darkBackground, colored bool) string {
-	logoLines := strings.Split(strings.TrimRight(String(darkBackground, colored), "\n"), "\n")
+	logoLines := strings.Split(strings.TrimRight(composedString(darkBackground, colored), "\n"), "\n")
 	textLines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 
 	blankLogoRow := strings.Repeat(" ", rowWidth)
@@ -174,11 +161,11 @@ func terminalWidth(w io.Writer) int {
 	return width
 }
 
-// String returns the logo as a single string ending in "\n\n". When
-// colored is true, navy and orange segments are wrapped in ANSI
+// composedString returns the logo as a single string ending in "\n\n".
+// When colored is true, navy and orange segments are wrapped in ANSI
 // foreground escapes; darkBackground picks the lighter navy palette so
 // the logo stays readable on dark terminals.
-func String(darkBackground, colored bool) string {
+func composedString(darkBackground, colored bool) string {
 	var buffer strings.Builder
 	buffer.Grow(len(art) * (rowWidth + 16))
 	for _, row := range art {
@@ -197,11 +184,8 @@ func String(darkBackground, colored bool) string {
 	return buffer.String()
 }
 
-// IsTerminal reports whether w is an *os.File attached to a terminal.
-// The cobra version template cannot pass a writer into its func, so
-// the --version gate calls this on os.Stdout directly to match what
-// Render would see.
-func IsTerminal(w io.Writer) bool {
+// isTerminal reports whether w is an *os.File attached to a terminal.
+func isTerminal(w io.Writer) bool {
 	file, ok := w.(*os.File)
 	if !ok {
 		return false
@@ -209,17 +193,17 @@ func IsTerminal(w io.Writer) bool {
 	return term.IsTerminal(file.Fd())
 }
 
-// ColorEnabled reports whether ANSI escapes should be emitted. Honors
+// colorEnabled reports whether ANSI escapes should be emitted. Honors
 // the NO_COLOR convention (https://no-color.org/).
-func ColorEnabled() bool {
+func colorEnabled() bool {
 	return os.Getenv("NO_COLOR") == ""
 }
 
-// HasDarkBackground reports whether the terminal has a dark background,
+// hasDarkBackground reports whether the terminal has a dark background,
 // caching the answer for the process. Detection sends an OSC 11 query
 // via lipgloss; on terminals that don't reply, lipgloss defaults to
 // dark, which matches the dominant modern default.
-func HasDarkBackground() bool {
+func hasDarkBackground() bool {
 	darkBackgroundOnce.Do(func() {
 		if !term.IsTerminal(os.Stdin.Fd()) {
 			darkBackground = true
@@ -243,4 +227,39 @@ func ansiCode(c color, darkBackground bool) string {
 		return ansiNavyOnDarkBg
 	}
 	return ansiNavyOnLightBg
+}
+
+// Banner is the public entry point for the gantry-crane logo. The zero
+// value is ready to use; the type carries no state because all rendering
+// inputs (terminal detection, color, dark-background) are queried from
+// the writer or environment at render time.
+type Banner struct{}
+
+// Render writes the logo plus a trailing blank line to w when w is a
+// terminal file with NO_COLOR unset (colored) or set (plain ASCII).
+// Writes nothing when w is a pipe, file, or bytes.Buffer.
+func (Banner) Render(w io.Writer) error {
+	return render(w)
+}
+
+// RenderBeside writes the logo and text side by side to w. Falls back
+// to stacked layout on narrow terminals; writes only text on non-
+// terminal writers.
+func (Banner) RenderBeside(w io.Writer, text string) error {
+	return renderBeside(w, text)
+}
+
+// BesideString returns the side-by-side composition for callers that
+// cannot pass a writer through to RenderBeside (e.g. cobra version
+// templates). The out parameter is used only to gate terminal-vs-text
+// behavior; nothing is written to it. On non-terminal writers, returns
+// text unchanged.
+func (Banner) BesideString(out io.Writer, text string) string {
+	if !isTerminal(out) {
+		return text
+	}
+	if terminalWidth(out) < minSideBySideWidth {
+		return composedString(hasDarkBackground(), colorEnabled()) + text
+	}
+	return composeBeside(text, hasDarkBackground(), colorEnabled())
 }

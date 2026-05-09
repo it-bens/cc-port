@@ -9,13 +9,17 @@ Not a general UI layer. The only prompt this package exposes is the one listed b
 ## Public API
 
 - **Prompt entry points**
-  - `SelectCategories() (manifest.CategorySet, error)`: interactive multi-select category picker for `export` / `export manifest`. Iterates `manifest.AllCategories`, presents each with the description from the unexported `categoryOptionMeta` table, and folds the user's selection into a `manifest.CategorySet` via `manifest.SpecByName`.
+  - `SelectCategories(banner Banner) (manifest.CategorySet, error)`: interactive multi-select category picker for `export` / `export manifest`. Iterates `manifest.AllCategories`, presents each with the description from the unexported `categoryOptionMeta` table, and folds the user's selection into a `manifest.CategorySet` via `manifest.SpecByName`. The `banner` parameter is the consumer-defined interface satisfied by the build-tag-selected implementation in `cmd/cc-port`.
 
 ## Contracts
 
 ### Interactive banner
 
-`SelectCategories` calls `showInteractiveBanner` after `requireTTY` returns nil and before constructing the form. The banner renders `internal/logo` through the `bannerWriter` seam (default `os.Stdout`) behind a package-scoped `sync.Once`, so a process that prompts more than once still prints the logo at most once. The banner is cosmetic, and `logo.Render` already suppresses itself on non-terminal writers and under `NO_COLOR`.
+`SelectCategories` calls `showInteractiveBanner(banner)` after `requireTTY` returns nil and before constructing the form. The injected `Banner` (one method, `Render(io.Writer) error`) writes to `os.Stdout` directly behind a package-scoped `sync.Once`, so a process that prompts more than once still calls `banner.Render` at most once. The banner is cosmetic; the real impl in the cc-port-logo build self-suppresses on non-terminal writers and under `NO_COLOR`, and the no-op impl in the default build writes nothing.
+
+### Banner is consumer-defined
+
+`Banner` is declared in `prompt.go` as a one-method interface (`Render(io.Writer) error`). It lives next to its sole consumer `showInteractiveBanner`; the implementation is supplied by `cmd/cc-port` (see `cmd/cc-port/README.md` §Banner DI). The package never imports `internal/logo`.
 
 ### Interactive prompts require a TTY
 
@@ -44,4 +48,4 @@ Non-TTY stdin triggers the preflight abort with a remediation message before any
 
 ## Tests
 
-`prompt_test.go` covers the TTY preflight path and the runner-error path for `SelectCategories`, plus every entry of `manifest.AllCategories` through `categoriesFromSelections`. A drift-guard test asserts every `manifest.AllCategories` entry has UI option metadata in the unexported `categoryOptionMeta` map. Tests can override four package-level seams (`isTerminal`, `runForm`, `bannerWriter`, `interactiveBannerOnce`) to bypass the terminal requirement, the `huh` event loop, banner output on stdout, and the once-guard that would otherwise silence the banner path after the first test runs it. The path where the user submits a real selection is not exercised under `go test`, and runs only when the CLI is driven interactively.
+`prompt_test.go` covers the TTY preflight path and the runner-error path for `SelectCategories`, plus every entry of `manifest.AllCategories` through `categoriesFromSelections`. A drift-guard test asserts every `manifest.AllCategories` entry has UI option metadata in the unexported `categoryOptionMeta` map. Tests can override three package-level seams (`isTerminal`, `runForm`, `interactiveBannerOnce`) to bypass the terminal requirement, the `huh` event loop, and the once-guard that would otherwise silence the banner path after the first test runs it. The path where the user submits a real selection is not exercised under `go test`, and runs only when the CLI is driven interactively.

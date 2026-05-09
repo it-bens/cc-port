@@ -25,7 +25,7 @@ func TestApplyCategorySelection_FromManifestAloneAccepted(t *testing.T) {
 	cmd := newTestCmdWithCategoryFlags(t)
 	require.NoError(t, cmd.Flags().Set("from-manifest", manifestPath))
 
-	gotCategories, gotPlaceholders, err := applyCategorySelection(cmd, nil, "/Users/test/Projects/myproject")
+	gotCategories, gotPlaceholders, err := applyCategorySelection(cmd, nil, "/Users/test/Projects/myproject", noopBanner{})
 
 	require.NoError(t, err)
 	assert.True(t, gotCategories.Sessions, "manifest with --all categories must populate Sessions")
@@ -37,7 +37,7 @@ func TestApplyCategorySelection_FromManifestRejectsAllFlag(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("from-manifest", "/tmp/m.xml"))
 	require.NoError(t, cmd.Flags().Set("all", "true"))
 
-	_, _, err := applyCategorySelection(cmd, nil, "/Users/test/Projects/myproject")
+	_, _, err := applyCategorySelection(cmd, nil, "/Users/test/Projects/myproject", noopBanner{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--from-manifest is mutually exclusive")
@@ -51,7 +51,7 @@ func TestApplyCategorySelection_FromManifestRejectsEachPerCategoryFlag(t *testin
 			require.NoError(t, cmd.Flags().Set("from-manifest", "/tmp/m.xml"))
 			require.NoError(t, cmd.Flags().Set(spec.Name, "true"))
 
-			_, _, err := applyCategorySelection(cmd, nil, "/Users/test/Projects/myproject")
+			_, _, err := applyCategorySelection(cmd, nil, "/Users/test/Projects/myproject", noopBanner{})
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "--from-manifest is mutually exclusive")

@@ -26,7 +26,7 @@ import (
 // populates it on flag parse, so the RunE closure must dereference at
 // call time. The export manifest subcommand is attached here so the
 // caller wires both with one AddCommand.
-func newExportCmd(claudeDir *string) *cobra.Command {
+func newExportCmd(claudeDir *string, banner Banner) *cobra.Command {
 	var (
 		output         string
 		fromManifest   string
@@ -54,7 +54,7 @@ func newExportCmd(claudeDir *string) *cobra.Command {
 				return err
 			}
 
-			categories, placeholders, err := applyCategorySelection(cmd, claudeHome, exportOptions.ProjectPath)
+			categories, placeholders, err := applyCategorySelection(cmd, claudeHome, exportOptions.ProjectPath, banner)
 			if err != nil {
 				return err
 			}
@@ -117,7 +117,7 @@ func newExportCmd(claudeDir *string) *cobra.Command {
 	// MarkFlagRequired errors only when the flag name doesn't exist; "output" was registered above.
 	_ = cmd.MarkFlagRequired("output")
 
-	cmd.AddCommand(newExportManifestCmd(claudeDir))
+	cmd.AddCommand(newExportManifestCmd(claudeDir, banner))
 	return cmd
 }
 
@@ -153,7 +153,7 @@ func runExportWithStages(
 // points at the persistent root flag's local. Output and category flags
 // live as closure-scoped locals on the cmd; runExportManifest reads
 // --output via cmd.Flags().GetString.
-func newExportManifestCmd(claudeDir *string) *cobra.Command {
+func newExportManifestCmd(claudeDir *string, banner Banner) *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
 		Use:   "manifest <project-path>",
@@ -166,7 +166,7 @@ func newExportManifestCmd(claudeDir *string) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExportManifest(cmd, args, *claudeDir)
+			return runExportManifest(cmd, args, *claudeDir, banner)
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "manifest.xml",
@@ -181,7 +181,7 @@ func newExportManifestCmd(claudeDir *string) *cobra.Command {
 // different path with --output. The guard runs before placeholder
 // discovery so the user is not asked to answer prompts only to fail on
 // the pre-existing output.
-func runExportManifest(cmd *cobra.Command, args []string, claudeDir string) error {
+func runExportManifest(cmd *cobra.Command, args []string, claudeDir string, banner ui.Banner) error {
 	output, _ := cmd.Flags().GetString("output")
 	if _, err := os.Stat(output); err == nil {
 		return fmt.Errorf("%s already exists; remove it or pass --output", output)
@@ -199,25 +199,7 @@ func runExportManifest(cmd *cobra.Command, args []string, claudeDir string) erro
 		return err
 	}
 
-	categories, err := resolveCategoriesFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-	anySet := false
-	for _, spec := range manifest.AllCategories {
-		if spec.Value(&categories) {
-			anySet = true
-			break
-		}
-	}
-	if !anySet {
-		categories, err = ui.SelectCategories()
-		if err != nil {
-			return err
-		}
-	}
-
-	placeholders, err := discoverAndPromptPlaceholders(claudeHome, projectPath)
+	categories, placeholders, err := resolveCategoriesAndPlaceholders(cmd, claudeHome, projectPath, banner)
 	if err != nil {
 		return err
 	}

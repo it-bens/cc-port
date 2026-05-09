@@ -13,7 +13,7 @@ cc-port/
 │   ├── fsutil/             Shared filesystem helpers: directory copy, path-ancestor resolution
 │   ├── importer/           Import orchestration: placeholder validation, atomic staging
 │   ├── lock/               Advisory lock + live-session refusal
-│   ├── logo/               ASCII banner rendered on interactive prompts
+│   ├── logo/               ASCII banner rendered when built with -tags logo (cc-port-logo binary)
 │   ├── manifest/           metadata.xml wire DTOs + category enum table
 │   ├── move/               Move plan, dry-run, apply with copy-verify-delete
 │   ├── pipeline/           WriterStage/ReaderStage interfaces + composing runners
@@ -55,6 +55,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | `--from-manifest` exclusivity with `--all` and per-category flags | [`cmd/cc-port/README.md`](../cmd/cc-port/README.md) §Category selection |
 | Tempfile materialization for random-access consumers | [`internal/pipeline/README.md`](../internal/pipeline/README.md) §Public API |
 | Layered AWS credential resolution (file > env > prompt) | [`internal/credentials/README.md`](../internal/credentials/README.md) §Source layering and precedence |
+| Banner is consumer-defined; `internal/logo` is opt-in via `-tags logo` | `cmd/cc-port/banner_default.go`, `cmd/cc-port/banner_logo.go` |
 
 ### TTY-prompt ownership split
 

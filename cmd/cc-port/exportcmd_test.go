@@ -11,7 +11,7 @@ import (
 
 func TestExportManifestCmd_HasOutputFlag(t *testing.T) {
 	var claudeDir string
-	cmd := newExportManifestCmd(&claudeDir)
+	cmd := newExportManifestCmd(&claudeDir, noopBanner{})
 	flag := cmd.Flags().Lookup("output")
 	require.NotNil(t, flag, "export manifest --output must be registered")
 	short := cmd.Flags().ShorthandLookup("o")
@@ -23,10 +23,10 @@ func TestExportManifestCmd_OverwriteGuard(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "pre-existing.xml")
 	require.NoError(t, os.WriteFile(outPath, []byte("x"), 0o600))
 	var claudeDir string
-	cmd := newExportManifestCmd(&claudeDir)
+	cmd := newExportManifestCmd(&claudeDir, noopBanner{})
 	require.NoError(t, cmd.Flags().Set("output", outPath))
 
-	err := runExportManifest(cmd, []string{"/Users/test/Projects/myproject"}, claudeDir)
+	err := runExportManifest(cmd, []string{"/Users/test/Projects/myproject"}, claudeDir, noopBanner{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
@@ -34,7 +34,7 @@ func TestExportManifestCmd_OverwriteGuard(t *testing.T) {
 
 func TestExportCmd_PassphraseFlagsRegistered(t *testing.T) {
 	var claudeDir string
-	cmd := newExportCmd(&claudeDir)
+	cmd := newExportCmd(&claudeDir, noopBanner{})
 	require.NotNil(t, cmd.Flags().Lookup("passphrase-env"),
 		"--passphrase-env should be registered on export")
 	require.NotNil(t, cmd.Flags().Lookup("passphrase-file"),

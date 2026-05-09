@@ -1,8 +1,23 @@
 version: 2
 
 builds:
-  - main: ./cmd/cc-port
+  - id: cc-port
+    main: ./cmd/cc-port
     binary: cc-port
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+  - id: cc-port-logo
+    main: ./cmd/cc-port
+    binary: cc-port-logo
+    flags:
+      - -tags=logo
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
@@ -14,8 +29,14 @@ builds:
       - arm64
 
 archives:
-  - formats: ["tar.gz"]
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+  - id: cc-port
+    builds: [cc-port]
+    formats: ["tar.gz"]
+    name_template: "cc-port_{{ .Os }}_{{ .Arch }}"
+  - id: cc-port-logo
+    builds: [cc-port-logo]
+    formats: ["tar.gz"]
+    name_template: "cc-port-logo_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
@@ -37,6 +58,23 @@ homebrew_casks:
       post:
         install: |
           system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port"] if OS.mac?
+    zap:
+      trash:
+        - "~/.claude/.cc-port.lock"
+    repository:
+      owner: it-bens
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+  - name: cc-port-logo
+    binaries:
+      - cc-port-logo
+    homepage: "https://github.com/it-bens/cc-port"
+    description: "Claude Code project portability tool (with crane logo)"
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port-logo"] if OS.mac?
     zap:
       trash:
         - "~/.claude/.cc-port.lock"

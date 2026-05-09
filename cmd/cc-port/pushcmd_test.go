@@ -41,7 +41,7 @@ func pushTestManifestPath(t *testing.T) string {
 
 func TestPush_RejectsFromManifestWithCategoryFlag(t *testing.T) {
 	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", "/Users/test/Projects/myproject",
 		"--as", "myproj",
@@ -60,7 +60,7 @@ func TestPush_RejectsFromManifestWithCategoryFlag(t *testing.T) {
 
 func TestPush_RejectsMissingAsFlag(t *testing.T) {
 	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{"push", "/tmp/x", "--remote", remoteURL})
 
 	err := rootCmd.Execute()
@@ -73,7 +73,7 @@ func TestPush_RejectsMissingAsFlag(t *testing.T) {
 }
 
 func TestPush_RejectsMissingRemoteFlag(t *testing.T) {
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{"push", "/tmp/x", "--as", "name"})
 
 	err := rootCmd.Execute()
@@ -91,7 +91,7 @@ func TestPush_DryRunDoesNotUpload(t *testing.T) {
 	manifestPath := pushTestManifestPath(t)
 	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
 
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{
@@ -125,7 +125,7 @@ func TestPush_ApplyCommitsToRemote(t *testing.T) {
 	manifestPath := pushTestManifestPath(t)
 	url := "file://" + t.TempDir()
 
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -153,7 +153,7 @@ func TestPush_CrossMachineRefusesWithoutForce(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "other-host-other-user")
 
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -177,7 +177,7 @@ func TestPush_ForceOverridesCrossMachineRefusal(t *testing.T) {
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "other-host-other-user")
 
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -212,7 +212,7 @@ func TestPush_AcceptsValidCredentialsFile(t *testing.T) {
 	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
 	credentialsPath := writeTestCredentialsFile(t, 0o600)
 
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -233,7 +233,7 @@ func TestPush_AcceptsNoPromptFlag(t *testing.T) {
 	manifestPath := pushTestManifestPath(t)
 	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
 
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -260,7 +260,7 @@ func TestPush_RejectsTooPermissiveCredentialsFile(t *testing.T) {
 	remoteURL := "file://" + filepath.ToSlash(t.TempDir())
 	credentialsPath := writeTestCredentialsFile(t, 0o644)
 
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
@@ -283,7 +283,7 @@ func TestPush_RejectsMalformedCredentialsFile(t *testing.T) {
 	malformedCredentialsPath := filepath.Join(t.TempDir(), "malformed.env")
 	require.NoError(t, os.WriteFile(malformedCredentialsPath, []byte("BROKEN_NO_EQUALS\n"), 0o600))
 
-	rootCmd := newRootCmd()
+	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
 		"--claude-dir", claudeFixtureDir,
