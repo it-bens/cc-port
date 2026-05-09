@@ -10,6 +10,10 @@
           {
             "type": "command",
             "command": "jq --rawfile ctx .claude/hook-contexts/reviewing-plans.md 'if .tool_input.skill == \"superpowers-additions:reviewing-plans\" then {hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $ctx}} else empty end'"
+          },
+          {
+            "type": "command",
+            "command": "jq --rawfile ctx .claude/hook-contexts/brainstorming.md 'if .tool_input.skill == \"superpowers:brainstorming\" then {hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $ctx}} else empty end'"
           }
         ]
       }
@@ -21,6 +25,10 @@
           {
             "type": "command",
             "command": "jq --rawfile ctx .claude/hook-contexts/reviewing-plans.md 'if (.prompt // \"\" | startswith(\"/superpowers-additions:reviewing-plans\")) then {hookSpecificOutput: {hookEventName: \"UserPromptSubmit\", additionalContext: $ctx}} else empty end'"
+          },
+          {
+            "type": "command",
+            "command": "jq --rawfile ctx .claude/hook-contexts/brainstorming.md 'if (.prompt // \"\" | startswith(\"/superpowers:brainstorming\")) then {hookSpecificOutput: {hookEventName: \"UserPromptSubmit\", additionalContext: $ctx}} else empty end'"
           }
         ]
       }
