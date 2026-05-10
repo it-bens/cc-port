@@ -5,7 +5,7 @@
 Output docs/images/demo-export-import.gif
 Output docs/images/demo-export-import.mp4
 
-Set Width 1200
+Set Width 1650
 Set Height 700
 Set FontSize 22
 Set TypingSpeed 60ms
