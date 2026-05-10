@@ -7,7 +7,7 @@ GORELEASER  ?= goreleaser
 
 .DEFAULT_GOAL := help
 .PHONY: help build install test test-race test-integration test-large test-all \
-        vet lint fmt tidy snapshot ci clean
+        vet lint fmt tidy release-check snapshot snapshot-sign ci clean
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -45,10 +45,16 @@ fmt: ## Apply gofmt + goimports via golangci-lint fmt
 tidy: ## Tidy go.mod and go.sum
 	go mod tidy
 
-snapshot: ## Build a snapshot release with goreleaser
-	$(GORELEASER) build --snapshot --clean
+release-check: ## Validate .goreleaser.yml schema
+	$(GORELEASER) check
 
-ci: vet test-race test-integration lint ## Run the same checks CI runs
+snapshot: ## Run the full release pipeline locally (no publish, no brew, no signing)
+	$(GORELEASER) release --snapshot --clean --skip=publish,homebrew,sign
+
+snapshot-sign: ## Same as snapshot but exercises cosign sign-blob (opens browser for OIDC)
+	$(GORELEASER) release --snapshot --clean --skip=publish,homebrew
+
+ci: vet test-race test-integration lint release-check snapshot ## Run the same checks CI runs
 
 clean: ## Remove the binary and build artifacts
 	rm -f $(BINARY) coverage.txt
