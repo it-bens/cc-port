@@ -15,7 +15,7 @@ Set Padding 20
 
 # Bootstrap: synthetic HOME with seeded ~/.claude/ for /Users/demo/old-project.
 Hide
-Type 'export HOME="$(mktemp -d)"' Enter
+Type 'export HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
 Type 'export PS1="\$ "' Enter
 Type 'clear' Enter
 Type 'bash docs/videos/fixtures/seed-source.sh /Users/demo/old-project >/dev/null' Enter

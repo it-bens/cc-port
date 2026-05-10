@@ -14,8 +14,8 @@ Set Padding 20
 
 # Source-machine bootstrap.
 Hide
-Type 'export SOURCE_HOME="$(mktemp -d)"' Enter
-Type 'export TARGET_HOME="$(mktemp -d)"' Enter
+Type 'export SOURCE_HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
+Type 'export TARGET_HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
 Type 'mkdir -p /tmp/cc-port-demo-share' Enter
 Type 'export HOME="$SOURCE_HOME"' Enter
 Type 'export PS1="me@laptop:~\$ "' Enter

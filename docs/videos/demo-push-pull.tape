@@ -13,8 +13,8 @@ Set Padding 20
 
 # Source-machine bootstrap.
 Hide
-Type 'export SOURCE_HOME="$(mktemp -d)"' Enter
-Type 'export TARGET_HOME="$(mktemp -d)"' Enter
+Type 'export SOURCE_HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
+Type 'export TARGET_HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
 Type 'set -a; source dev/s3/env; set +a' Enter
 Type 'export AWS_ACCESS_KEY_ID="$GARAGE_DEFAULT_ACCESS_KEY"' Enter
 Type 'export AWS_SECRET_ACCESS_KEY="$GARAGE_DEFAULT_SECRET_KEY"' Enter
