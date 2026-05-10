@@ -8,7 +8,7 @@ Output docs/images/demo-export-import.mp4
 Set Width 1650
 Set Height 700
 Set FontSize 22
-Set TypingSpeed 60ms
+Set TypingSpeed 20ms
 Set PlaybackSpeed 1.0
 Set Padding 20
 
