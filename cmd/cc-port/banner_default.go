@@ -3,7 +3,7 @@
 package main
 
 // bannerImpl is the build-tag-selected banner implementation read by
-// main(). The default cc-port binary uses noopBanner; the cc-port-logo
+// main(). The default cc-port binary uses noopBanner; the cc-port-with-logo
 // binary (built with -tags logo) overrides this in banner_logo.go.
 //
 // This is the unexported package-level seam pattern allowed by

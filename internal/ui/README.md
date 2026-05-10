@@ -15,7 +15,7 @@ Not a general UI layer. The only prompt this package exposes is the one listed b
 
 ### Interactive banner
 
-`SelectCategories` calls `showInteractiveBanner(banner)` after `requireTTY` returns nil and before constructing the form. The injected `Banner` (one method, `Render(io.Writer) error`) writes to `os.Stdout` directly behind a package-scoped `sync.Once`, so a process that prompts more than once still calls `banner.Render` at most once. The banner is cosmetic; the real impl in the cc-port-logo build self-suppresses on non-terminal writers and under `NO_COLOR`, and the no-op impl in the default build writes nothing.
+`SelectCategories` calls `showInteractiveBanner(banner)` after `requireTTY` returns nil and before constructing the form. The injected `Banner` (one method, `Render(io.Writer) error`) writes to `os.Stdout` directly behind a package-scoped `sync.Once`, so a process that prompts more than once still calls `banner.Render` at most once. The banner is cosmetic; the real impl in the cc-port-with-logo build self-suppresses on non-terminal writers and under `NO_COLOR`, and the no-op impl in the default build writes nothing.
 
 ### Banner is consumer-defined
 

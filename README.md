@@ -41,7 +41,7 @@ Replace `<vX.Y.Z>` with the release tag. After `checksums.txt` is verified, run 
 cc-port ships as two binaries built from the same source:
 
 - `cc-port` — default. No banner output. `go build ./cmd/cc-port` or `brew install it-bens/tap/cc-port`.
-- `cc-port-logo` — variant. Renders a colored gantry-crane logo on `--help`, `--version`, and the interactive picker. `go build -tags logo -o cc-port-logo ./cmd/cc-port` or `brew install it-bens/tap/cc-port-logo`.
+- `cc-port-with-logo` — variant. Renders a colored gantry-crane logo on `--help`, `--version`, and the interactive picker. `go build -tags logo -o cc-port-with-logo ./cmd/cc-port` or `brew install it-bens/tap/cc-port-with-logo`.
 
 Functionally identical otherwise; pick whichever you prefer. Pre-built tarballs of both are attached to every [GitHub release](https://github.com/it-bens/cc-port/releases).
 

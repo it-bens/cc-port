@@ -17,7 +17,7 @@ import (
 // Banner is the consumer-defined interface for the interactive-prompt
 // banner. The single Render method matches what showInteractiveBanner
 // needs; the implementation chooses whether to draw the gantry-crane
-// logo (cc-port-logo build) or no-op (default cc-port build).
+// logo (cc-port-with-logo build) or no-op (default cc-port build).
 type Banner interface {
 	Render(io.Writer) error
 }

@@ -13,7 +13,7 @@ cc-port/
 │   ├── fsutil/             Shared filesystem helpers: directory copy, path-ancestor resolution
 │   ├── importer/           Import orchestration: placeholder validation, atomic staging
 │   ├── lock/               Advisory lock + live-session refusal
-│   ├── logo/               ASCII banner rendered when built with -tags logo (cc-port-logo binary)
+│   ├── logo/               ASCII banner rendered when built with -tags logo (cc-port-with-logo binary)
 │   ├── manifest/           metadata.xml wire DTOs + category enum table
 │   ├── move/               Move plan, dry-run, apply with copy-verify-delete
 │   ├── pipeline/           WriterStage/ReaderStage interfaces + composing runners

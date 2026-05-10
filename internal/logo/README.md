@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Renders the cc-port gantry-crane logo as colored ASCII for the cc-port-logo binary's `--help`, `--version`, and interactive prompts. The art is a compact (22×14 rune) stylization of `docs/images/logo.png`; navy body, orange cable and trolley, one container hanging from the cable and two stacked on the ground between the legs. Navy comes from one of two palettes picked at runtime based on the terminal background.
+Renders the cc-port gantry-crane logo as colored ASCII for the cc-port-with-logo binary's `--help`, `--version`, and interactive prompts. The art is a compact (22×14 rune) stylization of `docs/images/logo.png`; navy body, orange cable and trolley, one container hanging from the cable and two stacked on the ground between the legs. Navy comes from one of two palettes picked at runtime based on the terminal background.
 
-The package is opt-in via the `logo` build tag and is compiled into the cc-port-logo binary only. The default cc-port binary does not import this package.
+The package is opt-in via the `logo` build tag and is compiled into the cc-port-with-logo binary only. The default cc-port binary does not import this package.
 
 ## Public API
 
@@ -44,7 +44,7 @@ None. The package does not error on "logo would be unreadable" conditions; misus
 
 ## Used by
 
-`cmd/cc-port/banner_logo.go` is the sole external file that imports `internal/logo`. That file is gated by `//go:build logo` and only compiles into the cc-port-logo binary.
+`cmd/cc-port/banner_logo.go` is the sole external file that imports `internal/logo`. That file is gated by `//go:build logo` and only compiles into the cc-port-with-logo binary.
 
 ## Tests
 
