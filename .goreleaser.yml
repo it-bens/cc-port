@@ -13,9 +13,9 @@ builds:
     goarch:
       - amd64
       - arm64
-  - id: cc-port-logo
+  - id: cc-port-with-logo
     main: ./cmd/cc-port
-    binary: cc-port-logo
+    binary: cc-port-with-logo
     flags:
       - -tags=logo
     ldflags:
@@ -30,16 +30,28 @@ builds:
 
 archives:
   - id: cc-port
-    builds: [cc-port]
+    ids: [cc-port]
     formats: ["tar.gz"]
     name_template: "cc-port_{{ .Os }}_{{ .Arch }}"
-  - id: cc-port-logo
-    builds: [cc-port-logo]
+  - id: cc-port-with-logo
+    ids: [cc-port-with-logo]
     formats: ["tar.gz"]
-    name_template: "cc-port-logo_{{ .Os }}_{{ .Arch }}"
+    name_template: "cc-port-with-logo_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
 
 changelog:
   sort: asc
@@ -50,6 +62,7 @@ changelog:
 
 homebrew_casks:
   - name: cc-port
+    ids: [cc-port]
     binaries:
       - cc-port
     homepage: "https://github.com/it-bens/cc-port"
@@ -66,15 +79,16 @@ homebrew_casks:
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-  - name: cc-port-logo
+  - name: cc-port-with-logo
+    ids: [cc-port-with-logo]
     binaries:
-      - cc-port-logo
+      - cc-port-with-logo
     homepage: "https://github.com/it-bens/cc-port"
     description: "Claude Code project portability tool (with crane logo)"
     hooks:
       post:
         install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port-logo"] if OS.mac?
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port-with-logo"] if OS.mac?
     zap:
       trash:
         - "~/.claude/.cc-port.lock"

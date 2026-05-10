@@ -34,7 +34,7 @@ When `--from-manifest` is set, `applyCategorySelection` rejects `--all` or any p
 
 ## Banner DI
 
-`bannerImpl` is a build-tag-selected unexported package var declared in `banner_default.go` (`//go:build !logo`, set to `noopBanner{}`) and `banner_logo.go` (`//go:build logo`, set to `logo.Banner{}`). `main()` reads it once and threads it through `newRootCmd(banner)`. The default `cc-port` binary embeds `noopBanner` (writes nothing); the `cc-port-logo` binary embeds `logo.Banner` (renders the gantry-crane logo). No runtime flag selects between the two — the choice is made by the build tag at the composition root.
+`bannerImpl` is a build-tag-selected unexported package var declared in `banner_default.go` (`//go:build !logo`, set to `noopBanner{}`) and `banner_logo.go` (`//go:build logo`, set to `logo.Banner{}`). `main()` reads it once and threads it through `newRootCmd(banner)`. The default `cc-port` binary embeds `noopBanner` (writes nothing); the `cc-port-with-logo` binary embeds `logo.Banner` (renders the gantry-crane logo). No runtime flag selects between the two — the choice is made by the build tag at the composition root.
 
 `Banner` is declared in `banner.go` as the cmd-local interface, embedding `ui.Banner` and adding `RenderBeside` and `BesideString`. The embedding lets the same banner value pass to `ui.SelectCategories(banner ui.Banner)` without losing `Render` through interface narrowing. `noopBanner` satisfies both interfaces structurally.
 
