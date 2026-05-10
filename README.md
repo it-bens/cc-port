@@ -1,5 +1,7 @@
 ![cc-port banner: two piers labeled with old and new project paths, a gantry crane carrying a container between them](docs/images/banner.png)
 
+![cc-port demo: renaming a project folder and running cc-port move to fix the Claude Code state](docs/images/demo-move.gif)
+
 `cc-port` rewrites Claude Code project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into `~/.claude/projects/<encoded>/`, `~/.claude/history.jsonl`, and `~/.claude.json`. cc-port rewrites the references safely: boundary-aware substring replacement, atomic writes with rollback, and a lock-plus-live-session check. No operation collides with a running Claude Code process.
 
 > [!CAUTION]
@@ -50,6 +52,8 @@ Full flag reference: `cc-port <subcommand> --help`. `cc-port --version` prints t
 
 ### `cc-port move`
 
+![cc-port move: rename a project folder, then run cc-port move to update ~/.claude/ references and rename the encoded project directory](docs/images/demo-move.gif)
+
 `cc-port move <old-path> <new-path> [--apply] [--refs-only] [--rewrite-transcripts]`
 
 Rewrite every reference to `<old-path>` under `~/.claude/` to `<new-path>`. Default is dry-run. `--apply` copies, verifies, then deletes the old encoded directory. `--refs-only` updates references only and leaves the project directory in place on disk. `--rewrite-transcripts` also rewrites paths inside session transcripts.
@@ -59,6 +63,8 @@ cc-port move /Users/me/old-project /Users/me/new-project --apply
 ```
 
 ### `cc-port export`
+
+![cc-port export and import: export a project to an archive on one machine, then import the archive on a teammate's machine](docs/images/demo-export-import.gif)
 
 `cc-port export <project-path> --output <archive.zip>`
 
@@ -81,6 +87,8 @@ cc-port export manifest /Users/me/project --output /tmp/project.xml
 ```
 
 ### `cc-port import`
+
+(See the `cc-port export` section above for an end-to-end export → import demo.)
 
 `cc-port import <archive.zip> <target-path>`
 
@@ -106,6 +114,8 @@ cc-port import manifest /tmp/project.zip --output /tmp/project.xml
 
 ### `cc-port push`
 
+![cc-port push and pull: push a project to an S3 remote on one machine, then pull it on a teammate's machine](docs/images/demo-push-pull.gif)
+
 `cc-port push <project-path> --as <name> --remote <url> [--apply] [--force] [--passphrase-env <NAME> | --passphrase-file <PATH>] [--from-manifest <path>] [--all | <category flags>]`
 
 Push the project at `<project-path>` to the remote at `<url>` under the stable name `<name>`. Dry-run by default. `--apply` commits the upload. `--force` overrides the cross-machine conflict refusal. Categories and placeholders mirror `cc-port export`: `--from-manifest` loads both from a manifest file; otherwise category flags select what to include and the export prompts for missing placeholders on a TTY. Pre-build a manifest via `cc-port export manifest` for non-interactive use.
@@ -115,6 +125,8 @@ cc-port push /Users/me/project --as project --remote s3://bucket?region=us-east-
 ```
 
 ### `cc-port pull`
+
+(See the `cc-port push` section above for an end-to-end push → pull demo.)
 
 `cc-port pull <name> --to <target-path> --remote <url> [--apply] [--passphrase-env <NAME> | --passphrase-file <PATH>] [--from-manifest <path>]`
 

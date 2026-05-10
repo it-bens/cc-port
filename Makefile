@@ -83,3 +83,9 @@ s3-down: ## Stop the dev S3 backend (preserves data volumes)
 s3-reset: ## Destroy and recreate the dev S3 backend (drops all data)
 	docker compose -f dev/s3/docker-compose.yml down -v
 	$(MAKE) s3-up
+
+videos: build s3-up ## Re-render all VHS demo tapes (GIF + MP4)
+	PATH="$$PWD:$$PATH" vhs docs/videos/demo-move.tape
+	PATH="$$PWD:$$PATH" vhs docs/videos/demo-export-import.tape
+	PATH="$$PWD:$$PATH" vhs docs/videos/demo-push-pull.tape
+	@$(MAKE) s3-down
