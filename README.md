@@ -21,6 +21,21 @@ go install github.com/it-bens/cc-port/cmd/cc-port@latest
 
 Prebuilt releases (macOS / Linux tarballs, checksums) are published under [GitHub Releases](https://github.com/it-bens/cc-port/releases).
 
+## Verify a release
+
+Release artifacts are signed by the GitHub Actions release workflow with cosign keyless OIDC. Every release ships `checksums.txt`, `checksums.txt.sig`, and `checksums.txt.pem` alongside the tarballs. Verify the checksums file first, then match each downloaded archive against it.
+
+```
+cosign verify-blob \
+  --certificate-identity 'https://github.com/it-bens/cc-port/.github/workflows/release.yml@refs/tags/<vX.Y.Z>' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  checksums.txt
+```
+
+Replace `<vX.Y.Z>` with the release tag. After `checksums.txt` is verified, run `sha256sum -c checksums.txt` (or `shasum -a 256 -c checksums.txt` on macOS) against the downloaded archives.
+
 ## Builds
 
 cc-port ships as two binaries built from the same source:
