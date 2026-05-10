@@ -21,7 +21,9 @@ Type 'export HOME="$SOURCE_HOME"' Enter
 Type 'export PS1="me@laptop:~\$ "' Enter
 Type 'clear' Enter
 Type 'bash docs/videos/fixtures/seed-source.sh /Users/demo/source-project >/dev/null' Enter
+Sleep 3s
 Type 'clear' Enter
+Sleep 200ms
 Show
 
 # Source machine: export.
@@ -35,7 +37,9 @@ Hide
 Type 'export HOME="$TARGET_HOME"' Enter
 Type 'export PS1="teammate@laptop:~\$ "' Enter
 Type 'bash docs/videos/fixtures/seed-target.sh >/dev/null' Enter
+Sleep 1s
 Type 'clear' Enter
+Sleep 200ms
 Show
 
 # Teammate machine: import.

@@ -19,7 +19,9 @@ Type 'export HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
 Type 'export PS1="\$ "' Enter
 Type 'clear' Enter
 Type 'bash docs/videos/fixtures/seed-source.sh /Users/demo/old-project >/dev/null' Enter
+Sleep 3s
 Type 'clear' Enter
+Sleep 200ms
 Show
 
 # Demo sequence
