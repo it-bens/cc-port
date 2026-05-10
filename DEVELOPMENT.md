@@ -51,6 +51,18 @@ Other recommended plugins:
 - Lint: `~/go/bin/golangci-lint run ./...`.
 - Fuzz targets in `internal/rewrite/rewrite_fuzz_test.go` and `internal/importer/resolve_fuzz_test.go`. Seeds replay as deterministic subtests under `go test ./...`. The unbounded mutation loop is local-only, one target per run: `go test ./internal/rewrite -run=^$ -fuzz=^FuzzReplacePathInBytes$ -fuzztime=2m`. Commit any `testdata/fuzz/FuzzXxx/<hash>` file produced by a real regression so every future run replays it.
 
+## Local S3 backend
+
+`dev/s3/` provides a project-stored Garage container exposing an S3-compatible API on `http://localhost:9000`. Used by the demo videos and (planned) E2E tests of `internal/sync` / `internal/remote`.
+
+```
+make s3-up      # Start
+make s3-down    # Stop
+make s3-reset   # Destroy and recreate
+```
+
+See [`dev/s3/README.md`](dev/s3/README.md) for credentials, endpoint conventions, and rationale.
+
 ## Commits
 
 Conventional commits; scope is a module directory name where applicable (`fix(importer): …`, `refactor!: …`).
