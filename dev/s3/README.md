@@ -2,12 +2,6 @@
 
 A single-node [Garage](https://garagehq.deuxfleurs.fr/) container that exposes an S3-compatible API on `http://localhost:9000`. Used by the demo videos under `docs/videos/` and (planned) E2E tests against `internal/sync` / `internal/remote`.
 
-## Why Garage
-
-MinIO is archived and the Community Edition has been hollowed out over 2025. LocalStack follows the same community/Pro pattern. Adobe S3Mock is a mock, and cc-port's `push --force` and cross-machine conflict refusal lean on real `If-Match` and metadata semantics, especially once the backend is reused for E2E. SeaweedFS is the documented fallback (Apache 2.0, larger production track record).
-
-Garage wins on community signal (community-led by Deuxfleurs, no enterprise tier), single Rust binary, multi-arch. The AGPL-3.0 license is a non-issue because cc-port consumes Garage as a service, not redistributed.
-
 ## Lifecycle
 
 From the repository root:
@@ -29,10 +23,6 @@ make s3-reset   # Destroy data volumes and start fresh
 | Secret key | sourced from `dev/s3/env` (`GARAGE_DEFAULT_SECRET_KEY`) |
 
 The credentials in `dev/s3/env` are deterministic zeros, plainly fake, and clearly marked test-only. They exist so that the demo tapes and integration tests produce identical fixtures. **Never use them in production.**
-
-## Container runtime
-
-Docker Compose v2 is the documented default. Podman with `podman compose` is expected to work because the compose file uses no Docker-specific extensions, but is not actively maintained.
 
 ## Auto-bootstrap
 
