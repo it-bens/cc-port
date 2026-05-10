@@ -7,10 +7,11 @@ GORELEASER  ?= goreleaser
 
 .DEFAULT_GOAL := help
 .PHONY: help build install test test-race test-integration test-large test-all \
-        vet lint fmt tidy release-check snapshot snapshot-sign ci clean
+        vet lint fmt tidy release-check snapshot snapshot-sign ci clean \
+        s3-up s3-down s3-reset s3-wait videos
 
 help: ## Show available targets
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 build: ## Build the cc-port binary into the repo root
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) $(PKG)
@@ -59,3 +60,32 @@ ci: vet test-race test-integration lint release-check snapshot ## Run the same c
 clean: ## Remove the binary and build artifacts
 	rm -f $(BINARY) coverage.txt
 	rm -rf dist
+
+s3-up: ## Start the dev S3 backend (Garage) and wait until it accepts requests
+	docker compose -f dev/s3/docker-compose.yml up -d
+	$(MAKE) s3-wait
+
+s3-wait: ## Block until the dev S3 endpoint at http://localhost:9000 responds
+	@echo "Waiting for Garage S3 API on http://localhost:9000 ..."
+	@for i in $$(seq 1 60); do \
+		if curl -sS -o /dev/null -w '%{http_code}' http://localhost:9000/ | grep -qE '^[2345][0-9][0-9]$$'; then \
+			echo "Garage is up."; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "Garage did not become ready in 60s." >&2; \
+	exit 1
+
+s3-down: ## Stop the dev S3 backend (preserves data volumes)
+	docker compose -f dev/s3/docker-compose.yml down
+
+s3-reset: ## Destroy and recreate the dev S3 backend (drops all data)
+	docker compose -f dev/s3/docker-compose.yml down -v
+	$(MAKE) s3-up
+
+videos: build s3-up ## Re-render all VHS demo tapes (GIF + MP4)
+	PATH="$$PWD:$$PATH" vhs docs/videos/demo-move.tape
+	PATH="$$PWD:$$PATH" vhs docs/videos/demo-export-import.tape
+	PATH="$$PWD:$$PATH" vhs docs/videos/demo-push-pull.tape
+	@$(MAKE) s3-down
