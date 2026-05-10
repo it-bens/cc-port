@@ -1,0 +1,20 @@
+services:
+  garage:
+    image: dxflrs/garage:v2.3.0@sha256:866bd13ed2038ba7e7190e840482bc27234c4afaf77be8cfa439ae088c1e4690
+    container_name: cc-port-dev-garage
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    env_file:
+      - env
+    environment:
+      - GARAGE_CONFIG_FILE=/etc/garage.toml
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro
+      - garage_meta:/var/lib/garage/meta
+      - garage_data:/var/lib/garage/data
+    ports:
+      - "127.0.0.1:9000:3900"
+    restart: unless-stopped
+
+volumes:
+  garage_meta:
+  garage_data:
