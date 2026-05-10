@@ -23,14 +23,13 @@ Prebuilt releases (macOS / Linux tarballs, checksums) are published under [GitHu
 
 ## Verify a release
 
-Release artifacts are signed by the GitHub Actions release workflow with cosign keyless OIDC. Every release ships `checksums.txt`, `checksums.txt.sig`, and `checksums.txt.pem` alongside the tarballs. Verify the checksums file first, then match each downloaded archive against it.
+Release artifacts are signed by the GitHub Actions release workflow with cosign keyless OIDC. Every release ships `checksums.txt` and a sigstore bundle `checksums.txt.sigstore.json` alongside the tarballs. Verify the checksums file first, then match each downloaded archive against it.
 
 ```
 cosign verify-blob \
+  --bundle checksums.txt.sigstore.json \
   --certificate-identity 'https://github.com/it-bens/cc-port/.github/workflows/release.yml@refs/tags/<vX.Y.Z>' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  --certificate checksums.txt.pem \
-  --signature checksums.txt.sig \
   checksums.txt
 ```
 
