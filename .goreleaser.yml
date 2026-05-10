@@ -30,11 +30,11 @@ builds:
 
 archives:
   - id: cc-port
-    builds: [cc-port]
+    ids: [cc-port]
     formats: ["tar.gz"]
     name_template: "cc-port_{{ .Os }}_{{ .Arch }}"
   - id: cc-port-with-logo
-    builds: [cc-port-with-logo]
+    ids: [cc-port-with-logo]
     formats: ["tar.gz"]
     name_template: "cc-port-with-logo_{{ .Os }}_{{ .Arch }}"
 
