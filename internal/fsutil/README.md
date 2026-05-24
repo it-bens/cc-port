@@ -6,7 +6,7 @@ Shared filesystem helpers for recursive directory copy and path resolution. `Res
 
 ## Public API
 
-- `CopyDir(ctx context.Context, source, destination string) error`: recursively copies a directory tree, preserving file and directory permissions. Symlinks are replicated as symlinks. Irregular entries fail-hard. Writes go through an `os.Root` opened on `destination`. `ctx.Err()` is checked at the top of every `WalkDir` callback so a cancelled context aborts within one iteration.
+- `CopyDir(ctx context.Context, source, destination string) error`: recursively copies a directory tree, preserving permissions and regular-file modification times. Symlinks are replicated as symlinks. Irregular entries fail-hard. Writes go through an `os.Root` opened on `destination`. `ctx.Err()` is checked at the top of every `WalkDir` callback so a cancelled context aborts within one iteration.
 - `ResolveExistingAncestor(absDir string) (string, error)`: walks `absDir` upward to the longest prefix that exists on disk. Runs `filepath.EvalSymlinks` on that prefix and re-attaches any missing trailing components unchanged. Requires an absolute path. See §Contracts.
 
 ## Contracts
@@ -40,7 +40,7 @@ Called by `internal/move` (`move/execute.go`) and `internal/testutil` (`testutil
 
 #### Handled
 
-- Regular files: streamed via `io.Copy` at the source file's mode.
+- Regular files: streamed via `io.Copy` at the source file's mode, then restored to the source file's modification time via `Root.Chtimes`.
 - Directories: created via `Root.MkdirAll` at the source directory's mode, then re-chmodded in case a parent was created earlier at a coarser mode.
 - Symlinks (file or directory): replicated via `Root.Symlink` with the target string read from `os.Readlink`. `filepath.WalkDir` does not descend into symlinked directories, so loops and cross-volume escapes are avoided.
 
@@ -52,6 +52,7 @@ Irregular entries (sockets, FIFOs, devices, anything where `fs.DirEntry.Type()` 
 
 - Cross-device boundaries: no special handling. If destination and source are on different filesystems, the copy works. A subsequent `os.Rename` onto the destination may fail with `EXDEV`. Callers that require rename atomicity own this concern.
 - Ownership (`uid`/`gid`): preserved only to the extent the kernel applies it. `CopyDir` does not call `Chown`.
+- Directory and symlink modification times: not restored. Writing files into a copied directory advances its mtime after creation, so only regular-file mtimes are carried over.
 
 ## Quirks
 
@@ -59,4 +60,4 @@ Irregular entries (sockets, FIFOs, devices, anything where `fs.DirEntry.Type()` 
 
 ## Tests
 
-`copy_test.go` covers directory mode preservation, nested mixed modes, and file mode preservation. `copy_symlink_test.go` covers symlink replication, symlink-to-directory replication, and large-file streaming. `copy_unix_test.go` (build-tagged `linux || darwin`) rejects FIFOs. `paths_test.go` covers symlink resolution, missing-tail preservation, `/` pass-through, broken symlink error, non-`ENOENT` stat error, and the two panic cases.
+`copy_test.go` covers directory mode preservation, nested mixed modes, file mode preservation, and regular-file modification-time preservation. `copy_symlink_test.go` covers symlink replication, symlink-to-directory replication, and large-file streaming. `copy_unix_test.go` (build-tagged `linux || darwin`) rejects FIFOs. `paths_test.go` covers symlink resolution, missing-tail preservation, `/` pass-through, broken symlink error, non-`ENOENT` stat error, and the two panic cases.

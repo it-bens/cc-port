@@ -9,10 +9,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
-// CopyDir recursively copies source to destination, preserving file and
-// directory permissions. Symlinks are replicated as symlinks: their
+// CopyDir recursively copies source to destination, preserving regular-file
+// permissions and modification times. Directory and symlink modification
+// times are not preserved. Symlinks are replicated as symlinks: their
 // target string is written verbatim and never followed for content.
 // Regular files are streamed via io.Copy to avoid loading them whole
 // into memory. Irregular entries (sockets, FIFOs, devices) cause the
@@ -69,7 +71,7 @@ func CopyDir(ctx context.Context, source, destination string) error {
 					return fmt.Errorf("create parent for %q: %w", relativePath, err)
 				}
 			}
-			return streamRegularFile(path, destRoot, relativePath, info.Mode().Perm())
+			return streamRegularFile(path, destRoot, relativePath, info.Mode().Perm(), info.ModTime())
 
 		default:
 			return fmt.Errorf("fsutil: cannot copy irregular entry %q (mode %s)", path, entryMode)
@@ -120,10 +122,10 @@ var openStreamDest = func(root *os.Root, path string, mode os.FileMode) (io.Writ
 	return root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 }
 
-// streamRegularFile copies src's contents to relativePath under destRoot
-// and applies mode afterward. Uses io.Copy so large files do not land
+// streamRegularFile copies src's contents to relativePath under destRoot and
+// applies mode and modTime afterward. Uses io.Copy so large files do not land
 // whole in memory.
-func streamRegularFile(src string, destRoot *os.Root, relativePath string, mode os.FileMode) (err error) {
+func streamRegularFile(src string, destRoot *os.Root, relativePath string, mode os.FileMode, modTime time.Time) (err error) {
 	in, err := os.Open(src) //nolint:gosec // G304: walked entry under caller-supplied source
 	if err != nil {
 		return fmt.Errorf("open source %q: %w", src, err)
@@ -145,6 +147,9 @@ func streamRegularFile(src string, destRoot *os.Root, relativePath string, mode 
 	}
 	if err := destRoot.Chmod(relativePath, mode); err != nil {
 		return fmt.Errorf("chmod %q: %w", relativePath, err)
+	}
+	if err := destRoot.Chtimes(relativePath, modTime, modTime); err != nil {
+		return fmt.Errorf("chtimes %q: %w", relativePath, err)
 	}
 	return nil
 }

@@ -37,7 +37,7 @@ func rewriteGlobalFiles(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := rewriteTracked(path, moveOptions.OldPath, moveOptions.NewPath, tracker); err != nil {
+		if err := rewriteTrackedPreservingMtime(path, moveOptions.OldPath, moveOptions.NewPath, tracker); err != nil {
 			return fmt.Errorf("rewrite %s %s: %w", group.Name, path, err)
 		}
 	}
@@ -258,4 +258,21 @@ func rewriteTracked(path, oldPath, newPath string, tracker *globalFileTracker) e
 	}
 	rewritten, _ := rewrite.ReplacePathInBytes(original, oldPath, newPath)
 	return rewrite.SafeWriteFile(path, rewritten, mode)
+}
+
+// rewriteTrackedPreservingMtime is rewriteTracked plus restoration of the
+// file's pre-rewrite modification time, for the session-keyed flat files whose
+// mtime a move must preserve.
+func rewriteTrackedPreservingMtime(path, oldPath, newPath string, tracker *globalFileTracker) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if err := rewriteTracked(path, oldPath, newPath, tracker); err != nil {
+		return err
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		return fmt.Errorf("restore mtime %s: %w", path, err)
+	}
+	return nil
 }

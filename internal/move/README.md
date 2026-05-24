@@ -23,7 +23,7 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
 
 ### Internal helpers
 
-`rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` routes through it so the rollback tracker sees pre-write bytes consistently: `rewriteUserWideFiles` iterates `claude.UserWideRewriteTargets` (settings.json, plugins/installed_plugins.json, plugins/known_marketplaces.json), and the session-keyed-groups loop iterates `locations.AllFlatFiles()`.
+`rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` routes through it so the rollback tracker sees pre-write bytes consistently: `rewriteUserWideFiles` iterates `claude.UserWideRewriteTargets` (settings.json, plugins/installed_plugins.json, plugins/known_marketplaces.json). The session-keyed-groups loop iterates `locations.AllFlatFiles()` through `rewriteTrackedPreservingMtime`, which wraps `rewriteTracked` and restores each file's pre-rewrite modification time. See §Source mtime preservation (move).
 
 `snapshotPaths(ctx, locations)` enumerates every snapshot path under `locations.FileHistoryDirs`. Contents are never read; only path discovery. The returned length equals the dry-run `plan.ReplacementsByCategory["file-history-snapshots"]`. `DryRun`'s counter and `Apply`'s preservation warning call it so both stay in lock-step off one enumeration. `ctx` is checked at the top of the outer loop and inside the `listFilesRecursive` walk so a long enumeration aborts within one iteration. The helper is unexported; the black-box test file reaches it through a `_test.go` binding.
 
@@ -78,6 +78,26 @@ Callers: `cc-port move --apply` command in `cmd/cc-port`. See `internal/lock/REA
 
 - `tasks/.lock` and `tasks/.highwatermark` are not copied and not rewritten. They are runtime-only artifacts.
 
+### Source mtime preservation (move)
+
+A move rewrites only the embedded project path inside each file, so the session data is otherwise unchanged. Transcripts, memory files, and session-keyed flat files keep their source modification times so the move does not reorder Claude Code's mtime-sorted `/resume` picker.
+
+Callers: `cc-port move --apply` command in `cmd/cc-port`.
+
+#### Handled
+
+- Transcripts and memory files: copied by `internal/fsutil.CopyDir`, which restores mtime per [`internal/fsutil/README.md`](../fsutil/README.md) §Symlink replication for CopyDir, then rewritten by `rewritePathsPreservingMtime`, which restores the mtime the copy carried over.
+- Session-keyed flat files (`todos`, `usage-data`, `plugins-data`, `tasks`): rewritten in place through `rewriteTrackedPreservingMtime`, matching how `cc-port import` preserves the same categories (see [`internal/importer/README.md`](../importer/README.md) §Source mtime preservation).
+
+#### Refused
+
+None at runtime. An `os.Stat` or `os.Chtimes` failure aborts the rewrite and the rollback tracker unwinds partial work.
+
+#### Not covered
+
+- `history.jsonl`, `~/.claude.json`, `settings.json`, and `~/.claude/sessions/*.json`: rewritten with a fresh modification time. These are merged or genuinely edited globals, not verbatim session files, so they inherit the write-time mtime the way an import treats merge results.
+- File-history snapshots: never rewritten, so their mtime survives untouched. See §File-history handling (move).
+
 ### File-history handling (move)
 
 File-history snapshots under `~/.claude/file-history/<session-uuid>/` are opaque byte streams. cc-port never inspects or rewrites their content. See [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command. This section covers the move-specific handling.
@@ -99,4 +119,4 @@ None at runtime. The move never refuses based on snapshot content. Copy is uncon
 
 ## Tests
 
-Unit tests live in `move_test.go` (end-to-end `DryRun`/`Apply` coverage) and `rewrite_global_test.go` (`rewriteTracked` happy path and failure modes). Coverage includes dry-run (with and without transcripts, refs-only, project-not-found), apply (basic, refs-only, with transcripts), encoded-dir collision refusal, live-session refusal, malformed-history reporting, and file-history snapshot preservation.
+Unit tests live in `move_test.go` (end-to-end `DryRun`/`Apply` coverage) and `rewrite_global_test.go` (`rewriteTracked` happy path and failure modes). Coverage includes dry-run (with and without transcripts, refs-only, project-not-found), apply (basic, refs-only, with transcripts), encoded-dir collision refusal, live-session refusal, malformed-history reporting, file-history snapshot preservation, source mtime preservation on session files, and fresh mtime on merged globals.
