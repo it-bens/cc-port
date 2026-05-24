@@ -33,13 +33,8 @@ func rewriteTranscriptsInDir(ctx context.Context, newProjectDir string, moveOpti
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		data, err := os.ReadFile(transcriptPath) //nolint:gosec // path constructed from trusted internal data
-		if err != nil {
-			return fmt.Errorf("read transcript %s: %w", transcriptPath, err)
-		}
-		rewritten, _ := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
-		if err := rewrite.SafeWriteFile(transcriptPath, rewritten, 0o644); err != nil {
-			return fmt.Errorf("write transcript %s: %w", transcriptPath, err)
+		if err := rewritePathsPreservingMtime(transcriptPath, moveOptions); err != nil {
+			return fmt.Errorf("rewrite transcript %s: %w", transcriptPath, err)
 		}
 	}
 	return nil
@@ -63,14 +58,32 @@ func rewriteMemoryFilesInDir(ctx context.Context, newProjectDir string, moveOpti
 			continue
 		}
 		memoryFilePath := filepath.Join(newMemoryDir, entry.Name())
-		data, err := os.ReadFile(memoryFilePath) //nolint:gosec // path constructed from trusted internal data
-		if err != nil {
-			return fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
+		if err := rewritePathsPreservingMtime(memoryFilePath, moveOptions); err != nil {
+			return fmt.Errorf("rewrite memory file %s: %w", memoryFilePath, err)
 		}
-		rewritten, _ := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
-		if err := rewrite.SafeWriteFile(memoryFilePath, rewritten, 0o644); err != nil {
-			return fmt.Errorf("write memory file %s: %w", memoryFilePath, err)
-		}
+	}
+	return nil
+}
+
+// rewritePathsPreservingMtime replaces the old project path with the new one
+// inside the file at path, then restores its modification time. The mtime read
+// here is the value CopyDir carried over from the source, so correctness
+// depends on the copy running before this rewrite.
+func rewritePathsPreservingMtime(path string, moveOptions Options) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	rewritten, _ := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+	if err := rewrite.SafeWriteFile(path, rewritten, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		return fmt.Errorf("restore mtime %s: %w", path, err)
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -818,6 +819,73 @@ func TestApply_RewritesTodos(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(body), renamedProjectPath)
 	assert.NotContains(t, string(body), oldProjectPath)
+}
+
+func assertModTime(t *testing.T, path string, want time.Time) {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.True(t, info.ModTime().Equal(want),
+		"%s mtime = %v, want %v", path, info.ModTime(), want)
+}
+
+// TestApply_PreservesSourceModTimeOnSessionFiles pins the move's mtime
+// preservation across both code paths: transcripts and memory exercise the
+// in-project copy-then-rewrite path, and the todo file (keyed by a session
+// UUID that survives the move) exercises the global flat-file rewrite path.
+func TestApply_PreservesSourceModTimeOnSessionFiles(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	oldLocations, err := claude.LocateProject(claudeHome, oldProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, oldLocations.SessionTranscripts)
+	require.NotEmpty(t, oldLocations.MemoryFiles)
+	require.NotEmpty(t, oldLocations.TodoFiles)
+
+	transcriptSource := oldLocations.SessionTranscripts[0]
+	memorySource := oldLocations.MemoryFiles[0]
+	todoPath := oldLocations.TodoFiles[0]
+
+	want := time.Date(2021, time.March, 4, 9, 30, 0, 0, time.UTC)
+	for _, path := range []string{transcriptSource, memorySource, todoPath} {
+		require.NoError(t, os.Chtimes(path, want, want))
+	}
+
+	err = move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:            oldProjectPath,
+		NewPath:            newProjectPath,
+		RewriteTranscripts: true,
+		RefsOnly:           true,
+	})
+	require.NoError(t, err)
+
+	newProjectDir := claudeHome.ProjectDir(newProjectPath)
+	assertModTime(t, filepath.Join(newProjectDir, filepath.Base(transcriptSource)), want)
+	assertModTime(t, filepath.Join(newProjectDir, "memory", filepath.Base(memorySource)), want)
+	assertModTime(t, todoPath, want)
+}
+
+// TestApply_StampsFreshModTimeOnMergedGlobals pins the negative half of the
+// policy: history.jsonl is a merged global, so a move gives it a fresh
+// modification time instead of preserving the stale source mtime.
+func TestApply_StampsFreshModTimeOnMergedGlobals(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	historyPath := claudeHome.HistoryFile()
+	stale := time.Date(2021, time.March, 4, 9, 30, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(historyPath, stale, stale))
+
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+	})
+	require.NoError(t, err)
+
+	info, err := os.Stat(historyPath)
+	require.NoError(t, err)
+	assert.True(t, info.ModTime().After(stale),
+		"history.jsonl mtime = %v, want a fresh time after %v", info.ModTime(), stale)
 }
 
 // TestApply_Rollback_RestoresGlobalsOnSecondDeleteFailure exercises the

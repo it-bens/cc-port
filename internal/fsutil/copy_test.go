@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -162,6 +163,23 @@ func TestCopyDirPreservesFileMode(t *testing.T) {
 	if got := readOnlyInfo.Mode().Perm(); got != expectedReadOnly {
 		t.Fatalf("ro mode = %o, want %o", got, expectedReadOnly)
 	}
+}
+
+func TestCopyDirPreservesFileModTime(t *testing.T) {
+	source := t.TempDir()
+	filePath := filepath.Join(source, "transcript.jsonl")
+	require.NoError(t, os.WriteFile(filePath, []byte("{}\n"), 0o600))
+
+	want := time.Date(2021, time.March, 4, 9, 30, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(filePath, want, want))
+
+	destination := filepath.Join(t.TempDir(), "dst")
+	require.NoError(t, CopyDir(t.Context(), source, destination))
+
+	info, err := os.Stat(filepath.Join(destination, "transcript.jsonl"))
+	require.NoError(t, err)
+	require.True(t, info.ModTime().Equal(want),
+		"copied file mtime = %v, want %v", info.ModTime(), want)
 }
 
 // closeErroringCloser wraps a real *os.File: writes pass through unchanged,
