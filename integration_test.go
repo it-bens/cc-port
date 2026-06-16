@@ -5,6 +5,7 @@ package integration_test
 import (
 	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -638,4 +639,149 @@ func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
 	require.NoError(t, err, "stat imported .claude.json")
 	assert.False(t, configStat.ModTime().Before(roundTripStartedAt),
 		".claude.json is a merge result; its mtime should be at or after round-trip start")
+}
+
+// stageWorkflowTree writes a workflow run record, its script, and a subagent
+// workflow transcript under sessionSubdir, mirroring the on-disk shape the
+// Claude Code Workflow tool produces (projects/<encoded>/<sid>/workflows/**
+// and .../subagents/workflows/**). Each body embeds projectPath and homeDir so
+// the round-trip rewrite is observable. scriptPath deliberately carries the
+// *encoded* project-dir name (`-Users-...` with dashes, not slashes): the
+// path-boundary rewriter matches only the slashed real path, so the encoded
+// segment survives a move or export verbatim — the same residual cc-port
+// accepts for every transcript and file-history snapshot.
+func stageWorkflowTree(t *testing.T, sessionSubdir, encodedDirName, projectPath, homeDir string) {
+	t.Helper()
+	sid := filepath.Base(sessionSubdir)
+
+	files := map[string][]byte{
+		filepath.Join(sessionSubdir, "workflows", "wf_ccport.json"): []byte(fmt.Sprintf(
+			`{"runId":"wf_ccport","workflowName":"review-changeset",`+
+				`"scriptPath":"%s/.claude/projects/%s/%s/workflows/scripts/review-changeset-wf_ccport.js",`+
+				`"args":{"kind":"files","target":"%s/internal/parser"},`+
+				`"result":"Reviewed %s/internal/parser and reported findings.","status":"completed"}`,
+			homeDir, encodedDirName, sid, projectPath, projectPath)),
+		filepath.Join(sessionSubdir, "workflows", "scripts", "review-changeset-wf_ccport.js"): []byte(fmt.Sprintf(
+			"// review-changeset workflow scoped to %s/\nexport const meta = { name: 'review-changeset' }\n",
+			projectPath)),
+		filepath.Join(sessionSubdir, "subagents", "workflows", "wf_ccport", "agent-review.jsonl"): []byte(fmt.Sprintf(
+			`{"type":"system","subtype":"workflow_agent_start","cwd":"%s","sessionId":"%s"}`+"\n"+
+				`{"type":"human","message":{"role":"user","content":"Review %s/internal/render"}}`+"\n",
+			projectPath, sid, projectPath)),
+	}
+
+	for path, body := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750), "create workflow dir for %s", path)
+		require.NoError(t, os.WriteFile(path, body, 0o600), "write workflow fixture %s", path)
+	}
+}
+
+// TestIntegration_ExportImportRoundTrip_Workflows verifies that a workflow tree
+// living inside a session subdir (projects/<encoded>/<sid>/workflows/** and
+// .../subagents/workflows/**) survives an export + import round-trip with its
+// project-path references rewritten to the destination. Workflows are not a
+// dedicated category: they ride the sessions category through addDirToZip on
+// export and the sessions/ prefix on import.
+func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+
+	locations, err := claude.LocateProject(sourceHome, fixtureProjectPath)
+	require.NoError(t, err, "locate fixture project")
+	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
+	sessionSubdir := locations.SessionSubdirs[0]
+	sid := filepath.Base(sessionSubdir)
+	encodedDirName := filepath.Base(sourceHome.ProjectDir(fixtureProjectPath))
+
+	stageWorkflowTree(t, sessionSubdir, encodedDirName, fixtureProjectPath, fixtureHomeDir)
+
+	archivePath := filepath.Join(t.TempDir(), "export-workflows.zip")
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err, "create archive file")
+	_, err = export.Run(t.Context(), sourceHome, &export.Options{
+		ProjectPath: fixtureProjectPath,
+		Output:      archiveFile,
+		Categories:  manifest.CategorySet{Sessions: true},
+		Placeholders: []manifest.Placeholder{
+			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
+			{Key: "{{HOME}}", Original: fixtureHomeDir},
+		},
+	})
+	require.NoError(t, err, "export with sessions category should succeed")
+	require.NoError(t, archiveFile.Close(), "close archive after export")
+
+	destinationHome := setupDestinationHome(t)
+	source, size := openArchive(t, archivePath)
+	_, err = importer.Run(t.Context(), destinationHome, importer.Options{
+		Source:     source,
+		Size:       size,
+		TargetPath: destinationProjectPath,
+		Resolutions: map[string]string{
+			"{{PROJECT_PATH}}": destinationProjectPath,
+			"{{HOME}}":         destinationHomeDir,
+		},
+	})
+	require.NoError(t, err, "import should succeed")
+
+	destProjectDir := destinationHome.ProjectDir(destinationProjectPath)
+	recordPath := filepath.Join(destProjectDir, sid, "workflows", "wf_ccport.json")
+	scriptPath := filepath.Join(destProjectDir, sid, "workflows", "scripts", "review-changeset-wf_ccport.js")
+	transcriptPath := filepath.Join(destProjectDir, sid, "subagents", "workflows", "wf_ccport", "agent-review.jsonl")
+
+	// The script carries no project path, so only its survival matters; the
+	// run record and transcript are read below, which proves theirs survived.
+	assert.FileExists(t, scriptPath, "workflow script should survive the round-trip")
+
+	recordBody, err := os.ReadFile(recordPath) //nolint:gosec // test-controlled path
+	require.NoError(t, err, "read imported workflow run record")
+	assert.Contains(t, string(recordBody), destinationProjectPath,
+		"run record must carry the destination project path after import")
+	assert.NotContains(t, string(recordBody), fixtureProjectPath,
+		"run record must not retain the source project path")
+	assert.NotContains(t, string(recordBody), "{{PROJECT_PATH}}",
+		"run record must have no unresolved placeholders")
+	assert.NotContains(t, string(recordBody), "{{HOME}}",
+		"run record must have no unresolved placeholders")
+
+	transcriptBody, err := os.ReadFile(transcriptPath) //nolint:gosec // test-controlled path
+	require.NoError(t, err, "read imported subagent workflow transcript")
+	assert.Contains(t, string(transcriptBody), destinationProjectPath,
+		"subagent workflow transcript must carry the destination project path")
+	assert.NotContains(t, string(transcriptBody), fixtureProjectPath,
+		"subagent workflow transcript must not retain the source project path")
+}
+
+// TestIntegration_MoveRewritesWorkflowTree verifies that move rewrites the
+// project-path references inside a session subdir's workflow tree when
+// RewriteTranscripts is enabled — the same opt-in gate that covers subagent
+// transcripts. The encoded scriptPath segment is left verbatim by design.
+func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
+	sourceHome := testutil.SetupFixture(t)
+
+	locations, err := claude.LocateProject(sourceHome, fixtureProjectPath)
+	require.NoError(t, err, "locate fixture project")
+	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
+	sessionSubdir := locations.SessionSubdirs[0]
+	sid := filepath.Base(sessionSubdir)
+	encodedDirName := filepath.Base(sourceHome.ProjectDir(fixtureProjectPath))
+
+	stageWorkflowTree(t, sessionSubdir, encodedDirName, fixtureProjectPath, fixtureHomeDir)
+
+	newPath := "/Users/test/Projects/renamed-workflows"
+	err = move.Apply(t.Context(), sourceHome, move.Options{
+		OldPath:            fixtureProjectPath,
+		NewPath:            newPath,
+		RefsOnly:           true,
+		RewriteTranscripts: true,
+	})
+	require.NoError(t, err, "move with transcript rewrite should succeed")
+
+	recordPath := filepath.Join(sourceHome.ProjectDir(newPath), sid, "workflows", "wf_ccport.json")
+	require.FileExists(t, recordPath, "workflow run record should move with the project dir")
+
+	recordBody, err := os.ReadFile(recordPath) //nolint:gosec // test-controlled path
+	require.NoError(t, err, "read moved workflow run record")
+	assert.Contains(t, string(recordBody), newPath,
+		"moved run record must carry the new project path")
+	assert.NotContains(t, string(recordBody), fixtureProjectPath,
+		"moved run record must not retain the source project path")
 }

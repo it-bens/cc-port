@@ -115,6 +115,31 @@ Per-command handling:
 - [`internal/export/README.md`](../internal/export/README.md) §File-history handling (export): archive-verbatim, stderr warning, privacy-of-exported-snapshots residual risk and the `--file-history=false` opt-out.
 - [`internal/importer/README.md`](../internal/importer/README.md) §File-history handling (import): write-verbatim; placeholder substitution is skipped on file-history bodies on current archives.
 
+## Per-session project subdirectories (cross-cutting)
+
+Each `~/.claude/projects/<encoded>/<session-uuid>/` directory holds
+per-session state that belongs to the project: `subagents/` agent
+transcripts, `session-memory/`, and Workflow-tool output (run records and
+`scripts/` under `workflows/`, per-agent transcripts under
+`subagents/workflows/`). No command below special-cases these by kind. They
+ride the same session-subdir handling as transcripts.
+
+- `move` copies the whole encoded project directory, so the subtree
+  relocates with it. The project-path rewrite reaches subdir bodies only
+  under `--rewrite-transcripts`, the same opt-in that covers subagent
+  transcripts.
+- `export` archives the subtree under the `sessions` category and `import`
+  restores it from the `sessions/` prefix, with bodies anonymised on the way
+  out and resolved on the way in. `push` and `pull` inherit this through the
+  same export and import paths.
+
+A `~/.claude/projects/<encoded>/` reference inside one of these bodies (for
+example a workflow run record's `scriptPath`) keeps the old encoded
+directory name after a move or export: the rewriter matches the slashed
+project path, never the dashed encoded form. The same stale-path residual
+applies, framed in §File-history policy (cross-cutting). cc-port does not
+inspect or repair it.
+
 ## Pipeline composition (cross-cutting)
 
 cc-port's read and write paths compose through a uniform `WriterStage`

@@ -257,8 +257,8 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 
 // listTranscriptFiles returns every file under projectDir that
 // RewriteTranscripts should rewrite: top-level `.jsonl` files, plus every file
-// under each session subdirectory (covering <uuid>/subagents/*.jsonl and
-// <uuid>/session-memory/**).
+// under each session subdirectory (covering <uuid>/subagents/**,
+// <uuid>/session-memory/**, and <uuid>/workflows/**).
 //
 // `memory/` is excluded because rewriteMemoryFilesInDir handles it separately.
 // `sessions/` is excluded because rewriteSessionFiles in rewrite_global.go
