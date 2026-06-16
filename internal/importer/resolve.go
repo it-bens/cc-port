@@ -22,16 +22,22 @@ const projectPathKey = "{{PROJECT_PATH}}"
 // resolution map via withImplicitAnchors.
 const homePathKey = "{{HOME}}"
 
+// projectDirKey is the manifest key cc-port resolves to the import target's
+// encoded storage directory (claude.Home.ProjectDir(targetPath)). importer.Run
+// injects it via withImplicitAnchors, so it is treated as already-resolved.
+const projectDirKey = "{{PROJECT_DIR}}"
+
 // IsImplicitKey reports whether key is supplied by the import flow itself,
 // not by manifest <resolve> in the archive or in --from-manifest.
 // The implicit set covers {{PROJECT_PATH}} (supplied from the import target
-// argument) and {{HOME}} (supplied from the import machine's
-// os.UserHomeDir() via resolveHomeAnchor). Callers refuse user-supplied
-// resolutions for these keys and treat them as already-resolved when
-// computing unresolved sets. Adding a new implicit key requires only an
+// argument), {{HOME}} (supplied from the import machine's os.UserHomeDir()
+// via resolveHomeAnchor), and {{PROJECT_DIR}} (supplied from
+// claude.Home.ProjectDir(targetPath) via withImplicitAnchors). Callers refuse
+// user-supplied resolutions for these keys and treat them as already-resolved
+// when computing unresolved sets. Adding a new implicit key requires only an
 // edit here plus a corresponding cmd-layer wiring.
 func IsImplicitKey(key string) bool {
-	return key == projectPathKey || key == homePathKey
+	return key == projectPathKey || key == homePathKey || key == projectDirKey
 }
 
 // applyResolutions replaces each placeholder token in content with its
