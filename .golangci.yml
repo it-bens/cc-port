@@ -45,6 +45,8 @@ linters:
       line-length: 150
     misspell:
       locale: US
+      ignore-rules:
+        - cancelled
     goconst:
       ignore-tests: true
     gocritic:
