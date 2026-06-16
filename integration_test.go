@@ -425,12 +425,7 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 	const passphrase = "round-trip-passphrase"
 	sourceHome := testutil.SetupFixture(t)
 
-	locations, err := claude.LocateProject(sourceHome, fixtureProjectPath)
-	require.NoError(t, err, "locate fixture project")
-	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
-	sessionSubdir := locations.SessionSubdirs[0]
-	sid := filepath.Base(sessionSubdir)
-	stageWorkflowTree(t, sessionSubdir, sourceHome.ProjectDir(fixtureProjectPath), fixtureProjectPath)
+	sid := stageFixtureWorkflowTree(t, sourceHome)
 
 	archivePath := filepath.Join(t.TempDir(), "export.zip.age")
 
@@ -692,6 +687,18 @@ func stageWorkflowTree(t *testing.T, sessionSubdir, encodedProjectDir, projectPa
 	}
 }
 
+// stageFixtureWorkflowTree stages the canonical fixture's workflow tree under
+// its first session subdir and returns the session UUID that names it.
+func stageFixtureWorkflowTree(t *testing.T, home *claude.Home) string {
+	t.Helper()
+	locations, err := claude.LocateProject(home, fixtureProjectPath)
+	require.NoError(t, err, "locate fixture project")
+	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
+	sessionSubdir := locations.SessionSubdirs[0]
+	stageWorkflowTree(t, sessionSubdir, home.ProjectDir(fixtureProjectPath), fixtureProjectPath)
+	return filepath.Base(sessionSubdir)
+}
+
 // TestIntegration_ExportImportRoundTrip_Workflows verifies that a workflow tree
 // living inside a session subdir (projects/<encoded>/<sid>/workflows/** and
 // .../subagents/workflows/**) survives an export + import round-trip with its
@@ -701,13 +708,7 @@ func stageWorkflowTree(t *testing.T, sessionSubdir, encodedProjectDir, projectPa
 func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 	sourceHome := testutil.SetupFixture(t)
 
-	locations, err := claude.LocateProject(sourceHome, fixtureProjectPath)
-	require.NoError(t, err, "locate fixture project")
-	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
-	sessionSubdir := locations.SessionSubdirs[0]
-	sid := filepath.Base(sessionSubdir)
-
-	stageWorkflowTree(t, sessionSubdir, sourceHome.ProjectDir(fixtureProjectPath), fixtureProjectPath)
+	sid := stageFixtureWorkflowTree(t, sourceHome)
 
 	archivePath := filepath.Join(t.TempDir(), "export-workflows.zip")
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
@@ -781,16 +782,10 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
 	sourceHome := testutil.SetupFixture(t)
 
-	locations, err := claude.LocateProject(sourceHome, fixtureProjectPath)
-	require.NoError(t, err, "locate fixture project")
-	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
-	sessionSubdir := locations.SessionSubdirs[0]
-	sid := filepath.Base(sessionSubdir)
-
-	stageWorkflowTree(t, sessionSubdir, sourceHome.ProjectDir(fixtureProjectPath), fixtureProjectPath)
+	sid := stageFixtureWorkflowTree(t, sourceHome)
 
 	newPath := "/Users/test/Projects/renamed-workflows"
-	err = move.Apply(t.Context(), sourceHome, move.Options{
+	err := move.Apply(t.Context(), sourceHome, move.Options{
 		OldPath:            fixtureProjectPath,
 		NewPath:            newPath,
 		RefsOnly:           true,

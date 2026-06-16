@@ -179,6 +179,8 @@ func TestIsImplicitKey_RecognizesHome(t *testing.T) {
 		"{{HOME}} must be implicit so the orchestrator filters it from prompts and importer.Run injects it")
 	assert.True(t, importer.IsImplicitKey("{{PROJECT_PATH}}"),
 		"{{PROJECT_PATH}} stays implicit (regression guard)")
+	assert.True(t, importer.IsImplicitKey("{{PROJECT_DIR}}"),
+		"{{PROJECT_DIR}} is implicit so withImplicitAnchors injects the target's encoded dir")
 	assert.False(t, importer.IsImplicitKey("{{ARBITRARY_KEY}}"))
 }
 

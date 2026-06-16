@@ -6,24 +6,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
 
-func TestDiscoverAndPromptPlaceholders_AlwaysDeclaresProjectDir(t *testing.T) {
-	home := testutil.SetupFixture(t)
-	projectPath := testutil.FixtureProjectPath()
+// TestExportManifest_AlwaysDeclaresProjectDir asserts the written export
+// manifest declares {{PROJECT_DIR}} even when project content surfaces no
+// discoverable anchor. The encoded dir lives in session-subdir bodies that
+// discovery does not scan, so the cmd layer declares it unconditionally.
+func TestExportManifest_AlwaysDeclaresProjectDir(t *testing.T) {
+	home, _, manifestPath := driveExportManifest(t, testutil.FixtureProjectPath())
 
-	placeholders, err := discoverAndPromptPlaceholders(home, projectPath)
+	metadata, err := manifest.ReadManifest(manifestPath)
 	require.NoError(t, err)
 
-	var original string
-	found := false
-	for _, placeholder := range placeholders {
-		if placeholder.Key == "{{PROJECT_DIR}}" {
-			found = true
-			original = placeholder.Original
+	var projectDir *manifest.Placeholder
+	for i := range metadata.Placeholders {
+		if metadata.Placeholders[i].Key == "{{PROJECT_DIR}}" {
+			projectDir = &metadata.Placeholders[i]
 		}
 	}
-	require.True(t, found, "{{PROJECT_DIR}} must always be declared")
-	assert.Equal(t, home.ProjectDir(projectPath), original)
+	require.NotNil(t, projectDir, "{{PROJECT_DIR}} must always be declared")
+	assert.Equal(t, home.ProjectDir(testutil.FixtureProjectPath()), projectDir.Original)
 }
