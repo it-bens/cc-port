@@ -19,6 +19,7 @@ import (
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
+	"github.com/it-bens/cc-port/internal/progress"
 )
 
 // PushOptions carries the inputs cmd/cc-port push hands to PlanPush and
@@ -32,6 +33,11 @@ type PushOptions struct {
 	Placeholders      []manifest.Placeholder
 	Force             bool
 	EncryptionEnabled bool
+
+	// Reporter receives the push progress event stream. PlanPush ignores it
+	// (it is a pure pre-flight read); ExecutePush defaults a nil Reporter to
+	// progress.Noop().
+	Reporter progress.Reporter
 }
 
 // PushPlan is the read-only result of PlanPush. Render writes it for
@@ -59,6 +65,11 @@ type PullOptions struct {
 	HomePath          string
 	FromManifest      *manifest.Metadata
 	EncryptionEnabled bool
+
+	// Reporter receives the pull progress event stream. PlanPull ignores it
+	// (it is a pure pre-flight read); ExecutePull defaults a nil Reporter to
+	// progress.Noop().
+	Reporter progress.Reporter
 }
 
 // PullPlan is the read-only result of PlanPull. Render writes it for
@@ -151,7 +162,11 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 	if output == nil {
 		return errors.New("sync.ExecutePush: output is nil")
 	}
+	if opts.Reporter == nil {
+		opts.Reporter = progress.Noop()
+	}
 
+	exportPhase := opts.Reporter.Phase("export", 0, progress.UnitItems)
 	exportOptions := export.Options{
 		ProjectPath:  opts.ProjectPath,
 		Output:       output,
@@ -159,10 +174,12 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 		Placeholders: opts.Placeholders,
 		SyncPushedBy: plan.SelfPusher,
 		SyncPushedAt: time.Now().UTC(),
+		Reporter:     exportPhase,
 	}
 	if _, err := export.Run(ctx, opts.ClaudeHome, &exportOptions); err != nil {
 		return fmt.Errorf("sync.ExecutePush: export: %w", err)
 	}
+	exportPhase.End("")
 	return nil
 }
 
@@ -172,6 +189,8 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 // before calling, and owns the defer Close. The context.Context parameter is
 // unused today but kept on the public API to mirror ExecutePull and reserve
 // a cancellation seam for future readers.
+//
+//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
 func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*PullPlan, error) {
 	if opts.Name == "" {
 		return nil, errors.New("sync.PlanPull: Name is empty")
@@ -263,9 +282,14 @@ func computeUnresolved(
 // repeated reads, so manifest reads in Plan and body reads in importer.Run
 // share one materialized tempfile. The returned *importer.Result carries
 // the post-import rules-scan; cmd renders it through renderRulesReport.
+//
+//nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
 func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source pipeline.Source) (*importer.Result, error) {
 	if plan == nil {
 		return nil, errors.New("sync.ExecutePull: plan is nil")
+	}
+	if opts.Reporter == nil {
+		opts.Reporter = progress.Noop()
 	}
 
 	// Build the resolution map from --from-manifest's <resolve> values,
@@ -285,16 +309,19 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 		}
 	}
 
+	importPhase := opts.Reporter.Phase("import", 0, progress.UnitItems)
 	result, err := importer.Run(ctx, opts.ClaudeHome, &importer.Options{
 		Source:      source.ReaderAt,
 		Size:        source.Size,
 		TargetPath:  opts.TargetPath,
 		HomePath:    opts.HomePath,
 		Resolutions: merged,
+		Reporter:    importPhase,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sync.ExecutePull: import: %w", err)
 	}
+	importPhase.End("")
 	return result, nil
 }
 
