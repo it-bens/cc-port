@@ -9,23 +9,25 @@ import (
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
-// rewriteNewProjectDir rewrites the copied project dir: transcripts and memory files.
-func rewriteNewProjectDir(ctx context.Context, newProjectDir string, moveOptions Options) error {
+// rewriteNewProjectDir rewrites the copied project dir: transcripts and memory
+// files. oldEncodedDir and newEncodedDir are the absolute encoded storage dirs;
+// every rewritten body also has old→new encoded-dir references swapped.
+func rewriteNewProjectDir(ctx context.Context, oldEncodedDir, newEncodedDir string, moveOptions Options) error {
 	if moveOptions.RewriteTranscripts {
-		if err := rewriteTranscriptsInDir(ctx, newProjectDir, moveOptions); err != nil {
+		if err := rewriteTranscriptsInDir(ctx, oldEncodedDir, newEncodedDir, moveOptions); err != nil {
 			return err
 		}
 	}
 
-	if err := rewriteMemoryFilesInDir(ctx, newProjectDir, moveOptions); err != nil {
+	if err := rewriteMemoryFilesInDir(ctx, oldEncodedDir, newEncodedDir, moveOptions); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func rewriteTranscriptsInDir(ctx context.Context, newProjectDir string, moveOptions Options) error {
-	newTranscripts, err := listTranscriptFiles(ctx, newProjectDir)
+func rewriteTranscriptsInDir(ctx context.Context, oldEncodedDir, newEncodedDir string, moveOptions Options) error {
+	newTranscripts, err := listTranscriptFiles(ctx, newEncodedDir)
 	if err != nil {
 		return fmt.Errorf("collect transcripts in new dir: %w", err)
 	}
@@ -33,15 +35,15 @@ func rewriteTranscriptsInDir(ctx context.Context, newProjectDir string, moveOpti
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := rewritePathsPreservingMtime(transcriptPath, moveOptions); err != nil {
+		if err := rewritePathsPreservingMtime(transcriptPath, oldEncodedDir, newEncodedDir, moveOptions); err != nil {
 			return fmt.Errorf("rewrite transcript %s: %w", transcriptPath, err)
 		}
 	}
 	return nil
 }
 
-func rewriteMemoryFilesInDir(ctx context.Context, newProjectDir string, moveOptions Options) error {
-	newMemoryDir := filepath.Join(newProjectDir, "memory")
+func rewriteMemoryFilesInDir(ctx context.Context, oldEncodedDir, newEncodedDir string, moveOptions Options) error {
+	newMemoryDir := filepath.Join(newEncodedDir, "memory")
 	if _, err := os.Stat(newMemoryDir); err != nil {
 		return nil
 	}
@@ -58,18 +60,19 @@ func rewriteMemoryFilesInDir(ctx context.Context, newProjectDir string, moveOpti
 			continue
 		}
 		memoryFilePath := filepath.Join(newMemoryDir, entry.Name())
-		if err := rewritePathsPreservingMtime(memoryFilePath, moveOptions); err != nil {
+		if err := rewritePathsPreservingMtime(memoryFilePath, oldEncodedDir, newEncodedDir, moveOptions); err != nil {
 			return fmt.Errorf("rewrite memory file %s: %w", memoryFilePath, err)
 		}
 	}
 	return nil
 }
 
-// rewritePathsPreservingMtime replaces the old project path with the new one
-// inside the file at path, then restores its modification time. The mtime read
-// here is the value CopyDir carried over from the source, so correctness
-// depends on the copy running before this rewrite.
-func rewritePathsPreservingMtime(path string, moveOptions Options) error {
+// rewritePathsPreservingMtime replaces the old project path with the new one,
+// and the old encoded storage dir with the new one, inside the file at path,
+// then restores its modification time. The mtime read here is the value
+// CopyDir carried over from the source, so correctness depends on the copy
+// running before this rewrite.
+func rewritePathsPreservingMtime(path, oldEncodedDir, newEncodedDir string, moveOptions Options) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", path, err)
@@ -79,6 +82,7 @@ func rewritePathsPreservingMtime(path string, moveOptions Options) error {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	rewritten, _ := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+	rewritten, _ = rewrite.ReplacePathInBytes(rewritten, oldEncodedDir, newEncodedDir)
 	if err := rewrite.SafeWriteFile(path, rewritten, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}

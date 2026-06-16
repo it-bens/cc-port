@@ -776,7 +776,8 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 // TestIntegration_MoveRewritesWorkflowTree verifies that move rewrites the
 // project-path references inside a session subdir's workflow tree when
 // RewriteTranscripts is enabled — the same opt-in gate that covers subagent
-// transcripts. The encoded scriptPath segment is left verbatim by design.
+// transcripts. It also rewrites the encoded storage-dir segment (e.g. a run
+// record's scriptPath) from the old encoded dir to the new one.
 func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
 	sourceHome := testutil.SetupFixture(t)
 
@@ -806,4 +807,8 @@ func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
 		"moved run record must carry the new project path")
 	assert.NotContains(t, string(recordBody), fixtureProjectPath,
 		"moved run record must not retain the source project path")
+	assert.Contains(t, string(recordBody), sourceHome.ProjectDir(newPath),
+		"moved run record scriptPath must carry the new encoded dir")
+	assert.NotContains(t, string(recordBody), sourceHome.ProjectDir(fixtureProjectPath),
+		"moved run record scriptPath must not retain the old encoded dir")
 }
