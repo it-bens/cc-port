@@ -644,23 +644,21 @@ func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
 // stageWorkflowTree writes a workflow run record, its script, and a subagent
 // workflow transcript under sessionSubdir, mirroring the on-disk shape the
 // Claude Code Workflow tool produces (projects/<encoded>/<sid>/workflows/**
-// and .../subagents/workflows/**). Each body embeds projectPath and homeDir so
-// the round-trip rewrite is observable. scriptPath deliberately carries the
-// *encoded* project-dir name (`-Users-...` with dashes, not slashes): the
-// path-boundary rewriter matches only the slashed real path, so the encoded
-// segment survives a move or export verbatim — the same residual cc-port
-// accepts for every transcript and file-history snapshot.
-func stageWorkflowTree(t *testing.T, sessionSubdir, encodedDirName, projectPath, homeDir string) {
+// and .../subagents/workflows/**). The run record's scriptPath embeds
+// encodedProjectDir (the absolute ~/.claude/projects/<encoded> directory), and
+// the args/result/transcript embed projectPath, so both the {{PROJECT_DIR}}
+// and {{PROJECT_PATH}} rewrites are observable.
+func stageWorkflowTree(t *testing.T, sessionSubdir, encodedProjectDir, projectPath string) {
 	t.Helper()
 	sid := filepath.Base(sessionSubdir)
 
 	files := map[string][]byte{
 		filepath.Join(sessionSubdir, "workflows", "wf_ccport.json"): []byte(fmt.Sprintf(
 			`{"runId":"wf_ccport","workflowName":"review-changeset",`+
-				`"scriptPath":"%s/.claude/projects/%s/%s/workflows/scripts/review-changeset-wf_ccport.js",`+
+				`"scriptPath":"%s/%s/workflows/scripts/review-changeset-wf_ccport.js",`+
 				`"args":{"kind":"files","target":"%s/internal/parser"},`+
 				`"result":"Reviewed %s/internal/parser and reported findings.","status":"completed"}`,
-			homeDir, encodedDirName, sid, projectPath, projectPath)),
+			encodedProjectDir, sid, projectPath, projectPath)),
 		filepath.Join(sessionSubdir, "workflows", "scripts", "review-changeset-wf_ccport.js"): []byte(fmt.Sprintf(
 			"// review-changeset workflow scoped to %s/\nexport const meta = { name: 'review-changeset' }\n",
 			projectPath)),
@@ -690,9 +688,8 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
 	sessionSubdir := locations.SessionSubdirs[0]
 	sid := filepath.Base(sessionSubdir)
-	encodedDirName := filepath.Base(sourceHome.ProjectDir(fixtureProjectPath))
 
-	stageWorkflowTree(t, sessionSubdir, encodedDirName, fixtureProjectPath, fixtureHomeDir)
+	stageWorkflowTree(t, sessionSubdir, sourceHome.ProjectDir(fixtureProjectPath), fixtureProjectPath)
 
 	archivePath := filepath.Join(t.TempDir(), "export-workflows.zip")
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
@@ -704,6 +701,7 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 		Placeholders: []manifest.Placeholder{
 			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
 			{Key: "{{HOME}}", Original: fixtureHomeDir},
+			{Key: "{{PROJECT_DIR}}", Original: sourceHome.ProjectDir(fixtureProjectPath)},
 		},
 	})
 	require.NoError(t, err, "export with sessions category should succeed")
@@ -742,6 +740,13 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 	assert.NotContains(t, string(recordBody), "{{HOME}}",
 		"run record must have no unresolved placeholders")
 
+	senderEncodedDir := filepath.Base(sourceHome.ProjectDir(fixtureProjectPath))
+	recipientEncodedDir := filepath.Base(destinationHome.ProjectDir(destinationProjectPath))
+	assert.Contains(t, string(recordBody), recipientEncodedDir,
+		"scriptPath must carry the recipient's encoded dir after import")
+	assert.NotContains(t, string(recordBody), senderEncodedDir,
+		"scriptPath must not retain the sender's encoded dir")
+
 	transcriptBody, err := os.ReadFile(transcriptPath) //nolint:gosec // test-controlled path
 	require.NoError(t, err, "read imported subagent workflow transcript")
 	assert.Contains(t, string(transcriptBody), destinationProjectPath,
@@ -762,9 +767,8 @@ func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
 	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
 	sessionSubdir := locations.SessionSubdirs[0]
 	sid := filepath.Base(sessionSubdir)
-	encodedDirName := filepath.Base(sourceHome.ProjectDir(fixtureProjectPath))
 
-	stageWorkflowTree(t, sessionSubdir, encodedDirName, fixtureProjectPath, fixtureHomeDir)
+	stageWorkflowTree(t, sessionSubdir, sourceHome.ProjectDir(fixtureProjectPath), fixtureProjectPath)
 
 	newPath := "/Users/test/Projects/renamed-workflows"
 	err = move.Apply(t.Context(), sourceHome, move.Options{
