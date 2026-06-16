@@ -65,9 +65,10 @@ func TestStreamRouting_ImportManifestSuccessLineRoutedToCobraStdout(t *testing.T
 }
 
 // stageMinimalHome stages a Claude home under t.TempDir() with only an empty
-// project directory keyed to projectPath. The empty content means
-// export.DiscoverPlaceholders returns no suggestions, so resolveSuggestions
-// produces an empty placeholder list and the cmd reaches its success line.
+// project directory keyed to projectPath. The empty content means discovery
+// surfaces no {{PROJECT_PATH}}/{{HOME}} suggestions; the deterministic
+// {{PROJECT_DIR}} placeholder is still declared but matches nothing, and the
+// cmd reaches its success line.
 func stageMinimalHome(t *testing.T, projectPath string) *claude.Home {
 	t.Helper()
 
