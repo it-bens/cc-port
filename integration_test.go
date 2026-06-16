@@ -425,6 +425,13 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 	const passphrase = "round-trip-passphrase"
 	sourceHome := testutil.SetupFixture(t)
 
+	locations, err := claude.LocateProject(sourceHome, fixtureProjectPath)
+	require.NoError(t, err, "locate fixture project")
+	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
+	sessionSubdir := locations.SessionSubdirs[0]
+	sid := filepath.Base(sessionSubdir)
+	stageWorkflowTree(t, sessionSubdir, sourceHome.ProjectDir(fixtureProjectPath), fixtureProjectPath)
+
 	archivePath := filepath.Join(t.TempDir(), "export.zip.age")
 
 	// Build an encrypted archive via pipeline composition.
@@ -448,6 +455,7 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 		Placeholders: []manifest.Placeholder{
 			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
 			{Key: "{{HOME}}", Original: fixtureHomeDir},
+			{Key: "{{PROJECT_DIR}}", Original: sourceHome.ProjectDir(fixtureProjectPath)},
 		},
 	}
 	_, err = export.Run(t.Context(), sourceHome, &exportOptions)
@@ -491,6 +499,16 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 		"import from decrypted source should succeed")
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
+
+	recordPath := filepath.Join(
+		destinationHome.ProjectDir(destinationProjectPath), sid, "workflows", "wf_ccport.json",
+	)
+	recordBody, err := os.ReadFile(recordPath) //nolint:gosec // test-controlled path
+	require.NoError(t, err, "read imported workflow run record")
+	assert.Contains(t, string(recordBody), filepath.Base(destinationHome.ProjectDir(destinationProjectPath)),
+		"scriptPath must carry the recipient's encoded dir after an encrypted round-trip")
+	assert.NotContains(t, string(recordBody), filepath.Base(sourceHome.ProjectDir(fixtureProjectPath)),
+		"scriptPath must not retain the sender's encoded dir")
 }
 
 // firstFileUnder returns the first non-directory descendant of root, in walk
