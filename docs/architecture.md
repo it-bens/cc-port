@@ -17,6 +17,7 @@ cc-port/
 │   ├── manifest/           metadata.xml wire DTOs + category enum table
 │   ├── move/               Move plan, dry-run, apply with copy-verify-delete
 │   ├── pipeline/           WriterStage/ReaderStage interfaces + composing runners
+│   ├── progress/           Progress reporter, event stream, and four output renderers
 │   ├── remote/             gocloud.dev-backed remote source and sink stages
 │   ├── rewrite/            Byte-level rewrite primitives + SafeRenamePromoter
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
@@ -56,6 +57,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Tempfile materialization for random-access consumers | [`internal/pipeline/README.md`](../internal/pipeline/README.md) §Public API |
 | Layered AWS credential resolution (file > env > prompt) | [`internal/credentials/README.md`](../internal/credentials/README.md) §Source layering and precedence |
 | Banner is consumer-defined; `internal/logo` is opt-in via `-tags logo` | `cmd/cc-port/banner_default.go`, `cmd/cc-port/banner_logo.go` |
+| Reporter injected through Options, never package-global | [`internal/progress/README.md`](../internal/progress/README.md) §Reporter injection |
 
 ### TTY-prompt ownership split
 
