@@ -1,0 +1,3 @@
+{"v":1,"event":"phase_start","path":["copy"],"total":10,"unit":"files"}
+{"v":1,"event":"phase_advance","path":["copy"],"done":4}
+{"v":1,"event":"failed","path":["copy"],"error":"disk full"}

@@ -1,0 +1,3 @@
+[START] phase=copy total=100 unit=bytes
+[PROGRESS] phase=copy 10/100 (10%)
+[PROGRESS] phase=copy 90/100 (90%)

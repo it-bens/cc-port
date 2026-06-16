@@ -1,0 +1,3 @@
+[START] phase=copy total=10 unit=files
+[PROGRESS] phase=copy 4/10 (40%)
+[CANCELLED] phase=copy done=4/10

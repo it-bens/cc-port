@@ -1,0 +1,3 @@
+[START] phase=copy total=10 unit=files
+[WARN] skipped a file
+[DONE] (1 warning)

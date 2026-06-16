@@ -1,0 +1,8 @@
+{"v":1,"event":"phase_start","path":["copy"],"total":10,"unit":"files"}
+{"v":1,"event":"phase_advance","path":["copy"],"done":4}
+{"v":1,"event":"phase_advance","path":["copy"],"done":10}
+{"v":1,"event":"phase_end","path":["copy"],"summary":"10 files","duration":"2s"}
+{"v":1,"event":"phase_start","path":["rewrite"],"total":3,"unit":"items"}
+{"v":1,"event":"phase_advance","path":["rewrite"],"done":3}
+{"v":1,"event":"phase_end","path":["rewrite"],"summary":"3 items","duration":"1s"}
+{"v":1,"event":"done"}
