@@ -18,29 +18,10 @@ import (
 // the export-manifest command's success line ("Manifest written to ...")
 // reaches a buffer set via cmd.SetOut, not os.Stdout. A bare fmt.Printf
 // would bypass the buffer and the assertion would fail.
-//
-// Stages a minimal home in t.TempDir() rather than calling
-// testutil.SetupFixture: the canonical fixture's session and memory bodies
-// reference sibling project paths (e.g. /Users/test/Projects/myproject-extras)
-// which the placeholder discoverer surfaces as {{UNRESOLVED_N}} prompts,
-// blocking a no-TTY happy-path drive of the cmd.
 func TestStreamRouting_ExportManifestSuccessLineRoutedToCobraStdout(t *testing.T) {
-	home := stageMinimalHome(t, testutil.FixtureProjectPath())
+	_, stdout, manifestPath := driveExportManifest(t, testutil.FixtureProjectPath())
 
-	var stdout, stderr bytes.Buffer
-	claudeDir := home.Dir
-	cmd := newExportManifestCmd(&claudeDir, noopBanner{})
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-
-	output := filepath.Join(t.TempDir(), "m.xml")
-	require.NoError(t, cmd.Flags().Set("output", output))
-	require.NoError(t, cmd.Flags().Set("all", "true"))
-	cmd.SetContext(context.Background())
-	cmd.SetArgs([]string{testutil.FixtureProjectPath()})
-
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, stdout.String(), "Manifest written to "+output,
+	assert.Contains(t, stdout, "Manifest written to "+manifestPath,
 		"success line did not reach cmd.OutOrStdout buffer; bare fmt.Printf regression?")
 }
 
@@ -65,9 +46,10 @@ func TestStreamRouting_ImportManifestSuccessLineRoutedToCobraStdout(t *testing.T
 }
 
 // stageMinimalHome stages a Claude home under t.TempDir() with only an empty
-// project directory keyed to projectPath. The empty content means
-// export.DiscoverPlaceholders returns no suggestions, so resolveSuggestions
-// produces an empty placeholder list and the cmd reaches its success line.
+// project directory keyed to projectPath. The empty content means discovery
+// surfaces no {{PROJECT_PATH}}/{{HOME}} suggestions; the deterministic
+// {{PROJECT_DIR}} placeholder is still declared but matches nothing, and the
+// cmd reaches its success line.
 func stageMinimalHome(t *testing.T, projectPath string) *claude.Home {
 	t.Helper()
 
@@ -81,4 +63,32 @@ func stageMinimalHome(t *testing.T, projectPath string) *claude.Home {
 		Dir:        claudeDir,
 		ConfigFile: configFilePath,
 	}
+}
+
+// driveExportManifest stages a minimal home for projectPath, runs the
+// export-manifest command with --all to a temp manifest, and returns the home,
+// the command's stdout, and the manifest path.
+//
+// It stages a minimal home rather than testutil.SetupFixture: the canonical
+// fixture's session and memory bodies reference sibling project paths (e.g.
+// /Users/test/Projects/myproject-extras) that the placeholder discoverer
+// surfaces as {{UNRESOLVED_N}} prompts, blocking a no-TTY drive of the cmd.
+func driveExportManifest(t *testing.T, projectPath string) (home *claude.Home, stdout, manifestPath string) {
+	t.Helper()
+	home = stageMinimalHome(t, projectPath)
+
+	var out, errBuf bytes.Buffer
+	claudeDir := home.Dir
+	cmd := newExportManifestCmd(&claudeDir, noopBanner{})
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+
+	manifestPath = filepath.Join(t.TempDir(), "m.xml")
+	require.NoError(t, cmd.Flags().Set("output", manifestPath))
+	require.NoError(t, cmd.Flags().Set("all", "true"))
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{projectPath})
+	require.NoError(t, cmd.Execute())
+
+	return home, out.String(), manifestPath
 }

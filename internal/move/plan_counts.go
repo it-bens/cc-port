@@ -137,6 +137,7 @@ func countTranscriptReplacements(
 	ctx context.Context,
 	locations *claude.ProjectLocations,
 	moveOptions Options,
+	oldEncodedDir, newEncodedDir string,
 ) (int, error) {
 	transcriptPaths, err := listTranscriptFiles(ctx, locations.ProjectDir)
 	if err != nil {
@@ -154,6 +155,8 @@ func countTranscriptReplacements(
 		}
 		_, count := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
 		total += count
+		_, encodedCount := rewrite.ReplacePathInBytes(data, oldEncodedDir, newEncodedDir)
+		total += encodedCount
 	}
 	return total, nil
 }

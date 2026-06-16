@@ -67,6 +67,7 @@ Callers: `cc-port move --apply` command in `cmd/cc-port`. See `internal/lock/REA
 - `Apply` wraps its body in `lock.WithLock`, which aborts if a Claude Code session is live or another cc-port invocation is running.
 - Session-keyed categories: `~/.claude/todos/<sid>-agent-<sid>.json`, `~/.claude/usage-data/session-meta/<sid>.json`, `~/.claude/usage-data/facets/<sid>.json`, `~/.claude/plugins/data/<ns>/<sid>/**`, `~/.claude/tasks/<sid>/**`.
 - User-wide categories iterated via `claude.UserWideRewriteTargets`: `~/.claude/settings.json`, `~/.claude/plugins/installed_plugins.json`, `~/.claude/plugins/known_marketplaces.json`. Each is stat-gated; missing files skip without error.
+- Copied project-dir bodies have the old encoded storage dir swapped for the new one via a second `rewrite.ReplacePathInBytes` pass in `rewritePathsPreservingMtime`, alongside the real-path rewrite. The pass covers the transcript / session-subdir tree under `--rewrite-transcripts` and the memory files unconditionally.
 
 #### Refused
 
@@ -80,7 +81,7 @@ Callers: `cc-port move --apply` command in `cmd/cc-port`. See `internal/lock/REA
 
 ### Source mtime preservation (move)
 
-A move rewrites only the embedded project path inside each file, so the session data is otherwise unchanged. Transcripts, memory files, and session-keyed flat files keep their source modification times so the move does not reorder Claude Code's mtime-sorted `/resume` picker.
+A move rewrites the embedded project path in every file, and additionally swaps the encoded storage dir in the copied project-dir tree (transcripts and memory), leaving the session data otherwise unchanged. Transcripts, memory files, and session-keyed flat files keep their source modification times so the move does not reorder Claude Code's mtime-sorted `/resume` picker.
 
 Callers: `cc-port move --apply` command in `cmd/cc-port`.
 

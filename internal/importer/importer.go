@@ -180,7 +180,9 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 			return err
 		}
 
-		resolutions := withImplicitAnchors(importOptions.Resolutions, importOptions.TargetPath, importOptions.HomePath)
+		resolutions := withImplicitAnchors(
+			importOptions.Resolutions, importOptions.TargetPath, importOptions.HomePath, encodedProjectDir,
+		)
 
 		if err := runPreflight(presentDeclaredKeys, metadata, resolutions); err != nil {
 			return err
@@ -295,11 +297,13 @@ func recordPresentDeclaredKeys(body []byte, declaredByKey, presentKeys map[strin
 }
 
 // withImplicitAnchors returns a copy of resolutions that always contains
-// entries for both implicit keys, injecting them from targetPath and
-// homePath when the caller did not supply them. The original map is not
-// mutated. Callers that already populated either key win.
-func withImplicitAnchors(resolutions map[string]string, targetPath, homePath string) map[string]string {
-	result := make(map[string]string, len(resolutions)+2)
+// entries for the three implicit keys, injecting them from targetPath,
+// homePath, and encodedProjectDir when the caller did not supply them. The
+// original map is not mutated. Callers that already populated a key win.
+func withImplicitAnchors(
+	resolutions map[string]string, targetPath, homePath, encodedProjectDir string,
+) map[string]string {
+	result := make(map[string]string, len(resolutions)+3)
 	for key, value := range resolutions {
 		result[key] = value
 	}
@@ -308,6 +312,9 @@ func withImplicitAnchors(resolutions map[string]string, targetPath, homePath str
 	}
 	if _, has := result[homePathKey]; !has {
 		result[homePathKey] = homePath
+	}
+	if _, has := result[projectDirKey]; !has {
+		result[projectDirKey] = encodedProjectDir
 	}
 	return result
 }

@@ -132,7 +132,9 @@ func populatePlanCounts(
 	}
 
 	if moveOptions.RewriteTranscripts {
-		plan.TranscriptReplacements, err = countTranscriptReplacements(ctx, locations, moveOptions)
+		plan.TranscriptReplacements, err = countTranscriptReplacements(
+			ctx, locations, moveOptions, plan.OldProjectDir, plan.NewProjectDir,
+		)
 		if err != nil {
 			return err
 		}

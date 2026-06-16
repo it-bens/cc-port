@@ -121,6 +121,12 @@ The consumers that enforce the "refused on collision" behaviour:
   the original path as input and encodes forward. To find the owner of a
   stored directory, read `cwd` from a `sessions/*.json` file or the
   matching `~/.claude.json` project key.
+- **Forward re-derivation for the encoded-dir placeholder.** Export, import,
+  and move now rewrite the encoded `~/.claude/projects/<encoded>` reference
+  inside session-subdir bodies via `{{PROJECT_DIR}}` (export/import) and a
+  second `ReplacePathInBytes` pass (move). This re-derives the encoded form
+  forward from a known real path (`ProjectDir`); it never decodes an encoded
+  name back to a path.
 
 ### Project enumeration
 

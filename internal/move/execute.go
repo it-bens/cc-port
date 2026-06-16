@@ -47,7 +47,7 @@ func executeMove(
 
 	tracker := &globalFileTracker{}
 
-	if err := rewriteNewProjectDir(ctx, newProjectDir, moveOptions); err != nil {
+	if err := rewriteNewProjectDir(ctx, oldProjectDir, newProjectDir, moveOptions); err != nil {
 		return err
 	}
 

@@ -258,7 +258,14 @@ func discoverAndPromptPlaceholders(claudeHome *claude.Home, projectPath string) 
 	}
 
 	suggestions := export.DiscoverPlaceholders(contentBuffer, projectPath, homePath)
-	return resolveSuggestions(suggestions), nil
+	placeholders := resolveSuggestions(suggestions)
+	// gatherProjectContent omits the session-subdir bodies where the encoded
+	// dir appears, so declare it unconditionally rather than via discovery.
+	placeholders = append(placeholders, manifest.Placeholder{
+		Key:      "{{PROJECT_DIR}}",
+		Original: claudeHome.ProjectDir(projectPath),
+	})
+	return placeholders, nil
 }
 
 func gatherProjectContent(locations *claude.ProjectLocations) ([]byte, error) {

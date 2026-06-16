@@ -41,6 +41,8 @@ Called by `cmd/cc-port` for every full export. `applyPlaceholders` is also the `
 
 Every body written to the archive passes through `applyPlaceholders` before hitting the ZIP. This applies to sessions, memory, history, config, and every session-keyed group (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`).
 
+`{{PROJECT_DIR}}` is declared unconditionally by the cmd layer from `claude.Home.ProjectDir(projectPath)`, not discovered, because the encoded storage reference lives in session-subdir bodies that placeholder discovery does not scan. `applyPlaceholders` substitutes it before `{{HOME}}` via longest-first ordering. When the reference is absent the declared key is unused.
+
 Placeholder replacement is order-independent across runs: a re-export of the same project produces the same placeholder set. Covered by `export_test.go:TestExport_PathAnonymization_OrderIndependent`.
 
 File-history snapshots are the one exception. See §File-history handling (export).
