@@ -134,11 +134,20 @@ ride the same session-subdir handling as transcripts.
   same export and import paths.
 
 A `~/.claude/projects/<encoded>/` reference inside one of these bodies (for
-example a workflow run record's `scriptPath`) keeps the old encoded
-directory name after a move or export: the rewriter matches the slashed
-project path, never the dashed encoded form. The same stale-path residual
-applies, framed in §File-history policy (cross-cutting). cc-port does not
-inspect or repair it.
+example a workflow run record's `scriptPath`) is rewritten with the rest of the
+project's references: `export` anonymises it to `{{PROJECT_DIR}}`, `import`
+resolves that to the recipient's own encoded dir, and `move` swaps the old
+encoded dir for the new one (over the transcript tree under
+`--rewrite-transcripts`, over memory files unconditionally). The rewriter
+matches the encoded form as a known absolute path; it never decodes an encoded
+name back to a real path. The globals (`history.jsonl`, `sessions/*.json`,
+`.claude.json`) get no dedicated encoded-dir pass, but they are not specially
+excluded either: on `export`/`import` they ride the same placeholder
+anonymisation as every other body, so an unescaped encoded-dir occurrence is
+anonymised and resolved there like any other path (harmless, since the
+recipient's dir is the correct value); on `move` the encoded-dir pass runs only
+over the copied project-dir tree, so globals keep the residual handling
+described in §File-history policy (cross-cutting).
 
 ## Pipeline composition (cross-cutting)
 
