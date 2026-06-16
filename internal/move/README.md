@@ -7,13 +7,13 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
 ## Public API
 
 - `DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error)`: compute the plan without writing any files.
-- `Apply(claudeHome *claude.Home, moveOptions Options) error`: execute the plan with copy-verify-delete, warnings to `Options.WarningWriter`.
+- `Apply(claudeHome *claude.Home, moveOptions Options) error`: execute the plan with copy-verify-delete, emitting progress and warnings through `Options.Reporter`.
 - `PlanCategories() []string`: returns a copy of the canonical category ordering so CLI renderers iterate `ReplacementsByCategory` in a stable order.
 - `Options`: input parameters for a move operation.
   - `OldPath`, `NewPath`: source and destination project paths.
   - `RewriteTranscripts`: opt-in project-local transcript rewrite.
   - `RefsOnly`: skip the on-disk encoded-dir rename, update references only.
-  - `WarningWriter`: warning sink, defaults to `os.Stderr`, unused by `DryRun`.
+  - `Reporter`: progress and warning sink, defaults to `progress.Noop()`, unused by `DryRun`.
 - `Plan`: dry-run output.
   - `OldProjectDir` / `NewProjectDir`: encoded storage paths.
   - `ReplacementsByCategory map[string]int`: keyed on `planCategories` order, missing keys read as zero.
@@ -40,7 +40,7 @@ Callers: `cc-port move` command in `cmd/cc-port`.
 #### Handled
 
 - `DryRun` includes a `Warning: history.jsonl has N malformed line(s) at [...]` block in the plan output when any entries fail to parse.
-- `Apply` prints `warning: history.jsonl contains N malformed line(s) at [...]` to stderr (or to `Options.WarningWriter`) after `history.jsonl` is rewritten. The rewrite still succeeds. Malformed lines are preserved verbatim and well-formed lines are rewritten normally.
+- `Apply` emits a `history.jsonl contains N malformed line(s) at [...]` warning through `Options.Reporter` after `history.jsonl` is rewritten. The rewrite still succeeds. Malformed lines are preserved verbatim and well-formed lines are rewritten normally.
 
 #### Refused
 
@@ -107,7 +107,7 @@ Callers: `cc-port move` command in `cmd/cc-port`.
 
 #### Handled
 
-- `Apply` leaves every snapshot under the same UUID directory untouched. The old project path may appear inside a snapshot body afterwards. The apply path prints `note: N file-history snapshot(s) preserved verbatim ...` to stderr (or to `Options.WarningWriter`). The dry-run plan reports the preserved count in the same position.
+- `Apply` leaves every snapshot under the same UUID directory untouched. The old project path may appear inside a snapshot body afterwards. The apply path emits a `note: N file-history snapshot(s) preserved verbatim ...` warning through `Options.Reporter`. The dry-run plan reports the preserved count in the same position.
 
 #### Refused
 
