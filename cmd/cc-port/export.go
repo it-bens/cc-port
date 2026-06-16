@@ -259,10 +259,8 @@ func discoverAndPromptPlaceholders(claudeHome *claude.Home, projectPath string) 
 
 	suggestions := export.DiscoverPlaceholders(contentBuffer, projectPath, homePath)
 	placeholders := resolveSuggestions(suggestions)
-	// The encoded project dir is deterministic and appears in session-subdir
-	// bodies that gatherProjectContent does not scan, so declare it
-	// unconditionally rather than relying on a discovered anchor. Import injects
-	// the matching key implicitly.
+	// gatherProjectContent omits the session-subdir bodies where the encoded
+	// dir appears, so declare it unconditionally rather than via discovery.
 	placeholders = append(placeholders, manifest.Placeholder{
 		Key:      "{{PROJECT_DIR}}",
 		Original: claudeHome.ProjectDir(projectPath),

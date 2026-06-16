@@ -34,8 +34,10 @@ const projectDirKey = "{{PROJECT_DIR}}"
 // via resolveHomeAnchor), and {{PROJECT_DIR}} (supplied from
 // claude.Home.ProjectDir(targetPath) via withImplicitAnchors). Callers refuse
 // user-supplied resolutions for these keys and treat them as already-resolved
-// when computing unresolved sets. Adding a new implicit key requires only an
-// edit here plus a corresponding cmd-layer wiring.
+// when computing unresolved sets. Adding a new implicit key requires an edit
+// here plus wiring its value into the resolution map, either at the cmd layer
+// (as {{HOME}} does via resolveHomeAnchor) or inside importer.Run (as
+// {{PROJECT_DIR}} does via withImplicitAnchors).
 func IsImplicitKey(key string) bool {
 	return key == projectPathKey || key == homePathKey || key == projectDirKey
 }
