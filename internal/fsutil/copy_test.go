@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +54,7 @@ func TestCopyDirPreservesDirectoryMode0755(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	if err := CopyDir(t.Context(), source, destination); err != nil {
+	if err := CopyDir(t.Context(), source, destination, nil); err != nil {
 		t.Fatalf("CopyDir: %v", err)
 	}
 
@@ -77,7 +78,7 @@ func TestCopyDirPreservesDirectoryMode0700(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	if err := CopyDir(t.Context(), source, destination); err != nil {
+	if err := CopyDir(t.Context(), source, destination, nil); err != nil {
 		t.Fatalf("CopyDir: %v", err)
 	}
 
@@ -106,7 +107,7 @@ func TestCopyDirPreservesNestedMixedDirectoryModes(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	if err := CopyDir(t.Context(), source, destination); err != nil {
+	if err := CopyDir(t.Context(), source, destination, nil); err != nil {
 		t.Fatalf("CopyDir: %v", err)
 	}
 
@@ -144,7 +145,7 @@ func TestCopyDirPreservesFileMode(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	if err := CopyDir(t.Context(), source, destination); err != nil {
+	if err := CopyDir(t.Context(), source, destination, nil); err != nil {
 		t.Fatalf("CopyDir: %v", err)
 	}
 
@@ -174,7 +175,7 @@ func TestCopyDirPreservesFileModTime(t *testing.T) {
 	require.NoError(t, os.Chtimes(filePath, want, want))
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	require.NoError(t, CopyDir(t.Context(), source, destination))
+	require.NoError(t, CopyDir(t.Context(), source, destination, nil))
 
 	info, err := os.Stat(filepath.Join(destination, "transcript.jsonl"))
 	require.NoError(t, err)
@@ -214,10 +215,33 @@ func TestCopyDir_CloseErrorPropagates(t *testing.T) {
 	dst := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(src, "f.txt"), []byte("payload"), 0o600))
 
-	err := CopyDir(t.Context(), src, dst)
+	err := CopyDir(t.Context(), src, dst, nil)
 	require.Error(t, err, "CopyDir must surface the deferred close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
 	require.ErrorContains(t, err, "close destination")
+}
+
+func TestCopyDir_OnEntryFiresPerFileAndSymlinkNotDirectory(t *testing.T) {
+	source := t.TempDir()
+	nestedDir := filepath.Join(source, "nested")
+	require.NoError(t, os.Mkdir(nestedDir, 0o755)) //nolint:gosec // G301: test-controlled mode
+	deeperDir := filepath.Join(nestedDir, "deeper")
+	require.NoError(t, os.Mkdir(deeperDir, 0o755)) //nolint:gosec // G301: test-controlled mode
+
+	require.NoError(t, os.WriteFile(filepath.Join(source, "top.txt"), []byte("a"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(nestedDir, "mid.txt"), []byte("b"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(deeperDir, "leaf.txt"), []byte("c"), 0o600))
+	require.NoError(t, os.Symlink(filepath.Join(source, "top.txt"), filepath.Join(source, "link")))
+
+	const regularFiles = 3
+	const symlinks = 1
+
+	calls := 0
+	destination := filepath.Join(t.TempDir(), "dst")
+	require.NoError(t, CopyDir(t.Context(), source, destination, func() { calls++ }))
+
+	assert.Equal(t, regularFiles+symlinks, calls,
+		"onEntry must fire once per regular file and once per symlink, never for directories")
 }
 
 func TestCopyDir_AbortsOnCancelledContext(t *testing.T) {
@@ -233,7 +257,7 @@ func TestCopyDir_AbortsOnCancelledContext(t *testing.T) {
 	cancel()
 
 	// Act
-	err := CopyDir(ctx, source, destination)
+	err := CopyDir(ctx, source, destination, nil)
 
 	// Assert
 	require.Error(t, err)

@@ -19,7 +19,7 @@ func TestCopyDir_RejectsIrregularEntry(t *testing.T) {
 	}
 
 	destination := filepath.Join(t.TempDir(), "dst")
-	err := CopyDir(t.Context(), source, destination)
+	err := CopyDir(t.Context(), source, destination, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "irregular")
 }

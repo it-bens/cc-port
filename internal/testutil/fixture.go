@@ -28,7 +28,7 @@ func SetupFixture(t *testing.T) *claude.Home {
 
 	fixtureDir := findFixtureDir(t)
 
-	if err := fsutil.CopyDir(context.Background(), filepath.Join(fixtureDir, "dotclaude"), claudeDir); err != nil {
+	if err := fsutil.CopyDir(context.Background(), filepath.Join(fixtureDir, "dotclaude"), claudeDir, nil); err != nil {
 		t.Fatalf("copy fixture directory: %v", err)
 	}
 

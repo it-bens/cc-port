@@ -34,6 +34,12 @@ func newRootCmd(banner Banner) *cobra.Command {
 		Long:  "Move, export, and import Claude Code project configuration and history.",
 	}
 	rootCmd.PersistentFlags().StringVar(&claudeDir, "claude-dir", "", "override ~/.claude location")
+	// -v is reserved for --version because rootCmd.Version is set, so --verbose
+	// takes no shorthand.
+	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "suppress progress output, show only errors")
+	rootCmd.PersistentFlags().Bool("verbose", false, "show verbose progress detail")
+	rootCmd.PersistentFlags().Bool("debug", false, "show debug-level progress detail")
+	rootCmd.PersistentFlags().Bool("json", false, "emit progress as newline-delimited JSON")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	rootCmd.Version = version

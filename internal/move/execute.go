@@ -41,7 +41,7 @@ func executeMove(
 	}()
 
 	createdPaths = append(createdPaths, newProjectDir)
-	if err := fsutil.CopyDir(ctx, oldProjectDir, newProjectDir); err != nil {
+	if err := fsutil.CopyDir(ctx, oldProjectDir, newProjectDir, nil); err != nil {
 		return fmt.Errorf("copy project directory: %w", err)
 	}
 
@@ -57,7 +57,7 @@ func executeMove(
 
 	if !moveOptions.RefsOnly {
 		createdPaths = append(createdPaths, moveOptions.NewPath)
-		if err := fsutil.CopyDir(ctx, moveOptions.OldPath, moveOptions.NewPath); err != nil {
+		if err := fsutil.CopyDir(ctx, moveOptions.OldPath, moveOptions.NewPath, nil); err != nil {
 			return errors.Join(fmt.Errorf("copy project on disk: %w", err), tracker.restore())
 		}
 	}
