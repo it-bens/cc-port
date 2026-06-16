@@ -285,7 +285,7 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 		}
 	}
 
-	result, err := importer.Run(ctx, opts.ClaudeHome, importer.Options{
+	result, err := importer.Run(ctx, opts.ClaudeHome, &importer.Options{
 		Source:      source.ReaderAt,
 		Size:        source.Size,
 		TargetPath:  opts.TargetPath,

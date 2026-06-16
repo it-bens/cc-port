@@ -12,7 +12,7 @@ This module's unit is one project, not the file system at large. The wire format
 - `DiscoverPaths(content []byte) []string`: find path-like tokens inside a body.
 - `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion`: assign `{{PROJECT_PATH}}` and `{{HOME}}` to matching prefixes; unknown prefixes are dropped.
 - `DiscoverPlaceholders(content []byte, projectPath, homePath string) []PlaceholderSuggestion`: canonical composition for `cc-port export`. Runs `DiscoverPaths`, filters candidates against the project and home anchors, and emits at most two suggestions.
-- `Options`, `Result`, `PlaceholderSuggestion`: export configuration and outputs. `Options.Output` is the `io.Writer` archive bytes are written into; `Options.Categories` is a `manifest.CategorySet`.
+- `Options`, `Result`, `PlaceholderSuggestion`: export configuration and outputs. `Options.Output` is the `io.Writer` archive bytes are written into; `Options.Categories` is a `manifest.CategorySet`. `Options.Reporter progress.Reporter` receives the progress event stream and defaults to `progress.Noop()` when nil.
 - `Options.SyncPushedBy` (`string`) and `Options.SyncPushedAt` (`time.Time`) are optional fields populated only by `cc-port push` (via `internal/sync`). When non-empty / non-zero, `buildMetadata` writes them to `metadata.xml` as `<sync-pushed-by>` and `<sync-pushed-at>` (RFC3339, UTC). `cc-port export` callers leave them at the zero value and the elements are omitted.
 
 ## Contracts

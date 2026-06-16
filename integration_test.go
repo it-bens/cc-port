@@ -107,7 +107,7 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 		},
 	}
 
-	_, err := importer.Run(t.Context(), destinationHome, importOptions)
+	_, err := importer.Run(t.Context(), destinationHome, &importOptions)
 	require.NoError(t, err, "import should succeed")
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
@@ -303,7 +303,7 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	destinationHome := setupDestinationHome(t)
 
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), destinationHome, importer.Options{
+	_, err = importer.Run(t.Context(), destinationHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
@@ -415,7 +415,7 @@ func TestIntegration_ImportConflict(t *testing.T) {
 		},
 	}
 
-	_, err = importer.Run(t.Context(), sourceHome, importOptions)
+	_, err = importer.Run(t.Context(), sourceHome, &importOptions)
 	require.Error(t, err, "import to existing project should fail with a conflict error")
 	assert.Contains(t, err.Error(), "already exists",
 		"conflict error message should mention 'already exists'")
@@ -489,7 +489,7 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 			"{{HOME}}":         destinationHomeDir,
 		},
 	}
-	_, importErr := importer.Run(t.Context(), destinationHome, importOptions)
+	_, importErr := importer.Run(t.Context(), destinationHome, &importOptions)
 	require.NoError(t, importErr,
 		"import from decrypted source should succeed")
 
@@ -613,7 +613,7 @@ func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
 
 	destinationHome := setupDestinationHome(t)
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), destinationHome, importer.Options{
+	_, err = importer.Run(t.Context(), destinationHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
@@ -728,7 +728,7 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 
 	destinationHome := setupDestinationHome(t)
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), destinationHome, importer.Options{
+	_, err = importer.Run(t.Context(), destinationHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,

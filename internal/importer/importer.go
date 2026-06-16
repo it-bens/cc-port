@@ -22,6 +22,7 @@ import (
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/transport"
@@ -124,6 +125,10 @@ type Options struct {
 	HomePath    string
 	Resolutions map[string]string
 
+	// Reporter receives the import progress event stream. Defaults to
+	// progress.Noop() when nil.
+	Reporter progress.Reporter
+
 	// renameHook lets tests inject promote-time failures. When nil, Run uses
 	// os.Rename directly via SafeRenamePromoter. Package-internal by design.
 	renameHook func(oldpath, newpath string) error
@@ -141,12 +146,15 @@ type Result struct {
 // stages the archive. SafeRenamePromoter promotes all staged temps atomically
 // and rolls back on any rename failure. After the promote succeeds the
 // rules-scan runs against TargetPath; the returned Result carries the report.
-func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*Result, error) {
+func Run(ctx context.Context, claudeHome *claude.Home, importOptions *Options) (*Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("canceled: %w", err)
 	}
 	if importOptions.Source == nil {
 		return nil, fmt.Errorf("importer: %w", ErrSourceNil)
+	}
+	if importOptions.Reporter == nil {
+		importOptions.Reporter = progress.Noop()
 	}
 	var report scan.Report
 	err := lock.WithLock(claudeHome, func() error {
@@ -154,6 +162,7 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 			return fmt.Errorf("canceled: %w", err)
 		}
 
+		preflightPhase := importOptions.Reporter.Phase("preflight", 0, progress.UnitItems)
 		if err := ValidateResolutions(importOptions.Resolutions); err != nil {
 			return fmt.Errorf("validate resolutions: %w", err)
 		}
@@ -166,7 +175,9 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 		if err := checkStagingFilesystems(claudeHome, encodedProjectDir); err != nil {
 			return err
 		}
+		preflightPhase.End("")
 
+		manifestPhase := importOptions.Reporter.Phase("manifest", 0, progress.UnitItems)
 		metadata, err := manifest.ReadManifestFromZip(importOptions.Source, importOptions.Size)
 		if err != nil {
 			return fmt.Errorf("read metadata from archive: %w", err)
@@ -188,9 +199,16 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 			return err
 		}
 
+		entryTotal, err := countNonMetadataEntries(importOptions.Source, importOptions.Size)
+		if err != nil {
+			return err
+		}
+		manifestPhase.End("")
+
+		extractPhase := importOptions.Reporter.Phase("extract", entryTotal, progress.UnitEntries)
 		plan, err := buildImportPlan(
 			ctx, claudeHome, importOptions.Source, importOptions.Size,
-			importOptions.TargetPath, encodedProjectDir, resolutions,
+			importOptions.TargetPath, encodedProjectDir, resolutions, extractPhase,
 		)
 		if err != nil {
 			// Clean up whatever temp paths the plan managed to create before
@@ -202,10 +220,13 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 			}
 			return err
 		}
+		extractPhase.End("")
 
+		promotePhase := importOptions.Reporter.Phase("promote", stagedFileCount(plan), progress.UnitItems)
 		if err := promotePlan(plan, importOptions.renameHook); err != nil {
 			return err
 		}
+		promotePhase.End("")
 		report = scan.ScanReport(claudeHome.RulesDir(), importOptions.TargetPath)
 		return nil
 	})
@@ -213,6 +234,42 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions Options) (*
 		return nil, err
 	}
 	return &Result{RulesReport: report}, nil
+}
+
+// countNonMetadataEntries opens the archive central directory and returns the
+// number of entries the extract phase will stage (every entry except
+// metadata.xml). It decompresses nothing — zip.NewReader parses only the
+// central directory — so this is the cheapest honest source for the extract
+// phase total.
+func countNonMetadataEntries(src io.ReaderAt, size int64) (int64, error) {
+	zipReader, err := zip.NewReader(src, size)
+	if err != nil {
+		return 0, fmt.Errorf("open archive: %w", err)
+	}
+	var count int64
+	for _, zipFile := range zipReader.File {
+		if zipFile.Name == "metadata.xml" {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+// stagedFileCount returns the number of staged artifacts promotePlan will
+// rename: the project dir plus any staged history, config, file-history, and
+// session-keyed files. Read-only over plan; used as the promote phase total.
+func stagedFileCount(plan *importPlan) int64 {
+	count := int64(1) // the project directory is always staged
+	if plan.historyStaged {
+		count++
+	}
+	if plan.configStaged {
+		count++
+	}
+	count += int64(len(plan.fileHistoryFiles))
+	count += int64(len(plan.sessionKeyedStagedFiles))
+	return count
 }
 
 // forEachNonMetadataEntry iterates each non-metadata entry on zipReader,
@@ -470,6 +527,7 @@ func stageArchiveEntries(
 	src io.ReaderAt,
 	size int64,
 	resolutions map[string]string,
+	extractPhase progress.PhaseHandle,
 ) (historyAppends [][]byte, configBlock []byte, err error) {
 	zipReader, err := zip.NewReader(src, size)
 	if err != nil {
@@ -485,6 +543,8 @@ func stageArchiveEntries(
 		}
 		historyAppends = newAppends
 		configBlock = newConfig
+		extractPhase.Detail(progress.LevelVerbose, "staged %s (%d bytes)", zipFile.Name, entryBytes)
+		extractPhase.Advance(1)
 		return entryBytes, nil
 	})
 	if err != nil {
@@ -573,6 +633,7 @@ func buildImportPlan(
 	targetPath string,
 	encodedProjectDir string,
 	resolutions map[string]string,
+	extractPhase progress.PhaseHandle,
 ) (*importPlan, error) {
 	plan, err := newImportPlan(claudeHome, encodedProjectDir)
 	if err != nil {
@@ -584,7 +645,7 @@ func buildImportPlan(
 	}
 	plan.projectDirCreated = true
 
-	historyAppends, configBlock, err := stageArchiveEntries(ctx, claudeHome, plan, src, size, resolutions)
+	historyAppends, configBlock, err := stageArchiveEntries(ctx, claudeHome, plan, src, size, resolutions, extractPhase)
 	if err != nil {
 		return plan, err
 	}
