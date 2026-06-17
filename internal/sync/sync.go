@@ -22,6 +22,9 @@ import (
 	"github.com/it-bens/cc-port/internal/progress"
 )
 
+// now is a seam reassigned under t.Cleanup so tests can pin timestamps.
+var now = time.Now
+
 // PushOptions carries the inputs cmd/cc-port push hands to PlanPush and
 // ExecutePush. Cmd opens the prior reader pipeline (passed as *PriorRead to
 // PlanPush) and the writer pipeline (passed as io.Writer to ExecutePush).
@@ -173,7 +176,7 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 		Categories:   opts.Categories,
 		Placeholders: opts.Placeholders,
 		SyncPushedBy: plan.SelfPusher,
-		SyncPushedAt: time.Now().UTC(),
+		SyncPushedAt: now().UTC(),
 		Reporter:     exportPhase,
 	}
 	if _, err := export.Run(ctx, opts.ClaudeHome, &exportOptions); err != nil {

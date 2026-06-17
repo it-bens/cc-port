@@ -2,6 +2,7 @@ package export
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,4 +24,20 @@ func TestResult_CoversEveryManifestCategory(t *testing.T) {
 		require.NoError(t, err, "category %q must map to a Result slice", spec.Name)
 		assert.NotNil(t, entries, "category %q returned nil slice pointer", spec.Name)
 	}
+}
+
+// TestBuildMetadata_StampsCreatedFromClock asserts buildMetadata records the
+// export-creation instant from the now seam rather than the live wall clock.
+//
+// This is a `package export` internal test by necessity: buildMetadata is
+// unexported and Created is read once from the seam.
+func TestBuildMetadata_StampsCreatedFromClock(t *testing.T) {
+	fixed := time.Date(2021, 1, 2, 3, 4, 5, 0, time.UTC)
+	now = func() time.Time { return fixed }
+	t.Cleanup(func() { now = time.Now })
+
+	metadata := buildMetadata(&Options{})
+
+	assert.True(t, fixed.Equal(metadata.Export.Created),
+		"Created = %v, want %v", metadata.Export.Created, fixed)
 }

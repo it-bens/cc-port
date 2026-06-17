@@ -25,6 +25,9 @@ import (
 	"github.com/it-bens/cc-port/internal/transport"
 )
 
+// now is a seam reassigned under t.Cleanup so tests can pin timestamps.
+var now = time.Now
+
 // Options holds all parameters for an export operation. FromManifest is
 // a CLI-layer carrier only: when non-empty the CLI loads categories and
 // placeholders from that file instead of discovering them. Run ignores
@@ -855,7 +858,7 @@ func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
 func buildMetadata(exportOptions *Options) *manifest.Metadata {
 	metadata := &manifest.Metadata{
 		Export: manifest.Info{
-			Created:    time.Now(),
+			Created:    now(),
 			Categories: manifest.BuildCategoryEntries(&exportOptions.Categories),
 		},
 		Placeholders: exportOptions.Placeholders,
