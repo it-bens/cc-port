@@ -51,8 +51,7 @@ func runWithProgress(cmd *cobra.Command, work func(ctx context.Context, reporter
 // wireInterrupt routes an interactive renderer's interrupt signal to context
 // cancellation. Renderers that do not own interactive input do not implement
 // progress.Interruptible and are skipped, leaving signal.NotifyContext as their
-// sole cancellation source. The goroutine exits when the interrupt fires or the
-// context is done.
+// sole cancellation source.
 func wireInterrupt(ctx context.Context, cancel context.CancelFunc, renderer progress.Renderer) {
 	interruptible, ok := renderer.(progress.Interruptible)
 	if !ok {
