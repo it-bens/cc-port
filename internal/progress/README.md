@@ -23,17 +23,14 @@ The Reporter observes quantities only: file counts, byte totals, phase names, du
 - **Renderers and selection**
   - `Renderer`: `Consume(Event)` per surviving event in emission order, `Finalize() error` once after the stream closes.
   - `LedgerRenderer`, `StreamRenderer`, `JSONRenderer`, `NullRenderer`: the four sinks, built via `NewLedgerRenderer`, `NewStreamRenderer`, `NewJSONRenderer`, `NewNullRenderer`.
+    - **Ledger** drives an interactive TTY through bubbletea: a live tree of phase nodes with spinner and progress bars. Selected when the sink is a TTY and neither `--json` nor `--quiet` is set.
+    - **Stream** writes append-only, ANSI-free lines for CI logs and redirected stderr. `PhaseStart`/`PhaseEnd` always print; `PhaseAdvance` is rate-limited to one line per phase per 500 ms. The non-TTY default.
+    - **JSON** emits one schema-stable, newline-delimited object per event under `--json`, regardless of TTY.
+    - **Null** is the `--quiet` sink. It drops every event but warnings and a terminal summary: an `[ERROR]` line plus a `failed at <phase>` line on failure, a single line otherwise.
   - `Selection`: the flag-derived intent (`JSON`, `Quiet`, `Verbose`, `Debug`, `Output`).
   - `Pick(selection) (Renderer, Level)`: maps a `Selection` to a concrete renderer and active level. See §Contracts §Renderer selection.
 - **Byte counters**
-  - `CountingWriter`, `CountingReader`, `CountingReaderAt`: wrap an `io.Writer`/`io.Reader`/`io.ReaderAt` so each successful operation advances a `PhaseHandle` by the bytes actually moved, not the bytes offered.
-
-## The four renderers
-
-- **Ledger** drives an interactive TTY through bubbletea: a live tree of phase nodes with spinner and progress bars. Selected when the sink is a TTY and neither `--json` nor `--quiet` is set.
-- **Stream** writes append-only, ANSI-free lines for CI logs and redirected stderr. `PhaseStart`/`PhaseEnd` always print; `PhaseAdvance` is rate-limited to one line per phase per 500 ms. The non-TTY default.
-- **JSON** emits one schema-stable, newline-delimited object per event under `--json`, regardless of TTY.
-- **Null** is the `--quiet` sink. It drops every event but warnings and a terminal summary: an `[ERROR]` line plus a `failed at <phase>` line on failure, a single line otherwise.
+  - `CountingWriter`, `CountingReaderAt`: wrap an `io.Writer`/`io.ReaderAt` so each successful operation advances a `PhaseHandle` by the bytes actually moved, not the bytes offered.
 
 ## Contracts
 
@@ -46,7 +43,7 @@ Callers: every command path that holds a `Reporter` (`internal/move`, `internal/
 #### Handled
 
 - Phase totals and advances carry integer counts and a `Unit`, never the content they count.
-- `CountingWriter`/`CountingReader`/`CountingReaderAt` advance by byte length alone; the bytes flow through the wrapped stream untouched and unobserved.
+- `CountingWriter`/`CountingReaderAt` advance by byte length alone; the bytes flow through the wrapped stream untouched and unobserved.
 
 #### Refused
 
@@ -98,7 +95,7 @@ None at runtime. A dropped verbose Detail is the intended outcome, not an error.
 
 ### Reporter injection
 
-A command receives its `Reporter` through its Options struct, never a package global. The default an Options struct carries is `Noop()`. The cmd layer is the sole renderer composer: `runWithProgress` in `cmd/cc-port` builds the renderer from the verbosity flags and constructs the Reporter, then hands it to the command.
+A command receives its `Reporter` through its Options struct, never a package global. An unset `Reporter` field (nil) is replaced with `Noop()` by the command before use. The cmd layer is the sole renderer composer: `runWithProgress` in `cmd/cc-port` builds the renderer from the verbosity flags and constructs the Reporter, then hands it to the command.
 
 Callers: `cmd/cc-port` (`runWithProgress`); every command's Options struct (`internal/move`, `internal/export`, `internal/importer`, `internal/sync`).
 
@@ -121,10 +118,8 @@ The unexported package vars `now` and `isTTY` are the only package-level mutable
 
 Phases are determinate by file count where the iteration pre-enumerates its work list, so `PhaseStart.Total` carries the real count. The two streaming copy phases in `internal/move` are the documented exception: they open with `Total` zero and drive an indeterminate live counter through `CopyDir`'s `onEntry` callback, avoiding a second metadata walk just to learn the count up front. See `internal/move/README.md` §Source mtime preservation (move) for the copy phases themselves.
 
-## Subpackage: progresstest
-
-`progresstest.Recorder` is a recording `Renderer` for command-wiring tests. `Recorder.Reporter(level)` hands out a real `Reporter` built via `NewReporter`, so a test exercises the genuine level filter, path nesting, and `Phase`/`SubPhase` aliasing rather than a hand-rolled stand-in. `Recorder.Events()` returns the recorded events in emission order; `OfType[T](events)` filters them to one concrete event type.
-
 ## Tests
+
+The `progresstest` subpackage supplies `Recorder`, a recording `Renderer` for command-wiring tests. `Recorder.Reporter(level)` hands out a real `Reporter` built via `NewReporter`, so a test exercises the genuine level filter, path nesting, and `Phase`/`SubPhase` aliasing rather than a hand-rolled stand-in. `Recorder.Events()` returns the recorded events in emission order; `OfType[T](events)` filters them to one concrete event type.
 
 Unit tests in `event`/`reporter`/`pick`/`counting`/`render_*` test files cover the level filter, path nesting, `Phase`/`SubPhase` aliasing, terminal-method panics on a handle, the `Pick` precedence and level matrix, the counting wrappers' advance-by-bytes-moved behavior, and each renderer's `Consume`/`Finalize` output. `render_golden_test.go` pins the Ledger frames. `progresstest/recorder_test.go` covers the recorder.

@@ -3,7 +3,7 @@
 ## Before editing
 
 - Progress observes quantities only: counts, bytes, names, durations. Never read or carry user-data bytes through an Event (README §Quantity-only observation).
-- A command receives its Reporter through its Options struct, never a package global; the default is `Noop()` (README §Reporter injection).
+- A command receives its Reporter through its Options struct, never a package global; a nil Reporter is replaced with `Noop()` by the command (README §Reporter injection).
 - Verbose and debug `Detail` events drop on Ledger backpressure; phase and terminal events block (README §Drop policy).
 - Renderer construction and the TTY probe live in `cmd/cc-port`, not here (README §Reporter injection).
 - The `now` and `isTTY` package vars are the only package-level mutable state, reassigned only by tests under `t.Cleanup` (README §Quirks).

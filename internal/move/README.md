@@ -6,14 +6,14 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
 
 ## Public API
 
-- `DryRun(claudeHome *claude.Home, moveOptions Options) (*Plan, error)`: compute the plan without writing any files.
-- `Apply(claudeHome *claude.Home, moveOptions Options) error`: execute the plan with copy-verify-delete, emitting progress and warnings through `Options.Reporter`.
+- `DryRun(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (*Plan, error)`: compute the plan without writing any files.
+- `Apply(ctx context.Context, claudeHome *claude.Home, moveOptions Options) error`: execute the plan with copy-verify-delete, emitting progress and warnings through `Options.Reporter`.
 - `PlanCategories() []string`: returns a copy of the canonical category ordering so CLI renderers iterate `ReplacementsByCategory` in a stable order.
 - `Options`: input parameters for a move operation.
   - `OldPath`, `NewPath`: source and destination project paths.
   - `RewriteTranscripts`: opt-in project-local transcript rewrite.
   - `RefsOnly`: skip the on-disk encoded-dir rename, update references only.
-  - `Reporter`: progress and warning sink, defaults to `progress.Noop()`, unused by `DryRun`.
+  - `Reporter`: progress and warning sink, unused by `DryRun`; nil-handling follows `internal/progress/README.md` §Reporter injection.
 - `Plan`: dry-run output.
   - `OldProjectDir` / `NewProjectDir`: encoded storage paths.
   - `ReplacementsByCategory map[string]int`: keyed on `planCategories` order, missing keys read as zero.
