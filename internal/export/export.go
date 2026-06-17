@@ -384,12 +384,9 @@ func exportSessionKeyed(
 	return nil
 }
 
-// collectSessionKeyedPairs buckets every (group, path) pair from
-// locations.AllFlatFiles() (which applies each group's sidecar filter) by
-// category. categoryOrder lists the distinct categories of
-// claude.SessionKeyedGroups in first-seen registry order, so a selected
-// category with zero present files still opens a (total 0) sub-phase and a
-// future registry addition cannot silently lose its bracket.
+// categoryOrder lists the distinct categories of claude.SessionKeyedGroups in first-seen
+// registry order, so a selected category with zero present files still opens a (total 0)
+// sub-phase and a future registry addition cannot silently lose its bracket.
 func collectSessionKeyedPairs(
 	locations *claude.ProjectLocations,
 ) (categoryOrder []string, pairsByCategory map[string][]sessionKeyedPair) {

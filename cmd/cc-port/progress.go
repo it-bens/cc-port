@@ -17,11 +17,8 @@ import (
 // rendered output back.
 var stderrSink = os.Stderr
 
-// runWithProgress builds the progress reporter from the command's verbosity
-// flags, runs work under a SIGINT-cancelable context, and emits the terminal
-// event matching how work returned. It is the sole site that installs the
-// interrupt handler. The returned error joins work's error with the renderer's
-// Finalize error so neither is lost.
+// runWithProgress is the sole site that installs the SIGINT handler.
+// The returned error joins work's error with renderer.Finalize so neither is lost.
 func runWithProgress(cmd *cobra.Command, work func(ctx context.Context, reporter progress.Reporter) error) error {
 	selection, err := selectionFromFlags(cmd)
 	if err != nil {
@@ -47,8 +44,6 @@ func runWithProgress(cmd *cobra.Command, work func(ctx context.Context, reporter
 	return errors.Join(workErr, renderer.Finalize())
 }
 
-// selectionFromFlags reads the four verbosity flags off cmd and pairs them with
-// the stderr sink so Pick can choose a renderer and level.
 func selectionFromFlags(cmd *cobra.Command) (progress.Selection, error) {
 	quiet, err := cmd.Flags().GetBool("quiet")
 	if err != nil {

@@ -10,9 +10,8 @@ import (
 )
 
 // now and isTTY are seams reassigned under t.Cleanup so tests can pin
-// timestamps, durations, and terminal detection. isTTY is consumed by renderer
-// selection in a later task; it lives here beside now so both seams sit in one
-// place.
+// timestamps, durations, and terminal detection. Both live here so the two
+// seams sit in one place.
 var (
 	now   = time.Now
 	isTTY = func(file *os.File) bool { return term.IsTerminal(file.Fd()) }

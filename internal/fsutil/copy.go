@@ -91,8 +91,6 @@ func CopyDir(ctx context.Context, source, destination string, onEntry func()) er
 	})
 }
 
-// notifyEntry calls onEntry when it is non-nil, guarding callers that pass
-// nil because they do not track per-entry progress.
 func notifyEntry(onEntry func()) {
 	if onEntry != nil {
 		onEntry()

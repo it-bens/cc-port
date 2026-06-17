@@ -275,7 +275,6 @@ func (model *ledgerModel) openPhase() *phaseNode {
 	return deepest
 }
 
-// deepestOpen walks a subtree and returns its deepest open descendant.
 func deepestOpen(node *phaseNode) (*phaseNode, bool) {
 	for index := len(node.children) - 1; index >= 0; index-- {
 		if candidate, ok := deepestOpen(node.children[index]); ok {
