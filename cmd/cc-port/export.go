@@ -17,6 +17,7 @@ import (
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/ui"
 )
@@ -66,14 +67,22 @@ func newExportCmd(claudeDir *string, banner Banner) *cobra.Command {
 				return err
 			}
 
-			result, err := runExportWithStages(
-				cmd.Context(), claudeHome, &exportOptions,
-				[]pipeline.WriterStage{
-					&encrypt.WriterStage{Pass: passphrase},
-					&file.Sink{Path: outputPath},
-				},
-			)
-			if err != nil {
+			var result export.Result
+			if err := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+				exportOptions.Reporter = reporter
+				runResult, runErr := runExportWithStages(
+					ctx, claudeHome, &exportOptions,
+					[]pipeline.WriterStage{
+						&encrypt.WriterStage{Pass: passphrase},
+						&file.Sink{Path: outputPath},
+					},
+				)
+				if runErr != nil {
+					return runErr
+				}
+				result = runResult
+				return nil
+			}); err != nil {
 				return err
 			}
 

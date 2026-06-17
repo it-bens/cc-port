@@ -23,7 +23,7 @@ func TestReadZipFile_RejectsOversizedEntry(t *testing.T) {
 	buildArchiveWithSingleEntry(t, archivePath, "sessions/bomb.json", 600<<20)
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: filepath.Join(t.TempDir(), "project"),
@@ -42,7 +42,7 @@ func TestRun_RefusesArchiveExceedingAggregateUncompressedCap(t *testing.T) {
 	destClaudeHome := buildEmptyDestClaudeHome(t)
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
 		Source:      source,
 		Size:        size,
 		TargetPath:  filepath.Join(t.TempDir(), "project"),

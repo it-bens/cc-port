@@ -12,7 +12,7 @@ This module's unit is one project, not the file system at large. The wire format
 - `DiscoverPaths(content []byte) []string`: find path-like tokens inside a body.
 - `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion`: assign `{{PROJECT_PATH}}` and `{{HOME}}` to matching prefixes; unknown prefixes are dropped.
 - `DiscoverPlaceholders(content []byte, projectPath, homePath string) []PlaceholderSuggestion`: canonical composition for `cc-port export`. Runs `DiscoverPaths`, filters candidates against the project and home anchors, and emits at most two suggestions.
-- `Options`, `Result`, `PlaceholderSuggestion`: export configuration and outputs. `Options.Output` is the `io.Writer` archive bytes are written into; `Options.Categories` is a `manifest.CategorySet`.
+- `Options`, `Result`, `PlaceholderSuggestion`: export configuration and outputs. `Options.Output` is the `io.Writer` archive bytes are written into; `Options.Categories` is a `manifest.CategorySet`. `Options.Reporter progress.Reporter` is the export progress sink; nil-handling follows `internal/progress/README.md` §Reporter injection.
 - `Options.SyncPushedBy` (`string`) and `Options.SyncPushedAt` (`time.Time`) are optional fields populated only by `cc-port push` (via `internal/sync`). When non-empty / non-zero, `buildMetadata` writes them to `metadata.xml` as `<sync-pushed-by>` and `<sync-pushed-at>` (RFC3339, UTC). `cc-port export` callers leave them at the zero value and the elements are omitted.
 
 ## Contracts
@@ -61,7 +61,7 @@ Used internally by `exportSessionKeyed`.
 
 #### Handled
 
-The session-keyed groups (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`) are written by one registry-driven loop. `exportSessionKeyed` iterates `locations.AllFlatFiles()` once and skips groups whose `CategorySet` flag is off. Each entry's zip prefix and relative-path base come from `transport.SessionKeyedTargets`. There are no per-group helpers.
+The session-keyed groups (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`) are written by two cooperating functions. `collectSessionKeyedPairs` iterates `locations.AllFlatFiles()` once, buckets files by category, and derives the distinct category order from `claude.SessionKeyedGroups` in registry order. `exportSessionKeyed` loops over those categories, skips any whose `CategorySet` flag is off, and opens one sub-phase per selected category, rolling the two usage-data groups into a single `usage-data` sub-phase. Each entry's zip prefix and relative-path base come from `transport.SessionKeyedTargets`. There are no per-group helpers.
 
 #### Refused
 

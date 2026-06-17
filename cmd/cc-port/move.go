@@ -10,6 +10,7 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/move"
+	"github.com/it-bens/cc-port/internal/progress"
 )
 
 // findActive is the test seam for lock.FindActive. Swapped in
@@ -48,7 +49,10 @@ func newMoveCmd(claudeDir *string) *cobra.Command {
 			if !apply {
 				return runMoveDryRun(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), claudeHome, moveOptions)
 			}
-			return move.Apply(ctx, claudeHome, moveOptions)
+			return runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+				moveOptions.Reporter = reporter
+				return move.Apply(ctx, claudeHome, moveOptions)
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "execute the move (default is dry-run)")

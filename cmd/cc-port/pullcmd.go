@@ -11,8 +11,10 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
+	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
 )
@@ -72,16 +74,21 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 	return cmd
 }
 
-// openArchiveSource opens the strict reader pipeline for pull. Translates
-// remote.ErrNotFound and encrypt.ErrPassphraseRequired into sync sentinels;
-// other errors propagate wrapped.
+// openArchiveSource opens the strict reader pipeline for pull. The counting
+// stage is inserted after remote.Source so the download phase measures the
+// encrypted bytes coming off the remote — the real network transfer — exactly
+// once. Translates remote.ErrNotFound and encrypt.ErrPassphraseRequired into
+// sync sentinels; other errors propagate wrapped.
 func openArchiveSource(
 	ctx context.Context,
 	r *remote.Remote,
 	name, pass string,
+	reporter progress.Reporter,
 ) (pipeline.Source, error) {
+	counter := &downloadCounterStage{reporter: reporter}
 	src, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
 		&remote.Source{Remote: r, Key: name},
+		counter,
 		&encrypt.ReaderStage{Pass: pass, Mode: encrypt.Strict},
 		&pipeline.MaterializeStage{},
 	})
@@ -93,13 +100,14 @@ func openArchiveSource(
 	case err != nil:
 		return pipeline.Source{}, fmt.Errorf("open archive: %w", err)
 	}
+	counter.End()
 	return src, nil
 }
 
-// runPullCmd is the pull subcommand body. The named return + deferred
-// closes pattern is load-bearing: remote.Remote owns a gocloud bucket
-// whose Close error must surface, and source.Close releases the
-// decrypt-tempfile.
+// runPullCmd is the pull subcommand body. The named return on the
+// runWithProgress closure is load-bearing: source.Close error must surface
+// joined into the closure's return value. The remote close defer sits outside
+// the closure so it covers both pipeline errors and successful drains.
 func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error) {
 	apply, _ := cmd.Flags().GetBool("apply")
 
@@ -113,51 +121,65 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		}
 	}()
 
-	ctx := cmd.Context()
-	source, err := openArchiveSource(ctx, r, opts.Name, passphrase)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := source.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("close source: %w", cerr))
+	var result *importer.Result
+	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) (err error) {
+		opts.Reporter = reporter
+
+		source, err := openArchiveSource(ctx, r, opts.Name, passphrase, reporter)
+		if err != nil {
+			return err
 		}
-	}()
+		defer func() {
+			if cerr := source.Close(); cerr != nil {
+				err = errors.Join(err, fmt.Errorf("close source: %w", cerr))
+			}
+		}()
 
-	plan, err := syncc.PlanPull(ctx, opts, source)
-	if err != nil {
-		return err
-	}
-
-	if err := plan.Render(cmd.OutOrStdout()); err != nil {
-		return fmt.Errorf("render plan: %w", err)
-	}
-
-	if !apply {
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); err != nil {
-			return fmt.Errorf("write apply hint: %w", err)
+		plan, err := syncc.PlanPull(ctx, opts, source)
+		if err != nil {
+			return err
 		}
+
+		if err := plan.Render(cmd.OutOrStdout()); err != nil {
+			return fmt.Errorf("render plan: %w", err)
+		}
+
+		if !apply {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); err != nil {
+				return fmt.Errorf("write apply hint: %w", err)
+			}
+			return nil
+		}
+
+		if len(plan.UnresolvedPlaceholders) > 0 {
+			return fmt.Errorf(
+				"%w: %s",
+				syncc.ErrUnresolvedPlaceholder,
+				strings.Join(plan.UnresolvedPlaceholders, ", "),
+			)
+		}
+
+		runResult, err := syncc.ExecutePull(ctx, opts, plan, source)
+		if err != nil {
+			return err
+		}
+		result = runResult
 		return nil
-	}
+	})
 
-	if len(plan.UnresolvedPlaceholders) > 0 {
-		return fmt.Errorf(
-			"%w: %s",
-			syncc.ErrUnresolvedPlaceholder,
-			strings.Join(plan.UnresolvedPlaceholders, ", "),
-		)
+	// result is non-nil only on the committed-apply path. Gating success
+	// output on result (not on progErr) keeps a renderer-teardown error in
+	// progErr from hiding the rules report and confirmation after the import
+	// already mutated local state. The rules report must stay here, after
+	// runWithProgress returned: Finalize has stopped the live ledger, so this
+	// stderr write no longer interleaves with the program's repaint.
+	if apply && result != nil {
+		renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
+		if _, werr := fmt.Fprintf(cmd.OutOrStdout(), "Pulled: %s\n", opts.TargetPath); werr != nil {
+			progErr = errors.Join(progErr, fmt.Errorf("write pull confirmation: %w", werr))
+		}
 	}
-
-	result, err := syncc.ExecutePull(ctx, opts, plan, source)
-	if err != nil {
-		return err
-	}
-	renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
-
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Pulled: %s\n", opts.TargetPath); err != nil {
-		return fmt.Errorf("write pull confirmation: %w", err)
-	}
-	return nil
+	return progErr
 }
 
 // buildPullOptions validates flags, resolves the target path, opens the

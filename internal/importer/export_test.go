@@ -13,7 +13,7 @@ import (
 func RunWithRenameHook(
 	ctx context.Context,
 	claudeHome *claude.Home,
-	importOptions Options,
+	importOptions *Options,
 	renameHook func(oldpath, newpath string) error,
 ) error {
 	importOptions.renameHook = renameHook

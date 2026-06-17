@@ -48,6 +48,8 @@ Functionally identical otherwise; pick whichever you prefer. Pre-built tarballs 
 
 Full flag reference: `cc-port <subcommand> --help`. `cc-port --version` prints the build version.
 
+Persistent progress flags are available on every subcommand: `--quiet` (`-q`) suppresses progress and shows only errors; `--verbose` adds detail lines and `--debug` adds more, neither with a shorthand; `--json` emits progress as newline-delimited JSON instead of human output, which wins over a terminal. By default progress renders live on a terminal and as plain append-only lines when stderr is redirected.
+
 ### `cc-port move`
 
 ![cc-port move: rename a project folder, then run cc-port move to update ~/.claude/ references and rename the encoded project directory](docs/images/demo-move.gif)

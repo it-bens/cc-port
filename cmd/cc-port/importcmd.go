@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
+	"github.com/it-bens/cc-port/internal/progress"
 )
 
 // newImportCmd returns the import subcommand with closure-scoped flag
@@ -85,9 +87,17 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				Resolutions: resolutions,
 			}
 
-			result, err := importer.Run(cmd.Context(), claudeHome, importOptions)
-			if err != nil {
-				return fmt.Errorf("import: %w", err)
+			var result *importer.Result
+			if err := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+				importOptions.Reporter = reporter
+				runResult, runErr := importer.Run(ctx, claudeHome, &importOptions)
+				if runErr != nil {
+					return fmt.Errorf("import: %w", runErr)
+				}
+				result = runResult
+				return nil
+			}); err != nil {
+				return err
 			}
 
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Imported to %s\n", targetPath); err != nil {

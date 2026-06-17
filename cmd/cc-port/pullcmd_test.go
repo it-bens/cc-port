@@ -9,12 +9,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/progress"
+	"github.com/it-bens/cc-port/internal/progress/progresstest"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
 )
@@ -227,8 +230,9 @@ func TestOpenArchiveSource_MissingObjectReturnsErrRemoteNotFound(t *testing.T) {
 	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
+	recorder := progresstest.NewRecorder()
 
-	_, err = openArchiveSource(context.Background(), r, "missing", "")
+	_, err = openArchiveSource(context.Background(), r, "missing", "", recorder.Reporter(progress.LevelInfo))
 
 	if !errors.Is(err, syncc.ErrRemoteNotFound) {
 		t.Fatalf("err = %v, want syncc.ErrRemoteNotFound", err)
@@ -241,8 +245,9 @@ func TestOpenArchiveSource_EncryptedNoPassphraseReturnsErrPassphraseRequired(t *
 	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
+	recorder := progresstest.NewRecorder()
 
-	_, err = openArchiveSource(context.Background(), r, "k", "")
+	_, err = openArchiveSource(context.Background(), r, "k", "", recorder.Reporter(progress.LevelInfo))
 
 	if !errors.Is(err, syncc.ErrPassphraseRequired) {
 		t.Fatalf("err = %v, want syncc.ErrPassphraseRequired", err)
@@ -255,8 +260,9 @@ func TestOpenArchiveSource_PlaintextWithPassphraseReturnsErrUnencryptedInput(t *
 	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
+	recorder := progresstest.NewRecorder()
 
-	_, err = openArchiveSource(context.Background(), r, "k", "any-pass")
+	_, err = openArchiveSource(context.Background(), r, "k", "any-pass", recorder.Reporter(progress.LevelInfo))
 
 	if !errors.Is(err, encrypt.ErrUnencryptedInput) {
 		t.Fatalf("err = %v, want encrypt.ErrUnencryptedInput", err)
@@ -269,11 +275,27 @@ func TestOpenArchiveSource_PlaintextNoPassphraseSucceeds(t *testing.T) {
 	r, err := remote.New(context.Background(), url, remote.Deps{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = r.Close() })
+	recorder := progresstest.NewRecorder()
 
-	src, err := openArchiveSource(context.Background(), r, "k", "")
+	src, err := openArchiveSource(context.Background(), r, "k", "", recorder.Reporter(progress.LevelInfo))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = src.Close() })
-	if src.Size <= 0 {
-		t.Fatalf("src.Size = %d, want > 0", src.Size)
-	}
+	require.Positive(t, src.Size, "src.Size must be positive")
+
+	// The download phase must be determinate: PhaseStart.Total == remote blob
+	// size, and the cumulative PhaseAdvance.Done reaches exactly Total. For the
+	// plaintext (no-passphrase) case the encrypt stage is a passthrough, so the
+	// remote blob size equals the materialized tempfile size (src.Size).
+	starts := progresstest.OfType[progress.PhaseStart](recorder.Events())
+	require.Len(t, starts, 1, "expected exactly one download PhaseStart")
+	assert.Equal(t, []string{"download"}, starts[0].Path)
+	assert.Equal(t, src.Size, starts[0].Total, "download phase total must equal remote blob size")
+
+	advances := progresstest.OfType[progress.PhaseAdvance](recorder.Events())
+	require.NotEmpty(t, advances, "expected at least one PhaseAdvance")
+	last := advances[len(advances)-1]
+	assert.Equal(t, starts[0].Total, last.Done, "cumulative done must equal total (no overshoot)")
+
+	ends := progresstest.OfType[progress.PhaseEnd](recorder.Events())
+	assert.Len(t, ends, 1, "expected exactly one PhaseEnd")
 }

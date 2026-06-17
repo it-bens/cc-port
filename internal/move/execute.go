@@ -12,6 +12,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/fsutil"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
@@ -41,34 +42,56 @@ func executeMove(
 	}()
 
 	createdPaths = append(createdPaths, newProjectDir)
-	if err := fsutil.CopyDir(ctx, oldProjectDir, newProjectDir); err != nil {
+	copyDataPhase := moveOptions.Reporter.Phase("copy project data", 0, progress.UnitFiles)
+	copiedDataFiles := int64(0)
+	onDataEntry := func() {
+		copiedDataFiles++
+		copyDataPhase.Advance(1)
+	}
+	if err := fsutil.CopyDir(ctx, oldProjectDir, newProjectDir, onDataEntry); err != nil {
 		return fmt.Errorf("copy project directory: %w", err)
 	}
+	copyDataPhase.End(fmt.Sprintf("%d files", copiedDataFiles))
 
 	tracker := &globalFileTracker{}
 
-	if err := rewriteNewProjectDir(ctx, oldProjectDir, newProjectDir, moveOptions); err != nil {
+	rewriteDataPhase := moveOptions.Reporter.Phase("rewrite project data", 0, progress.UnitItems)
+	if err := rewriteNewProjectDir(ctx, oldProjectDir, newProjectDir, moveOptions, rewriteDataPhase); err != nil {
 		return err
 	}
+	rewriteDataPhase.End("")
 
-	if err := rewriteGlobalFiles(ctx, claudeHome, locations, moveOptions, tracker); err != nil {
+	rewriteRefsPhase := moveOptions.Reporter.Phase("rewrite global references", 0, progress.UnitItems)
+	if err := rewriteGlobalFiles(ctx, claudeHome, locations, moveOptions, tracker, rewriteRefsPhase); err != nil {
 		return errors.Join(err, tracker.restore())
 	}
+	rewriteRefsPhase.End("")
 
 	if !moveOptions.RefsOnly {
 		createdPaths = append(createdPaths, moveOptions.NewPath)
-		if err := fsutil.CopyDir(ctx, moveOptions.OldPath, moveOptions.NewPath); err != nil {
+		copyDirPhase := moveOptions.Reporter.Phase("copy project directory", 0, progress.UnitFiles)
+		copiedDirFiles := int64(0)
+		onDirEntry := func() {
+			copiedDirFiles++
+			copyDirPhase.Advance(1)
+		}
+		if err := fsutil.CopyDir(ctx, moveOptions.OldPath, moveOptions.NewPath, onDirEntry); err != nil {
 			return errors.Join(fmt.Errorf("copy project on disk: %w", err), tracker.restore())
 		}
+		copyDirPhase.End(fmt.Sprintf("%d files", copiedDirFiles))
 	}
 
+	verifyPhase := moveOptions.Reporter.Phase("verify", 0, progress.UnitItems)
 	if err := verifyNewDirs(newProjectDir, moveOptions); err != nil {
 		return errors.Join(err, tracker.restore())
 	}
+	verifyPhase.End("new directories present")
 
+	deletePhase := moveOptions.Reporter.Phase("delete", 0, progress.UnitItems)
 	if err := deleteOriginals(oldProjectDir, moveOptions, tracker); err != nil {
 		return err
 	}
+	deletePhase.End("originals removed")
 
 	warnFileHistoryPreserved(ctx, locations, moveOptions)
 
@@ -338,16 +361,6 @@ func snapshotPaths(ctx context.Context, locations *claude.ProjectLocations) ([]s
 	return paths, nil
 }
 
-// resolveWarningWriter returns the writer to which Apply sends
-// human-readable warnings. Defaults to os.Stderr so unconfigured callers
-// still see warnings; tests inject a buffer via Options.WarningWriter.
-func resolveWarningWriter(moveOptions Options) io.Writer {
-	if moveOptions.WarningWriter != nil {
-		return moveOptions.WarningWriter
-	}
-	return os.Stderr
-}
-
 // warnFileHistoryPreserved emits a warning when the project has file-history
 // snapshots. Snapshot contents are preserved verbatim; the warning surfaces
 // that the old project path may still appear inside them after a move.
@@ -364,10 +377,9 @@ func warnFileHistoryPreserved(
 	if len(paths) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(
-		resolveWarningWriter(moveOptions),
+	moveOptions.Reporter.Warn(fmt.Errorf(
 		"note: %d file-history snapshot(s) preserved verbatim; bodies may still contain the old project path "+
-			"(Claude Code reads them by filename for in-session rewinds, not as path references)\n",
+			"(Claude Code reads them by filename for in-session rewinds, not as path references)",
 		len(paths),
-	)
+	))
 }

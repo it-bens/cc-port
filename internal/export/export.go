@@ -19,6 +19,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/transport"
@@ -42,6 +43,10 @@ type Options struct {
 	FromManifest string
 	SyncPushedBy string
 	SyncPushedAt time.Time
+
+	// Reporter receives the export progress event stream. Defaults to
+	// progress.Noop() when nil.
+	Reporter progress.Reporter
 }
 
 // ArchiveEntry names one file inside the produced archive. Bodies are not
@@ -121,12 +126,18 @@ func Run(
 		return result, fmt.Errorf("canceled: %w", err)
 	}
 
+	if exportOptions.Reporter == nil {
+		exportOptions.Reporter = progress.Noop()
+	}
+
+	locatePhase := exportOptions.Reporter.Phase("locate", 0, progress.UnitItems)
 	locations, err := claude.LocateProject(claudeHome, exportOptions.ProjectPath)
 	if err != nil {
 		return result, fmt.Errorf("locate project: %w", err)
 	}
 
 	result.RulesReport = scan.ScanReport(claudeHome.RulesDir(), exportOptions.ProjectPath)
+	locatePhase.End("")
 
 	archiveWriter := zip.NewWriter(exportOptions.Output)
 	defer func() {
@@ -135,6 +146,8 @@ func Run(
 		}
 	}()
 
+	archivePhase := exportOptions.Reporter.Phase("archive", 0, progress.UnitItems)
+
 	if err := writeMetadataToZip(archiveWriter, exportOptions, &result); err != nil {
 		return result, err
 	}
@@ -142,23 +155,24 @@ func Run(
 	placeholders := exportOptions.Placeholders
 
 	if err := exportCoreCategories(
-		ctx, archiveWriter, &result, claudeHome, locations, exportOptions, placeholders,
+		ctx, archiveWriter, &result, claudeHome, locations, exportOptions, placeholders, archivePhase,
 	); err != nil {
 		return result, err
 	}
 
 	if exportOptions.Categories.FileHistory {
-		if err := exportFileHistory(ctx, archiveWriter, &result, locations); err != nil {
+		if err := exportFileHistory(ctx, archiveWriter, &result, locations, archivePhase); err != nil {
 			return result, err
 		}
 	}
 
 	if exportOptions.Categories.Config {
-		if err := exportConfig(archiveWriter, &result, claudeHome, exportOptions, placeholders); err != nil {
+		if err := exportConfig(archiveWriter, &result, claudeHome, exportOptions, placeholders, archivePhase); err != nil {
 			return result, err
 		}
 	}
 
+	archivePhase.End("")
 	return result, nil
 }
 
@@ -183,24 +197,25 @@ func exportCoreCategories(
 	archiveWriter *zip.Writer, result *Result,
 	claudeHome *claude.Home, locations *claude.ProjectLocations,
 	exportOptions *Options, placeholders []manifest.Placeholder,
+	archivePhase progress.PhaseHandle,
 ) error {
 	if exportOptions.Categories.Sessions {
-		if err := exportSessions(ctx, archiveWriter, result, locations, placeholders); err != nil {
+		if err := exportSessions(ctx, archiveWriter, result, locations, placeholders, archivePhase); err != nil {
 			return err
 		}
 	}
 	if exportOptions.Categories.Memory {
-		if err := exportMemory(ctx, archiveWriter, result, locations, placeholders); err != nil {
+		if err := exportMemory(ctx, archiveWriter, result, locations, placeholders, archivePhase); err != nil {
 			return err
 		}
 	}
 	if err := exportSessionKeyed(
-		ctx, archiveWriter, result, claudeHome, locations, exportOptions.Categories, placeholders,
+		ctx, archiveWriter, result, claudeHome, locations, exportOptions.Categories, placeholders, archivePhase,
 	); err != nil {
 		return err
 	}
 	if exportOptions.Categories.History {
-		if err := exportHistory(ctx, archiveWriter, result, claudeHome, exportOptions, placeholders); err != nil {
+		if err := exportHistory(ctx, archiveWriter, result, claudeHome, exportOptions, placeholders, archivePhase); err != nil {
 			return err
 		}
 	}
@@ -211,7 +226,10 @@ func exportSessions(
 	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
 	locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
+	archivePhase progress.PhaseHandle,
 ) error {
+	total := int64(len(locations.SessionTranscripts) + len(locations.SessionSubdirs))
+	sessionsPhase := archivePhase.SubPhase("sessions", total, progress.UnitFiles)
 	for _, transcriptPath := range locations.SessionTranscripts {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -222,6 +240,7 @@ func exportSessions(
 		); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
+		sessionsPhase.Advance(1)
 	}
 
 	for _, subdirPath := range locations.SessionSubdirs {
@@ -233,7 +252,9 @@ func exportSessions(
 		if err := addDirToZip(ctx, archiveWriter, result, "sessions", subdirPath, zipPrefix, placeholders); err != nil {
 			return fmt.Errorf("add session subdir %s: %w", subdirPath, err)
 		}
+		sessionsPhase.Advance(1)
 	}
+	sessionsPhase.End("")
 	return nil
 }
 
@@ -280,7 +301,9 @@ func exportMemory(
 	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
 	locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
+	archivePhase progress.PhaseHandle,
 ) error {
+	memoryPhase := archivePhase.SubPhase("memory", int64(len(locations.MemoryFiles)), progress.UnitFiles)
 	for _, memoryFilePath := range locations.MemoryFiles {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -289,18 +312,33 @@ func exportMemory(
 		if err := streamJSONLEntry(ctx, archiveWriter, result, "memory", zipName, memoryFilePath, placeholders); err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
+		memoryPhase.Advance(1)
 	}
+	memoryPhase.End("")
 	return nil
 }
 
-// exportSessionKeyed drives the zip layout for the session-keyed groups
-// from the transport registry, iterating locations.AllFlatFiles() once and
-// skipping groups whose controlling category is off.
+// sessionKeyedPair carries one (group, absolute path) pair collected from
+// locations.AllFlatFiles() so a category's files can be written together
+// under one sub-phase while keeping the registry's group association needed
+// to compute each entry's zip name.
+type sessionKeyedPair struct {
+	group claude.SessionKeyedGroup
+	path  string
+}
+
+// exportSessionKeyed drives the zip layout for the session-keyed groups from
+// the transport registry. It collects locations.AllFlatFiles() once, then
+// writes one sub-phase per selected category in first-seen registry order so
+// the two usage-data groups roll up into a single usage-data sub-phase. Files
+// within a category keep their AllFlatFiles() order, so the produced bytes
+// match the prior single-loop layout.
 func exportSessionKeyed(
 	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result, claudeHome *claude.Home,
 	locations *claude.ProjectLocations, categories manifest.CategorySet,
 	placeholders []manifest.Placeholder,
+	archivePhase progress.PhaseHandle,
 ) error {
 	baseByGroup := make(map[string]string, len(transport.SessionKeyedTargets))
 	prefixByGroup := make(map[string]string, len(transport.SessionKeyedTargets))
@@ -309,41 +347,81 @@ func exportSessionKeyed(
 		prefixByGroup[target.Group] = target.ZipPrefix
 	}
 
-	for group, path := range locations.AllFlatFiles() {
+	categoryOrder, pairsByCategory := collectSessionKeyedPairs(locations)
+
+	for _, category := range categoryOrder {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		spec, ok := manifest.SpecByName(group.Category)
+		spec, ok := manifest.SpecByName(category)
 		if !ok {
-			return fmt.Errorf("session-keyed group %q has unknown category %q", group.Name, group.Category)
+			return fmt.Errorf("session-keyed category %q is not a known manifest category", category)
 		}
 		if !spec.Value(&categories) {
 			continue
 		}
-		relative, err := filepath.Rel(baseByGroup[group.Name], path)
-		if err != nil {
-			return fmt.Errorf("compute relative path for %s: %w", path, err)
+		pairs := pairsByCategory[category]
+		categoryPhase := archivePhase.SubPhase(category, int64(len(pairs)), progress.UnitFiles)
+		for _, pair := range pairs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			relative, err := filepath.Rel(baseByGroup[pair.group.Name], pair.path)
+			if err != nil {
+				return fmt.Errorf("compute relative path for %s: %w", pair.path, err)
+			}
+			zipName := prefixByGroup[pair.group.Name] + filepath.ToSlash(relative)
+			// Session-keyed bodies are small JSON or JSONL. streamJSONLEntry
+			// applies placeholders per line; since paths never straddle '\n',
+			// the output matches a whole-file transform byte-for-byte.
+			if err := streamJSONLEntry(ctx, archiveWriter, result, category, zipName, pair.path, placeholders); err != nil {
+				return fmt.Errorf("write %s: %w", zipName, err)
+			}
+			categoryPhase.Advance(1)
 		}
-		zipName := prefixByGroup[group.Name] + filepath.ToSlash(relative)
-		// Session-keyed bodies are small JSON or JSONL. streamJSONLEntry
-		// applies placeholders per line; since paths never straddle '\n',
-		// the output matches a whole-file transform byte-for-byte.
-		if err := streamJSONLEntry(ctx, archiveWriter, result, group.Category, zipName, path, placeholders); err != nil {
-			return fmt.Errorf("write %s: %w", zipName, err)
-		}
+		categoryPhase.End("")
 	}
 	return nil
+}
+
+// categoryOrder lists the distinct categories of claude.SessionKeyedGroups in first-seen
+// registry order, so a selected category with zero present files still opens a (total 0)
+// sub-phase and a future registry addition cannot silently lose its bracket.
+func collectSessionKeyedPairs(
+	locations *claude.ProjectLocations,
+) (categoryOrder []string, pairsByCategory map[string][]sessionKeyedPair) {
+	pairsByCategory = make(map[string][]sessionKeyedPair)
+
+	seen := make(map[string]struct{}, len(claude.SessionKeyedGroups))
+	for _, group := range claude.SessionKeyedGroups {
+		if _, already := seen[group.Category]; already {
+			continue
+		}
+		seen[group.Category] = struct{}{}
+		categoryOrder = append(categoryOrder, group.Category)
+	}
+
+	for group, path := range locations.AllFlatFiles() {
+		pairsByCategory[group.Category] = append(
+			pairsByCategory[group.Category], sessionKeyedPair{group: group, path: path},
+		)
+	}
+	return categoryOrder, pairsByCategory
 }
 
 func exportHistory(
 	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result,
 	claudeHome *claude.Home, exportOptions *Options, placeholders []manifest.Placeholder,
+	archivePhase progress.PhaseHandle,
 ) error {
+	historyPhase := archivePhase.SubPhase("history", 1, progress.UnitFiles)
+
 	historyPath := claudeHome.HistoryFile()
 	historyFile, err := os.Open(historyPath) //nolint:gosec // G304: path from trusted ClaudeHome
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			historyPhase.End("absent")
 			return nil
 		}
 		return fmt.Errorf("open history file: %w", err)
@@ -366,6 +444,8 @@ func exportHistory(
 		return fmt.Errorf("write history/history.jsonl: %w", err)
 	}
 	result.History = append(result.History, ArchiveEntry{ArchivePath: zipName, Size: size})
+	historyPhase.Advance(1)
+	historyPhase.End("history.jsonl")
 	return nil
 }
 
@@ -374,7 +454,11 @@ func exportHistory(
 func exportFileHistory(
 	ctx context.Context,
 	archiveWriter *zip.Writer, result *Result, locations *claude.ProjectLocations,
+	archivePhase progress.PhaseHandle,
 ) error {
+	fileHistoryPhase := archivePhase.SubPhase(
+		"file-history", int64(len(locations.FileHistoryDirs)), progress.UnitFiles,
+	)
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -384,14 +468,18 @@ func exportFileHistory(
 		if err := addDirVerbatimToZip(ctx, archiveWriter, result, fileHistoryDir, zipPrefix); err != nil {
 			return fmt.Errorf("add file-history dir %s: %w", fileHistoryDir, err)
 		}
+		fileHistoryPhase.Advance(1)
 	}
+	fileHistoryPhase.End("")
 	return nil
 }
 
 func exportConfig(
 	archiveWriter *zip.Writer, result *Result,
 	claudeHome *claude.Home, exportOptions *Options, placeholders []manifest.Placeholder,
+	archivePhase progress.PhaseHandle,
 ) error {
+	configPhase := archivePhase.SubPhase("config", 1, progress.UnitFiles)
 	configData, err := extractProjectConfig(claudeHome.ConfigFile, exportOptions.ProjectPath)
 	if err != nil {
 		return fmt.Errorf("extract project config: %w", err)
@@ -400,6 +488,8 @@ func exportConfig(
 	if err := writeCategoryEntry(archiveWriter, result, "config", "config.json", anonymizedConfig); err != nil {
 		return fmt.Errorf("write config.json: %w", err)
 	}
+	configPhase.Advance(1)
+	configPhase.End("config.json")
 	return nil
 }
 

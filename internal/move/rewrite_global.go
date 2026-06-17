@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
@@ -20,26 +21,53 @@ func rewriteGlobalFiles(
 	locations *claude.ProjectLocations,
 	moveOptions Options,
 	tracker *globalFileTracker,
+	phase progress.PhaseHandle,
 ) error {
-	if err := rewriteHistoryFile(ctx, claudeHome, moveOptions, tracker); err != nil {
+	if err := rewriteHistoryFile(ctx, claudeHome, moveOptions, tracker, phase); err != nil {
 		return err
 	}
-	if err := rewriteSessionFiles(ctx, locations, moveOptions, tracker); err != nil {
+	if err := rewriteSessionFiles(ctx, locations, moveOptions, tracker, phase); err != nil {
 		return err
 	}
-	if err := rewriteUserWideFiles(ctx, claudeHome, moveOptions, tracker); err != nil {
+	if err := rewriteUserWideFiles(ctx, claudeHome, moveOptions, tracker, phase); err != nil {
 		return err
 	}
-	if err := rewriteConfigFile(ctx, claudeHome, moveOptions, tracker); err != nil {
+	if err := rewriteConfigFile(ctx, claudeHome, moveOptions, tracker, phase); err != nil {
 		return err
 	}
+	return rewriteSessionKeyedFiles(ctx, locations, moveOptions, tracker, phase)
+}
+
+// rewriteSessionKeyedFiles rewrites every session-keyed flat file, opening one
+// sub-phase per claude.SessionKeyedGroups entry so a group with zero present
+// files still reports a (total=0) sub-phase. Files are collected once through
+// locations.AllFlatFiles (which applies each group's sidecar filter), then the
+// registry is walked in canonical order.
+func rewriteSessionKeyedFiles(
+	ctx context.Context,
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+	tracker *globalFileTracker,
+	phase progress.PhaseHandle,
+) error {
+	collected := make(map[string][]string, len(claude.SessionKeyedGroups))
 	for group, path := range locations.AllFlatFiles() {
-		if err := ctx.Err(); err != nil {
-			return err
+		collected[group.Name] = append(collected[group.Name], path)
+	}
+
+	for _, group := range claude.SessionKeyedGroups {
+		paths := collected[group.Name]
+		groupPhase := phase.SubPhase(group.Name, int64(len(paths)), progress.UnitFiles)
+		for _, path := range paths {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := rewriteTrackedPreservingMtime(path, moveOptions.OldPath, moveOptions.NewPath, tracker); err != nil {
+				return fmt.Errorf("rewrite %s %s: %w", group.Name, path, err)
+			}
+			groupPhase.Advance(1)
 		}
-		if err := rewriteTrackedPreservingMtime(path, moveOptions.OldPath, moveOptions.NewPath, tracker); err != nil {
-			return fmt.Errorf("rewrite %s %s: %w", group.Name, path, err)
-		}
+		groupPhase.End(fmt.Sprintf("%d files", len(paths)))
 	}
 	return nil
 }
@@ -55,6 +83,7 @@ func rewriteHistoryFile(
 	claudeHome *claude.Home,
 	moveOptions Options,
 	tracker *globalFileTracker,
+	phase progress.PhaseHandle,
 ) error {
 	historyFile := claudeHome.HistoryFile()
 	info, err := os.Stat(historyFile)
@@ -64,6 +93,8 @@ func rewriteHistoryFile(
 		}
 		return fmt.Errorf("stat %s: %w", historyFile, err)
 	}
+
+	historyPhase := phase.SubPhase("history", 1, progress.UnitFiles)
 
 	var malformed []int
 	if info.Size() < siblingBackupThreshold {
@@ -76,12 +107,14 @@ func rewriteHistoryFile(
 	}
 
 	if len(malformed) > 0 {
-		_, _ = fmt.Fprintf(
-			resolveWarningWriter(moveOptions),
-			"warning: history.jsonl contains %d malformed line(s) at %v: preserved verbatim, not rewritten\n",
+		moveOptions.Reporter.Warn(fmt.Errorf(
+			"history.jsonl contains %d malformed line(s) at %v: preserved verbatim, not rewritten",
 			len(malformed), malformed,
-		)
+		))
 	}
+
+	historyPhase.Advance(1)
+	historyPhase.End("history.jsonl")
 	return nil
 }
 
@@ -166,7 +199,9 @@ func rewriteSessionFiles(
 	locations *claude.ProjectLocations,
 	moveOptions Options,
 	tracker *globalFileTracker,
+	phase progress.PhaseHandle,
 ) error {
+	sessionsPhase := phase.SubPhase("sessions", int64(len(locations.SessionFiles)), progress.UnitFiles)
 	for _, sessionFilePath := range locations.SessionFiles {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -182,7 +217,9 @@ func rewriteSessionFiles(
 		if err := rewrite.SafeWriteFile(sessionFilePath, rewritten, mode); err != nil {
 			return fmt.Errorf("write session file %s: %w", sessionFilePath, err)
 		}
+		sessionsPhase.Advance(1)
 	}
+	sessionsPhase.End(fmt.Sprintf("%d files", len(locations.SessionFiles)))
 	return nil
 }
 
@@ -197,23 +234,43 @@ func rewriteUserWideFiles(
 	claudeHome *claude.Home,
 	moveOptions Options,
 	tracker *globalFileTracker,
+	phase progress.PhaseHandle,
 ) error {
 	for _, target := range claude.UserWideRewriteTargets {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		path := target.Path(claudeHome)
+		present := true
 		if _, err := os.Stat(path); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
+			if !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("stat %s: %w", path, err)
 			}
-			return fmt.Errorf("stat %s: %w", path, err)
+			present = false
+		}
+
+		targetPhase := phase.SubPhase(target.Name, boolToInt64(present), progress.UnitFiles)
+		if !present {
+			targetPhase.End("absent")
+			continue
 		}
 		if err := rewriteTracked(path, moveOptions.OldPath, moveOptions.NewPath, tracker); err != nil {
 			return fmt.Errorf("rewrite %s %s: %w", target.Name, path, err)
 		}
+		targetPhase.Advance(1)
+		targetPhase.End(target.Name)
 	}
 	return nil
+}
+
+// boolToInt64 maps a presence flag to a phase total: 1 for a present file, 0
+// for an absent one, so an absent user-wide target still opens a zero-total
+// sub-phase and the user-wide registry stays fully covered.
+func boolToInt64(present bool) int64 {
+	if present {
+		return 1
+	}
+	return 0
 }
 
 func rewriteConfigFile(
@@ -221,6 +278,7 @@ func rewriteConfigFile(
 	claudeHome *claude.Home,
 	moveOptions Options,
 	tracker *globalFileTracker,
+	phase progress.PhaseHandle,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -233,6 +291,8 @@ func rewriteConfigFile(
 		return fmt.Errorf("stat %s: %w", configFile, err)
 	}
 
+	configPhase := phase.SubPhase("config", 1, progress.UnitFiles)
+
 	original, mode, err := tracker.save(configFile)
 	if err != nil {
 		return fmt.Errorf("read config file for backup: %w", err)
@@ -244,6 +304,9 @@ func rewriteConfigFile(
 	if err := rewrite.SafeWriteFile(configFile, rewritten, mode); err != nil {
 		return fmt.Errorf("write config file: %w", err)
 	}
+
+	configPhase.Advance(1)
+	configPhase.End("~/.claude.json")
 	return nil
 }
 

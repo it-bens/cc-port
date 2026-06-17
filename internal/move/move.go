@@ -4,10 +4,10 @@ package move
 import (
 	"context"
 	"fmt"
-	"io"
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/lock"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/scan"
 )
 
@@ -18,11 +18,11 @@ type Options struct {
 	RewriteTranscripts bool
 	RefsOnly           bool
 
-	// WarningWriter receives human-readable warnings emitted during Apply
-	// (e.g. malformed lines in history.jsonl that the move preserves but
-	// cannot repair). Defaults to os.Stderr when nil. DryRun does not use
-	// this field — it surfaces warnings through Plan instead.
-	WarningWriter io.Writer
+	// Reporter receives the progress event stream and the warnings Apply
+	// emits (malformed history lines, file-history preservation). Defaults
+	// to progress.Noop() when nil. DryRun does not use it — it surfaces
+	// warnings through Plan instead.
+	Reporter progress.Reporter
 }
 
 // Plan holds the results of a dry-run move operation.
@@ -153,6 +153,9 @@ func populatePlanCounts(
 func Apply(ctx context.Context, claudeHome *claude.Home, moveOptions Options) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("canceled: %w", err)
+	}
+	if moveOptions.Reporter == nil {
+		moveOptions.Reporter = progress.Noop()
 	}
 	return lock.WithLock(claudeHome, func() error {
 		if err := ctx.Err(); err != nil {

@@ -340,7 +340,7 @@ func runBasicImport(t *testing.T) *claude.Home {
 	destHomeDir := filepath.Join(t.TempDir(), "home")
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: fixtureDestProjectPath,
@@ -372,7 +372,7 @@ func TestImport_LeavesNoStagingTemps(t *testing.T) {
 			"{{HOME}}":         destHomeDir,
 		},
 	}
-	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
 	require.NoError(t, err)
 
 	assertNoStagingTemps(t, destClaudeHome)
@@ -402,7 +402,7 @@ func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
 			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
 		},
 	}
-	_, err = importer.Run(t.Context(), destClaudeHome, importOptions)
+	_, err = importer.Run(t.Context(), destClaudeHome, &importOptions)
 	require.Error(t, err, "import must refuse when a declared placeholder is not resolved")
 	var missingErr *importer.MissingResolutionsError
 	require.ErrorAs(t, err, &missingErr)
@@ -445,7 +445,7 @@ func TestImport_PreservesPlaceholderLookalikesInBodies(t *testing.T) {
 	))
 
 	// Act
-	_, err = importer.Run(t.Context(), destClaudeHome, importOptions)
+	_, err = importer.Run(t.Context(), destClaudeHome, &importOptions)
 
 	// Assert
 	require.NoError(t, err)
@@ -492,7 +492,7 @@ func TestImport_AtomicRollbackOnFailure(t *testing.T) {
 			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
 		},
 	}
-	err = importer.RunWithRenameHook(t.Context(), destClaudeHome, importOptions, injector)
+	err = importer.RunWithRenameHook(t.Context(), destClaudeHome, &importOptions, injector)
 	require.Error(t, err, "import must fail when a promote rename fails")
 
 	// Encoded project dir must not exist — it was promoted then rolled back.
@@ -720,7 +720,7 @@ func TestImport_ConflictRefused(t *testing.T) {
 		},
 	}
 
-	_, err := importer.Run(t.Context(), sourceClaudeHome, importOptions)
+	_, err := importer.Run(t.Context(), sourceClaudeHome, &importOptions)
 	require.Error(t, err, "import to existing project should fail")
 	require.ErrorIs(t, err, importer.ErrEncodedDirCollision)
 }
@@ -752,7 +752,7 @@ func TestImport_RoundTrip_NewCategories(t *testing.T) {
 	require.NoError(t, os.RemoveAll(freshHome.ProjectDir(fixtureSourceProjectPath)))
 
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), freshHome, importer.Options{
+	_, err = importer.Run(t.Context(), freshHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
@@ -793,7 +793,7 @@ func TestImport_LandsSessionKeyedFileAt0644(t *testing.T) {
 	require.NoError(t, os.RemoveAll(freshHome.ProjectDir(fixtureSourceProjectPath)))
 
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), freshHome, importer.Options{
+	_, err = importer.Run(t.Context(), freshHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
@@ -841,7 +841,7 @@ func TestImport_HardFailsOnUnknownManifestCategory(t *testing.T) {
 	require.NoError(t, zipFile.Close())
 
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), claudeHome, importer.Options{
+	_, err = importer.Run(t.Context(), claudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
@@ -875,7 +875,7 @@ func TestImport_HardFailsOnMissingManifestCategory(t *testing.T) {
 	require.NoError(t, zipFile.Close())
 
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), claudeHome, importer.Options{
+	_, err = importer.Run(t.Context(), claudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
@@ -918,7 +918,7 @@ func TestImport_HardFailsOnUnknownEntryPrefix(t *testing.T) {
 	require.NoError(t, zipFile.Close())
 
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), claudeHome, importer.Options{
+	_, err = importer.Run(t.Context(), claudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
@@ -998,7 +998,7 @@ func TestRun_RejectsZipSlipEntry(t *testing.T) {
 	})
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: filepath.Join(t.TempDir(), "project"),
@@ -1019,7 +1019,7 @@ func TestRun_RejectsAbsoluteZipEntry(t *testing.T) {
 	})
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: filepath.Join(t.TempDir(), "project"),
@@ -1045,7 +1045,7 @@ func TestRun_RejectsArchiveWhenStagingBaseUnstageable(t *testing.T) {
 		"file-history/abc/snapshot@v1", []byte("opaque"))
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: filepath.Join(t.TempDir(), "project"),
@@ -1067,7 +1067,7 @@ func TestReadZipFile_RejectsOversizedEntry_SmallCap(t *testing.T) {
 	buildArchiveWithSingleEntry(t, archivePath, "sessions/bomb.json", 2<<20)
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: filepath.Join(t.TempDir(), "project"),
@@ -1088,7 +1088,7 @@ func TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap(t *testing
 	destClaudeHome := buildEmptyDestClaudeHome(t)
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
 		Source:      source,
 		Size:        size,
 		TargetPath:  filepath.Join(t.TempDir(), "project"),
@@ -1109,7 +1109,7 @@ func TestRun_CancelsWhenContextCancelled(t *testing.T) {
 	cancel()
 
 	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(ctx, destClaudeHome, importer.Options{
+	_, err := importer.Run(ctx, destClaudeHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: fixtureDestProjectPath,
@@ -1246,7 +1246,7 @@ func writeMetadataXML(t *testing.T, zipWriter *zip.Writer) {
 func TestRun_NilSource(t *testing.T) {
 	home := testutil.SetupFixture(t)
 
-	_, err := importer.Run(t.Context(), home, importer.Options{
+	_, err := importer.Run(t.Context(), home, &importer.Options{
 		Source:     nil,
 		Size:       0,
 		TargetPath: "/Users/test/Projects/myproject",
@@ -1263,7 +1263,7 @@ func TestImporterRun_InjectsHomePathFromOptions(t *testing.T) {
 
 	claudeHome := stageEmptyClaudeHome(t)
 
-	_, err := importer.Run(t.Context(), claudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), claudeHome, &importer.Options{
 		Source:      bytes.NewReader(archiveBytes),
 		Size:        int64(len(archiveBytes)),
 		TargetPath:  "/Users/recipient/Projects/myproj",
@@ -1293,7 +1293,7 @@ func TestImporterRun_HomePathStaleManifestResolveIgnored(t *testing.T) {
 
 	claudeHome := stageEmptyClaudeHome(t)
 
-	_, err := importer.Run(t.Context(), claudeHome, importer.Options{
+	_, err := importer.Run(t.Context(), claudeHome, &importer.Options{
 		Source:      bytes.NewReader(archiveBytes),
 		Size:        int64(len(archiveBytes)),
 		TargetPath:  "/Users/recipient/Projects/myproj",
@@ -1397,7 +1397,7 @@ func TestImport_PreservesSessionMtimeFromArchive(t *testing.T) {
 			"{{HOME}}":         destHomeDir,
 		},
 	}
-	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
 	require.NoError(t, err, "import")
 
 	encodedDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
@@ -1428,7 +1428,7 @@ func TestImport_PreservesMemoryMtimeFromArchive(t *testing.T) {
 			"{{HOME}}":         destHomeDir,
 		},
 	}
-	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
 	require.NoError(t, err, "import")
 
 	encodedDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
@@ -1499,7 +1499,7 @@ func TestImport_PreservesFileHistoryMtimeFromArchive(t *testing.T) {
 			"{{HOME}}":         destHomeDir,
 		},
 	}
-	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
 	require.NoError(t, err, "import")
 
 	importedPath := filepath.Join(destClaudeHome.FileHistoryDir(),
@@ -1528,7 +1528,7 @@ func TestImport_PreservesSessionKeyedMtimeFromArchive(t *testing.T) {
 			"{{HOME}}":         destHomeDir,
 		},
 	}
-	_, err := importer.Run(t.Context(), destClaudeHome, importOptions)
+	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
 	require.NoError(t, err, "import")
 
 	importedPath := filepath.Join(destClaudeHome.TodosDir(),

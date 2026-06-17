@@ -1,0 +1,8 @@
+[START] phase=copy total=10 unit=files
+[PROGRESS] phase=copy 4/10 (40%)
+[PROGRESS] phase=copy 10/10 (100%)
+[END] phase=copy summary="10 files" dur=2s
+[START] phase=rewrite total=3 unit=items
+[PROGRESS] phase=rewrite 3/3 (100%)
+[END] phase=rewrite summary="3 items" dur=1s
+[DONE]

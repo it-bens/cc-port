@@ -196,6 +196,8 @@ func openPriorForTest(t *testing.T, r *remote.Remote, name, pass string) *PriorR
 // openSourceForTest opens the strict reader pipeline for pull tests. Returns
 // the opened pipeline.Source; t.Cleanup registers Close. t.Fatalf on any
 // error so test bodies stay flat.
+//
+//nolint:unparam // name mirrors the production archive key; current callers share one key.
 func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeline.Source {
 	t.Helper()
 	src, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
@@ -216,6 +218,8 @@ func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeli
 // idempotent close that delegates to the bucket writer, but the upload
 // commits inside that explicit Close, so a missed Close is a test bug
 // the caller must surface.
+//
+//nolint:unparam // name mirrors the production archive key; current callers share one key.
 func openWriterForTest(t *testing.T, r *remote.Remote, name, pass string) io.WriteCloser {
 	t.Helper()
 	w, err := pipeline.RunWriter(context.Background(), []pipeline.WriterStage{

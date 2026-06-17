@@ -23,9 +23,13 @@ import (
 // ctx is checked at the top of every WalkDir callback so a canceled
 // context aborts a long copy within one iteration.
 //
+// onEntry fires once after each regular file and each symlink is copied
+// successfully; it is not called for directories. A nil onEntry is a no-op,
+// letting callers that do not track progress pass nil.
+//
 // Writes go through an os.Root opened on destination, so even a
 // malformed relative path cannot land outside destination.
-func CopyDir(ctx context.Context, source, destination string) error {
+func CopyDir(ctx context.Context, source, destination string, onEntry func()) error {
 	if err := os.MkdirAll(destination, 0o755); err != nil { //nolint:gosec // G301: cc-port-wide 0o755 convention
 		return fmt.Errorf("create destination %q: %w", destination, err)
 	}
@@ -56,7 +60,11 @@ func CopyDir(ctx context.Context, source, destination string) error {
 
 		switch {
 		case entryMode&fs.ModeSymlink != 0:
-			return copySymlink(path, destRoot, relativePath)
+			if err := copySymlink(path, destRoot, relativePath); err != nil {
+				return err
+			}
+			notifyEntry(onEntry)
+			return nil
 
 		case dirEntry.IsDir():
 			return copyDirectory(dirEntry, destRoot, relativePath)
@@ -71,12 +79,22 @@ func CopyDir(ctx context.Context, source, destination string) error {
 					return fmt.Errorf("create parent for %q: %w", relativePath, err)
 				}
 			}
-			return streamRegularFile(path, destRoot, relativePath, info.Mode().Perm(), info.ModTime())
+			if err := streamRegularFile(path, destRoot, relativePath, info.Mode().Perm(), info.ModTime()); err != nil {
+				return err
+			}
+			notifyEntry(onEntry)
+			return nil
 
 		default:
 			return fmt.Errorf("fsutil: cannot copy irregular entry %q (mode %s)", path, entryMode)
 		}
 	})
+}
+
+func notifyEntry(onEntry func()) {
+	if onEntry != nil {
+		onEntry()
+	}
 }
 
 // copySymlink replicates a source symlink at relativePath under destRoot,

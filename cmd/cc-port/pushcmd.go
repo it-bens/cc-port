@@ -11,6 +11,7 @@ import (
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/pipeline"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
 )
@@ -186,22 +187,26 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string, banner Bann
 		}()
 	}
 
-	plan, err := syncc.PlanPush(ctx, opts, prior)
-	if err != nil {
-		return err
-	}
-	if err := plan.Render(cmd.OutOrStdout()); err != nil {
-		return fmt.Errorf("render plan: %w", err)
-	}
+	return runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+		opts.Reporter = reporter
 
-	if !apply {
-		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); err != nil {
-			return fmt.Errorf("write apply hint: %w", err)
+		plan, err := syncc.PlanPush(ctx, opts, prior)
+		if err != nil {
+			return err
 		}
-		return nil
-	}
+		if err := plan.Render(cmd.OutOrStdout()); err != nil {
+			return fmt.Errorf("render plan: %w", err)
+		}
 
-	return applyPush(ctx, cmd, r, opts, plan, passphrase)
+		if !apply {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); err != nil {
+				return fmt.Errorf("write apply hint: %w", err)
+			}
+			return nil
+		}
+
+		return applyPush(ctx, cmd, r, opts, plan, passphrase)
+	})
 }
 
 // applyPush runs the cross-machine guard, opens the writer pipeline, calls
@@ -241,9 +246,16 @@ func applyPush(
 		}
 	}()
 
-	if err := syncc.ExecutePush(ctx, opts, plan, writer); err != nil {
+	// plan.PriorSize is a best-known total proxy: the prior archive's size on
+	// a re-push, zero (indeterminate) on the first push. The true upload size
+	// is unknowable before export streams it.
+	uploadPhase := opts.Reporter.Phase("upload", plan.PriorSize, progress.UnitBytes)
+	countingWriter := progress.CountingWriter(writer, uploadPhase)
+
+	if err := syncc.ExecutePush(ctx, opts, plan, countingWriter); err != nil {
 		return err
 	}
+	uploadPhase.End("")
 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Pushed: %s/%s\n", r.URL(), opts.Name); err != nil {
 		return fmt.Errorf("write push confirmation: %w", err)

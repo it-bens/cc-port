@@ -16,6 +16,8 @@ import (
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/move"
+	"github.com/it-bens/cc-port/internal/progress"
+	"github.com/it-bens/cc-port/internal/progress/progresstest"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
 
@@ -365,21 +367,23 @@ func TestDryRun_ReportsMalformedHistoryLines(t *testing.T) {
 func TestApply_WarnsOnMalformedHistoryLines(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	var warnings bytes.Buffer
+	recorder := progresstest.NewRecorder()
 	err := move.Apply(t.Context(), claudeHome, move.Options{
-		OldPath:       oldProjectPath,
-		NewPath:       newProjectPath,
-		RefsOnly:      true,
-		WarningWriter: &warnings,
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+		Reporter: recorder.Reporter(progress.LevelInfo),
 	})
 	require.NoError(t, err)
 
-	output := warnings.String()
-	assert.Contains(t, output, "history.jsonl",
+	warnings := progresstest.OfType[progress.Warning](recorder.Events())
+	require.NotEmpty(t, warnings, "a warning should be emitted for malformed history lines")
+	message := joinWarningMessages(warnings)
+	assert.Contains(t, message, "history.jsonl",
 		"warning should identify history.jsonl")
-	assert.Contains(t, output, "malformed",
+	assert.Contains(t, message, "malformed",
 		"warning should name the condition")
-	assert.Contains(t, output, "10",
+	assert.Contains(t, message, "10",
 		"warning should name the 1-based line number from the fixture")
 }
 
@@ -464,19 +468,21 @@ func TestApply_EmitsFileHistoryWarning(t *testing.T) {
 	require.NotEmpty(t, snapshots,
 		"fixture precondition: must have at least one snapshot to warn about")
 
-	var warnings bytes.Buffer
+	recorder := progresstest.NewRecorder()
 	err = move.Apply(t.Context(), claudeHome, move.Options{
-		OldPath:       oldProjectPath,
-		NewPath:       newProjectPath,
-		RefsOnly:      true,
-		WarningWriter: &warnings,
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+		Reporter: recorder.Reporter(progress.LevelInfo),
 	})
 	require.NoError(t, err)
 
-	output := warnings.String()
-	assert.Contains(t, output, "file-history snapshot",
+	warnings := progresstest.OfType[progress.Warning](recorder.Events())
+	require.NotEmpty(t, warnings, "a warning should be emitted for preserved file-history snapshots")
+	message := joinWarningMessages(warnings)
+	assert.Contains(t, message, "file-history snapshot",
 		"warning must name the file-history category")
-	assert.Contains(t, output, "preserved",
+	assert.Contains(t, message, "preserved",
 		"warning must state the preservation invariant")
 }
 
@@ -1127,6 +1133,222 @@ func assertTranscriptRewritten(t *testing.T, projectDir, oldPath, newPath string
 			"transcript should contain new project path after rewrite")
 	}
 	assert.True(t, foundTranscript, "expected at least one transcript file in new project dir")
+}
+
+// joinWarningMessages concatenates the error text of every Warning event so a
+// test can assert on the surfaced warning copy without depending on emission
+// order across multiple warnings.
+func joinWarningMessages(warnings []progress.Warning) string {
+	var builder strings.Builder
+	for _, warning := range warnings {
+		builder.WriteString(warning.Err.Error())
+		builder.WriteByte('\n')
+	}
+	return builder.String()
+}
+
+// topLevelPhaseNames returns the names of every top-level phase opened on the
+// recorder, in emission order. A top-level phase is a PhaseStart whose Path has
+// exactly one segment.
+func topLevelPhaseNames(events []progress.Event) []string {
+	var names []string
+	for _, start := range progresstest.OfType[progress.PhaseStart](events) {
+		if len(start.Path) == 1 {
+			names = append(names, start.Path[0])
+		}
+	}
+	return names
+}
+
+// globalReferenceSubPhaseNames returns the set of sub-phase names opened
+// directly under the rewrite global references phase.
+func globalReferenceSubPhaseNames(events []progress.Event) map[string]struct{} {
+	names := make(map[string]struct{})
+	for _, start := range progresstest.OfType[progress.PhaseStart](events) {
+		if len(start.Path) == 2 && start.Path[0] == "rewrite global references" {
+			names[start.Path[1]] = struct{}{}
+		}
+	}
+	return names
+}
+
+func TestApply_EmitsTopLevelPhasesInOrderUnderRefsOnly(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	recorder := progresstest.NewRecorder()
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+		Reporter: recorder.Reporter(progress.LevelInfo),
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t,
+		[]string{
+			"copy project data",
+			"rewrite project data",
+			"rewrite global references",
+			"verify",
+			"delete",
+		},
+		topLevelPhaseNames(recorder.Events()),
+		"--refs-only omits the on-disk copy project directory phase",
+	)
+}
+
+// TestApply_AdvancesCopyProjectDataPhasePerFile guards the live-count UX: the
+// copy project data phase is indeterminate (total 0), so without a per-entry
+// Advance no PhaseAdvance event fires and the live counter never moves. The
+// fixture's project data dir has files, so at least one advance must appear.
+func TestApply_AdvancesCopyProjectDataPhasePerFile(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	recorder := progresstest.NewRecorder()
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+		Reporter: recorder.Reporter(progress.LevelInfo),
+	})
+	require.NoError(t, err)
+
+	advances := 0
+	for _, advance := range progresstest.OfType[progress.PhaseAdvance](recorder.Events()) {
+		if len(advance.Path) == 1 && advance.Path[0] == "copy project data" {
+			advances++
+		}
+	}
+	assert.Positive(t, advances,
+		"copy project data phase must advance once per copied entry")
+}
+
+// TestApply_GlobalReferenceSubPhasesCoverEveryRegistry is the move progress
+// drift-guard: every user-wide rewrite target and every session-keyed group
+// must contribute a sub-phase under rewrite global references, including groups
+// with no present files. Expected names derive from the registries so a future
+// registry entry that forgets its sub-phase fails this test.
+func TestApply_GlobalReferenceSubPhasesCoverEveryRegistry(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	recorder := progresstest.NewRecorder()
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+		Reporter: recorder.Reporter(progress.LevelInfo),
+	})
+	require.NoError(t, err)
+
+	subPhaseNames := globalReferenceSubPhaseNames(recorder.Events())
+
+	for _, target := range claude.UserWideRewriteTargets {
+		assert.Contains(t, subPhaseNames, target.Name,
+			"user-wide rewrite target %q must open a sub-phase", target.Name)
+	}
+	for _, group := range claude.SessionKeyedGroups {
+		assert.Contains(t, subPhaseNames, group.Name,
+			"session-keyed group %q must open a sub-phase", group.Name)
+	}
+}
+
+// TestApply_OpensSubPhaseForSessionKeyedGroupWithNoFiles pins the empty-group
+// half of the drift-guard: a session-keyed group contributes a sub-phase even
+// when it has zero present files. The minimal on-disk fixture stages no
+// session-keyed data, so every group is empty, which a naive file-stream
+// implementation would skip entirely.
+func TestApply_OpensSubPhaseForSessionKeyedGroupWithNoFiles(t *testing.T) {
+	claudeHome, projectPath := setupOnDiskMoveFixture(t)
+
+	recorder := progresstest.NewRecorder()
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  projectPath,
+		NewPath:  filepath.Join(filepath.Dir(projectPath), "destination"),
+		Reporter: recorder.Reporter(progress.LevelInfo),
+	})
+	require.NoError(t, err)
+
+	subPhaseNames := globalReferenceSubPhaseNames(recorder.Events())
+
+	for _, group := range claude.SessionKeyedGroups {
+		assert.Contains(t, subPhaseNames, group.Name,
+			"empty session-keyed group %q must still open a sub-phase", group.Name)
+	}
+}
+
+// TestApply_GlobalReferenceSubPhasesCoverFixedSingletons completes the
+// drift-guard alongside the registry coverage above: rewrite global references
+// also opens a sub-phase for each fixed singleton present in the home — history,
+// sessions, and config. The fixture stages history.jsonl, a sessions dir, and
+// .claude.json, so all three must appear.
+func TestApply_GlobalReferenceSubPhasesCoverFixedSingletons(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	recorder := progresstest.NewRecorder()
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+		Reporter: recorder.Reporter(progress.LevelInfo),
+	})
+	require.NoError(t, err)
+
+	subPhaseNames := globalReferenceSubPhaseNames(recorder.Events())
+	for _, singleton := range []string{"history", "sessions", "config"} {
+		assert.Contains(t, subPhaseNames, singleton,
+			"fixed singleton %q must open a sub-phase", singleton)
+	}
+}
+
+func TestApply_EmitsTopLevelPhasesInOrderWhenNotRefsOnly(t *testing.T) {
+	claudeHome, projectPath := setupOnDiskMoveFixture(t)
+
+	recorder := progresstest.NewRecorder()
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  projectPath,
+		NewPath:  filepath.Join(filepath.Dir(projectPath), "destination"),
+		Reporter: recorder.Reporter(progress.LevelInfo),
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t,
+		[]string{
+			"copy project data",
+			"rewrite project data",
+			"rewrite global references",
+			"copy project directory",
+			"verify",
+			"delete",
+		},
+		topLevelPhaseNames(recorder.Events()),
+		"a non-refs-only move copies the on-disk project directory between the global rewrite and verify",
+	)
+}
+
+// setupOnDiskMoveFixture stages a minimal Claude home whose project path is a
+// real on-disk directory under t.TempDir, so a non-refs-only Apply can copy it.
+// The encoded project data dir exists but holds no session UUIDs, so the
+// identity check is skipped rather than enforced.
+func setupOnDiskMoveFixture(t *testing.T) (claudeHome *claude.Home, projectPath string) {
+	t.Helper()
+
+	root := t.TempDir()
+	projectPath = filepath.Join(root, "source")
+
+	require.NoError(t, os.MkdirAll(projectPath, 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectPath, "file.txt"), []byte("source content"), 0o600))
+
+	claudeHome = &claude.Home{
+		Dir:        filepath.Join(root, "dotclaude"),
+		ConfigFile: filepath.Join(root, "dotclaude.json"),
+	}
+	encodedDir := claudeHome.ProjectDir(projectPath)
+	require.NoError(t, os.MkdirAll(encodedDir, 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(encodedDir, "marker"), []byte("encoded data"), 0o600))
+
+	return claudeHome, projectPath
 }
 
 func TestPlanCategoriesReturnsCanonicalOrder(t *testing.T) {
