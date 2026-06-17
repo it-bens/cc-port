@@ -63,25 +63,35 @@ func TestImport_EmitsTopLevelPhasesInOrder(t *testing.T) {
 	)
 }
 
-// TestImport_ExtractAdvancesMonotonically locks the extract counter to the real
-// staging iteration: PhaseAdvance.Done is cumulative, so it must be
-// non-decreasing, and at least one advance must fire because the fixture
-// archive stages non-metadata entries.
-func TestImport_ExtractAdvancesMonotonically(t *testing.T) {
+// TestImport_ExtractCountsEveryStagedEntry asserts the importer advances the
+// extract phase once per staged non-metadata entry: the final cumulative Done
+// must equal the phase's declared Total, so a single Advance covering all
+// entries at once (a per-entry-counting bug) would fail.
+func TestImport_ExtractCountsEveryStagedEntry(t *testing.T) {
 	recorder := progresstest.NewRecorder()
 	recordSuccessfulImport(t, recorder)
 
-	previousDone := int64(-1)
-	advances := 0
-	for _, advance := range progresstest.OfType[progress.PhaseAdvance](recorder.Events()) {
-		if len(advance.Path) != 1 || advance.Path[0] != "extract" {
-			continue
+	events := recorder.Events()
+
+	var extractStart progress.PhaseStart
+	foundStart := false
+	for _, start := range progresstest.OfType[progress.PhaseStart](events) {
+		if len(start.Path) == 1 && start.Path[0] == "extract" {
+			extractStart = start
+			foundStart = true
 		}
-		assert.GreaterOrEqual(t, advance.Done, previousDone,
-			"extract Done must not decrease")
-		previousDone = advance.Done
-		advances++
 	}
-	assert.Positive(t, advances,
-		"extract must advance at least once per staged archive entry")
+	require.True(t, foundStart, "extract phase must open")
+
+	var extractAdvances []progress.PhaseAdvance
+	for _, advance := range progresstest.OfType[progress.PhaseAdvance](events) {
+		if len(advance.Path) == 1 && advance.Path[0] == "extract" {
+			extractAdvances = append(extractAdvances, advance)
+		}
+	}
+	require.NotEmpty(t, extractAdvances, "extract must advance at least once")
+
+	lastAdvance := extractAdvances[len(extractAdvances)-1]
+	assert.Equal(t, extractStart.Total, lastAdvance.Done,
+		"extract Done must equal the number of staged entries")
 }

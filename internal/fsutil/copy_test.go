@@ -183,6 +183,30 @@ func TestCopyDirPreservesFileModTime(t *testing.T) {
 		"copied file mtime = %v, want %v", info.ModTime(), want)
 }
 
+func TestCopyDir_OnEntryFiresPerFileAndSymlinkNotDirectory(t *testing.T) {
+	source := t.TempDir()
+	nestedDir := filepath.Join(source, "nested")
+	require.NoError(t, os.Mkdir(nestedDir, 0o755)) //nolint:gosec // G301: test-controlled mode
+	deeperDir := filepath.Join(nestedDir, "deeper")
+	require.NoError(t, os.Mkdir(deeperDir, 0o755)) //nolint:gosec // G301: test-controlled mode
+
+	require.NoError(t, os.WriteFile(filepath.Join(source, "top.txt"), []byte("a"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(nestedDir, "mid.txt"), []byte("b"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(deeperDir, "leaf.txt"), []byte("c"), 0o600))
+	require.NoError(t, os.Symlink(filepath.Join(source, "top.txt"), filepath.Join(source, "link")))
+
+	const regularFiles = 3
+	const symlinks = 1
+
+	calls := 0
+	destination := filepath.Join(t.TempDir(), "dst")
+
+	require.NoError(t, CopyDir(t.Context(), source, destination, func() { calls++ }))
+
+	assert.Equal(t, regularFiles+symlinks, calls,
+		"onEntry must fire once per regular file and once per symlink, never for directories")
+}
+
 // closeErroringCloser wraps a real *os.File: writes pass through unchanged,
 // but Close() closes the real handle (to avoid leaks) and returns a synthetic
 // error. Tests use this to prove deferred Close errors propagate out of the
@@ -219,29 +243,6 @@ func TestCopyDir_CloseErrorPropagates(t *testing.T) {
 	require.Error(t, err, "CopyDir must surface the deferred close error")
 	require.ErrorIs(t, err, sentinel, "the synthetic sentinel must be in the error chain")
 	require.ErrorContains(t, err, "close destination")
-}
-
-func TestCopyDir_OnEntryFiresPerFileAndSymlinkNotDirectory(t *testing.T) {
-	source := t.TempDir()
-	nestedDir := filepath.Join(source, "nested")
-	require.NoError(t, os.Mkdir(nestedDir, 0o755)) //nolint:gosec // G301: test-controlled mode
-	deeperDir := filepath.Join(nestedDir, "deeper")
-	require.NoError(t, os.Mkdir(deeperDir, 0o755)) //nolint:gosec // G301: test-controlled mode
-
-	require.NoError(t, os.WriteFile(filepath.Join(source, "top.txt"), []byte("a"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(nestedDir, "mid.txt"), []byte("b"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(deeperDir, "leaf.txt"), []byte("c"), 0o600))
-	require.NoError(t, os.Symlink(filepath.Join(source, "top.txt"), filepath.Join(source, "link")))
-
-	const regularFiles = 3
-	const symlinks = 1
-
-	calls := 0
-	destination := filepath.Join(t.TempDir(), "dst")
-	require.NoError(t, CopyDir(t.Context(), source, destination, func() { calls++ }))
-
-	assert.Equal(t, regularFiles+symlinks, calls,
-		"onEntry must fire once per regular file and once per symlink, never for directories")
 }
 
 func TestCopyDir_AbortsOnCancelledContext(t *testing.T) {
