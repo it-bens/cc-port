@@ -122,6 +122,7 @@ func runMoveDryRun(
 	} else {
 		_, _ = fmt.Fprintf(stdout, "  ├ Transcripts (--rewrite-transcripts not set, skipping)\n")
 	}
+	_, _ = fmt.Fprintf(stdout, "  ├ Memory: %d replacements\n", movePlan.MemoryReplacements)
 	_, _ = fmt.Fprintln(stdout, "  │")
 
 	_, _ = fmt.Fprintf(

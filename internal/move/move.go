@@ -36,6 +36,7 @@ type Plan struct {
 
 	ConfigBlockRekey       bool
 	TranscriptReplacements int
+	MemoryReplacements     int
 
 	HistoryMalformedLines []int
 	RulesReport           scan.Report
@@ -138,6 +139,13 @@ func populatePlanCounts(
 		if err != nil {
 			return err
 		}
+	}
+
+	plan.MemoryReplacements, err = countMemoryReplacements(
+		ctx, locations, moveOptions, plan.OldProjectDir, plan.NewProjectDir,
+	)
+	if err != nil {
+		return err
 	}
 
 	snapshots, err := countFileHistorySnapshots(ctx, locations)
