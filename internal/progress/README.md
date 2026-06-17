@@ -95,14 +95,14 @@ None at runtime. A dropped verbose Detail is the intended outcome, not an error.
 
 ### Reporter injection
 
-A command receives its `Reporter` through its Options struct, never a package global. An unset `Reporter` field (nil) is replaced with `Noop()` by the command before use. The cmd layer is the sole renderer composer: `runWithProgress` in `cmd/cc-port` builds the renderer from the verbosity flags and constructs the Reporter, then hands it to the command.
+A command receives its `Reporter` through its Options struct, never a package global. An unset `Reporter` field (nil) is replaced with `Noop()` by the command before use. `runWithProgress` in `cmd/cc-port` assembles a `Selection` from the verbosity flags and calls `Pick` for the renderer and level (§Renderer selection). It wraps them in a Reporter and threads that into the command.
 
 Callers: `cmd/cc-port` (`runWithProgress`); every command's Options struct (`internal/move`, `internal/export`, `internal/importer`, `internal/sync`).
 
 #### Handled
 
 - Each command's Options struct carries a `Reporter` field defaulting to `Noop()`, so a command driven without progress wiring still runs.
-- Renderer construction and the TTY probe live in `cmd/cc-port`, keeping the package free of terminal-detection policy at its call sites.
+- `runWithProgress` is the only site that assembles the `Selection` and wraps the Reporter; command modules hold a `Reporter` and never select or construct a renderer (§Renderer selection).
 
 #### Refused
 
