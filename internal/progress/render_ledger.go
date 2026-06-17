@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/progress"
@@ -23,28 +24,39 @@ const spinnerInterval = 100 * time.Millisecond
 // model. It is selected when the sink is a TTY and neither --json nor --quiet
 // is set.
 type LedgerRenderer struct {
-	events  chan Event
-	program *tea.Program
-	done    chan struct{}
-	runErr  error
+	events    chan Event
+	program   *tea.Program
+	done      chan struct{}
+	runErr    error
+	interrupt chan struct{}
 }
 
 // NewLedgerRenderer builds a LedgerRenderer writing to output and starts its
-// bubbletea program in a goroutine. SIGINT is left to cobra via
-// WithoutSignalHandler; the Cancelled event drives the interrupted render.
+// bubbletea program in a goroutine. The program owns terminal input so bubbletea
+// consumes the capability-query responses the terminal emits at startup;
+// without that, those bytes leak to the shell prompt after exit.
+// WithoutSignalHandler keeps OS signals with the central handler in the cmd
+// layer. A Ctrl-C key press closes the interrupt channel exposed by Interrupted,
+// which the cmd layer routes to context cancellation.
 func NewLedgerRenderer(output io.Writer) *LedgerRenderer {
 	events := make(chan Event, ledgerChannelDepth)
-	model := newLedgerModel(events)
-	program := tea.NewProgram(
-		model,
+	interrupt := make(chan struct{})
+	model := newLedgerModel(events, interrupt)
+
+	options := []tea.ProgramOption{
 		tea.WithOutput(output),
-		tea.WithInput(nil),
 		tea.WithoutSignalHandler(),
-	)
+	}
+	if ledgerInput != nil {
+		options = append(options, tea.WithInput(ledgerInput))
+	}
+	program := tea.NewProgram(model, options...)
+
 	renderer := &LedgerRenderer{
-		events:  events,
-		program: program,
-		done:    make(chan struct{}),
+		events:    events,
+		program:   program,
+		done:      make(chan struct{}),
+		interrupt: interrupt,
 	}
 	go func() {
 		defer close(renderer.done)
@@ -52,6 +64,13 @@ func NewLedgerRenderer(output io.Writer) *LedgerRenderer {
 		renderer.runErr = err
 	}()
 	return renderer
+}
+
+// Interrupted reports the channel closed when the user presses Ctrl-C while the
+// ledger owns the terminal. The cmd layer selects on it to cancel the work
+// context.
+func (renderer *LedgerRenderer) Interrupted() <-chan struct{} {
+	return renderer.interrupt
 }
 
 // Consume applies the drop policy: verbose/debug Detail events are dropped on
@@ -85,12 +104,14 @@ func (renderer *LedgerRenderer) Finalize() error {
 // ledgerModel is the bubbletea model: a tree of phase nodes plus the terminal
 // outcome. It owns the event channel; a poll command drains it into Update.
 type ledgerModel struct {
-	events   <-chan Event
-	roots    []*phaseNode
-	index    map[string]*phaseNode
-	spinner  spinner.Model
-	warnings int
-	outcome  terminalOutcome
+	events        <-chan Event
+	interrupt     chan struct{}
+	interruptOnce sync.Once
+	roots         []*phaseNode
+	index         map[string]*phaseNode
+	spinner       spinner.Model
+	warnings      int
+	outcome       terminalOutcome
 }
 
 // terminalOutcome records how the run ended so View can paint the final frame.
@@ -136,12 +157,19 @@ type channelClosedMsg struct{}
 // spinnerTickMsg drives a single spinner frame.
 type spinnerTickMsg struct{}
 
-func newLedgerModel(events <-chan Event) *ledgerModel {
+func newLedgerModel(events <-chan Event, interrupt chan struct{}) *ledgerModel {
 	return &ledgerModel{
-		events:  events,
-		index:   make(map[string]*phaseNode),
-		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+		events:    events,
+		interrupt: interrupt,
+		index:     make(map[string]*phaseNode),
+		spinner:   spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
+}
+
+// signalInterrupt closes the interrupt channel exactly once so the cmd layer can
+// cancel the work context. Repeated Ctrl-C is idempotent.
+func (model *ledgerModel) signalInterrupt() {
+	model.interruptOnce.Do(func() { close(model.interrupt) })
 }
 
 func (model *ledgerModel) Init() tea.Cmd {
@@ -178,6 +206,11 @@ func (model *ledgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return model, nextTick
 	case Event:
 		return model.applyEvent(typed)
+	case tea.KeyPressMsg:
+		if typed.String() == "ctrl+c" {
+			model.signalInterrupt()
+		}
+		return model, nil
 	default:
 		return model, nil
 	}

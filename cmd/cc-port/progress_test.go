@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -75,6 +76,49 @@ func TestRunWithProgress_JSONModeEmitsEventObjectsThroughSink(t *testing.T) {
 	assert.Contains(t, rendered, `{"v":1,`)
 	assert.Contains(t, rendered, `"event":"phase_start"`)
 	assert.Contains(t, rendered, `"event":"phase_end"`)
+}
+
+type fakeInterruptibleRenderer struct {
+	interrupt chan struct{}
+}
+
+func (fakeInterruptibleRenderer) Consume(progress.Event) {}
+func (fakeInterruptibleRenderer) Finalize() error        { return nil }
+func (renderer fakeInterruptibleRenderer) Interrupted() <-chan struct{} {
+	return renderer.interrupt
+}
+
+type fakePlainRenderer struct{}
+
+func (fakePlainRenderer) Consume(progress.Event) {}
+func (fakePlainRenderer) Finalize() error        { return nil }
+
+func TestWireInterrupt_CancelsContextOnInterrupt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	renderer := fakeInterruptibleRenderer{interrupt: make(chan struct{})}
+
+	wireInterrupt(ctx, cancel, renderer)
+	close(renderer.interrupt)
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("context was not cancelled after interrupt")
+	}
+}
+
+func TestWireInterrupt_SkipsNonInterruptibleRenderer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	wireInterrupt(ctx, cancel, fakePlainRenderer{})
+
+	select {
+	case <-ctx.Done():
+		t.Fatal("context cancelled for a non-interruptible renderer")
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
 func readSink(t *testing.T, sinkPath string) string {

@@ -28,8 +28,12 @@ func runWithProgress(cmd *cobra.Command, work func(ctx context.Context, reporter
 	renderer, level := progress.Pick(selection)
 	reporter := progress.NewReporter(renderer, level)
 
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
+
+	wireInterrupt(ctx, cancel, renderer)
 
 	workErr := work(ctx, reporter)
 	switch {
@@ -42,6 +46,24 @@ func runWithProgress(cmd *cobra.Command, work func(ctx context.Context, reporter
 	}
 
 	return errors.Join(workErr, renderer.Finalize())
+}
+
+// wireInterrupt routes an interactive renderer's interrupt signal to context
+// cancellation. Renderers that do not own interactive input do not implement
+// progress.Interruptible and are skipped, leaving signal.NotifyContext as their
+// sole cancellation source.
+func wireInterrupt(ctx context.Context, cancel context.CancelFunc, renderer progress.Renderer) {
+	interruptible, ok := renderer.(progress.Interruptible)
+	if !ok {
+		return
+	}
+	go func() {
+		select {
+		case <-interruptible.Interrupted():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 }
 
 func selectionFromFlags(cmd *cobra.Command) (progress.Selection, error) {

@@ -115,7 +115,7 @@ None at runtime. A nil `Reporter` on an Options struct is replaced with `Noop()`
 
 ## Quirks
 
-The unexported package vars `now` and `isTTY` are the only package-level mutable state. They are seams a test reassigns under `t.Cleanup` to pin timestamps, durations, and terminal detection. Production never reassigns them.
+The unexported package vars `now`, `isTTY`, and `ledgerInput` are the only package-level mutable state. They are seams a test reassigns under `t.Cleanup` to pin timestamps, durations, terminal detection, and the ledger program's input. The `ledgerInput` seam supplies a non-terminal reader so the program does not open a real TTY. Production never reassigns them; `ledgerInput` stays nil so bubbletea opens the controlling terminal itself.
 
 Phases are determinate by file count where the iteration pre-enumerates its work list, so `PhaseStart.Total` carries the real count. The two streaming copy phases in `internal/move` are the documented exception: they open with `Total` zero and drive an indeterminate live counter through `CopyDir`'s `onEntry` callback, avoiding a second metadata walk just to learn the count up front. See `internal/move/README.md` §Source mtime preservation (move) for the copy phases themselves.
 

@@ -6,7 +6,7 @@
 - A command receives its Reporter through its Options struct, never a package global; a nil Reporter is replaced with `Noop()` by the command (README §Reporter injection).
 - Verbose and debug `Detail` events drop on Ledger backpressure; phase and terminal events block (README §Drop policy).
 - Select renderers and detect the terminal only through `Pick` and the `isTTY` seam; add no second selection path or ad-hoc terminal check (README §Renderer selection).
-- The `now` and `isTTY` package vars are the only package-level mutable state, reassigned only by tests under `t.Cleanup` (README §Quirks).
+- The `now`, `isTTY`, and `ledgerInput` package vars are the only package-level mutable state, reassigned only by tests under `t.Cleanup` (README §Quirks).
 
 ## Navigation
 

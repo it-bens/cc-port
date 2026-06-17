@@ -3,9 +3,11 @@ package progress
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	teatest "github.com/charmbracelet/x/exp/teatest/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +18,7 @@ import (
 // run (or sends a terminal event, which quits on its own).
 func runLedger(t *testing.T, events chan Event, feed func()) []byte {
 	t.Helper()
-	model := newLedgerModel(events)
+	model := newLedgerModel(events, make(chan struct{}))
 	test := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(80, 24))
 
 	feed()
@@ -167,7 +169,39 @@ func TestLedgerDropsVerboseDetailUnderBackpressure(t *testing.T) {
 	assert.Equal(t, int64(1), advance.Done)
 }
 
+func TestLedgerSignalsInterruptOnCtrlC(t *testing.T) {
+	interrupt := make(chan struct{})
+	model := newLedgerModel(make(chan Event, ledgerChannelDepth), interrupt)
+
+	_, cmd := model.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+
+	assert.Nil(t, cmd)
+	select {
+	case <-interrupt:
+	default:
+		t.Fatal("ctrl+c did not close the interrupt channel")
+	}
+}
+
+func TestLedgerIgnoresNonCtrlCKeys(t *testing.T) {
+	interrupt := make(chan struct{})
+	model := newLedgerModel(make(chan Event, ledgerChannelDepth), interrupt)
+
+	_, cmd := model.Update(tea.KeyPressMsg{Code: 'a'})
+
+	assert.Nil(t, cmd)
+	select {
+	case <-interrupt:
+		t.Fatal("a non-ctrl+c key closed the interrupt channel")
+	default:
+	}
+}
+
 func TestLedgerFinalizeSucceedsAfterCleanRun(t *testing.T) {
+	original := ledgerInput
+	ledgerInput = strings.NewReader("")
+	t.Cleanup(func() { ledgerInput = original })
+
 	var output bytes.Buffer
 	renderer := NewLedgerRenderer(&output)
 	renderer.Consume(PhaseStart{Path: []string{"copy"}, Total: 1, Unit: UnitFiles, At: time.Now()})
