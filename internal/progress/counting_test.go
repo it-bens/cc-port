@@ -46,13 +46,13 @@ func (writer *shortWriter) Write(p []byte) (int, error) {
 	return written, writer.err
 }
 
-// shortReaderAt delivers only the first deliver bytes for any ReadAt.
-type shortReaderAt struct {
+// shortReader delivers only the first deliver bytes per Read call.
+type shortReader struct {
 	deliver int
 	err     error
 }
 
-func (reader *shortReaderAt) ReadAt(p []byte, _ int64) (int, error) {
+func (reader *shortReader) Read(p []byte) (int, error) {
 	read := reader.deliver
 	if read > len(p) {
 		read = len(p)
@@ -94,13 +94,35 @@ func TestCountingWriterDoesNotAdvanceOnZeroBytes(t *testing.T) {
 	assert.Empty(t, handle.advances)
 }
 
-func TestCountingReaderAtAdvancesByBytesRead(t *testing.T) {
+func TestCountingReaderAdvancesByBytesRead(t *testing.T) {
 	handle := &recordingHandle{}
-	reader := CountingReaderAt(&shortReaderAt{deliver: 4}, handle)
+	reader := CountingReader(&shortReader{deliver: 4}, handle)
 
-	n, err := reader.ReadAt(make([]byte, 16), 100)
+	n, err := reader.Read(make([]byte, 16))
 
 	require.NoError(t, err)
 	assert.Equal(t, 4, n)
 	assert.Equal(t, []int64{4}, handle.advances)
+}
+
+func TestCountingReaderAdvancesByShortReadEvenWithError(t *testing.T) {
+	handle := &recordingHandle{}
+	readErr := errors.New("connection reset")
+	reader := CountingReader(&shortReader{deliver: 3, err: readErr}, handle)
+
+	n, err := reader.Read(make([]byte, 10))
+
+	require.ErrorIs(t, err, readErr)
+	assert.Equal(t, 3, n)
+	assert.Equal(t, []int64{3}, handle.advances)
+}
+
+func TestCountingReaderDoesNotAdvanceOnZeroBytes(t *testing.T) {
+	handle := &recordingHandle{}
+	reader := CountingReader(&shortReader{deliver: 0, err: errors.New("closed")}, handle)
+
+	_, err := reader.Read(make([]byte, 4))
+
+	require.Error(t, err)
+	assert.Empty(t, handle.advances)
 }

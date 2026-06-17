@@ -30,7 +30,8 @@ The Reporter observes quantities only: file counts, byte totals, phase names, du
   - `Selection`: the flag-derived intent (`JSON`, `Quiet`, `Verbose`, `Debug`, `Output`).
   - `Pick(selection) (Renderer, Level)`: maps a `Selection` to a concrete renderer and active level. See §Contracts §Renderer selection.
 - **Byte counters**
-  - `CountingWriter`, `CountingReaderAt`: wrap an `io.Writer`/`io.ReaderAt` so each successful operation advances a `PhaseHandle` by the bytes actually moved, not the bytes offered.
+  - `CountingWriter`: wraps an `io.Writer` so each successful write advances a `PhaseHandle` by the bytes actually written. Used by push.
+  - `CountingReader`: wraps an `io.Reader` so each successful read advances a `PhaseHandle` by the bytes actually read. Used by pull's streaming download stage.
 
 ## Contracts
 
@@ -43,7 +44,7 @@ Callers: every command path that holds a `Reporter` (`internal/move`, `internal/
 #### Handled
 
 - Phase totals and advances carry integer counts and a `Unit`, never the content they count.
-- `CountingWriter`/`CountingReaderAt` advance by byte length alone; the bytes flow through the wrapped stream untouched and unobserved.
+- `CountingWriter` and `CountingReader` advance by byte length alone; the bytes flow through the wrapped stream untouched and unobserved.
 
 #### Refused
 
@@ -122,4 +123,4 @@ Phases are determinate by file count where the iteration pre-enumerates its work
 
 The `progresstest` subpackage supplies `Recorder`, a recording `Renderer` for command-wiring tests. `Recorder.Reporter(level)` hands out a real `Reporter` built via `NewReporter`, so a test exercises the genuine level filter, path nesting, and `Phase`/`SubPhase` aliasing rather than a hand-rolled stand-in. `Recorder.Events()` returns the recorded events in emission order; `OfType[T](events)` filters them to one concrete event type.
 
-Unit tests in `event`/`reporter`/`pick`/`counting`/`render_*` test files cover the level filter, path nesting, `Phase`/`SubPhase` aliasing, terminal-method panics on a handle, the `Pick` precedence and level matrix, the counting wrappers' advance-by-bytes-moved behavior, and each renderer's `Consume`/`Finalize` output. `render_golden_test.go` pins the Ledger frames. `progresstest/recorder_test.go` covers the recorder.
+Unit tests in `event`/`reporter`/`pick`/`counting`/`render_*` test files cover the level filter, path nesting, `Phase`/`SubPhase` aliasing, terminal-method panics on a handle, the `Pick` precedence and level matrix, the `CountingWriter` and `CountingReader` advance-by-bytes-moved behavior, and each renderer's `Consume`/`Finalize` output. `render_golden_test.go` pins the Ledger frames. `progresstest/recorder_test.go` covers the recorder.

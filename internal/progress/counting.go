@@ -22,19 +22,19 @@ func (writer *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// CountingReaderAt wraps r so each positional read advances handle by the bytes
+// CountingReader wraps r so each successful read advances handle by the bytes
 // actually read.
-func CountingReaderAt(r io.ReaderAt, handle PhaseHandle) io.ReaderAt {
-	return &countingReaderAt{inner: r, handle: handle}
+func CountingReader(r io.Reader, handle PhaseHandle) io.Reader {
+	return &countingReader{inner: r, handle: handle}
 }
 
-type countingReaderAt struct {
-	inner  io.ReaderAt
+type countingReader struct {
+	inner  io.Reader
 	handle PhaseHandle
 }
 
-func (reader *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
-	n, err := reader.inner.ReadAt(p, off)
+func (reader *countingReader) Read(p []byte) (int, error) {
+	n, err := reader.inner.Read(p)
 	if n > 0 {
 		reader.handle.Advance(int64(n))
 	}

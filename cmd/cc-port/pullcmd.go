@@ -74,16 +74,21 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 	return cmd
 }
 
-// openArchiveSource opens the strict reader pipeline for pull. Translates
-// remote.ErrNotFound and encrypt.ErrPassphraseRequired into sync sentinels;
-// other errors propagate wrapped.
+// openArchiveSource opens the strict reader pipeline for pull. The counting
+// stage is inserted after remote.Source so the download phase measures the
+// encrypted bytes coming off the remote — the real network transfer — exactly
+// once. Translates remote.ErrNotFound and encrypt.ErrPassphraseRequired into
+// sync sentinels; other errors propagate wrapped.
 func openArchiveSource(
 	ctx context.Context,
 	r *remote.Remote,
 	name, pass string,
+	reporter progress.Reporter,
 ) (pipeline.Source, error) {
+	counter := &downloadCounterStage{reporter: reporter}
 	src, err := pipeline.RunReader(ctx, []pipeline.ReaderStage{
 		&remote.Source{Remote: r, Key: name},
+		counter,
 		&encrypt.ReaderStage{Pass: pass, Mode: encrypt.Strict},
 		&pipeline.MaterializeStage{},
 	})
@@ -95,13 +100,14 @@ func openArchiveSource(
 	case err != nil:
 		return pipeline.Source{}, fmt.Errorf("open archive: %w", err)
 	}
+	counter.End()
 	return src, nil
 }
 
-// runPullCmd is the pull subcommand body. The named return + deferred
-// closes pattern is load-bearing: remote.Remote owns a gocloud bucket
-// whose Close error must surface, and source.Close releases the
-// decrypt-tempfile.
+// runPullCmd is the pull subcommand body. The named return on the
+// runWithProgress closure is load-bearing: source.Close error must surface
+// joined into the closure's return value. The remote close defer sits outside
+// the closure so it covers both pipeline errors and successful drains.
 func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error) {
 	apply, _ := cmd.Flags().GetBool("apply")
 
@@ -115,27 +121,19 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		}
 	}()
 
-	source, err := openArchiveSource(cmd.Context(), r, opts.Name, passphrase)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := source.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("close source: %w", cerr))
-		}
-	}()
-
 	var result *importer.Result
-	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) (err error) {
 		opts.Reporter = reporter
 
-		// The download phase wraps source.ReaderAt so every positional read
-		// through the materialized archive — the manifest read in PlanPull and
-		// importer's multi-pass body reads in ExecutePull — advances the byte
-		// counter. RemoteSize is the materialized archive size; importer's
-		// multiple passes mean the counter can exceed it.
-		downloadPhase := reporter.Phase("download", source.Size, progress.UnitBytes)
-		source.ReaderAt = progress.CountingReaderAt(source.ReaderAt, downloadPhase)
+		source, err := openArchiveSource(ctx, r, opts.Name, passphrase, reporter)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if cerr := source.Close(); cerr != nil {
+				err = errors.Join(err, fmt.Errorf("close source: %w", cerr))
+			}
+		}()
 
 		plan, err := syncc.PlanPull(ctx, opts, source)
 		if err != nil {
@@ -147,7 +145,6 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		}
 
 		if !apply {
-			downloadPhase.End("")
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); err != nil {
 				return fmt.Errorf("write apply hint: %w", err)
 			}
@@ -166,7 +163,6 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		if err != nil {
 			return err
 		}
-		downloadPhase.End("")
 		result = runResult
 		return nil
 	})
