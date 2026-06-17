@@ -142,7 +142,7 @@ There are no per-group staging helpers. The unified `importPlan.sessionKeyedStag
 
 Promotion order after the encoded project directory, history, config, and file-history entries follows `transport.SessionKeyedTargets` order: todos, usage-data/session-meta, usage-data/facets, plugins-data, tasks.
 
-`importPlan.cleanupTemps()` returns `error`. It aggregates `os.Remove` and `os.RemoveAll` failures via `errors.Join` so the caller logs a single diagnostic on an already-failed import path.
+`importPlan.cleanupTemps()` returns `error`. It aggregates removal failures via `errors.Join` so the caller logs a single diagnostic on an already-failed import path. A staged temp is recorded as soon as its path is known, before the streaming write that may fail, so a temp left behind by a mid-stream failure is still reclaimed. An `fs.ErrNotExist` from `os.Remove` counts as success: a temp whose creation failed before any byte hit disk is already absent, not a cleanup error.
 
 ### Strict archive contract
 

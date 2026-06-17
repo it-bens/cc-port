@@ -457,26 +457,29 @@ func (plan *importPlan) cleanupTemps() error {
 		}
 	}
 	if plan.historyStaged {
-		if err := os.Remove(plan.tempHistoryFile); err != nil {
-			errs = append(errs, err)
-		}
+		errs = appendIfRealError(errs, os.Remove(plan.tempHistoryFile))
 	}
 	if plan.configStaged {
-		if err := os.Remove(plan.tempConfigFile); err != nil {
-			errs = append(errs, err)
-		}
+		errs = appendIfRealError(errs, os.Remove(plan.tempConfigFile))
 	}
 	for _, entry := range plan.fileHistoryFiles {
-		if err := os.Remove(entry.tempPath); err != nil {
-			errs = append(errs, err)
-		}
+		errs = appendIfRealError(errs, os.Remove(entry.tempPath))
 	}
 	for _, entry := range plan.sessionKeyedStagedFiles {
-		if err := os.Remove(entry.tempPath); err != nil {
-			errs = append(errs, err)
-		}
+		errs = appendIfRealError(errs, os.Remove(entry.tempPath))
 	}
 	return errors.Join(errs...)
+}
+
+// appendIfRealError appends err to errs unless it is nil or fs.ErrNotExist. A
+// temp whose creation failed before the file existed is recorded so a later
+// cleanup attempt is honest about it; its absence here is success, not an
+// error worth surfacing.
+func appendIfRealError(errs []error, err error) []error {
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		return errs
+	}
+	return append(errs, err)
 }
 
 // newImportPlan computes the temp-path for every destination the importer
@@ -582,11 +585,12 @@ func routeArchiveEntry(
 		return bytesRead, append(historyAppends, content), configBlock, nil
 	case strings.HasPrefix(name, "file-history/"):
 		staged, bytesRead, err := stageFileHistoryFromZip(claudeHome.FileHistoryDir(), zipFile)
-		if err != nil {
-			return bytesRead, historyAppends, configBlock, err
+		// Record any temp the stager created, even on error, so cleanupTemps
+		// can reclaim it. An empty tempPath means no temp was created.
+		if staged.tempPath != "" {
+			plan.fileHistoryFiles = append(plan.fileHistoryFiles, staged)
 		}
-		plan.fileHistoryFiles = append(plan.fileHistoryFiles, staged)
-		return bytesRead, historyAppends, configBlock, nil
+		return bytesRead, historyAppends, configBlock, err
 	case name == "config.json":
 		content, bytesRead, err := readAndResolve(zipFile, resolutions)
 		if err != nil {
@@ -609,11 +613,12 @@ func dispatchSessionKeyed(
 			continue
 		}
 		staged, bytesRead, err := stageSessionKeyedFileFromZip(claudeHome, target, zipFile, resolutions)
-		if err != nil {
-			return true, bytesRead, err
+		// Record any temp the stager created, even on error, so cleanupTemps
+		// can reclaim it. An empty tempPath means no temp was created.
+		if staged.tempPath != "" {
+			plan.sessionKeyedStagedFiles = append(plan.sessionKeyedStagedFiles, staged)
 		}
-		plan.sessionKeyedStagedFiles = append(plan.sessionKeyedStagedFiles, staged)
-		return true, bytesRead, nil
+		return true, bytesRead, err
 	}
 	return false, 0, nil
 }
@@ -718,14 +723,18 @@ func stageFileHistoryFromZip(
 	if err != nil {
 		return stagedFile{}, 0, err
 	}
+	// Record the temp before any call that may create it on disk. The error
+	// paths below return this populated stagedFile so the caller can hand it
+	// to cleanupTemps; an empty record would orphan a half-written temp.
+	staged := stagedFile{finalPath: finalPath, tempPath: tempPath}
 	bytesRead, err := streamVerbatimToTemp(tempPath, zipFile, filePerm)
 	if err != nil {
-		return stagedFile{}, bytesRead, err
+		return staged, bytesRead, err
 	}
 	if err := applyMtime(tempPath, zipFile.Modified); err != nil {
-		return stagedFile{}, bytesRead, err
+		return staged, bytesRead, err
 	}
-	return stagedFile{finalPath: finalPath, tempPath: tempPath}, bytesRead, nil
+	return staged, bytesRead, nil
 }
 
 // stageSessionKeyedFileFromZip streams one session-keyed archive entry to
@@ -745,14 +754,17 @@ func stageSessionKeyedFileFromZip(
 	if err != nil {
 		return stagedFile{}, 0, err
 	}
+	// Record the temp before any call that may create it on disk, so the
+	// error paths below return a record cleanupTemps can reclaim.
+	staged := stagedFile{group: target.Group, finalPath: finalPath, tempPath: tempPath}
 	bytesRead, err := streamResolveToTemp(tempPath, zipFile, resolutions, filePerm)
 	if err != nil {
-		return stagedFile{}, bytesRead, err
+		return staged, bytesRead, err
 	}
 	if err := applyMtime(tempPath, zipFile.Modified); err != nil {
-		return stagedFile{}, bytesRead, err
+		return staged, bytesRead, err
 	}
-	return stagedFile{group: target.Group, finalPath: finalPath, tempPath: tempPath}, bytesRead, nil
+	return staged, bytesRead, nil
 }
 
 // streamResolveIntoRoot streams a zip entry through the per-entry cap and
