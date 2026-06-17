@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // forceTTY pins isTTY to value under cleanup so Pick's TTY branch is
@@ -36,11 +37,8 @@ func TestPickChoosesLedgerOnTTY(t *testing.T) {
 	forceTTY(t, true)
 	renderer, _ := Pick(Selection{})
 	ledger, ok := renderer.(*LedgerRenderer)
-	assert.True(t, ok, "expected *LedgerRenderer, got %T", renderer)
-	if ok {
-		// Tear down the program goroutine started at construction.
-		assert.NoError(t, ledger.Finalize())
-	}
+	require.True(t, ok, "expected *LedgerRenderer, got %T", renderer)
+	assert.NoError(t, ledger.Finalize())
 }
 
 func TestPickChoosesStreamOffTTY(t *testing.T) {

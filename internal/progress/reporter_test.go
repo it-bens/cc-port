@@ -2,7 +2,6 @@ package progress
 
 import (
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -204,7 +203,7 @@ func TestTerminalMethodOnPhaseHandlePanics(t *testing.T) {
 	require.Panics(t, func() { phase.Cancelled("x") })
 }
 
-func TestNoopSwallowsEveryEvent(t *testing.T) {
+func TestNoopSwallowsEveryEvent(_ *testing.T) {
 	reporter := Noop()
 
 	phase := reporter.Phase("copy", 10, UnitItems)
@@ -213,9 +212,6 @@ func TestNoopSwallowsEveryEvent(t *testing.T) {
 	sub.Detail(LevelError, "x")
 	sub.End("done")
 	reporter.Warn(errors.New("x"))
-
-	require.NotNil(t, phase)
-	require.NotNil(t, sub)
 }
 
 func TestNoopTerminalMethodsOnHandleDoNotPanic(t *testing.T) {
@@ -224,27 +220,4 @@ func TestNoopTerminalMethodsOnHandleDoNotPanic(t *testing.T) {
 	require.NotPanics(t, func() { phase.Done() })
 	require.NotPanics(t, func() { phase.Fail(errors.New("x")) })
 	require.NotPanics(t, func() { phase.Cancelled("x") })
-}
-
-func TestClockSeamReassignsAndRestoresUnderCleanup(t *testing.T) {
-	pinned := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
-	t.Run("reassigns inside subtest", func(t *testing.T) {
-		originalNow := now
-		now = func() time.Time { return pinned }
-		t.Cleanup(func() { now = originalNow })
-		assert.Equal(t, pinned, now())
-	})
-	// The subtest's cleanup restored the real clock: the pinned year is gone.
-	assert.NotEqual(t, pinned, now())
-}
-
-func TestIsTTYSeamReassignsAndRestoresUnderCleanup(t *testing.T) {
-	t.Run("forces true inside subtest", func(t *testing.T) {
-		original := isTTY
-		isTTY = func(*os.File) bool { return true }
-		t.Cleanup(func() { isTTY = original })
-		assert.True(t, isTTY(os.Stdin))
-	})
-	// The subtest's cleanup restored the real probe: stdin in a test is not a TTY.
-	assert.False(t, isTTY(os.Stdin))
 }

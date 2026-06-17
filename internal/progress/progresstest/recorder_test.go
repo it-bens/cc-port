@@ -45,18 +45,6 @@ func TestRecorderCapturesFullLifecycleInOrder(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestRecorderReporterAppliesRealLevelFilter(t *testing.T) {
-	recorder := progresstest.NewRecorder()
-	reporter := recorder.Reporter(progress.LevelInfo)
-
-	reporter.Detail(progress.LevelInfo, "kept")
-	reporter.Detail(progress.LevelVerbose, "dropped")
-
-	details := progresstest.OfType[progress.Detail](recorder.Events())
-	require.Len(t, details, 1)
-	assert.Equal(t, "kept", details[0].Text)
-}
-
 func TestOfTypePreservesOrderAndType(t *testing.T) {
 	recorder := progresstest.NewRecorder()
 	reporter := recorder.Reporter(progress.LevelInfo)

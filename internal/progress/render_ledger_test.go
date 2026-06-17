@@ -145,7 +145,7 @@ func TestLedgerDropsVerboseDetailUnderBackpressure(t *testing.T) {
 	assert.Equal(t, int64(1), advance.Done)
 }
 
-func TestLedgerFinalizeReturnsRunError(t *testing.T) {
+func TestLedgerFinalizeSucceedsAfterCleanRun(t *testing.T) {
 	var output bytes.Buffer
 	renderer := NewLedgerRenderer(&output)
 	renderer.Consume(PhaseStart{Path: []string{"copy"}, Total: 1, Unit: UnitFiles, At: time.Now()})
