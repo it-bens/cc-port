@@ -121,6 +121,7 @@ type phaseNode struct {
 	done           int64
 	unit           Unit
 	children       []*phaseNode
+	startedAt      time.Time
 	ended          bool
 	summary        string
 	duration       time.Duration
@@ -225,9 +226,10 @@ func (model *ledgerModel) applyEvent(event Event) (tea.Model, tea.Cmd) {
 
 func (model *ledgerModel) startPhase(event PhaseStart) {
 	node := &phaseNode{
-		path:  event.Path,
-		total: event.Total,
-		unit:  event.Unit,
+		path:      event.Path,
+		total:     event.Total,
+		unit:      event.Unit,
+		startedAt: event.At,
 	}
 	if event.Total > 0 {
 		node.bar = progress.New()
@@ -335,7 +337,12 @@ func (model *ledgerModel) writeNode(builder *strings.Builder, node *phaseNode, d
 	case node.ended:
 		fmt.Fprintf(builder, "%s✓ %s  %s  %s\n", indent, name, node.summary, node.duration)
 	default:
-		fmt.Fprintf(builder, "%s%s %s  %s\n", indent, model.spinner.View(), name, model.counter(node))
+		// Live elapsed mirrors the ended branch's node.duration on every
+		// in-progress node, not only leaves, so the active render stays
+		// symmetric with the completed render. Truncate to whole seconds so the
+		// value is stable across the 10 Hz spinner re-renders.
+		elapsed := now().Sub(node.startedAt).Truncate(time.Second)
+		fmt.Fprintf(builder, "%s%s %s  %s  %s\n", indent, model.spinner.View(), name, model.counter(node), elapsed)
 	}
 	for _, child := range node.children {
 		model.writeNode(builder, child, depth+1)

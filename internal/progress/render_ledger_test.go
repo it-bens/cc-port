@@ -41,6 +41,28 @@ func TestLedgerRendersCompletedPhaseAndDone(t *testing.T) {
 	assert.Contains(t, string(output), "done")
 }
 
+func TestLedgerShowsLiveElapsedOnActivePhase(t *testing.T) {
+	// Pin now to a constant 3s after the phase start so the live elapsed is
+	// stable across the many View() calls the 10 Hz spinner triggers. A
+	// per-call-advancing clock would jitter the rendered value.
+	base := time.Date(2026, time.June, 16, 9, 0, 0, 0, time.UTC)
+	original := now
+	now = func() time.Time { return base.Add(3 * time.Second) }
+	t.Cleanup(func() { now = original })
+
+	events := make(chan Event, ledgerChannelDepth)
+	output := runLedger(t, events, func() {
+		events <- PhaseStart{Path: []string{"copy"}, Total: 10, Unit: UnitFiles, At: base}
+		events <- PhaseAdvance{Path: []string{"copy"}, Done: 4}
+		// No terminal event: closing the channel captures the still-active frame.
+		close(events)
+	})
+
+	assert.Contains(t, string(output), "copy")
+	assert.Contains(t, string(output), "4/10 files")
+	assert.Contains(t, string(output), "3s")
+}
+
 func TestLedgerRendersInterruptedOnCancel(t *testing.T) {
 	events := make(chan Event, ledgerChannelDepth)
 	output := runLedger(t, events, func() {
