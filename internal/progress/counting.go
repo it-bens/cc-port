@@ -22,8 +22,9 @@ func (writer *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// CountingReader wraps r so each successful read advances handle by the bytes
-// actually read.
+// CountingReader wraps r so each read advances handle by the bytes actually
+// read, not the bytes requested. A short read that also returns an error still
+// advances by what moved.
 func CountingReader(r io.Reader, handle PhaseHandle) io.Reader {
 	return &countingReader{inner: r, handle: handle}
 }

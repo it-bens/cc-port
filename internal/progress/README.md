@@ -30,8 +30,8 @@ The Reporter observes quantities only: file counts, byte totals, phase names, du
   - `Selection`: the flag-derived intent (`JSON`, `Quiet`, `Verbose`, `Debug`, `Output`).
   - `Pick(selection) (Renderer, Level)`: maps a `Selection` to a concrete renderer and active level. See §Contracts §Renderer selection.
 - **Byte counters**
-  - `CountingWriter`: wraps an `io.Writer` so each successful write advances a `PhaseHandle` by the bytes actually written. Used by push.
-  - `CountingReader`: wraps an `io.Reader` so each successful read advances a `PhaseHandle` by the bytes actually read. Used by pull's streaming download stage.
+  - `CountingWriter`: wraps an `io.Writer` so each write advances a `PhaseHandle` by the bytes actually written, not the bytes offered. Used by push.
+  - `CountingReader`: wraps an `io.Reader` so each read advances a `PhaseHandle` by the bytes actually read, not the bytes requested. Used by pull's streaming download stage.
 
 ## Contracts
 
