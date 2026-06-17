@@ -64,9 +64,10 @@ func TestImport_EmitsTopLevelPhasesInOrder(t *testing.T) {
 }
 
 // TestImport_ExtractCountsEveryStagedEntry asserts the importer advances the
-// extract phase once per staged non-metadata entry: the final cumulative Done
-// must equal the phase's declared Total, so a single Advance covering all
-// entries at once (a per-entry-counting bug) would fail.
+// extract phase exactly once per staged non-metadata entry: the cumulative Done
+// values must run 1, 2, …, Total. A single Advance jumping straight to Total (a
+// batch counter rather than per-entry) lands on the right final number but
+// breaks the strict per-entry sequence, so this catches it.
 func TestImport_ExtractCountsEveryStagedEntry(t *testing.T) {
 	recorder := progresstest.NewRecorder()
 	recordSuccessfulImport(t, recorder)
@@ -83,15 +84,18 @@ func TestImport_ExtractCountsEveryStagedEntry(t *testing.T) {
 	}
 	require.True(t, foundStart, "extract phase must open")
 
-	var extractAdvances []progress.PhaseAdvance
+	var extractDoneValues []int64
 	for _, advance := range progresstest.OfType[progress.PhaseAdvance](events) {
 		if len(advance.Path) == 1 && advance.Path[0] == "extract" {
-			extractAdvances = append(extractAdvances, advance)
+			extractDoneValues = append(extractDoneValues, advance.Done)
 		}
 	}
-	require.NotEmpty(t, extractAdvances, "extract must advance at least once")
+	require.NotEmpty(t, extractDoneValues, "extract must advance at least once")
 
-	lastAdvance := extractAdvances[len(extractAdvances)-1]
-	assert.Equal(t, extractStart.Total, lastAdvance.Done,
-		"extract Done must equal the number of staged entries")
+	var want []int64
+	for entry := int64(1); entry <= extractStart.Total; entry++ {
+		want = append(want, entry)
+	}
+	assert.Equal(t, want, extractDoneValues,
+		"extract Done must increase by one per staged entry up to Total")
 }

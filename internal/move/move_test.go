@@ -1160,6 +1160,18 @@ func topLevelPhaseNames(events []progress.Event) []string {
 	return names
 }
 
+// globalReferenceSubPhaseNames returns the set of sub-phase names opened
+// directly under the rewrite global references phase.
+func globalReferenceSubPhaseNames(events []progress.Event) map[string]struct{} {
+	names := make(map[string]struct{})
+	for _, start := range progresstest.OfType[progress.PhaseStart](events) {
+		if len(start.Path) == 2 && start.Path[0] == "rewrite global references" {
+			names[start.Path[1]] = struct{}{}
+		}
+	}
+	return names
+}
+
 func TestApply_EmitsTopLevelPhasesInOrderUnderRefsOnly(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
@@ -1228,12 +1240,7 @@ func TestApply_GlobalReferenceSubPhasesCoverEveryRegistry(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	subPhaseNames := make(map[string]struct{})
-	for _, start := range progresstest.OfType[progress.PhaseStart](recorder.Events()) {
-		if len(start.Path) == 2 && start.Path[0] == "rewrite global references" {
-			subPhaseNames[start.Path[1]] = struct{}{}
-		}
-	}
+	subPhaseNames := globalReferenceSubPhaseNames(recorder.Events())
 
 	for _, target := range claude.UserWideRewriteTargets {
 		assert.Contains(t, subPhaseNames, target.Name,
@@ -1261,12 +1268,7 @@ func TestApply_OpensSubPhaseForSessionKeyedGroupWithNoFiles(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	subPhaseNames := make(map[string]struct{})
-	for _, start := range progresstest.OfType[progress.PhaseStart](recorder.Events()) {
-		if len(start.Path) == 2 && start.Path[0] == "rewrite global references" {
-			subPhaseNames[start.Path[1]] = struct{}{}
-		}
-	}
+	subPhaseNames := globalReferenceSubPhaseNames(recorder.Events())
 
 	for _, group := range claude.SessionKeyedGroups {
 		assert.Contains(t, subPhaseNames, group.Name,
@@ -1274,7 +1276,31 @@ func TestApply_OpensSubPhaseForSessionKeyedGroupWithNoFiles(t *testing.T) {
 	}
 }
 
-func TestApply_EmitsCopyProjectDirectoryPhaseWhenNotRefsOnly(t *testing.T) {
+// TestApply_GlobalReferenceSubPhasesCoverFixedSingletons completes the
+// drift-guard alongside the registry coverage above: rewrite global references
+// also opens a sub-phase for each fixed singleton present in the home — history,
+// sessions, and config. The fixture stages history.jsonl, a sessions dir, and
+// .claude.json, so all three must appear.
+func TestApply_GlobalReferenceSubPhasesCoverFixedSingletons(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	recorder := progresstest.NewRecorder()
+	err := move.Apply(t.Context(), claudeHome, move.Options{
+		OldPath:  oldProjectPath,
+		NewPath:  newProjectPath,
+		RefsOnly: true,
+		Reporter: recorder.Reporter(progress.LevelInfo),
+	})
+	require.NoError(t, err)
+
+	subPhaseNames := globalReferenceSubPhaseNames(recorder.Events())
+	for _, singleton := range []string{"history", "sessions", "config"} {
+		assert.Contains(t, subPhaseNames, singleton,
+			"fixed singleton %q must open a sub-phase", singleton)
+	}
+}
+
+func TestApply_EmitsTopLevelPhasesInOrderWhenNotRefsOnly(t *testing.T) {
 	claudeHome, projectPath := setupOnDiskMoveFixture(t)
 
 	recorder := progresstest.NewRecorder()
@@ -1285,8 +1311,18 @@ func TestApply_EmitsCopyProjectDirectoryPhaseWhenNotRefsOnly(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Contains(t, topLevelPhaseNames(recorder.Events()), "copy project directory",
-		"a non-refs-only move copies the on-disk project directory as its own phase")
+	assert.Equal(t,
+		[]string{
+			"copy project data",
+			"rewrite project data",
+			"rewrite global references",
+			"copy project directory",
+			"verify",
+			"delete",
+		},
+		topLevelPhaseNames(recorder.Events()),
+		"a non-refs-only move copies the on-disk project directory between the global rewrite and verify",
+	)
 }
 
 // setupOnDiskMoveFixture stages a minimal Claude home whose project path is a
