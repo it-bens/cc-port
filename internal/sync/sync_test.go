@@ -137,7 +137,10 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
 	}
-	before := time.Now().UTC()
+	fixed := time.Date(2021, 1, 2, 3, 4, 5, 0, time.UTC)
+	now = func() time.Time { return fixed }
+	t.Cleanup(func() { now = time.Now })
+
 	writer := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
 		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
@@ -148,7 +151,6 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close writer: %v", err)
 	}
-	after := time.Now().UTC()
 
 	rc, err := r.Open(context.Background(), "k")
 	if err != nil {
@@ -166,15 +168,8 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	if metadata.SyncPushedBy != plan.SelfPusher {
 		t.Fatalf("SyncPushedBy = %q, want %q", metadata.SyncPushedBy, plan.SelfPusher)
 	}
-	if metadata.SyncPushedAt == "" {
-		t.Fatal("SyncPushedAt empty")
-	}
-	pushedAt, err := time.Parse(time.RFC3339, metadata.SyncPushedAt)
-	if err != nil {
-		t.Fatalf("Parse SyncPushedAt: %v", err)
-	}
-	if pushedAt.Before(before.Add(-1*time.Second)) || pushedAt.After(after.Add(1*time.Second)) {
-		t.Fatalf("SyncPushedAt %v outside [%v, %v]", pushedAt, before, after)
+	if want := fixed.Format(time.RFC3339); metadata.SyncPushedAt != want {
+		t.Fatalf("SyncPushedAt = %q, want %q", metadata.SyncPushedAt, want)
 	}
 }
 
