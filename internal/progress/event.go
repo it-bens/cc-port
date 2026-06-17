@@ -107,3 +107,11 @@ type Renderer interface {
 	Consume(Event)
 	Finalize() error
 }
+
+// Interruptible is implemented by renderers that own interactive terminal input
+// and can observe a user interrupt (Ctrl-C). The cmd layer type-asserts a
+// renderer to this interface and routes Interrupted to context cancellation;
+// renderers without interactive input do not implement it.
+type Interruptible interface {
+	Interrupted() <-chan struct{}
+}

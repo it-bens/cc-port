@@ -2,6 +2,7 @@ package progress
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -9,12 +10,17 @@ import (
 	"github.com/charmbracelet/x/term"
 )
 
-// now and isTTY are seams reassigned under t.Cleanup so tests can pin
-// timestamps, durations, and terminal detection. Both live here so the two
-// seams sit in one place.
+// now, isTTY, and ledgerInput are seams reassigned under t.Cleanup so tests can
+// pin timestamps, durations, terminal detection, and the ledger program's
+// input. All three live here so the seams sit in one place.
 var (
 	now   = time.Now
 	isTTY = func(file *os.File) bool { return term.IsTerminal(file.Fd()) }
+	// ledgerInput overrides the ledger program's input. Nil in production so
+	// bubbletea opens the controlling terminal and consumes its
+	// capability-query responses; a test reassigns it under t.Cleanup to a
+	// non-terminal reader so the program does not open a real TTY.
+	ledgerInput io.Reader
 )
 
 // Reporter is the surface a command emits progress through. The root Reporter
