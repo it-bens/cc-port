@@ -161,6 +161,33 @@ func countTranscriptReplacements(
 	return total, nil
 }
 
+// countMemoryReplacements walks locations.MemoryFiles and, per file, adds both
+// the real-path and the encoded-dir occurrence counts — mirroring the
+// unconditional apply-side rewrite in rewriteMemoryFilesInDir. An absent memory
+// dir yields an empty slice from LocateProject, which contributes zero.
+func countMemoryReplacements(
+	ctx context.Context,
+	locations *claude.ProjectLocations,
+	moveOptions Options,
+	oldEncodedDir, newEncodedDir string,
+) (int, error) {
+	total := 0
+	for _, memoryFilePath := range locations.MemoryFiles {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		data, err := os.ReadFile(memoryFilePath) //nolint:gosec // path constructed from trusted internal data
+		if err != nil {
+			return 0, fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
+		}
+		_, count := rewrite.ReplacePathInBytes(data, moveOptions.OldPath, moveOptions.NewPath)
+		total += count
+		_, encodedCount := rewrite.ReplacePathInBytes(data, oldEncodedDir, newEncodedDir)
+		total += encodedCount
+	}
+	return total, nil
+}
+
 // countFileHistorySnapshots returns the number of snapshot files under the
 // project's file-history directories for the dry-run plan.
 func countFileHistorySnapshots(ctx context.Context, locations *claude.ProjectLocations) (int, error) {

@@ -17,7 +17,7 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
 - `Plan`: dry-run output.
   - `OldProjectDir` / `NewProjectDir`: encoded storage paths.
   - `ReplacementsByCategory map[string]int`: keyed on `planCategories` order, missing keys read as zero.
-  - `TranscriptReplacements` (int), `ConfigBlockRekey` and `MoveProjectDir` (booleans).
+  - `TranscriptReplacements` and `MemoryReplacements` (ints), `ConfigBlockRekey` and `MoveProjectDir` (booleans).
   - `HistoryMalformedLines []int`: 1-based line numbers that failed to parse.
   - `RulesReport scan.Report`.
 

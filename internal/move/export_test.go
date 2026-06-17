@@ -5,5 +5,6 @@ package move
 // package's public API while giving external tests access to internal
 // enumeration helpers for count/containment assertions.
 var (
-	SnapshotPaths = snapshotPaths
+	SnapshotPaths       = snapshotPaths
+	ListTranscriptFiles = listTranscriptFiles
 )

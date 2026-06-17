@@ -18,6 +18,7 @@ import (
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
 
@@ -108,6 +109,135 @@ func TestDryRun_WithTranscripts(t *testing.T) {
 	require.NotNil(t, plan)
 
 	assert.Positive(t, plan.TranscriptReplacements, "expected transcript replacements when opted in")
+}
+
+// TestDryRun_TranscriptReplacementsCountEncodedDirPass pins that
+// countTranscriptReplacements adds the encoded-dir pass, not only the
+// real-path pass. A transcript whose body holds three encoded-dir references
+// (and no slashed old path) makes the encoded pass the only contributor to its
+// own count, so the assertion fails if `total += encodedCount` is dropped.
+func TestDryRun_TranscriptReplacementsCountEncodedDirPass(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	oldEncodedDir := claudeHome.ProjectDir(oldProjectPath)
+	const encodedOnlyOccurrences = 3
+	var encodedBody strings.Builder
+	for range encodedOnlyOccurrences {
+		encodedBody.WriteString(oldEncodedDir)
+		encodedBody.WriteByte('\n')
+	}
+	encodedTranscript := filepath.Join(oldEncodedDir, "encoded-only-0000-0000-0000-000000000099.jsonl")
+	require.NoError(t, os.WriteFile(encodedTranscript, []byte(encodedBody.String()), 0o600))
+
+	expectedRealPath, expectedEncoded := expectedTranscriptPasses(t, claudeHome)
+	require.Positive(t, expectedEncoded,
+		"precondition: the planted transcript must make the encoded-dir pass non-zero")
+
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
+		OldPath:            oldProjectPath,
+		NewPath:            newProjectPath,
+		RewriteTranscripts: true,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, expectedRealPath+expectedEncoded, plan.TranscriptReplacements,
+		"TranscriptReplacements must sum the real-path and encoded-dir passes over every transcript")
+}
+
+// expectedTranscriptPasses re-derives the two replacement passes
+// countTranscriptReplacements performs — real-path (oldProjectPath) and
+// encoded-dir (old project data dir) — by reading the same transcript files
+// the helper walks, so the test pins the sum independently of the production
+// counter.
+func expectedTranscriptPasses(t *testing.T, claudeHome *claude.Home) (realPath, encoded int) {
+	t.Helper()
+
+	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
+	require.NoError(t, err)
+
+	paths, err := move.ListTranscriptFiles(t.Context(), locations.ProjectDir)
+	require.NoError(t, err)
+
+	oldEncodedDir := claudeHome.ProjectDir(oldProjectPath)
+	newEncodedDir := claudeHome.ProjectDir(newProjectPath)
+	for _, path := range paths {
+		data, err := os.ReadFile(path) //nolint:gosec // test-controlled path from LocateProject
+		require.NoError(t, err)
+		_, realCount := rewrite.ReplacePathInBytes(data, oldProjectPath, newProjectPath)
+		realPath += realCount
+		_, encodedCount := rewrite.ReplacePathInBytes(data, oldEncodedDir, newEncodedDir)
+		encoded += encodedCount
+	}
+	return realPath, encoded
+}
+
+// TestDryRun_MemoryReplacementsCountsBothPasses pins that the dry-run reports
+// memory-file replacements unconditionally and sums both passes the apply-side
+// rewrite performs: real-path (oldProjectPath) and encoded-dir (old project
+// data dir). One planted file holds only real-path refs and another only
+// encoded-dir refs, so dropping either pass changes the asserted total.
+func TestDryRun_MemoryReplacementsCountsBothPasses(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+
+	memoryDir := filepath.Join(claudeHome.ProjectDir(oldProjectPath), "memory")
+	require.NoError(t, os.MkdirAll(memoryDir, 0o750))
+
+	const realPathOccurrences = 2
+	var realPathBody strings.Builder
+	for range realPathOccurrences {
+		realPathBody.WriteString(oldProjectPath)
+		realPathBody.WriteByte('\n')
+	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(memoryDir, "real-path-only.md"), []byte(realPathBody.String()), 0o600))
+
+	oldEncodedDir := claudeHome.ProjectDir(oldProjectPath)
+	const encodedOccurrences = 3
+	var encodedBody strings.Builder
+	for range encodedOccurrences {
+		encodedBody.WriteString(oldEncodedDir)
+		encodedBody.WriteByte('\n')
+	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(memoryDir, "encoded-dir-only.md"), []byte(encodedBody.String()), 0o600))
+
+	expectedRealPath, expectedEncoded := expectedMemoryPasses(t, claudeHome)
+	require.Positive(t, expectedRealPath,
+		"precondition: a planted memory file must make the real-path pass non-zero")
+	require.Positive(t, expectedEncoded,
+		"precondition: a planted memory file must make the encoded-dir pass non-zero")
+
+	plan, err := move.DryRun(t.Context(), claudeHome, move.Options{
+		OldPath: oldProjectPath,
+		NewPath: newProjectPath,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, expectedRealPath+expectedEncoded, plan.MemoryReplacements,
+		"MemoryReplacements must sum the real-path and encoded-dir passes over every memory file")
+}
+
+// expectedMemoryPasses re-derives the two replacement passes
+// countMemoryReplacements performs by reading the same memory files
+// LocateProject collects, so the test pins the sum independently of the
+// production counter.
+func expectedMemoryPasses(t *testing.T, claudeHome *claude.Home) (realPath, encoded int) {
+	t.Helper()
+
+	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
+	require.NoError(t, err)
+
+	oldEncodedDir := claudeHome.ProjectDir(oldProjectPath)
+	newEncodedDir := claudeHome.ProjectDir(newProjectPath)
+	for _, memoryFilePath := range locations.MemoryFiles {
+		data, err := os.ReadFile(memoryFilePath) //nolint:gosec // test-controlled path from LocateProject
+		require.NoError(t, err)
+		_, realCount := rewrite.ReplacePathInBytes(data, oldProjectPath, newProjectPath)
+		realPath += realCount
+		_, encodedCount := rewrite.ReplacePathInBytes(data, oldEncodedDir, newEncodedDir)
+		encoded += encodedCount
+	}
+	return realPath, encoded
 }
 
 func TestDryRun_RefsOnly(t *testing.T) {
