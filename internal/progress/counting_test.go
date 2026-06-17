@@ -2,7 +2,6 @@ package progress
 
 import (
 	"errors"
-	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,20 +44,6 @@ func (writer *shortWriter) Write(p []byte) (int, error) {
 		written = len(p)
 	}
 	return written, writer.err
-}
-
-// shortReader reads only the first deliver bytes and reports an error.
-type shortReader struct {
-	deliver int
-	err     error
-}
-
-func (reader *shortReader) Read(p []byte) (int, error) {
-	read := reader.deliver
-	if read > len(p) {
-		read = len(p)
-	}
-	return read, reader.err
 }
 
 // shortReaderAt delivers only the first deliver bytes for any ReadAt.
@@ -107,28 +92,6 @@ func TestCountingWriterDoesNotAdvanceOnZeroBytes(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Empty(t, handle.advances)
-}
-
-func TestCountingReaderAdvancesByBytesRead(t *testing.T) {
-	handle := &recordingHandle{}
-	reader := CountingReader(&shortReader{deliver: 5}, handle)
-
-	n, err := reader.Read(make([]byte, 16))
-
-	require.NoError(t, err)
-	assert.Equal(t, 5, n)
-	assert.Equal(t, []int64{5}, handle.advances)
-}
-
-func TestCountingReaderAdvancesOnShortReadWithEOF(t *testing.T) {
-	handle := &recordingHandle{}
-	reader := CountingReader(&shortReader{deliver: 2, err: io.EOF}, handle)
-
-	n, err := reader.Read(make([]byte, 16))
-
-	require.ErrorIs(t, err, io.EOF)
-	assert.Equal(t, 2, n)
-	assert.Equal(t, []int64{2}, handle.advances)
 }
 
 func TestCountingReaderAtAdvancesByBytesRead(t *testing.T) {
