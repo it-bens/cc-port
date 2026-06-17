@@ -173,7 +173,7 @@ Per-command pipelines:
 - [`cmd/cc-port/importcmd.go`](../cmd/cc-port/importcmd.go) read path uses `[file.Source, encrypt.ReaderStage{Pass, Mode: Strict}, pipeline.MaterializeStage]`. The reader stage owns the encrypted-vs-plaintext × pass-vs-no-pass dispatch internally. `MaterializeStage` short-circuits on local-file chains because `file.Source` already populates `ReaderAt`. `import manifest` reuses the same stage list.
 - [`cmd/cc-port/pushcmd.go`](../cmd/cc-port/pushcmd.go) write path uses `[encrypt.WriterStage{Pass}, remote.Sink]`. The encrypt stage self-skips when `Pass` is empty.
 - [`cmd/cc-port/pushcmd.go`](../cmd/cc-port/pushcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Permissive}, pipeline.MaterializeStage]` for the cross-machine probe. Permissive admits a plaintext prior; Strict is on pull. `MaterializeStage` drains the gocloud reader because `remote.Source` is streaming.
-- [`cmd/cc-port/pullcmd.go`](../cmd/cc-port/pullcmd.go) read path uses `[remote.Source, encrypt.ReaderStage{Pass, Mode: Strict}, pipeline.MaterializeStage]`.
+- [`cmd/cc-port/pullcmd.go`](../cmd/cc-port/pullcmd.go) read path uses `[remote.Source, downloadCounterStage, encrypt.ReaderStage{Pass, Mode: Strict}, pipeline.MaterializeStage]`. `downloadCounterStage` counts the encrypted bytes streamed off the remote once, as `MaterializeStage` drains them.
 
 Materialization moved out of `remote.Source` and `encrypt.ReaderStage` into a dedicated terminal stage. Read paths are streaming by default. `MaterializeStage` short-circuits when the upstream View already exposes `ReaderAt` (local-file chains, `file.Source`) and otherwise drains to a 0600 tempfile owned by the runner's close cascade.
 
