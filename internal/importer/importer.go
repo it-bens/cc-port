@@ -201,7 +201,7 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions *Options) (
 
 		entryTotal, err := countNonMetadataEntries(importOptions.Source, importOptions.Size)
 		if err != nil {
-			return err
+			return fmt.Errorf("count archive entries: %w", err)
 		}
 		manifestPhase.End("")
 
@@ -256,9 +256,6 @@ func countNonMetadataEntries(src io.ReaderAt, size int64) (int64, error) {
 	return count, nil
 }
 
-// stagedFileCount returns the number of staged artifacts promotePlan will
-// rename: the project dir plus any staged history, config, file-history, and
-// session-keyed files. Read-only over plan; used as the promote phase total.
 func stagedFileCount(plan *importPlan) int64 {
 	count := int64(1) // the project directory is always staged
 	if plan.historyStaged {
