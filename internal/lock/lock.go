@@ -27,6 +27,36 @@ const FileName = ".cc-port.lock"
 // (*flock.Flock).Unlock.
 var unlockFn = (*flock.Flock).Unlock
 
+// ErrConcurrentInvocation is returned by WithLock when another cc-port run
+// already holds the advisory lock. Callers discriminate via errors.Is; the
+// wrapping message names the contended home directory.
+var ErrConcurrentInvocation = errors.New("another cc-port invocation is operating on the Claude home")
+
+// ErrUnlockFailure is returned by WithLock when releasing the advisory lock
+// fails on the fn-success path. The wrapping error joins the underlying
+// unlock cause via %w, so errors.Is matches both this sentinel and the cause.
+var ErrUnlockFailure = errors.New("release cc-port lock")
+
+// LiveSessionsError is returned by WithLock when one or more live Claude Code
+// sessions are detected before the lock is taken. Sessions carries the witness
+// list; callers inspect it via errors.As. WithLock takes the lock only when the
+// list is empty.
+type LiveSessionsError struct {
+	Sessions []ActiveSession
+}
+
+func (e *LiveSessionsError) Error() string {
+	descriptors := make([]string, len(e.Sessions))
+	for index, session := range e.Sessions {
+		descriptors[index] = fmt.Sprintf("pid=%d cwd=%q", session.Pid, session.Cwd)
+	}
+	return fmt.Sprintf(
+		"refusing to run: %d live Claude Code session(s) detected: [%s]",
+		len(e.Sessions),
+		strings.Join(descriptors, "; "),
+	)
+}
+
 // WithLock runs the live-session check before taking the lock, ensuring
 // no Claude Code session is active before fn is called.
 func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
@@ -35,15 +65,7 @@ func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
 		return fmt.Errorf("scan active sessions: %w", err)
 	}
 	if len(active) > 0 {
-		descriptors := make([]string, len(active))
-		for index, session := range active {
-			descriptors[index] = fmt.Sprintf("pid=%d cwd=%q", session.Pid, session.Cwd)
-		}
-		return fmt.Errorf(
-			"refusing to run: %d live Claude Code session(s) detected: [%s]",
-			len(active),
-			strings.Join(descriptors, "; "),
-		)
+		return &LiveSessionsError{Sessions: active}
 	}
 
 	if err := os.MkdirAll(claudeHome.Dir, 0o750); err != nil {
@@ -58,7 +80,7 @@ func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
 		return fmt.Errorf("acquire cc-port lock: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("another cc-port invocation is operating on %s", claudeHome.Dir)
+		return fmt.Errorf("%w: %s", ErrConcurrentInvocation, claudeHome.Dir)
 	}
 
 	defer func() {
@@ -73,7 +95,7 @@ func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
 			return
 		}
 		if unlockErr != nil {
-			returnErr = fmt.Errorf("release cc-port lock: %w", unlockErr)
+			returnErr = fmt.Errorf("%w: %w", ErrUnlockFailure, unlockErr)
 			return
 		}
 		if removeErr != nil {

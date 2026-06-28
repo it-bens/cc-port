@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
@@ -394,8 +395,7 @@ func TestDryRun_AbortsOnEncodedDirCollision(t *testing.T) {
 		OldPath: oldProjectPath,
 		NewPath: collidingPath,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
+	require.ErrorIs(t, err, move.ErrEncodedDirCollision)
 }
 
 func TestDryRun_AbortsWhenOldAndNewEncodeIdentically(t *testing.T) {
@@ -409,8 +409,7 @@ func TestDryRun_AbortsWhenOldAndNewEncodeIdentically(t *testing.T) {
 		OldPath: "/Users/test/Projects/my-project",
 		NewPath: identicalEncoding,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "both encode to")
+	require.ErrorIs(t, err, move.ErrEncodedDirAmbiguous)
 }
 
 func TestApply_AbortsOnEncodedDirCollision(t *testing.T) {
@@ -431,8 +430,7 @@ func TestApply_AbortsOnEncodedDirCollision(t *testing.T) {
 		NewPath:  collidingPath,
 		RefsOnly: true,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
+	require.ErrorIs(t, err, move.ErrEncodedDirCollision)
 
 	// Old project's data dir must be unchanged.
 	oldProjectDir := claudeHome.ProjectDir(oldProjectPath)
@@ -468,8 +466,8 @@ func TestApply_AbortsWhenClaudeSessionIsLive(t *testing.T) {
 		NewPath:  newProjectPath,
 		RefsOnly: true,
 	})
-	require.Error(t, applyErr, "Apply must abort when a live Claude Code session is detected")
-	assert.Contains(t, applyErr.Error(), "live Claude Code session")
+	var liveErr *lock.LiveSessionsError
+	require.ErrorAs(t, applyErr, &liveErr, "Apply must abort when a live Claude Code session is detected")
 
 	// Old project dir must still be there with identical entry count.
 	after, err := os.ReadDir(oldProjectDir)
@@ -1075,8 +1073,7 @@ func TestApply_Rollback_RestoresGlobalsOnSecondDeleteFailure(t *testing.T) {
 		NewPath:  newOnDiskPath,
 		RefsOnly: false,
 	})
-	require.Error(t, err, "Apply must surface the on-disk removal failure")
-	assert.Contains(t, err.Error(), "on-disk dir still present",
+	require.ErrorIs(t, err, move.ErrResidualSourceDir,
 		"error should come from the second-delete branch of deleteOriginals")
 
 	// Global files must be restored to their pre-move contents — the contract
@@ -1146,12 +1143,10 @@ func TestApply_SecondDeleteFailureSurfacesResidualStateMessage(t *testing.T) {
 		RefsOnly: false,
 	})
 
-	require.Error(t, err)
+	require.ErrorIs(t, err, move.ErrResidualSourceDir)
 	message := err.Error()
 	assert.Contains(t, message, "encoded project data",
 		"error must state that the encoded storage is gone")
-	assert.Contains(t, message, "on-disk dir still present",
-		"error must state that the on-disk directory remains")
 	assert.Contains(t, message, "cannot retry",
 		"error must tell the user cc-port move cannot retry this failure")
 	assert.Contains(t, message, "`mv "+oldOnDiskPath+" "+newOnDiskPath+"`",

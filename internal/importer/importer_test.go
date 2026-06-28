@@ -846,8 +846,10 @@ func TestImport_HardFailsOnUnknownManifestCategory(t *testing.T) {
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bogus")
+
+	var unknownErr *manifest.UnknownCategoriesError
+	require.ErrorAs(t, err, &unknownErr)
+	assert.Contains(t, unknownErr.Names, "bogus")
 }
 
 func TestImport_HardFailsOnMissingManifestCategory(t *testing.T) {
@@ -880,8 +882,10 @@ func TestImport_HardFailsOnMissingManifestCategory(t *testing.T) {
 		Size:       size,
 		TargetPath: fixtureSourceProjectPath,
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing")
+
+	var missingErr *manifest.MissingCategoriesError
+	require.ErrorAs(t, err, &missingErr)
+	assert.Contains(t, missingErr.Names, "tasks")
 }
 
 func TestImport_HardFailsOnUnknownEntryPrefix(t *testing.T) {

@@ -192,8 +192,7 @@ func TestReadManifest_RejectsOversizedFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, oversize, 0o600))
 
 	_, err := manifest.ReadManifest(path)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds")
+	require.ErrorIs(t, err, manifest.ErrManifestFileTooLarge)
 }
 
 func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
@@ -227,8 +226,7 @@ func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
 	require.NoError(t, err, "stat zip")
 
 	_, err = manifest.ReadManifestFromZip(zipFile, zipInfo.Size())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "exceeds")
+	require.ErrorIs(t, err, manifest.ErrManifestEntryTooLarge)
 }
 
 func TestMetadata_SyncFieldsRoundTrip(t *testing.T) {
@@ -304,7 +302,5 @@ func createTestZip(zipPath, sourcePath string) error {
 func TestReadManifestFromZip_NilSrc(t *testing.T) {
 	_, err := manifest.ReadManifestFromZip(nil, 0)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "MaterializeStage",
-		"error must hint at the missing pipeline stage to ease debugging")
+	require.ErrorIs(t, err, manifest.ErrNilSource)
 }

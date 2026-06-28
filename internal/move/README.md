@@ -21,6 +21,19 @@ Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`
   - `HistoryMalformedLines []int`: 1-based line numbers that failed to parse.
   - `RulesReport scan.Report`.
 
+### Errors
+
+- `ErrEncodedDirAmbiguous`: returned by `DryRun` and `Apply` when the old and new
+  project paths both encode to the same on-disk directory. Tests assert via
+  `errors.Is`.
+- `ErrEncodedDirCollision`: returned by `DryRun` and `Apply` when the new
+  project's encoded directory already exists because another real path encodes to
+  the same name. Tests assert via `errors.Is`.
+- `ErrResidualSourceDir`: returned by `Apply` when the encoded project data was
+  removed but the on-disk source directory cannot be deleted, the non-retryable
+  branch of `deleteOriginals`. Wraps the os cause and joins with any rollback
+  error; tests assert via `errors.Is`.
+
 ### Internal helpers
 
 `rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` routes through it so the rollback tracker sees pre-write bytes consistently: `rewriteUserWideFiles` iterates `claude.UserWideRewriteTargets` (settings.json, plugins/installed_plugins.json, plugins/known_marketplaces.json). The session-keyed-groups loop iterates `locations.AllFlatFiles()` through `rewriteTrackedPreservingMtime`, which wraps `rewriteTracked` and restores each file's pre-rewrite modification time. See §Source mtime preservation (move).

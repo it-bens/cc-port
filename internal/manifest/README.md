@@ -29,6 +29,26 @@ command modules agree on the wire contract through a neutral third party.
   - `ReadManifest(path string) (*Metadata, error)`
   - `ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error)`: parses metadata.xml from a ZIP exposed as `io.ReaderAt + size`. Callers open the source (file, materialized tempfile, or in-memory bytes) and pass it through; the manifest package is path-agnostic. Refuses a nil `src` with an error naming `MaterializeStage`.
 
+### Errors
+
+- `ErrManifestFileTooLarge`: returned by `ReadManifest` when metadata.xml on disk
+  exceeds `maxManifestBytes` (4 MiB). The wrapping message names the path and the
+  limit; tests assert via `errors.Is`.
+- `ErrManifestEntryTooLarge`: returned by `ReadManifestFromZip` when the
+  metadata.xml zip entry's decoded size exceeds the cap. The wrapping message
+  names the entry and the limit; tests assert via `errors.Is`.
+- `ErrNilSource`: returned by `ReadManifestFromZip` when `src` is nil. The
+  message hints that the caller's pipeline likely missed `MaterializeStage`;
+  tests assert via `errors.Is`.
+- `UnknownCategoriesError`: typed error returned by `ApplyCategoryEntries` when
+  the manifest declares names outside `AllCategories`. `Names` carries the
+  offending names; tests assert via `errors.As`. Reachable across the import
+  boundary because `importer.Run` wraps it with `%w`.
+- `MissingCategoriesError`: typed error returned by `ApplyCategoryEntries` when
+  the manifest omits `AllCategories` names. `Names` carries the missing names;
+  tests assert via `errors.As`. Joined with `UnknownCategoriesError` via
+  `errors.Join` when both classes occur.
+
 ## Contracts
 
 ### Category manifest

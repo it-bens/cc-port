@@ -38,6 +38,20 @@ should not reuse this package.
 - `FileName`: constant. The name (`.cc-port.lock`) of the advisory-lock file
   cc-port creates inside the Claude Code home directory.
 
+### Errors
+
+- `LiveSessionsError`: typed error returned by `WithLock` when the live-session
+  check finds one or more running Claude Code processes before the lock is taken.
+  `Sessions` carries the witness list as `[]ActiveSession`; tests assert via
+  `errors.As`. `WithLock` takes the lock only when the list is empty. Reachable
+  from `move.Apply`, which returns it unchanged from `lock.WithLock`.
+- `ErrConcurrentInvocation`: returned by `WithLock` when another cc-port
+  invocation already holds the advisory lock. The wrapping message names the
+  contended home directory; tests assert via `errors.Is`.
+- `ErrUnlockFailure`: returned by `WithLock` when releasing the lock fails on the
+  `fn`-success path. Joins the underlying unlock cause via `%w`, so `errors.Is`
+  matches both this sentinel and the cause.
+
 ## Contracts
 
 ### Concurrency guard
