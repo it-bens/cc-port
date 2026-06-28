@@ -101,8 +101,10 @@ func TestWithLock_AbortsWhenSessionPIDIsAlive(t *testing.T) {
 	writeSessionFile(t, claudeHome, "live", os.Getpid())
 
 	err := WithLock(claudeHome, func() error { return nil })
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "live Claude Code session")
+
+	var liveErr *LiveSessionsError
+	require.ErrorAs(t, err, &liveErr)
+	assert.Len(t, liveErr.Sessions, 1)
 }
 
 func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
@@ -121,8 +123,7 @@ func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
 	defer func() { _ = sibling.Unlock() }()
 
 	err = WithLock(claudeHome, func() error { return nil })
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "another cc-port invocation")
+	require.ErrorIs(t, err, ErrConcurrentInvocation)
 }
 
 func TestWithLock_SucceedsAfterPreviousReleased(t *testing.T) {
@@ -172,8 +173,8 @@ func TestWithLock_PropagatesAcquireError(t *testing.T) {
 		fnCalled = true
 		return nil
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "live Claude Code session")
+	var liveErr *LiveSessionsError
+	require.ErrorAs(t, err, &liveErr)
 	assert.False(t, fnCalled, "fn must not be invoked when acquire fails")
 }
 
@@ -201,14 +202,14 @@ func TestWithLock_ReleaseErrorSurfacesOnFnSuccess(t *testing.T) {
 
 	originalUnlock := unlockFn
 	t.Cleanup(func() { unlockFn = originalUnlock })
+	injectedUnlockErr := errors.New("synthetic unlock failure")
 	unlockFn = func(*flock.Flock) error {
-		return errors.New("synthetic unlock failure")
+		return injectedUnlockErr
 	}
 
 	err := WithLock(claudeHome, func() error { return nil })
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "release cc-port lock")
-	assert.Contains(t, err.Error(), "synthetic unlock failure")
+	require.ErrorIs(t, err, ErrUnlockFailure)
+	require.ErrorIs(t, err, injectedUnlockErr)
 }
 
 func TestWithLock_ReleaseErrorSuppressedOnFnError(t *testing.T) {
@@ -222,7 +223,6 @@ func TestWithLock_ReleaseErrorSuppressedOnFnError(t *testing.T) {
 
 	fnErr := errors.New("fn returned this")
 	err := WithLock(claudeHome, func() error { return fnErr })
-	require.Error(t, err)
 	require.ErrorIs(t, err, fnErr)
-	assert.NotContains(t, err.Error(), "release cc-port lock")
+	assert.NotErrorIs(t, err, ErrUnlockFailure)
 }

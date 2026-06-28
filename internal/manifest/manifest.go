@@ -5,6 +5,7 @@ package manifest
 import (
 	"archive/zip"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,6 +47,21 @@ type Placeholder struct {
 // for future placeholder growth and stops decompression-bomb payloads cold.
 const maxManifestBytes = 4 << 20
 
+// ErrManifestFileTooLarge is returned by ReadManifest when metadata.xml on disk
+// exceeds maxManifestBytes. The wrapping message names the path and the limit;
+// callers discriminate via errors.Is.
+var ErrManifestFileTooLarge = errors.New("manifest file too large")
+
+// ErrManifestEntryTooLarge is returned by ReadManifestFromZip when the
+// metadata.xml zip entry's decoded size exceeds maxManifestBytes. The wrapping
+// message names the entry and the limit; callers discriminate via errors.Is.
+var ErrManifestEntryTooLarge = errors.New("manifest entry too large")
+
+// ErrNilSource is returned by ReadManifestFromZip when src is nil. The message
+// hints that the caller's pipeline likely missed MaterializeStage. Mirrors
+// importer.ErrSourceNil.
+var ErrNilSource = errors.New("manifest: src is nil; pipeline missing MaterializeStage?")
+
 // WriteManifest marshals metadata to indented XML and writes it to path.
 func WriteManifest(path string, metadata *Metadata) error {
 	data, err := xml.MarshalIndent(metadata, "", "  ")
@@ -70,7 +86,7 @@ func ReadManifest(path string) (*Metadata, error) {
 		return nil, fmt.Errorf("stat manifest file: %w", err)
 	}
 	if info.Size() > int64(maxManifestBytes) {
-		return nil, fmt.Errorf("manifest file %q exceeds %d-byte limit", path, maxManifestBytes)
+		return nil, fmt.Errorf("%w: %q exceeds the %d-byte limit", ErrManifestFileTooLarge, path, maxManifestBytes)
 	}
 
 	data, err := os.ReadFile(path) //nolint:gosec // G304: caller-supplied manifest path
@@ -92,7 +108,7 @@ func ReadManifest(path string) (*Metadata, error) {
 // Rejects entries whose decoded size exceeds maxManifestBytes.
 func ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error) {
 	if src == nil {
-		return nil, fmt.Errorf("manifest: src is nil; pipeline missing MaterializeStage?")
+		return nil, ErrNilSource
 	}
 	reader, err := zip.NewReader(src, size)
 	if err != nil {
@@ -126,7 +142,7 @@ func readManifestEntry(file *zip.File) (*Metadata, error) {
 		return nil, fmt.Errorf("read metadata.xml from zip: %w", err)
 	}
 	if int64(len(data)) > int64(maxManifestBytes) {
-		return nil, fmt.Errorf("manifest entry %q exceeds %d-byte limit", file.Name, maxManifestBytes)
+		return nil, fmt.Errorf("%w: %q exceeds the %d-byte limit", ErrManifestEntryTooLarge, file.Name, maxManifestBytes)
 	}
 
 	var metadata Metadata

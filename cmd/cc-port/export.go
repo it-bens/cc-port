@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -192,10 +191,8 @@ func newExportManifestCmd(claudeDir *string, banner Banner) *cobra.Command {
 // the pre-existing output.
 func runExportManifest(cmd *cobra.Command, args []string, claudeDir string, banner ui.Banner) error {
 	output, _ := cmd.Flags().GetString("output")
-	if _, err := os.Stat(output); err == nil {
-		return fmt.Errorf("%s already exists; remove it or pass --output", output)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("stat %s: %w", output, err)
+	if err := requireOutputAbsent(output); err != nil {
+		return err
 	}
 
 	projectPath, err := claude.ResolveProjectPath(args[0])

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -173,10 +171,8 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 
 	archivePath := args[0]
 
-	if _, err := os.Stat(output); err == nil {
-		return fmt.Errorf("%s already exists; remove it or pass --output", output)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("stat %s: %w", output, err)
+	if err := requireOutputAbsent(output); err != nil {
+		return err
 	}
 
 	passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)

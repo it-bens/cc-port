@@ -69,8 +69,10 @@ func TestApplyCategoryEntries_MissingNameIsError(t *testing.T) {
 	truncated := entries[:len(entries)-1]
 
 	_, err := manifest.ApplyCategoryEntries(truncated)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tasks")
+
+	var missingErr *manifest.MissingCategoriesError
+	require.ErrorAs(t, err, &missingErr)
+	assert.Contains(t, missingErr.Names, "tasks")
 }
 
 func TestApplyCategoryEntries_EveryMissingNameListed(t *testing.T) {
@@ -78,9 +80,11 @@ func TestApplyCategoryEntries_EveryMissingNameListed(t *testing.T) {
 	entries := manifest.BuildCategoryEntries(&manifest.CategorySet{})[:7]
 
 	_, err := manifest.ApplyCategoryEntries(entries)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "plugins-data")
-	assert.Contains(t, err.Error(), "tasks")
+
+	var missingErr *manifest.MissingCategoriesError
+	require.ErrorAs(t, err, &missingErr)
+	assert.Contains(t, missingErr.Names, "plugins-data")
+	assert.Contains(t, missingErr.Names, "tasks")
 }
 
 func TestApplyCategoryEntries_UnknownNameIsError(t *testing.T) {
@@ -88,8 +92,10 @@ func TestApplyCategoryEntries_UnknownNameIsError(t *testing.T) {
 	entries = append(entries, manifest.Category{Name: "bogus", Included: true})
 
 	_, err := manifest.ApplyCategoryEntries(entries)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bogus")
+
+	var unknownErr *manifest.UnknownCategoriesError
+	require.ErrorAs(t, err, &unknownErr)
+	assert.Contains(t, unknownErr.Names, "bogus")
 }
 
 func TestApplyCategoryEntries_MissingAndUnknownAggregated(t *testing.T) {
@@ -98,9 +104,14 @@ func TestApplyCategoryEntries_MissingAndUnknownAggregated(t *testing.T) {
 	entries = append(entries, manifest.Category{Name: "bogus", Included: true})
 
 	_, err := manifest.ApplyCategoryEntries(entries)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tasks")
-	assert.Contains(t, err.Error(), "bogus")
+
+	var missingErr *manifest.MissingCategoriesError
+	require.ErrorAs(t, err, &missingErr)
+	assert.Contains(t, missingErr.Names, "tasks")
+
+	var unknownErr *manifest.UnknownCategoriesError
+	require.ErrorAs(t, err, &unknownErr)
+	assert.Contains(t, unknownErr.Names, "bogus")
 }
 
 func TestBuildApplyBuild_IsStable(t *testing.T) {

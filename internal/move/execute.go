@@ -16,6 +16,22 @@ import (
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
+// ErrEncodedDirAmbiguous is returned by checkEncodedDirCollision when the old
+// and new project paths both encode to the same on-disk storage directory. The
+// encoder is lossy on '/', '.', and ' '. Callers discriminate via errors.Is.
+var ErrEncodedDirAmbiguous = errors.New("refusing to move: old and new paths encode to the same directory")
+
+// ErrEncodedDirCollision is returned by checkEncodedDirCollision when the new
+// project's encoded directory already exists because another real path encodes
+// to the same name. Callers discriminate via errors.Is.
+var ErrEncodedDirCollision = errors.New("refusing to move: new project directory already exists")
+
+// ErrResidualSourceDir is returned by deleteOriginals when the encoded project
+// data is already removed but the on-disk source directory cannot be deleted.
+// The wrapping error preserves the os cause and the recovery instructions;
+// callers discriminate via errors.Is.
+var ErrResidualSourceDir = errors.New("on-disk source directory still present")
+
 // executeMove performs the copy-verify-delete sequence on disk after the
 // preflight checks in Apply have passed. It owns the rollback of partial
 // state: on any failure, newly created paths are removed and any globally
@@ -218,17 +234,16 @@ func checkEncodedDirCollision(claudeHome *claude.Home, oldPath, newPath string) 
 
 	if oldEncodedDir == newEncodedDir {
 		return fmt.Errorf(
-			"refusing to move: %q and %q both encode to directory %s — "+
+			"%w: %q and %q both encode to directory %s — "+
 				"the encoder is lossy on '/', '.', and ' ', so both paths share on-disk storage",
-			oldPath, newPath, filepath.Base(newEncodedDir),
+			ErrEncodedDirAmbiguous, oldPath, newPath, filepath.Base(newEncodedDir),
 		)
 	}
 
 	if _, err := os.Stat(newEncodedDir); err == nil {
 		return fmt.Errorf(
-			"refusing to move: new project directory %s already exists — "+
-				"another real project path encodes to the same name",
-			newEncodedDir,
+			"%w: %s — another real project path encodes to the same name",
+			ErrEncodedDirCollision, newEncodedDir,
 		)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat new project directory %s: %w", newEncodedDir, err)
@@ -260,14 +275,14 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 			// cc-port move cannot retry because LocateProject hard-requires
 			// the encoded dir — recovery is manual from here.
 			residual := fmt.Errorf(
-				"remove old project dir %s: %w\n"+
+				"%w: remove old project dir %s: %w\n"+
 					"state: encoded project data (session history, memory, todos) is gone and cannot be recovered; "+
 					"on-disk dir still present at %s with source files intact; "+
 					"global references restored to the old path\n"+
 					"recover: cc-port move cannot retry — the encoded source is gone. "+
 					"Leave the project at %s (Claude Code will recreate encoded state on next session), "+
 					"or complete the filesystem move with `mv %s %s`",
-				moveOptions.OldPath, err,
+				ErrResidualSourceDir, moveOptions.OldPath, err,
 				moveOptions.OldPath,
 				moveOptions.OldPath,
 				moveOptions.OldPath, moveOptions.NewPath,

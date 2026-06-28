@@ -3,7 +3,30 @@ package manifest
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
+
+// UnknownCategoriesError reports manifest category names that are not in
+// AllCategories. Names carries the offending names in encounter order; callers
+// inspect it via errors.As. Returned by ApplyCategoryEntries.
+type UnknownCategoriesError struct {
+	Names []string
+}
+
+func (e *UnknownCategoriesError) Error() string {
+	return fmt.Sprintf("unknown manifest category name(s): %s", strings.Join(e.Names, ", "))
+}
+
+// MissingCategoriesError reports AllCategories names absent from the manifest's
+// category list. Names carries the missing names in AllCategories order; callers
+// inspect it via errors.As. Returned by ApplyCategoryEntries.
+type MissingCategoriesError struct {
+	Names []string
+}
+
+func (e *MissingCategoriesError) Error() string {
+	return fmt.Sprintf("missing manifest category name(s): %s", strings.Join(e.Names, ", "))
+}
 
 // CategorySet specifies which export categories the user selected.
 // AllCategories is the single source of truth for valid categories and wire names.
@@ -102,16 +125,17 @@ func BuildCategoryEntries(set *CategorySet) []Category {
 }
 
 // ApplyCategoryEntries validates a manifest's category list and returns the
-// matching CategorySet. Missing and unknown names are aggregated via errors.Join.
+// matching CategorySet. Unknown and missing names are collected into an
+// UnknownCategoriesError and a MissingCategoriesError, joined via errors.Join.
 func ApplyCategoryEntries(entries []Category) (CategorySet, error) {
 	var set CategorySet
 	seen := make(map[string]bool, len(entries))
-	var errs []error
+	var unknown, missing []string
 
 	for _, entry := range entries {
 		spec, known := SpecByName(entry.Name)
 		if !known {
-			errs = append(errs, fmt.Errorf("unknown manifest category name: %q", entry.Name))
+			unknown = append(unknown, entry.Name)
 			continue
 		}
 		seen[entry.Name] = true
@@ -120,10 +144,17 @@ func ApplyCategoryEntries(entries []Category) (CategorySet, error) {
 
 	for _, spec := range AllCategories {
 		if !seen[spec.Name] {
-			errs = append(errs, fmt.Errorf("missing manifest category name: %q", spec.Name))
+			missing = append(missing, spec.Name)
 		}
 	}
 
+	var errs []error
+	if len(unknown) > 0 {
+		errs = append(errs, &UnknownCategoriesError{Names: unknown})
+	}
+	if len(missing) > 0 {
+		errs = append(errs, &MissingCategoriesError{Names: missing})
+	}
 	if len(errs) > 0 {
 		return CategorySet{}, errors.Join(errs...)
 	}

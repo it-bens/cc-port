@@ -32,8 +32,7 @@ func TestImportManifestCmd_OverwriteGuard(t *testing.T) {
 
 	err := runImportManifest(cmd, []string{archivePath})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
+	require.ErrorIs(t, err, errOutputExists)
 }
 
 func TestImportCmd_PassphraseFlagsRegistered(t *testing.T) {

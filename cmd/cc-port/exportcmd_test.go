@@ -28,8 +28,7 @@ func TestExportManifestCmd_OverwriteGuard(t *testing.T) {
 
 	err := runExportManifest(cmd, []string{"/Users/test/Projects/myproject"}, claudeDir, noopBanner{})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
+	require.ErrorIs(t, err, errOutputExists)
 }
 
 func TestExportCmd_PassphraseFlagsRegistered(t *testing.T) {
