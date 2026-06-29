@@ -2,12 +2,13 @@
 
 ## Purpose
 
-Shared filesystem helpers for recursive directory copy and path resolution. `ResolveExistingAncestor` walks a path upward to the longest existing prefix, evaluates symlinks on it, and re-attaches any missing tail.
+Shared filesystem helpers for recursive directory copy, file enumeration, and path resolution. `ResolveExistingAncestor` walks a path upward to the longest existing prefix, evaluates symlinks on it, and re-attaches any missing tail.
 
 ## Public API
 
 - `CopyDir(ctx context.Context, source, destination string, onEntry func()) error`: recursively copies a directory tree, preserving permissions and regular-file modification times. Symlinks are replicated as symlinks. Irregular entries fail-hard. Writes go through an `os.Root` opened on `destination`. `ctx.Err()` is checked at the top of every `WalkDir` callback so a cancelled context aborts within one iteration. `onEntry` fires once after each regular file and each symlink is copied, never for directories; a `nil` `onEntry` is a no-op for callers that do not track progress.
 - `ResolveExistingAncestor(absDir string) (string, error)`: walks `absDir` upward to the longest prefix that exists on disk. Runs `filepath.EvalSymlinks` on that prefix and re-attaches any missing trailing components unchanged. Requires an absolute path. See §Contracts.
+- `ListFilesRecursive(ctx context.Context, dir string) ([]string, error)`: returns every file path under `dir`, skipping directories. `ctx.Err()` is checked at the top of every `WalkDir` callback so a cancelled context aborts within one iteration. Called by `internal/claude` (`TranscriptFiles`) and `internal/move` (`snapshotPaths`).
 
 ## Contracts
 

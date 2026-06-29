@@ -13,6 +13,7 @@ This package owns flag parsing, stdout formatting, and exit-code mapping. Busine
 - `import`: restores a project from a ZIP archive into a target path, resolving non-implicit placeholders via `--from-manifest`.
 - `push`: uploads a project archive to a remote under a stable name, with cross-machine conflict refusal overridable by `--force`.
 - `pull`: downloads a named archive from a remote and applies it to a target path, sharing the placeholder-resolution contract with `import`.
+- `stats`: reports one project's footprint (per-surface path-reference counts and per-category disk usage), or with no argument ranks every project by disk footprint. Read-only, no lock; the root `--json` flag switches the result to a DTO.
 
 The `push` and `pull` subcommands accept `--credentials-file` (path to a `.env`-style AWS credentials file) and `--no-prompt` (disable the interactive prompt fallback). Authentication details: see the `--help` output's §Authentication block.
 
@@ -48,4 +49,4 @@ Every cmd write goes through `cmd.OutOrStdout()` for normal output and `cmd.ErrO
 
 ## Tests
 
-`importcmd_test.go` in this package tests cobra wiring on the `import` and `import manifest` subcommands (passphrase flags, manifest output guard). `category_selection_test.go` pins the `--from-manifest` exclusivity rule across every per-category flag. Most behavioral tests live in the owning `internal/*` packages. Push and pull dispatch tests (`openPriorRead`, `openArchiveSource`) live alongside the cmd helpers because the dispatch is owned here. `integration_test.go` at the repo root runs full CLI end-to-end against a fixture `~/.claude`.
+`importcmd_test.go` in this package tests cobra wiring on the `import` and `import manifest` subcommands (passphrase flags, manifest output guard). `category_selection_test.go` pins the `--from-manifest` exclusivity rule across every per-category flag. Most behavioral tests live in the owning `internal/*` packages. Push and pull dispatch tests (`openPriorRead`, `openArchiveSource`) live alongside the cmd helpers because the dispatch is owned here. `stats_test.go` pins the stats result stream routing and the `--json` DTO shape; `stats_integration_test.go` drives both stats modes end-to-end over the fixture. `integration_test.go` at the repo root runs full CLI end-to-end against a fixture `~/.claude`.

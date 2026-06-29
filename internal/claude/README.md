@@ -32,6 +32,17 @@ Not a rewriting package. The module produces locations and types.
     returns every file tied to a project. Errors if the project directory
     does not exist. Optional resources are zero-valued when absent.
   - `ProjectLocations`: struct holding the set.
+  - `EnumerateProjects(claudeHome *Home) ([]ProjectEnumeration, error)`:
+    lists every encoded project directory with the data needed to size its
+    disk footprint. An absent or empty projects directory yields an empty
+    slice, not an error.
+  - `ProjectEnumeration`: struct with `EncodedName`, `ResolvedPath` (the
+    witness-resolved real path, empty when no witness exists), and
+    `Locations`.
+  - `TranscriptFiles(ctx context.Context, projectDir string) ([]string, error)`:
+    a project dir's transcript body files (top-level `*.jsonl` plus every file
+    under each subdirectory other than `memory`/`sessions`). `move` rewrites
+    this set; `stats` counts and sizes it.
 - **Session-keyed registry**
   - `SessionKeyedGroup`: descriptor struct with `Name` (stable machine key
     and display label), `Category` (the controlling `manifest.AllCategories`
@@ -165,10 +176,9 @@ every file and directory tied to the project:
   absent, matching the behaviour of `collectMemoryFiles`. The directory may
   not exist if the feature has never been used.
 - After the project directory is confirmed to exist, `verifyProjectIdentity`
-  walks `~/.claude/sessions/*.json` and checks whether any session whose
-  `sessionId` matches a UUID inside the encoded project directory has a
-  `cwd` equal to `projectPath`. A single match confirms identity and the
-  check short-circuits.
+  walks `~/.claude/sessions/*.json` and collects the distinct `cwd` values
+  reported by sessions whose `sessionId` matches a UUID inside the encoded
+  project directory. A `cwd` equal to `projectPath` confirms identity.
 
 #### Refused
 
@@ -188,6 +198,39 @@ every file and directory tied to the project:
   sessions directory absent) cannot be identity-verified. `LocateProject`
   logs a one-line warning to `os.Stderr` and proceeds so fresh projects
   still work.
+
+### All-projects enumeration
+
+`EnumerateProjects` lists every directory under `ProjectsDir()`, skipping
+non-directory entries, and per directory resolves a real-path label from a
+session witness and collects the owned-data locations used for disk sizing. It
+is the all-projects counterpart to `LocateProject`.
+
+Unlike `LocateProject` it takes no caller-supplied path and runs no identity
+cross-check: with no requested path there is nothing to contradict. The real
+path is recovered from a session witness (see §Path encoding) when one exists
+and is left empty otherwise. `sessions/*.json` are attributed by `cwd`, so a
+witness-less directory contributes no session files; the session-UUID-keyed
+categories are collected regardless.
+
+#### Handled
+
+- A witness resolves the lossy encoding to the real path the session reported,
+  recovering which of several colliding paths owns the directory.
+- A witness-less directory still reports disk metrics; only the label degrades
+  to the encoded name.
+
+#### Refused
+
+- Nothing per project. A missing projects directory is an empty result, not an
+  error.
+
+#### Not covered
+
+- Reference counts. An arbitrary encoded directory has no confirmed real path
+  to scan shared files against, so references stay a single-project concern.
+- The shared global `history.jsonl` and `~/.claude.json` carry no per-project
+  disk footprint and are not consulted here.
 
 ### Session-keyed registry
 
@@ -326,6 +369,10 @@ Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`. Coverage:
 - round-trip marshal and unmarshal of each schema type.
 - `LocateProject` hit and miss paths, including the identity guard's match,
   contradiction, and no-witness outcomes.
+- `EnumerateProjects` (in `enumerate_test.go`): witness-resolved labels
+  including the lossy-encoding case, the multi-witness disagreement tie-break,
+  the witness-less label fallback, non-directory skip, and the empty projects
+  directory.
 
 Fuzz target `FuzzVerifyProjectIdentity` in `locations_fuzz_test.go` asserts
 the identity guard's three-state outcome is deterministic under arbitrary

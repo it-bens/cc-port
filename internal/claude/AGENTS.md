@@ -24,6 +24,7 @@
 - Encoding: `paths.go:EncodePath`, `paths.go:ResolveProjectPath`.
 - Home and derived paths: `paths.go:NewHome`, `paths.go:Home`.
 - Project enumeration: `locations.go:LocateProject`.
+- Transcript body file set (shared by move and stats): `transcripts.go:TranscriptFiles`.
 - Session-keyed registry: `session_keyed_groups.go`.
 - User-wide registry: `user_wide_groups.go`.
 - Schemas and constants: `schema.go` (`HistoryEntry`, `MaxHistoryLine`).

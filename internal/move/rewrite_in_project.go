@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
@@ -32,7 +33,7 @@ func rewriteNewProjectDir(
 func rewriteTranscriptsInDir(
 	ctx context.Context, oldEncodedDir, newEncodedDir string, moveOptions Options, phase progress.PhaseHandle,
 ) error {
-	newTranscripts, err := listTranscriptFiles(ctx, newEncodedDir)
+	newTranscripts, err := claude.TranscriptFiles(ctx, newEncodedDir)
 	if err != nil {
 		return fmt.Errorf("collect transcripts in new dir: %w", err)
 	}

@@ -136,6 +136,16 @@ Pull the archive named `<name>` from `<url>` and apply it to `<target-path>`. Dr
 cc-port pull project --to /Users/me/teammate-project --remote s3://bucket?region=us-east-1 --apply
 ```
 
+### `cc-port stats`
+
+`cc-port stats [<project-path>]`
+
+Report how much of `~/.claude/` a project occupies and how entangled its path is across shared files. With a project path, it prints per-surface reference counts and per-category disk usage. With no argument, it ranks every project by disk footprint. It is read-only: it never writes and takes no lock. The root `--json` flag emits the result as a JSON document instead of the human table.
+
+```
+cc-port stats /Users/me/project
+```
+
 ## Development
 
 Contributing or modifying cc-port? See [`DEVELOPMENT.md`](DEVELOPMENT.md) for architecture, tests, lint, and commit conventions.

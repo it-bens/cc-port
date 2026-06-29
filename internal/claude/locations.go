@@ -350,17 +350,19 @@ func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []
 		uuidSet[uuid] = struct{}{}
 	}
 
-	matched, seenCwds, err := walkSessionWitnesses(claudeHome.SessionsDir(), uuidSet, projectPath)
+	cwds, err := walkSessionWitnesses(claudeHome.SessionsDir(), uuidSet)
 	if err != nil {
 		return err
 	}
-	if matched {
-		return nil
+	for _, cwd := range cwds {
+		if cwd == projectPath {
+			return nil
+		}
 	}
-	if len(seenCwds) > 0 {
+	if len(cwds) > 0 {
 		return fmt.Errorf(
 			"encoded directory %s: sessions/*.json attributes it to %s, not to requested project %q; refusing to rewrite",
-			encodedDir, formatCwdList(seenCwds), projectPath,
+			encodedDir, formatCwdList(cwds), projectPath,
 		)
 	}
 
@@ -368,18 +370,21 @@ func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []
 	return nil
 }
 
-// walkSessionWitnesses inspects every sessions/*.json and returns whether a
-// witness confirmed projectPath (matched), along with the distinct cwd values
-// reported by witnesses that contradicted it. An empty seenCwds slice with
-// matched=false means no session's UUID was found in the encoded dir's set,
-// the "no witness" case. A missing sessions directory collapses to the same.
-func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}, projectPath string) (matched bool, seenCwds []string, err error) {
+// walkSessionWitnesses inspects every sessions/*.json and returns the distinct
+// cwd values that witnesses report for the encoded directory — a witness being
+// a session whose sessionId is in uuidSet. An empty slice means no witness was
+// found; a missing sessions directory collapses to the same. The walk is
+// target-agnostic: callers decide whether a returned cwd is a match (identity
+// confirmed), a contradiction (identity rejected), or the resolved label
+// (all-projects enumeration), so verifyProjectIdentity and EnumerateProjects
+// share one walk.
+func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}) (cwds []string, err error) {
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil, nil
+			return nil, nil
 		}
-		return false, nil, fmt.Errorf("read sessions directory: %w", err)
+		return nil, fmt.Errorf("read sessions directory: %w", err)
 	}
 
 	seen := make(map[string]struct{})
@@ -390,7 +395,7 @@ func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}, proje
 		sessionFilePath := filepath.Join(sessionsDir, entry.Name())
 		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // G304: path constructed from trusted sessions directory
 		if err != nil {
-			return false, nil, fmt.Errorf("read session file %s: %w", entry.Name(), err)
+			return nil, fmt.Errorf("read session file %s: %w", entry.Name(), err)
 		}
 		var probe struct {
 			SessionID string `json:"sessionId"`
@@ -402,15 +407,12 @@ func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}, proje
 		if _, ok := uuidSet[probe.SessionID]; !ok {
 			continue
 		}
-		if probe.Cwd == projectPath {
-			return true, nil, nil
-		}
 		if _, duplicate := seen[probe.Cwd]; !duplicate {
 			seen[probe.Cwd] = struct{}{}
-			seenCwds = append(seenCwds, probe.Cwd)
+			cwds = append(cwds, probe.Cwd)
 		}
 	}
-	return false, seenCwds, nil
+	return cwds, nil
 }
 
 // formatCwdList renders cwd witnesses as a comma-separated list of Go-quoted

@@ -139,7 +139,7 @@ func countTranscriptReplacements(
 	moveOptions Options,
 	oldEncodedDir, newEncodedDir string,
 ) (int, error) {
-	transcriptPaths, err := listTranscriptFiles(ctx, locations.ProjectDir)
+	transcriptPaths, err := claude.TranscriptFiles(ctx, locations.ProjectDir)
 	if err != nil {
 		return 0, err
 	}

@@ -7,7 +7,7 @@ Go CLI that rewrites Claude Code project state. See `README.md` for the project 
 - Never inspect or rewrite file-history snapshot contents. (docs/architecture.md §File-history policy (cross-cutting))
 - Add any new session-keyed directory by appending one entry to both `claude.SessionKeyedGroups` and `transport.SessionKeyedTargets`. (internal/claude/README.md §Session-keyed registry)
 - Register every export category in `manifest.AllCategories`. Never hard-code a parallel category list. (internal/manifest/README.md §Category manifest)
-- Route every path-substring rewrite through `rewrite.ReplacePathInBytes`. Never call `strings.ReplaceAll` on user paths. (internal/rewrite/README.md §Boundary rules)
+- Route every path-substring rewrite or count through the `rewrite` primitives. Never call `strings.ReplaceAll` or `strings.Count` on user paths. (internal/rewrite/README.md §Boundary rules)
 - Wrap every mutating command body (`move --apply`, `import`) in `lock.WithLock` before any write. (internal/lock/README.md §Concurrency guard)
 - Contain adversarial archive paths with `os.Root` and bound decompressed reads with `io.LimitReader`. (internal/importer/README.md §Import contract)
 - After editing archive cap-guard code, run `go test -tags large ./internal/importer/...` locally. (internal/importer/README.md §Tests)
@@ -17,6 +17,6 @@ Go CLI that rewrites Claude Code project state. See `README.md` for the project 
 ## Navigation
 
 - CLI entry: `cmd/cc-port`.
-- Commands: `internal/move`, `internal/export`, `internal/importer`, `internal/sync`.
+- Commands: `internal/move`, `internal/export`, `internal/importer`, `internal/sync`, `internal/stats`.
 - Shared primitives: `internal/rewrite`, `internal/lock`, `internal/fsutil`, `internal/claude`, `internal/scan`, `internal/ui`, `internal/pipeline`, `internal/progress`, `internal/file`.
 - Modules with hard editing rules additionally carry an `AGENTS.md`.

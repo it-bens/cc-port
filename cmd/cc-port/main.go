@@ -80,6 +80,7 @@ func newRootCmd(banner Banner) *cobra.Command {
 	rootCmd.AddCommand(newImportCmd(&claudeDir))
 	rootCmd.AddCommand(newPushCmd(&claudeDir, banner))
 	rootCmd.AddCommand(newPullCmd(&claudeDir))
+	rootCmd.AddCommand(newStatsCmd(&claudeDir))
 
 	return rootCmd
 }
