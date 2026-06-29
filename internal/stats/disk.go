@@ -19,11 +19,11 @@ import (
 func computeDisk(ctx context.Context, locations *claude.ProjectLocations) (map[string]DiskUsage, error) {
 	byCategory := make(map[string]DiskUsage, len(manifest.AllCategories))
 
-	bodyFiles, err := claude.TranscriptFiles(ctx, locations.ProjectDir)
+	transcriptFiles, err := claude.TranscriptFiles(ctx, locations.ProjectDir)
 	if err != nil {
 		return nil, err
 	}
-	sessions, err := sizeFiles(ctx, bodyFiles)
+	sessions, err := sizeFiles(ctx, transcriptFiles)
 	if err != nil {
 		return nil, err
 	}

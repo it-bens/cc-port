@@ -59,11 +59,11 @@ func countReferences(
 	}
 	counts["sessions"] = sessionsCount
 
-	transcriptPaths, err := claude.TranscriptFiles(ctx, encodedDir)
+	transcriptFiles, err := claude.TranscriptFiles(ctx, encodedDir)
 	if err != nil {
 		return nil, err
 	}
-	transcriptsCount, err := countWithEncodedDir(ctx, transcriptPaths, projectPath, encodedDir)
+	transcriptsCount, err := countWithEncodedDir(ctx, transcriptFiles, projectPath, encodedDir)
 	if err != nil {
 		return nil, err
 	}

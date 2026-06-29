@@ -99,3 +99,22 @@ func TestStatsCmd_TooManyArgsIsUsageError(t *testing.T) {
 	var usageErr *usageError
 	assert.ErrorAs(t, err, &usageErr, "a second positional argument must be a usage error (exit 2)")
 }
+
+func TestHumanizeBytes(t *testing.T) {
+	cases := []struct {
+		name  string
+		bytes int64
+		want  string
+	}{
+		{"below one KiB renders as bytes", 512, "512 B"},
+		{"exact KiB boundary", 1 << 10, "1.0 KiB"},
+		{"fractional KiB", 1536, "1.5 KiB"},
+		{"MiB branch", 5 << 20, "5.0 MiB"},
+		{"GiB branch", 3 << 30, "3.0 GiB"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, humanizeBytes(testCase.bytes))
+		})
+	}
+}

@@ -39,7 +39,7 @@ func newRootCmd(banner Banner) *cobra.Command {
 	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "suppress progress output, show only errors")
 	rootCmd.PersistentFlags().Bool("verbose", false, "show verbose progress detail")
 	rootCmd.PersistentFlags().Bool("debug", false, "show debug-level progress detail")
-	rootCmd.PersistentFlags().Bool("json", false, "emit progress as newline-delimited JSON")
+	rootCmd.PersistentFlags().Bool("json", false, "emit machine-readable JSON instead of human-readable output")
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
 	rootCmd.Version = version

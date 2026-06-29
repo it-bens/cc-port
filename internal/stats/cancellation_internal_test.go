@@ -13,10 +13,13 @@ import (
 	"github.com/it-bens/cc-port/internal/claude"
 )
 
-// TestCancellationStopsCountAndDiskScans verifies the per-line and per-file
-// ctx.Err() checks inside countReferences and computeDisk. The public entry
-// points guard the context before reaching either scan, so this loop-level
-// cancellation is only observable from inside the package.
+// TestCancellationStopsCountAndDiskScans verifies that countReferences and
+// computeDisk abort on a canceled context instead of running their scans to
+// completion. A pre-canceled context trips the first ctx.Err() check each one
+// reaches (the history scan and the transcript walk under this arrange), not
+// every per-loop check. The public entry points guard the context before
+// either scan, so this loop-level abort is only observable from inside the
+// package.
 func TestCancellationStopsCountAndDiskScans(t *testing.T) {
 	dir := t.TempDir()
 	home := &claude.Home{Dir: filepath.Join(dir, "dotclaude"), ConfigFile: filepath.Join(dir, "dotclaude.json")}

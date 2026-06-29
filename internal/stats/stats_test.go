@@ -87,6 +87,16 @@ func TestComputeFootprint_DiskFootprintByCategory(t *testing.T) {
 	// sessions = 2 top-level transcripts + 3 session-subdir bodies + 1 sessions/*.json.
 	assert.Equal(t, 6, diskUsage(t, footprint.Disk, "sessions").Files)
 
+	// memory holds the four project memory files. The session-keyed categories
+	// attribute files by the project's session UUIDs; only session …001 carries
+	// todos/usage-data/plugins-data/tasks entries. The tasks .lock and
+	// .highwatermark sidecars are filtered by AllFlatFiles, leaving only 1.json.
+	assert.Equal(t, 4, diskUsage(t, footprint.Disk, "memory").Files)
+	assert.Equal(t, 1, diskUsage(t, footprint.Disk, "todos").Files)
+	assert.Equal(t, 2, diskUsage(t, footprint.Disk, "usage-data").Files)
+	assert.Equal(t, 1, diskUsage(t, footprint.Disk, "plugins-data").Files)
+	assert.Equal(t, 1, diskUsage(t, footprint.Disk, "tasks").Files)
+
 	// history and config are shared globals: no per-project disk footprint.
 	assert.Equal(t, stats.DiskUsage{Category: "history"}, diskUsage(t, footprint.Disk, "history"))
 	assert.Equal(t, stats.DiskUsage{Category: "config"}, diskUsage(t, footprint.Disk, "config"))
@@ -335,9 +345,13 @@ func TestComputeFootprint_CountsEncodedStorageDirInTranscript(t *testing.T) {
 		"the encoded storage-dir form in a real transcript must be counted by the second pass")
 }
 
-// TestComputeFootprint_DiskMatchesAllProjectsEntry cross-checks that the
-// per-category disk usage a single-project footprint reports equals the same
-// project's entry in the all-projects ranking, so both modes size identically.
+// TestComputeFootprint_DiskMatchesAllProjectsEntry cross-checks that, for a
+// witness-resolved project, the per-category disk usage a single-project
+// footprint reports equals the same project's entry in the all-projects
+// ranking. The equality is conditional: the all-projects walk skips
+// sessions/*.json for a witness-less project (it has no real path to attribute
+// them by), while single-project mode always includes them. The fixture
+// project resolves a witness, asserted below.
 func TestComputeFootprint_DiskMatchesAllProjectsEntry(t *testing.T) {
 	home := testutil.SetupFixture(t)
 
@@ -354,7 +368,9 @@ func TestComputeFootprint_DiskMatchesAllProjectsEntry(t *testing.T) {
 		}
 	}
 	require.NotNil(t, matched, "the fixture project must appear in the all-projects ranking")
+	require.True(t, matched.Resolved,
+		"the cross-mode disk equality holds only for a witness-resolved project")
 
 	assert.Equal(t, footprint.Disk, matched.Disk,
-		"per-category disk usage must be identical between single-project and all-projects modes")
+		"per-category disk usage matches between modes for a witness-resolved project")
 }

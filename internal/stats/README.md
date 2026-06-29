@@ -49,8 +49,8 @@ for the label resolution and the witness-less fallback.
 Reference counts route through the `rewrite` count primitives, never
 `strings.Count`, so the boundary contract holds in one place (see
 [`internal/rewrite/README.md`](../rewrite/README.md) §Boundary rules). Each
-surface uses the variant that matches what an apply would actually rewrite
-there:
+surface uses the count variant whose escaping matches how an apply encodes a
+path on that surface:
 
 | Surface | Variant | Reason |
 |---|---|---|

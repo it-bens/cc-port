@@ -331,34 +331,37 @@ writes. Each type with an `Extra` field uses a custom `UnmarshalJSON` and
 
 ### History line cap
 
-The exported constant `MaxHistoryLine` (16 MiB) caps one `history.jsonl`
-line read through `bufio.Scanner`. Enforced by `countHistoryEntries` in
-this package and by `internal/export.extractProjectHistory`. New readers
-that scan `history.jsonl` line-by-line must use it so the observable cap
-stays consistent across commands.
+The exported constant `MaxHistoryLine` (16 MiB) caps a single
+`history.jsonl` line. The file's streaming line readers enforce it through one
+of two mechanisms, so an oversized line fails loudly instead of being
+truncated. A new streaming `history.jsonl` reader must keep the cap so the
+observable limit stays consistent across commands.
 
 #### Handled
 
-- Lines up to 16 MiB scan intact. Both scanner callers set
-  `scanner.Buffer(make([]byte, 64<<10), MaxHistoryLine)`, so the initial
-  allocation stays at 64 KiB and grows only when a line demands it.
-- Oversized lines cause `bufio.Scanner.Err()` to return
-  `bufio.ErrTooLong`. Both callers wrap with `fmt.Errorf("scan history
-  file: %w", err)` so the sentinel is reachable via `errors.Is`.
+- `bufio.Scanner` readers call `scanner.Buffer(make([]byte, 64<<10),
+  MaxHistoryLine)`: `countHistoryEntries` here, `move.scanHistoryFile`, and
+  `stats.countHistoryReferences`. The buffer starts at 64 KiB and grows only
+  up to the cap.
+- `bufio.Reader` readers wrap `bufio.NewReaderSize(src, 64<<10)`, read each
+  line with `ReadBytes('\n')`, and reject any line longer than
+  `MaxHistoryLine`: `rewrite.StreamHistoryJSONL` (move's rewrite path) and
+  `export.writeJSONLToZip` (the export path).
+- Both mechanisms report an oversized line as `bufio.ErrTooLong`, wrapped
+  with `%w` so a caller reaches it through `errors.Is`.
 
 #### Refused
 
-- Silent truncation of an oversized line. The scanner fails and the
-  commands that reach `LocateProject` or `export.Run` surface the error.
+- Silent truncation of an oversized line. The read fails and the command
+  surfaces the error.
 
 #### Not covered
 
-- Total file size. Callers that read `history.jsonl` whole (for example
-  `internal/move.scanHistoryFile` via `os.ReadFile`) are bounded only by
-  available memory, not by `MaxHistoryLine`.
-- The `internal/scan` package's own 16 MiB cap on rules files. Same
-  number, different content domain. The two caps are coincident and
-  independent.
+- `internal/importer` reads the existing `history.jsonl` whole through
+  `os.ReadFile` when merging imported entries, so it is bounded by available
+  memory, not by `MaxHistoryLine`.
+- The `internal/scan` package's own 16 MiB cap on rules files. Same number,
+  different content domain. The two caps are coincident and independent.
 
 ## Tests
 
