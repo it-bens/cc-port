@@ -156,7 +156,7 @@ func expectedTranscriptPasses(t *testing.T, claudeHome *claude.Home) (realPath, 
 	locations, err := claude.LocateProject(claudeHome, oldProjectPath)
 	require.NoError(t, err)
 
-	paths, err := move.ListTranscriptFiles(t.Context(), locations.ProjectDir)
+	paths, err := claude.TranscriptFiles(t.Context(), locations.ProjectDir)
 	require.NoError(t, err)
 
 	oldEncodedDir := claudeHome.ProjectDir(oldProjectPath)

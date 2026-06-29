@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/fsutil"
@@ -293,81 +291,18 @@ func deleteOriginals(oldProjectDir string, moveOptions Options, tracker *globalF
 	return nil
 }
 
-// listTranscriptFiles returns every file under projectDir that
-// RewriteTranscripts should rewrite: top-level `.jsonl` files, plus every file
-// under each session subdirectory (covering <uuid>/subagents/**,
-// <uuid>/session-memory/**, and <uuid>/workflows/**).
-//
-// `memory/` is excluded because rewriteMemoryFilesInDir handles it separately.
-// `sessions/` is excluded because rewriteSessionFiles in rewrite_global.go
-// already rewrites those files; listing them here would double-rewrite them.
-func listTranscriptFiles(ctx context.Context, projectDir string) ([]string, error) {
-	entries, err := os.ReadDir(projectDir)
-	if err != nil {
-		return nil, fmt.Errorf("read project directory: %w", err)
-	}
-
-	var transcripts []string
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		name := entry.Name()
-		fullPath := filepath.Join(projectDir, name)
-		if !entry.IsDir() {
-			if strings.HasSuffix(name, ".jsonl") {
-				transcripts = append(transcripts, fullPath)
-			}
-			continue
-		}
-		if name == "memory" || name == "sessions" {
-			continue
-		}
-		subdirFiles, err := listFilesRecursive(ctx, fullPath)
-		if err != nil {
-			return nil, err
-		}
-		transcripts = append(transcripts, subdirFiles...)
-	}
-	return transcripts, nil
-}
-
-// listFilesRecursive returns every file path under dir, skipping directories.
-// ctx is checked at the top of every WalkDir callback so a canceled
-// context aborts a long enumeration within one iteration.
-func listFilesRecursive(ctx context.Context, dir string) ([]string, error) {
-	var files []string
-	walkErr := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		files = append(files, path)
-		return nil
-	})
-	if walkErr != nil {
-		return nil, fmt.Errorf("walk %s: %w", dir, walkErr)
-	}
-	return files, nil
-}
-
 // snapshotPaths returns every snapshot file path under locations.FileHistoryDirs.
 // Snapshot contents are not read; path discovery only matches the opaque-bytes
 // invariant. Used by DryRun for the plan count and by Apply's preservation
 // warning so both stay in lock-step with one enumeration. ctx is checked at
-// the top of the outer loop as well as inside each listFilesRecursive walk.
+// the top of the outer loop as well as inside each fsutil.ListFilesRecursive walk.
 func snapshotPaths(ctx context.Context, locations *claude.ProjectLocations) ([]string, error) {
 	var paths []string
 	for _, fileHistoryDir := range locations.FileHistoryDirs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		snapshots, err := listFilesRecursive(ctx, fileHistoryDir)
+		snapshots, err := fsutil.ListFilesRecursive(ctx, fileHistoryDir)
 		if err != nil {
 			return nil, fmt.Errorf("walk file-history dir %s: %w", fileHistoryDir, err)
 		}

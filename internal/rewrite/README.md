@@ -11,6 +11,8 @@ Every path-rewriting command routes through this package so the boundary contrac
   - `ReplacePathInBytes(data []byte, oldPath, newPath string) ([]byte, int)`: boundary-aware substring replace; returns rewritten bytes and match count.
   - `ReplacePathInBytesWithJSONEscape(data []byte, oldPath, newPath string) ([]byte, int)`: two-pass variant that also matches the JSON-escaped `\/` form. Byte-identical to `ReplacePathInBytes` when the input contains no escaped slashes.
   - `ContainsBoundedPath(data []byte, path string) bool`: same boundary check without rewriting.
+  - `CountPathInBytes(data []byte, path string) int`: counts bounded occurrences without rewriting, scanning without a rewritten copy. The counting analogue of `ReplacePathInBytes`.
+  - `CountPathInBytesWithJSONEscape(data []byte, path string) int`: counts bounded occurrences across both the raw and JSON-escaped forms. The counting analogue of `ReplacePathInBytesWithJSONEscape`.
   - `EscapeSJSONKey(key string) string`: escapes a key for use as a single segment in an sjson path expression.
 - **Typed file helpers**
   - `StreamHistoryJSONL(ctx context.Context, src io.Reader, dst io.Writer, oldProject, newProject string) (int, []int, error)`: streams `history.jsonl` line by line, writing the rewritten output to dst; returns changed-line count, malformed-line numbers, and error. Caps one line at `claude.MaxHistoryLine`. Routes through `ReplacePathInBytesWithJSONEscape` so escape-form slashes in emitted JSON are rewritten.
@@ -52,6 +54,11 @@ variant; callers rewriting raw filesystem bytes (memory files,
 session-keyed flat files) stay on `ReplacePathInBytes` because a second
 pass would be noise.
 
+`CountPathInBytes` and `CountPathInBytesWithJSONEscape` apply the identical
+boundary rule but report only the match count; `stats` uses them to inventory
+references without producing a throwaway rewritten copy. Their raw-vs-escape
+split mirrors the replacers above.
+
 #### Handled
 
 - `/a/foo` followed by a non-path byte (whitespace, `/`, `"`, `,`, `!`, `?`,
@@ -83,7 +90,9 @@ rewriting sentence-ending prose references.
 Unit tests in `rewrite_test.go` cover `StreamHistoryJSONL`, `ReplacePathInBytes`
 (including dot-boundary lookahead), `SessionFile`, `UserConfig`,
 `SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
-`ContainsBoundedPath`, and `SafeWriteFile`.
+`ContainsBoundedPath`, the `Count*` primitives (boundary cases, the
+JSON-escaped form, and parity with their `Replace*` counterparts), and
+`SafeWriteFile`.
 
 Fuzz target in `rewrite_fuzz_test.go`. `FuzzReplacePathInBytes` asserts
 empty-`oldPath` no-op, identity-rewrite byte equality, and the length

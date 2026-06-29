@@ -10,4 +10,5 @@
 
 - Copy: `copy.go:CopyDir`.
 - Path resolution: `paths.go:ResolveExistingAncestor`.
+- File enumeration: `walk.go:ListFilesRecursive`.
 - Tests: `copy_test.go`, `copy_symlink_test.go`, `copy_unix_test.go`, `paths_test.go`.

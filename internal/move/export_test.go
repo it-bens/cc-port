@@ -4,7 +4,4 @@ package move
 // compiled into the production binary, so these aliases stay out of the
 // package's public API while giving external tests access to internal
 // enumeration helpers for count/containment assertions.
-var (
-	SnapshotPaths       = snapshotPaths
-	ListTranscriptFiles = listTranscriptFiles
-)
+var SnapshotPaths = snapshotPaths

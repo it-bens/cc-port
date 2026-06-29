@@ -160,6 +160,67 @@ func ContainsBoundedPath(data []byte, path string) bool {
 	return count > 0
 }
 
+// CountPathInBytes returns how many times path occurs in data as a bounded
+// reference, using the same right-boundary rule as ReplacePathInBytes. It scans
+// without materializing a rewritten copy, so stats can count occurrences across
+// many files without the replacer's per-file buffer.
+func CountPathInBytes(data []byte, path string) int {
+	return countBoundedPath(data, path)
+}
+
+// CountPathInBytesWithJSONEscape counts bounded occurrences of path in both its
+// raw form and its JSON-escaped form (each "/" written as "\/"), mirroring
+// ReplacePathInBytesWithJSONEscape's two-pass coverage. It is the counting lens
+// for surfaces an apply rewrites through the typed JSON helpers, whose emitters
+// can escape forward slashes.
+func CountPathInBytesWithJSONEscape(data []byte, path string) int {
+	count := countBoundedPath(data, path)
+	if !bytes.Contains(data, []byte(`\/`)) {
+		return count
+	}
+	escaped := strings.ReplaceAll(path, "/", `\/`)
+	return count + countBoundedPath(data, escaped)
+}
+
+// countBoundedPath walks data and counts matches of path bounded on the right
+// by a non-path-continuation byte. The cursor advances exactly as
+// ReplacePathInBytes's does (one byte past a rejected match, past the whole
+// match on a hit) so the two stay in lock-step; the shared boundary predicates
+// keep the rule itself single-sourced.
+func countBoundedPath(data []byte, path string) int {
+	if path == "" || len(data) == 0 {
+		return 0
+	}
+
+	pathBytes := []byte(path)
+	count := 0
+	cursor := 0
+	for cursor <= len(data)-len(pathBytes) {
+		if !bytes.Equal(data[cursor:cursor+len(pathBytes)], pathBytes) {
+			cursor++
+			continue
+		}
+
+		nextIndex := cursor + len(pathBytes)
+		if nextIndex < len(data) {
+			nextByte := data[nextIndex]
+			if nextByte == '.' {
+				if isExtensionDotAt(data, nextIndex) {
+					cursor++
+					continue
+				}
+			} else if isPathContinuationByte(nextByte) {
+				cursor++
+				continue
+			}
+		}
+
+		count++
+		cursor = nextIndex
+	}
+	return count
+}
+
 // StreamHistoryJSONL streams src line by line, rewriting every well-formed
 // entry so oldProject becomes newProject (in the structured `project` field
 // AND in any free-text reference such as `display` or `pastedContents`),

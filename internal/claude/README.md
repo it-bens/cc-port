@@ -32,6 +32,17 @@ Not a rewriting package. The module produces locations and types.
     returns every file tied to a project. Errors if the project directory
     does not exist. Optional resources are zero-valued when absent.
   - `ProjectLocations`: struct holding the set.
+  - `EnumerateProjects(claudeHome *Home) ([]ProjectEnumeration, error)`:
+    lists every encoded project directory with the data needed to size its
+    disk footprint. An absent or empty projects directory yields an empty
+    slice, not an error.
+  - `ProjectEnumeration`: struct with `EncodedName`, `ResolvedPath` (the
+    witness-resolved real path, empty when no witness exists), and
+    `Locations`.
+  - `TranscriptFiles(ctx context.Context, projectDir string) ([]string, error)`:
+    a project dir's transcript body files (top-level `*.jsonl` plus every file
+    under each subdirectory other than `memory`/`sessions`). `move` rewrites
+    this set; `stats` counts and sizes it.
 - **Session-keyed registry**
   - `SessionKeyedGroup`: descriptor struct with `Name` (stable machine key
     and display label), `Category` (the controlling `manifest.AllCategories`
@@ -165,10 +176,9 @@ every file and directory tied to the project:
   absent, matching the behaviour of `collectMemoryFiles`. The directory may
   not exist if the feature has never been used.
 - After the project directory is confirmed to exist, `verifyProjectIdentity`
-  walks `~/.claude/sessions/*.json` and checks whether any session whose
-  `sessionId` matches a UUID inside the encoded project directory has a
-  `cwd` equal to `projectPath`. A single match confirms identity and the
-  check short-circuits.
+  walks `~/.claude/sessions/*.json` and collects the distinct `cwd` values
+  reported by sessions whose `sessionId` matches a UUID inside the encoded
+  project directory. A `cwd` equal to `projectPath` confirms identity.
 
 #### Refused
 
@@ -188,6 +198,39 @@ every file and directory tied to the project:
   sessions directory absent) cannot be identity-verified. `LocateProject`
   logs a one-line warning to `os.Stderr` and proceeds so fresh projects
   still work.
+
+### All-projects enumeration
+
+`EnumerateProjects` lists every directory under `ProjectsDir()`, skipping
+non-directory entries, and per directory resolves a real-path label from a
+session witness and collects the owned-data locations used for disk sizing. It
+is the all-projects counterpart to `LocateProject`.
+
+Unlike `LocateProject` it takes no caller-supplied path and runs no identity
+cross-check: with no requested path there is nothing to contradict. The real
+path is recovered from a session witness (see §Path encoding) when one exists
+and is left empty otherwise. `sessions/*.json` are attributed by `cwd`, so a
+witness-less directory contributes no session files; the session-UUID-keyed
+categories are collected regardless.
+
+#### Handled
+
+- A witness resolves the lossy encoding to the real path the session reported,
+  recovering which of several colliding paths owns the directory.
+- A witness-less directory still reports disk metrics; only the label degrades
+  to the encoded name.
+
+#### Refused
+
+- Nothing per project. A missing projects directory is an empty result, not an
+  error.
+
+#### Not covered
+
+- Reference counts. An arbitrary encoded directory has no confirmed real path
+  to scan shared files against, so references stay a single-project concern.
+- The shared global `history.jsonl` and `~/.claude.json` carry no per-project
+  disk footprint and are not consulted here.
 
 ### Session-keyed registry
 
@@ -288,34 +331,37 @@ writes. Each type with an `Extra` field uses a custom `UnmarshalJSON` and
 
 ### History line cap
 
-The exported constant `MaxHistoryLine` (16 MiB) caps one `history.jsonl`
-line read through `bufio.Scanner`. Enforced by `countHistoryEntries` in
-this package and by `internal/export.extractProjectHistory`. New readers
-that scan `history.jsonl` line-by-line must use it so the observable cap
-stays consistent across commands.
+The exported constant `MaxHistoryLine` (16 MiB) caps a single
+`history.jsonl` line. The file's streaming line readers enforce it through one
+of two mechanisms, so an oversized line fails loudly instead of being
+truncated. A new streaming `history.jsonl` reader must keep the cap so the
+observable limit stays consistent across commands.
 
 #### Handled
 
-- Lines up to 16 MiB scan intact. Both scanner callers set
-  `scanner.Buffer(make([]byte, 64<<10), MaxHistoryLine)`, so the initial
-  allocation stays at 64 KiB and grows only when a line demands it.
-- Oversized lines cause `bufio.Scanner.Err()` to return
-  `bufio.ErrTooLong`. Both callers wrap with `fmt.Errorf("scan history
-  file: %w", err)` so the sentinel is reachable via `errors.Is`.
+- `bufio.Scanner` readers call `scanner.Buffer(make([]byte, 64<<10),
+  MaxHistoryLine)`: `countHistoryEntries` here, `move.scanHistoryFile`, and
+  `stats.countHistoryReferences`. The buffer starts at 64 KiB and grows only
+  up to the cap.
+- `bufio.Reader` readers wrap `bufio.NewReaderSize(src, 64<<10)`, read each
+  line with `ReadBytes('\n')`, and reject any line longer than
+  `MaxHistoryLine`: `rewrite.StreamHistoryJSONL` (move's rewrite path) and
+  `export.writeJSONLToZip` (the export path).
+- Both mechanisms report an oversized line as `bufio.ErrTooLong`, wrapped
+  with `%w` so a caller reaches it through `errors.Is`.
 
 #### Refused
 
-- Silent truncation of an oversized line. The scanner fails and the
-  commands that reach `LocateProject` or `export.Run` surface the error.
+- Silent truncation of an oversized line. The read fails and the command
+  surfaces the error.
 
 #### Not covered
 
-- Total file size. Callers that read `history.jsonl` whole (for example
-  `internal/move.scanHistoryFile` via `os.ReadFile`) are bounded only by
-  available memory, not by `MaxHistoryLine`.
-- The `internal/scan` package's own 16 MiB cap on rules files. Same
-  number, different content domain. The two caps are coincident and
-  independent.
+- `internal/importer` reads the existing `history.jsonl` whole through
+  `os.ReadFile` when merging imported entries, so it is bounded by available
+  memory, not by `MaxHistoryLine`.
+- The `internal/scan` package's own 16 MiB cap on rules files. Same number,
+  different content domain. The two caps are coincident and independent.
 
 ## Tests
 
@@ -326,6 +372,10 @@ Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`. Coverage:
 - round-trip marshal and unmarshal of each schema type.
 - `LocateProject` hit and miss paths, including the identity guard's match,
   contradiction, and no-witness outcomes.
+- `EnumerateProjects` (in `enumerate_test.go`): witness-resolved labels
+  including the lossy-encoding case, the multi-witness disagreement tie-break,
+  the witness-less label fallback, non-directory skip, and the empty projects
+  directory.
 
 Fuzz target `FuzzVerifyProjectIdentity` in `locations_fuzz_test.go` asserts
 the identity guard's three-state outcome is deterministic under arbitrary

@@ -854,3 +854,83 @@ func TestContainsBoundedPath(t *testing.T) {
 		assert.True(t, rewrite.ContainsBoundedPath(data, projectPath))
 	})
 }
+
+func TestCountPathInBytes(t *testing.T) {
+	projectPath := "/Users/x/myproject"
+
+	t.Run("counts every bounded occurrence", func(t *testing.T) {
+		data := []byte(`/Users/x/myproject /Users/x/myproject/main.go "/Users/x/myproject"`)
+		assert.Equal(t, 3, rewrite.CountPathInBytes(data, projectPath))
+	})
+
+	t.Run("excludes prefix-sharing sibling names", func(t *testing.T) {
+		data := []byte(`/Users/x/myproject-extras /Users/x/myproject2 /Users/x/myproject_bak /Users/x/myproject`)
+		assert.Equal(t, 1, rewrite.CountPathInBytes(data, projectPath),
+			"only the standalone path counts; -extras, 2, _bak share a prefix")
+	})
+
+	t.Run("excludes extension-dot continuation but counts sentence dot", func(t *testing.T) {
+		data := []byte(`backup /Users/x/myproject.v2/old then /Users/x/myproject. done`)
+		assert.Equal(t, 1, rewrite.CountPathInBytes(data, projectPath),
+			".v2 is an extension separator and must not count; the prose dot must")
+	})
+
+	t.Run("counts a match at the end of the buffer", func(t *testing.T) {
+		data := []byte(`cwd: /Users/x/myproject`)
+		assert.Equal(t, 1, rewrite.CountPathInBytes(data, projectPath))
+	})
+
+	t.Run("returns zero for empty inputs", func(t *testing.T) {
+		assert.Equal(t, 0, rewrite.CountPathInBytes(nil, projectPath))
+		assert.Equal(t, 0, rewrite.CountPathInBytes([]byte(`anything`), ""))
+	})
+}
+
+func TestCountPathInBytesWithJSONEscape(t *testing.T) {
+	projectPath := "/Users/me/foo"
+
+	t.Run("counts both raw and JSON-escaped forms", func(t *testing.T) {
+		data := []byte(`{"a":"/Users/me/foo","b":"\/Users\/me\/foo\/bar","c":"\/Users\/me\/foo"}`)
+		assert.Equal(t, 3, rewrite.CountPathInBytesWithJSONEscape(data, projectPath))
+	})
+
+	t.Run("excludes JSON-escaped prefix-sharing names", func(t *testing.T) {
+		data := []byte(`["\/Users\/me\/foo","\/Users\/me\/foobar"]`)
+		assert.Equal(t, 1, rewrite.CountPathInBytesWithJSONEscape(data, projectPath))
+	})
+
+	t.Run("matches CountPathInBytes when no escaped slash is present", func(t *testing.T) {
+		data := []byte(`["/Users/me/foo","/Users/me/foo/sub"]`)
+		assert.Equal(t, rewrite.CountPathInBytes(data, projectPath),
+			rewrite.CountPathInBytesWithJSONEscape(data, projectPath))
+	})
+}
+
+// TestCountPathAgreesWithReplace pins the count primitives to the replacers
+// they mirror: each must report exactly the replacement count its Replace
+// counterpart produces when rewriting the path onto itself. A drift in either
+// scan loop fails here.
+func TestCountPathAgreesWithReplace(t *testing.T) {
+	projectPath := "/Users/x/myproject"
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		{"standalone and separator-bounded", []byte(`/Users/x/myproject see /Users/x/myproject/a.go`)},
+		{"prefix-sharing siblings", []byte(`/Users/x/myproject-extras /Users/x/myproject.v2 /Users/x/myproject`)},
+		{"sentence and ellipsis dots", []byte(`at /Users/x/myproject. and /Users/x/myproject... ok`)},
+		{"json-escaped slashes", []byte(`{"p":"\/Users\/x\/myproject","q":"\/Users\/x\/myproject\/a"}`)},
+		{"absent", []byte(`nothing here`)},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, plainReplacements := rewrite.ReplacePathInBytes(testCase.data, projectPath, projectPath)
+			assert.Equal(t, plainReplacements, rewrite.CountPathInBytes(testCase.data, projectPath),
+				"CountPathInBytes must equal ReplacePathInBytes's count")
+
+			_, escapeReplacements := rewrite.ReplacePathInBytesWithJSONEscape(testCase.data, projectPath, projectPath)
+			assert.Equal(t, escapeReplacements, rewrite.CountPathInBytesWithJSONEscape(testCase.data, projectPath),
+				"CountPathInBytesWithJSONEscape must equal ReplacePathInBytesWithJSONEscape's count")
+		})
+	}
+}
