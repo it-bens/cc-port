@@ -16,7 +16,7 @@ Not a rewriting package. The module produces locations and types.
     encoding (`/`, `.`, space collapse to `-`, with a leading `-`).
 - **Home**
   - `NewHome(override string) (*Home, error)`: constructs a `~/.claude`
-    root, honouring `--claude-dir`.
+    root, honouring the generated `--claude-home` flag override.
   - `Home`: struct with `Dir` and `ConfigFile` fields plus path-deriving
     methods `ProjectsDir`, `ProjectDir`, `HistoryFile`, `SessionsDir`,
     `SettingsFile`, `RulesDir`, `FileHistoryDir`, `TodosDir`,
@@ -62,6 +62,21 @@ Not a rewriting package. The module produces locations and types.
   - `MaxHistoryLine`: 16 MiB ceiling for a single `history.jsonl` line
     read through `bufio.Scanner`. Shared by every scanner in the
     codebase that reads `history.jsonl`.
+- **Tool contract implementation** (`Adapter`, `Workspace` in `adapter.go`)
+  - `(*Workspace).MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error)`,
+    `(*Workspace).ResidualWarnings(tool.MoveRequest) ([]string, error)`
+    (`move.go`): the ordered per-surface rewrite this adapter performs for
+    `cc-port move`.
+  - `(*Workspace).Placeholders(project string, selected map[string]bool) ([]manifest.Placeholder, error)`,
+    `(*Workspace).Export(ctx, project string, selected map[string]bool, sink *archive.Sink) (tool.ExportResult, error)`
+    (`export.go`, `discover.go`): placeholder discovery and category export
+    for `cc-port export`.
+  - `(*Workspace).PreflightDirs`, `(*Workspace).ImplicitAnchors`,
+    `(*Workspace).Stage`, `(*Workspace).Finalize` (`import.go`): archive
+    staging and merge for `cc-port import`.
+  - `(*Workspace).ReferenceSurfaces`, `(*Workspace).DiskCategories`,
+    `(*Workspace).EnumerateProjects` (`stats.go`): read-only footprint
+    accounting for `cc-port stats`.
 
 ## Contracts
 
@@ -83,13 +98,18 @@ encoding and symlink resolution to user-supplied paths. The encoded name must
 match what Claude Code wrote on disk. The original path cannot be recovered
 from the encoded form.
 
-The consumers that enforce the "refused on collision" behaviour:
+`checkEncodedDirCollision` (`move.go`) enforces the "refused on collision"
+behaviour for `cc-port move`: it aborts before any write when old and new
+encode identically, or when the target encoded directory already exists
+(see §Apply contract (move)).
 
-- `internal/move/README.md §Malformed history entries preserved`: aborts
-  when old and new encode identically, or when the target encoded directory
-  already exists.
-- `internal/importer/README.md §Import contract`: `CheckConflict` refuses
-  when the encoded target directory already exists.
+`cc-port import` does not refuse on an existing encoded directory. Promotion
+overwrites it in place: `rewrite.SafeRenamePromoter` backs up any displaced
+content (in-memory bytes for a file, a sibling stash for a directory) before
+renaming the staged temp over it, so a promote failure still rolls back to
+the pre-import state. A re-run of the same import converges rather than
+refusing (see [`internal/importer/README.md`](../../importer/README.md)
+§Atomic staging).
 
 #### Handled
 
@@ -106,8 +126,6 @@ The consumers that enforce the "refused on collision" behaviour:
 - `cc-port move` (apply or dry-run) where the target encoded directory
   already exists. Another project path has claimed that storage. Proceeding
   would silently merge or overwrite its data.
-- `cc-port import` where the target encoded directory already exists. Same
-  reasoning.
 
 #### Not covered
 
@@ -128,6 +146,8 @@ The consumers that enforce the "refused on collision" behaviour:
   second `ReplacePathInBytes` pass (move). This re-derives the encoded form
   forward from a known real path (`ProjectDir`); it never decodes an encoded
   name back to a path.
+- **A pre-existing encoded directory at import time.** Unlike move, import
+  does not check for or refuse this case; see §Stage and Finalize (import).
 
 ### Project enumeration
 
@@ -228,11 +248,12 @@ categories are collected regardless.
 Downstream consumers iterate it rather than open-coding group names. Add a
 session-keyed directory as one row with a non-nil `Files` field.
 
-Each group's `Category` field names the `manifest.AllCategories` entry
-that gates its export. The two `usage-data/*` groups both carry
-`"usage-data"`, so a single category flag covers both subgroups.
-A drift-guard test in `session_keyed_groups_drift_test.go`
-fails when a group ships with a Category outside `manifest.AllCategories`.
+Each group's `Category` field names one of this adapter's own declared
+category names (`claude.New().Categories()`, see `categories.go`) that gates
+its export. The two `usage-data/*` groups both carry `"usage-data"`, so a
+single category flag covers both subgroups. `TestSessionKeyedGroups_CategoriesAreDeclaredCategories`
+in `session_keyed_groups_drift_test.go` fails when a group ships with a
+Category outside that declared set.
 
 #### Handled
 
@@ -347,6 +368,314 @@ observable limit stays consistent across commands.
 - The `internal/scan` package's own 16 MiB cap on rules files. Same number,
   different content domain. The two caps are coincident and independent.
 
+### Apply contract (move)
+
+`MoveSurfaces` returns one `tool.Surface` per rewrite unit, in a load-bearing
+order: history, user-wide files, session-keyed groups, config, transcripts
+(only under `--deep`), memory, sessions, then `project-directory` last of
+all. Every surface but `sessions` and `project-directory` re-verifies
+project identity via `LocateProject`'s session witness on each call; the
+`sessions` surface is the one that rewrites that witness's `cwd` field, so it
+must run after every other reference rewrite or a later identity check would
+see the witness already pointing at the new path. `project-directory` runs
+last because it derives paths directly from `Home.ProjectDir` and never
+calls `LocateProject`.
+
+#### Handled
+
+- Every plain-bytes surface (history, user-wide, session-keyed, config)
+  routes through `rewriteTracked`: `Restorer.RegisterFile`, then
+  `rewrite.ReplacePathInBytes`, then `rewrite.SafeWriteFile`.
+- Transcripts and memory route through `rewriteTwicePreservingMtime`, which
+  additionally rewrites the encoded storage-directory form
+  (`Home.ProjectDir(oldPath)` to `Home.ProjectDir(newPath)`) in the same
+  pass and restores the file's pre-rewrite mtime afterward.
+- `project-directory` copies the encoded storage directory (and, unless
+  `RefsOnly`, the on-disk project directory) to the new path via
+  `fsutil.CopyDir`, verifies both copies landed, then removes the originals.
+- `checkEncodedDirCollision` runs before any surface: a move where old and
+  new paths encode to the same directory (`ErrEncodedDirAmbiguous`), or where
+  the new encoded directory already exists (`ErrEncodedDirCollision`), is
+  refused before any write.
+
+#### Refused
+
+- Moves where old and new paths encode to the same directory, or where the
+  new encoded directory already exists: refused before any write via
+  `checkEncodedDirCollision`.
+- Encoded project data removed but the on-disk source directory cannot be
+  deleted: `ErrResidualSourceDir`, naming the manual `mv` command to finish
+  the move by hand.
+
+#### Not covered
+
+- `tasks/.lock` and `tasks/.highwatermark` are not copied and not rewritten.
+  They are runtime-only artifacts.
+
+### Malformed history entries preserved
+
+`~/.claude/history.jsonl` is expected to hold one JSON object per line. If a
+line fails to parse, cc-port cannot reconstruct the intended data from what
+was written. Repairing broken lines is out of scope.
+
+#### Handled
+
+- `MoveSurfaces`' history surface's `Plan` reports the malformed line count
+  via `scanHistoryFile`; `Apply` rewrites well-formed lines through
+  `StreamHistoryJSONL` while a malformed line passes through unchanged.
+
+#### Refused
+
+None at runtime. Malformed lines never block the rewrite.
+
+#### Not covered
+
+- Automatic repair. cc-port does not attempt to reconstruct, drop, or
+  quarantine a broken line. The original bytes land back on disk unchanged.
+- Detection outside `history.jsonl`. Session transcripts and session subdir
+  files are rewritten as opaque byte streams with path-boundary-aware
+  substitution, not scanned for parse errors.
+
+### File-history handling (move)
+
+Snapshots under `~/.claude/file-history/<session-uuid>/` are opaque byte
+streams (see `docs/architecture.md` §File-history policy (cross-cutting)).
+This section covers the move-specific handling.
+
+#### Handled
+
+- `MoveSurfaces` performs no file-history surface at all: snapshots are keyed
+  by session UUID, not by project path, so a move never needs to relocate
+  them. `ResidualWarnings` reports the count of snapshots left in place via
+  `snapshotPaths`, warning that their bodies may still contain the old
+  project path.
+
+#### Refused
+
+None at runtime. The move never refuses based on snapshot content.
+
+#### Not covered
+
+- Stale path strings inside snapshots after a move. Grepping
+  `~/.claude/file-history/` for the old project path still returns hits
+  after a successful move, by design. Rewind continues to work because it
+  resolves by filename, not by content.
+
+### Anonymisation (export)
+
+Called by `cc-port export` for every full export.
+
+#### Handled
+
+- Every body written to the archive passes through `sink.ApplyPlaceholders`
+  before hitting the ZIP. This applies to sessions, memory, history, config,
+  and every session-keyed group.
+- `{{PROJECT_DIR}}` is declared unconditionally in `Placeholders` from
+  `Home.ProjectDir(project)`, not discovered, because the encoded storage
+  reference lives in session-subdir bodies that `gatherDiscoveryContent`
+  does not scan. `applyPlaceholders` substitutes it before `{{HOME}}` via
+  longest-first ordering.
+- `discoverPlaceholders` anchors candidate paths under the project path and
+  the current machine's home directory (`homeAnchor`), emitting at most two
+  suggestions (`{{PROJECT_PATH}}`, `{{HOME}}`); an unanchored path is
+  dropped, never guessed at.
+- File-history snapshots are the one exception: see §File-history handling (export).
+
+#### Refused
+
+A partial-scrub pass on file-history bytes is refused. The category flag is
+the only opt-out surface.
+
+#### Not covered
+
+- Privacy of snapshot content inside an exported archive. If the archive is
+  shared, the recipient sees literal project paths embedded in any snapshot
+  that quoted them.
+
+### Session-keyed zip layout (export)
+
+Driven by `exportSessionKeyed`, which iterates `locations.AllFlatFiles()`
+(registry order) and skips any group whose category is not selected. Each
+entry's zip prefix and relative-path base come from the matching
+`Registries` row (`ZipPrefix`, `HomeBaseDir`); there are no per-group
+helpers.
+
+#### Handled
+
+The session-keyed groups (`todos`, `usage-data/session-meta`,
+`usage-data/facets`, `plugins-data`, `tasks`) are written by one loop driven
+entirely by `Registries`.
+
+#### Refused
+
+Hard-coding a zip prefix or home base directory in this file is refused. All
+layout comes from `Registries`.
+
+#### Not covered
+
+Adding a new session-keyed group. That requires appending to `Registries`,
+not editing `export.go`.
+
+### File-history handling (export)
+
+#### Handled
+
+When `file-history` is selected, each snapshot is written verbatim under
+`file-history/<uuid>/...` via `addDirVerbatimToZip`. No path anonymisation
+runs. `Export` returns a `tool.ExportResult` whose `Categories["file-history"]`
+carries one entry per snapshot, and a warning naming the count when the
+slice is non-empty.
+
+#### Refused
+
+Inspecting or rewriting snapshot bytes is refused. Snapshots are opaque
+user-file bytes.
+
+#### Not covered
+
+Privacy of exported snapshots. Excluding the category (omitting
+`--include claude/file-history`, or omitting all category flags on a
+non-`--all` invocation) is the entire opt-out surface.
+
+### History-line project attribution (export)
+
+`historyLineBelongsToProject` classifies one `history.jsonl` line by three
+rules, applied in order: (1) if the line parses and its `project` field
+equals `project`, it belongs; (2) if the line parses and its `project` field
+is a non-empty different value, it does not belong; (3) if the line does not
+parse, or parses with an empty `project` field, membership falls back to a
+boundary-aware substring scan (`rewrite.ContainsBoundedPath`) against the
+raw line bytes.
+
+#### Handled
+
+Every well-formed line with a matching `project` field is included without a
+substring scan; every malformed or `project`-less line still gets a
+substring-based inclusion test rather than being silently dropped.
+
+#### Refused
+
+None at runtime.
+
+#### Not covered
+
+A line whose `project` field names a different project but which also
+happens to reference this project's path in free text (for example, a
+pasted error mentioning both projects) is excluded, matching rule (2)'s
+precedence over the substring scan.
+
+### Source mtime preservation (Claude adapter)
+
+Used by `cc-port import` and `cc-port pull` to restore the chronological
+ordering of imported files (Claude Code's `/resume` picker orders sessions
+by mtime).
+
+#### Handled
+
+- Export: every verbatim archive entry carries the source file's mtime in
+  `FileHeader.Modified`. `writeJSONLFile` and the file-history writer stat
+  their open source and pass `ModTime()` through.
+- Move: transcripts and memory files restore their pre-rewrite mtime via
+  `rewriteTwicePreservingMtime`; session-keyed flat files restore theirs via
+  `os.Chtimes` after `rewriteTracked`.
+- Import: `archive.StageSibling` receives `entry.Modified` and applies it to
+  the staged temp before promotion.
+
+#### Refused
+
+None at runtime. A `Stat` or `Chtimes` failure aborts the operation.
+
+#### Not covered
+
+`metadata.xml`, `history.jsonl`, and `config.json` carry no per-file
+timestamp; each is synthesized or merged, so the entry's `Modified` is left
+zero and the destination inherits its natural write-time mtime.
+
+### Stage and Finalize (import)
+
+`Stage` routes one archive entry (already stripped of the `claude/` prefix)
+to a sibling temp via `archive.StageSibling`, or, for `history/history.jsonl`
+and `config.json`, buffers it for `Finalize` because both need a
+read-merge-write against existing content rather than plain promotion.
+
+#### Handled
+
+- `finalizeHistory` appends every new line to `history.jsonl`, deduplicating
+  by exact line against both existing content and lines already appended in
+  the same run, so a re-run of the same import never duplicates a line.
+- `finalizeConfig` splices the buffered project block into `~/.claude.json`
+  under the target path's key via `sjson.SetRawBytes`, preserving every byte
+  outside the inserted entry; re-running with the same block is naturally
+  idempotent.
+- `ImplicitAnchors` supplies `{{PROJECT_PATH}}` (the import target),
+  `{{HOME}}` (the import machine's real home directory, independent of any
+  `--claude-home` override), and `{{PROJECT_DIR}}` (the target's encoded
+  storage directory).
+
+#### Refused
+
+- An archive entry whose Claude-relative name matches no known prefix:
+  `UnknownArchiveEntryError`.
+- `mergeProjectConfigBytes` against an existing `.claude.json` that is not
+  valid JSON: `InvalidConfigJSONError`.
+
+#### Not covered
+
+- Cross-run history growth bounds. Every import appends only genuinely new
+  lines, but a long history of repeated distinct imports still grows the
+  file; there is no compaction.
+
+### File-history handling (import)
+
+#### Handled
+
+`Stage` routes `file-history/` entries to a sibling temp with
+`resolutions == nil`, so no placeholder substitution runs over snapshot
+bodies; they are written back byte-for-byte.
+
+#### Refused
+
+None at runtime.
+
+#### Not covered
+
+None at runtime. The opaque-bytes policy means content interpretation is out
+of scope.
+
+### Reference and disk accounting (stats)
+
+Reference counts route through the `rewrite` count primitives, never
+`strings.Count`, so the boundary contract holds in one place (see
+[`internal/rewrite/README.md`](../../rewrite/README.md) §Boundary rules).
+Each surface uses the count variant whose escaping matches how `Apply`
+encodes a path on that surface:
+
+| Surface | Variant | Reason |
+|---|---|---|
+| `history`, `sessions`, `config` | JSON-escape | `Apply` rewrites these through the typed JSON helpers, which can emit `\/`. |
+| `transcripts`, `memory` | raw, plus a raw encoded-dir pass | `Apply` rewrites these with the plain replacer, and each embeds the encoded `~/.claude/projects/<encoded>` form. |
+| user-wide and session-keyed flat files | raw | `Apply` rewrites these with the plain replacer. |
+
+#### Handled
+
+- A path bounded by a sibling prefix (`/p/myproject-extras` while counting
+  `/p/myproject`) does not count, because the boundary rule rejects it.
+- `DiskCategories` and `EnumerateProjects` key disk usage by category name
+  and order it by `categories` (this package's export-category table), so
+  `history` and `config` (shared globals with no per-project disk footprint)
+  are present in the result at zero rather than omitted.
+
+#### Refused
+
+A reference count for `file-history`. Snapshot bytes are opaque and never
+scanned.
+
+#### Not covered
+
+A move applied without `--deep` leaves transcripts untouched, so the
+unconditional transcript reference count reflects what such a move *would*
+touch if the flag were set, not a default move.
+
 ## Tests
 
 Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`. Coverage:
@@ -365,3 +694,21 @@ Fuzz target `FuzzVerifyProjectIdentity` in `locations_fuzz_test.go` asserts
 the identity guard's three-state outcome is deterministic under arbitrary
 projectPath and cwd byte sequences. Reached via the test-only
 `VerifyProjectIdentityForTest` shim in `export_test.go`.
+
+Move, export, import, and stats coverage: `move_internal_test.go`
+(`rewriteTracked` happy path and failure modes), `export_test.go` (full
+export coverage: all-categories, path anonymisation order-independence and
+boundary collisions, selective category export, history-inclusion rules),
+`export_filehistory_test.go` (unreadable-snapshot and unreadable-dir
+failure, zip-write failure, context cancellation mid-walk),
+`export_line_cap_test.go` and `export_mtime_internal_test.go` (the
+`MaxHistoryLine` cap and source-mtime preservation through `writeJSONLFile`),
+`discover_internal_test.go` (`discoverPaths`/`autoDetectPlaceholders`/`discoverPlaceholders`,
+including a corpus of prose fragments discovery must not mistake for a real
+path: base64 blobs, GitHub URL and ref fragments, RuboCop cop names, tilde
+paths, pseudo-XML tags, bare filenames in prose), `import_merge_internal_test.go`
+(`finalizeHistory`'s newline-boundary handling and `mergeProjectConfigBytes`'s
+sibling-key preservation and invalid-JSON refusal),
+`session_keyed_groups_drift_test.go` (every `Registries` session-keyed
+entry's `Category` matches a name this adapter's `Categories()` declares),
+and `witness_test.go` (`FindActive` on a live vs. a dead session PID).

@@ -23,10 +23,14 @@ witness blocks mutation while a live writer is present.
   4. `fn` returns nil: a deferred unlock error surfaces wrapped as
      `release cc-port lock: %w`; if unlock succeeds but removing the lock
      file fails, the error surfaces as `remove cc-port lock file: %w`.
-- `tool.ActiveWriter`: witness result with `Pid int` and `Cwd string`.
-  `internal/tool/claude.FindActive` supplies Claude Code evidence.
+- `tool.ActiveWriter`: witness result with `Pid int` and `Cwd string`. Each
+  tool supplies its own witness through `Workspace.ActiveWriters`:
+  `internal/tool/claude.FindActive` for Claude Code, and
+  `internal/tool/codex`'s five-source witness (see
+  `internal/tool/codex/README.md` §Witness evidence order) for Codex.
 - `FileName`: constant. The name (`.cc-port.lock`) of the advisory-lock file
-  cc-port creates inside the Claude Code home directory.
+  cc-port creates inside each tool's own home directory (`workspace.home.Dir`
+  for both the Claude and Codex adapters).
 
 ### Errors
 
@@ -59,21 +63,27 @@ Any witness result blocks the invocation before it writes files.
 The kernel releases the lock when cc-port exits, so a crash does not leave a
 stale block on the next invocation.
 
-Guarded commands (these take the lock and run the live-session check):
+Guarded commands (these take the lock and run the live-writer check):
 
 - `cc-port move --apply` (direct `Acquire` across selected tools)
 - `cc-port import` (nested `WithLock` across selected tools)
+- `cc-port pull --apply` (its execute path is `sync.ExecutePull`, which calls
+  `importer.Run` and inherits the same nested lock)
 
-Not guarded (these are read-only with respect to `~/.claude/` and run without
-locking or session detection):
+Not guarded (these are read-only with respect to every tool's home directory
+and run without locking or witness detection):
 
 - `cc-port move` (dry-run): counts potential replacements without writing.
-  A concurrent Claude Code write can skew the reported counts but cannot
-  corrupt data.
-- `cc-port export` and `cc-port export manifest`: read from `~/.claude/` and
-  write only to the output archive or manifest file outside it. A concurrent
-  Claude Code write during a long export can produce an internally inconsistent
-  archive, but nothing under `~/.claude/` changes.
+  A concurrent write from the tool itself can skew the reported counts but
+  cannot corrupt data.
+- `cc-port export`, `cc-port export manifest`, and `cc-port push`: read from
+  each tool's home and write only to the output archive, manifest file, or
+  remote, outside it. `sync.ExecutePush` calls `export.Run` directly, with no
+  lock of its own. A concurrent write from the tool during a long export or
+  push can produce an internally inconsistent archive, but nothing under the
+  tool's home changes.
+- `cc-port stats` and `cc-port pull` (dry-run): read-only by design; `stats`
+  never locks at all, and pull's dry-run only reads the remote manifest.
 
 Called by:
 

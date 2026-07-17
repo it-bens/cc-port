@@ -2,113 +2,90 @@
 
 ## Purpose
 
-Produces a cc-port archive from one project: discover path prefixes, propose placeholder mappings, write a ZIP with the chosen categories plus a `metadata.xml` manifest.
-
-This module's unit is one project, not the file system at large. The wire format and the category enum table live in [`internal/manifest`](../manifest/README.md). This package is a consumer.
+Generic export orchestration across every selected tool: for each target,
+stream its selected categories into one shared archive under a `<tool>/`
+prefix and write one `metadata.xml` with one `<tool>` block per target. This
+package has no tool-specific knowledge. Every category body, placeholder
+discovery rule, and archive-layout decision lives in the owning adapter (for
+example `internal/tool/claude`); this package only sequences targets and
+assembles the shared manifest.
 
 ## Public API
 
-- `Run(ctx context.Context, claudeHome *claude.Home, exportOptions *Options) (Result, error)`: full export, controlled by `Options`. Writes the archive bytes into `Options.Output`. The caller owns the writer's lifecycle; `Run` does not open or close any file.
-- `DiscoverPaths(content []byte) []string`: find path-like tokens inside a body.
-- `AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []PlaceholderSuggestion`: assign `{{PROJECT_PATH}}` and `{{HOME}}` to matching prefixes; unknown prefixes are dropped.
-- `DiscoverPlaceholders(content []byte, projectPath, homePath string) []PlaceholderSuggestion`: canonical composition for `cc-port export`. Runs `DiscoverPaths`, filters candidates against the project and home anchors, and emits at most two suggestions.
-- `Options`, `Result`, `PlaceholderSuggestion`: export configuration and outputs. `Options.Output` is the `io.Writer` archive bytes are written into; `Options.Categories` is a `manifest.CategorySet`. `Options.Reporter progress.Reporter` is the export progress sink; nil-handling follows `internal/progress/README.md` §Reporter injection.
-- `Options.SyncPushedBy` (`string`) and `Options.SyncPushedAt` (`time.Time`) are optional fields populated only by `cc-port push` (via `internal/sync`). When non-empty / non-zero, `buildMetadata` writes them to `metadata.xml` as `<sync-pushed-by>` and `<sync-pushed-at>` (RFC3339, UTC). `cc-port export` callers leave them at the zero value and the elements are omitted.
+- `Run(ctx context.Context, targets []tool.Target, options *Options) (Result, error)`:
+  runs the export. For each target, discovers or reuses its placeholders,
+  calls `target.Workspace.Export` against a shared `archive.Sink`, and
+  accumulates the result into one manifest. A target whose `Export` reports
+  `tool.ErrProjectAbsent` contributes an empty category block (every
+  category excluded, no placeholders) rather than failing the whole run.
+- `Options`: `ProjectPath`, `Output io.Writer`, `Selected map[string]map[string]bool`,
+  `Placeholders map[string][]manifest.Placeholder` (both keyed by tool
+  name; a tool absent from `Selected` exports nothing), `SyncPushedBy string`,
+  `SyncPushedAt time.Time` (populated only by `cc-port push` via
+  `internal/sync`; `cc-port export` leaves both at the zero value and the
+  XML elements are omitted), `Reporter progress.Reporter` (nil-handling
+  follows `internal/progress/README.md` §Reporter injection).
+- `Result`: `Metadata archive.WrittenEntry` (the manifest entry) and
+  `ByTool map[string]tool.ExportResult` (each target's own result).
 
 ## Contracts
 
 ### Category coverage
 
-Called by `cmd/cc-port`. Delegates to `internal/manifest` (see [`internal/manifest/README.md`](../manifest/README.md) §Category manifest) for the enum table, write helper, and validator.
+Called by `cmd/cc-port`. Delegates to `internal/manifest` (see
+[`internal/manifest/README.md`](../manifest/README.md) §Category manifest)
+for the per-tool enum validation and write helper.
 
 #### Handled
 
-Every archive declares all category names in `metadata.xml` via `manifest.BuildCategoryEntries(&opts.Categories)`.
+Every archive declares every one of a tool's registered category names in
+that tool's `metadata.xml` block, via `manifest.BuildToolCategoryEntries(categoryNames(target.Tool), selected)`.
 
 #### Refused
 
-Hand-rolling a parallel category literal is refused. The only correct path is `manifest.BuildCategoryEntries`.
+Hand-rolling a parallel category literal is refused. The only correct path
+is `manifest.BuildToolCategoryEntries` fed from the target's own
+`Categories()`.
 
 #### Not covered
 
-Validation that a read archive's category list is correct. That belongs to `internal/importer` via `manifest.ApplyCategoryEntries`.
+- Validating that a read archive's category list is correct. That belongs to
+  `internal/importer` via `manifest.ApplyToolCategories`.
+- What each category actually contains, how bodies are anonymized, and the
+  archive's per-tool directory layout. Those are the owning adapter's
+  concern; see [`internal/tool/claude/README.md`](../tool/claude/README.md)
+  for the Claude instance.
 
-### Anonymisation
-
-Called by `cmd/cc-port` for every full export. `applyPlaceholders` is also the `internal/export`-private anonymisation path for all non-file-history categories.
+### Per-target sweep semantics
 
 #### Handled
 
-Every body written to the archive passes through `applyPlaceholders` before hitting the ZIP. This applies to sessions, memory, history, config, and every session-keyed group (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`).
-
-`{{PROJECT_DIR}}` is declared unconditionally by the cmd layer from `claude.Home.ProjectDir(projectPath)`, not discovered, because the encoded storage reference lives in session-subdir bodies that placeholder discovery does not scan. `applyPlaceholders` substitutes it before `{{HOME}}` via longest-first ordering. When the reference is absent the declared key is unused.
-
-Placeholder replacement is order-independent across runs: a re-export of the same project produces the same placeholder set. Covered by `export_test.go:TestExport_PathAnonymization_OrderIndependent`.
-
-File-history snapshots are the one exception. See §File-history handling (export).
+A target reporting `tool.ErrProjectAbsent` from its `Export` call
+contributes `tool.ExportResult{Categories: map[string][]tool.ArchiveEntry{}}`
+(an explicitly empty, non-nil category map) and an empty tool-manifest
+block, rather than aborting the run. Every other target still runs and
+still reaches the shared `metadata.xml`.
 
 #### Refused
 
-A partial-scrub pass on file-history bytes is refused. The category flag is the only opt-out surface.
+A target error that is not `tool.ErrProjectAbsent` aborts the whole run; a
+partial archive with some targets silently skipped for an unexpected reason
+would be worse than a hard failure the caller sees immediately.
 
 #### Not covered
 
-Privacy of snapshot content inside an exported archive. If the archive is shared, the recipient sees literal project paths embedded in any snapshot that quoted them. Excluding the `file-history` category is the only mitigation.
-
-### Session-keyed zip layout
-
-Used internally by `exportSessionKeyed`.
-
-#### Handled
-
-The session-keyed groups (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`) are written by two cooperating functions. `collectSessionKeyedPairs` iterates `locations.AllFlatFiles()` once, buckets files by category, and derives the distinct category order from `claude.SessionKeyedGroups` in registry order. `exportSessionKeyed` loops over those categories, skips any whose `CategorySet` flag is off, and opens one sub-phase per selected category, rolling the two usage-data groups into a single `usage-data` sub-phase. Each entry's zip prefix and relative-path base come from `transport.SessionKeyedTargets`. There are no per-group helpers.
-
-#### Refused
-
-Hard-coding a zip prefix or home base directory in this package is refused. All layout comes from `transport.SessionKeyedTargets`.
-
-#### Not covered
-
-Adding a new session-keyed group. That requires appending to `claude.SessionKeyedGroups` and `transport.SessionKeyedTargets`, not editing this package.
-
-### File-history handling (export)
-
-Governed by the cross-cutting policy in [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting).
-
-#### Handled
-
-When `file-history` is enabled, each snapshot is written verbatim under `file-history/<uuid>/...`. No path anonymisation runs. `Run` returns a `Result` whose `FileHistory` slice carries one `ArchiveEntry` per snapshot. The CLI prints a warning when the slice is non-empty.
-
-#### Refused
-
-Inspecting or rewriting snapshot bytes is refused. Snapshots are opaque user-file bytes.
-
-#### Not covered
-
-Privacy of exported snapshots. An archive shared with someone else carries literal project paths inside any snapshot that quoted them. Excluding the category up front (`--file-history=false`, or omitting it when other categories are explicitly selected) is the entire opt-out surface.
-
-### Source mtime preservation
-
-Used by `cc-port import` and `cc-port pull` to restore the chronological ordering of imported files (Claude Code's `/resume` picker orders sessions by mtime).
-
-#### Handled
-
-Every verbatim archive entry carries the source file's mtime in `FileHeader.Modified`. `streamJSONLEntry` and `streamVerbatimEntry` stat their open source and pass `ModTime()` through to the zip-write helpers. Five categories are covered: session JSONLs, memory files, sub-agent files, every session-keyed group (`todos`, `usage-data/session-meta`, `usage-data/facets`, `plugins-data`, `tasks`), and file-history snapshots.
-
-The encoding is Go's `archive/zip` Info-ZIP `extTimeExtraID` extra field at whole-second precision. Sub-second source mtimes are truncated. The import side at [`internal/importer/README.md`](../importer/README.md) §Source mtime preservation reads `Modified` back and applies it to the staged file.
-
-#### Refused
-
-None at runtime. A `Stat` failure on the open source aborts the entry write.
-
-#### Not covered
-
-`metadata.xml`, `history.jsonl`, and `config.json` carry no per-file timestamp. Each is synthesized or merged at export time, so the archive entry's `Modified` is left zero. The import side reads zero as "no mtime carried" and the staged file inherits its natural import-time mtime.
+Retrying a failed target. `Run` fails the whole export on the first
+unexpected target error; there is no partial-success archive.
 
 ## Tests
 
-Unit tests in `export_test.go`, `discover_test.go`, `close_error_test.go`, and `file_history_errors_test.go`. Coverage: all-categories export, path anonymisation (order-independence, boundary collisions), selective category export, history-inclusion rules, file-history pipeline, zip-finalize and per-entry write fault injection via the caller-supplied `Options.Output`, path discovery, anchored placeholder discovery, auto-placeholder detection.
+Unit tests in `export_test.go`, `close_error_test.go`, and
+`progress_lifecycle_test.go`. Coverage: multi-target archive assembly, the
+`tool.ErrProjectAbsent` empty-block path, the sync-field population and
+omission, zip-finalize error propagation via the caller-supplied
+`Options.Output`, and the archive/export progress-phase sequencing.
 
-`history_line_cap_test.go` drives the `MaxHistoryLine` cap through `Run`. The invariant is owned by [`internal/claude/README.md`](../claude/README.md) §History line cap.
-
-Manifest marshal/unmarshal round-trip and XML format stability live in [`internal/manifest`](../manifest/README.md) §Tests.
+Per-adapter export behavior (category bodies, placeholder discovery,
+session-keyed layout, file-history handling) is tested in each adapter
+package, not here; see `internal/tool/claude/README.md` §Tests for the
+Claude instance.

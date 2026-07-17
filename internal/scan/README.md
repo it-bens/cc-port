@@ -15,11 +15,11 @@ Read-only scanner for `~/.claude/rules/*.md`.
 
 ### Rules files preserved
 
-Called by `internal/move.DryRun` only; `Apply` does not re-scan. See `internal/move/README.md` §Malformed history entries preserved for the surrounding plan flow.
+Called by `internal/tool/claude`'s `Export` only; `move` and `import` do not scan rules files. See `internal/tool/claude/README.md` §Anonymisation (export) for the surrounding export flow.
 
 #### Handled
 
-`move` surfaces matches so the user can edit them manually. `cc-port move` (dry-run) runs `internal/scan/rules.go:Rules` over every `.md` file in `~/.claude/rules/`. Each line that contains the old project path is reported as a `Warning` alongside the rest of the plan output. `--apply` does not re-scan, so edits made after the dry-run do not trigger a fresh warning.
+`cc-port export` surfaces matches so the user can edit them manually before sharing an archive. `internal/tool/claude`'s `Export` runs `internal/scan/rules.go:ScanReport` over every `.md` file in `~/.claude/rules/`. Each line that contains the project path is reported as a `Warning` alongside the export's other warnings.
 
 Files on disk are not modified. One `Warning` is emitted per matched line, not per matched path.
 

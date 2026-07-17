@@ -2,8 +2,8 @@
 
 ## Pointer map
 
-- Composition root and persistent flags: `main.go:newRootCmd`, `tools.go:newToolSet`, `toolselect.go:registerToolFlags` (README §Purpose)
-- Target selection and tool-home overrides: `toolselect.go:resolveTargets` (README §Purpose)
+- Composition root and persistent flags: `main.go:newRootCmd`, `tools.go:newToolSet`, `toolselect.go:registerToolFlags` (README §Tool registry and target resolution)
+- Target selection and tool-home overrides: `toolselect.go:resolveTargets` (README §Tool registry and target resolution)
 - Category flags and validation: `categories.go:registerCategoryFlags`, `categories.go:resolveSelectionFromCmd` (README §Category selection)
 - Manifest category selection and placeholder discovery: `category_selection.go:applyCategorySelection`, `category_selection.go:resolveCategoriesAndPlaceholders` (README §Category selection)
 - Command factories: `move.go:newMoveCmd`, `export.go:newExportCmd`, `importcmd.go:newImportCmd`, `pushcmd.go:newPushCmd`, `pullcmd.go:newPullCmd`, `stats.go:newStatsCmd` (README §Commands)
