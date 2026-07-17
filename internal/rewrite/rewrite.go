@@ -8,7 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // EscapeSJSONKey escapes `\` and `.` so an arbitrary string can be used as a
@@ -117,6 +120,106 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) (rewritten []byte,
 	}
 
 	return result.Bytes(), count
+}
+
+// TOMLPathRewrite rewrites bounded path references in raw TOML while preserving
+// the original formatting and comments. It rejects paths that TOML basic-string
+// keys would require escaping and verifies that only projects subkeys changed.
+func TOMLPathRewrite(data []byte, oldPath, newPath string) (rewritten []byte, count int, err error) {
+	if strings.ContainsAny(oldPath, `"\\`) || strings.ContainsAny(newPath, `"\\`) {
+		return data, 0, fmt.Errorf("TOML path rewrite refuses paths containing a quote or backslash")
+	}
+
+	inputPaths, err := tomlKeyPaths(data)
+	if err != nil {
+		return data, 0, fmt.Errorf("validate TOML path rewrite input: %w", err)
+	}
+
+	rewritten, count = ReplacePathInBytes(data, oldPath, newPath)
+	outputPaths, err := tomlKeyPaths(rewritten)
+	if err != nil {
+		return data, 0, fmt.Errorf("validate TOML path rewrite output: %w", err)
+	}
+
+	if !equalKeyPathMultisets(expectedTOMLKeyPaths(inputPaths, oldPath, newPath), outputPaths) {
+		return data, 0, fmt.Errorf("validate TOML path rewrite: key paths changed outside projects")
+	}
+	return rewritten, count, nil
+}
+
+func tomlKeyPaths(data []byte) (map[string]int, error) {
+	var document map[string]any
+	if err := toml.Unmarshal(data, &document); err != nil {
+		return nil, err
+	}
+
+	paths := make(map[string]int)
+	collectTOMLKeyPaths(document, nil, paths)
+	return paths, nil
+}
+
+func collectTOMLKeyPaths(value any, prefix []string, paths map[string]int) {
+	document, ok := value.(map[string]any)
+	if !ok {
+		return
+	}
+	for key, child := range document {
+		path := append(append([]string(nil), prefix...), key)
+		paths[encodeTOMLKeyPath(path)]++
+		collectTOMLKeyPaths(child, path, paths)
+	}
+}
+
+func expectedTOMLKeyPaths(paths map[string]int, oldPath, newPath string) map[string]int {
+	expected := make(map[string]int, len(paths))
+	for encoded, count := range paths {
+		path := decodeTOMLKeyPath(encoded)
+		if len(path) > 1 && path[0] == "projects" {
+			rewritten, replacements := ReplacePathInBytes([]byte(path[1]), oldPath, newPath)
+			if replacements > 0 {
+				path[1] = string(rewritten)
+			}
+		}
+		expected[encodeTOMLKeyPath(path)] += count
+	}
+	return expected
+}
+
+func encodeTOMLKeyPath(path []string) string {
+	var encoded strings.Builder
+	for _, segment := range path {
+		encoded.WriteString(strconv.Itoa(len(segment)))
+		encoded.WriteByte(':')
+		encoded.WriteString(segment)
+	}
+	return encoded.String()
+}
+
+func decodeTOMLKeyPath(encoded string) []string {
+	var path []string
+	for encoded != "" {
+		separator := strings.IndexByte(encoded, ':')
+		length, err := strconv.Atoi(encoded[:separator])
+		if err != nil || length < 0 || separator+1+length > len(encoded) {
+			panic("invalid TOML key path encoding")
+		}
+		start := separator + 1
+		path = append(path, encoded[start:start+length])
+		encoded = encoded[start+length:]
+	}
+	return path
+}
+
+func equalKeyPathMultisets(left, right map[string]int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for path, leftCount := range left {
+		if right[path] != leftCount {
+			return false
+		}
+	}
+	return true
 }
 
 // ReplacePathInBytesWithJSONEscape runs the boundary-aware rewriter twice:
