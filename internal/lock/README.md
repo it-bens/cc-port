@@ -2,23 +2,18 @@
 
 ## Purpose
 
-Acquires an exclusive advisory lock on `~/.claude/.cc-port.lock`. Refuses
-any mutation while another cc-port invocation holds it or a live Claude Code
-session is running on the host.
-
-The lock scope covers the whole `~/.claude` tree and the live-session check
-reads Claude Code's `sessions/*.json` format. Any future per-file locking
-should not reuse this package.
+Acquires an exclusive advisory lock at a caller-provided path. A caller-provided
+witness blocks mutation while a live writer is present.
 
 ## Public API
 
-- `WithLock(claudeHome *claude.Home, fn func() error) error`: the sole
-  lock-guarded entry point. Runs the live-session check (via `FindActive`)
-  first, then acquires `~/.claude/.cc-port.lock` via `gofrs/flock`, and
-  calls `fn` with the lock held. The lock is released via `defer` on every
-  exit path, including a panic inside `fn` that a caller recovers. Error
+- `WithLock(lockPath string, witness func() ([]tool.ActiveWriter, error), fn func() error) error`:
+  the sole lock-guarded entry point. Runs `witness` first, then acquires
+  `lockPath` via `gofrs/flock`, and calls `fn` with the lock held. `defer`
+  releases the lock on every exit path. It also runs after a panic in `fn`
+  that a caller recovers. Error
   precedence:
-  1. Live-session check finds a running Claude Code process: returns a
+  1. Witness finds a live writer: returns a
      descriptive error, does not take the lock, and does not invoke `fn`.
   2. Another cc-port invocation holds the lock: returns a contention error
      and does not invoke `fn`.
@@ -27,22 +22,16 @@ should not reuse this package.
      operational error takes precedence.
   4. `fn` returns nil: any deferred release error surfaces wrapped as
      `release cc-port lock: %w`.
-- `FindActive(claudeHome *claude.Home) ([]ActiveSession, error)`: returns
-  one `ActiveSession{Pid, Cwd}` per `~/.claude/sessions/*.json` file whose
-  recorded PID is alive on the host. Missing or empty `sessions/` yields a
-  nil slice and no error. Read-only callers (dry-run heads-up, inspection
-  tooling) use this without taking the flock; `WithLock` uses it
-  internally and refuses on any non-empty result.
-- `ActiveSession`: struct with `Pid int` and `Cwd string`. One instance per
-  live Claude Code process detected.
+- `tool.ActiveWriter`: witness result with `Pid int` and `Cwd string`.
+  `internal/tool/claude.FindActive` supplies Claude Code evidence.
 - `FileName`: constant. The name (`.cc-port.lock`) of the advisory-lock file
   cc-port creates inside the Claude Code home directory.
 
 ### Errors
 
-- `LiveSessionsError`: typed error returned by `WithLock` when the live-session
-  check finds one or more running Claude Code processes before the lock is taken.
-  `Sessions` carries the witness list as `[]ActiveSession`; tests assert via
+- `LiveSessionsError`: typed error returned by `WithLock` when the witness
+  finds one or more live writers before the lock is taken. `Sessions` carries
+  the witness list as `[]tool.ActiveWriter`; tests assert via
   `errors.As`. `WithLock` takes the lock only when the list is empty. Reachable
   from `move.Apply`, which returns it unchanged from `lock.WithLock`.
 - `ErrConcurrentInvocation`: returned by `WithLock` when another cc-port
@@ -56,11 +45,10 @@ should not reuse this package.
 
 ### Concurrency guard
 
-Before mutating shared files under `~/.claude/`, mutating commands wrap their
-work in `lock.WithLock`. It acquires an exclusive advisory lock on
-`~/.claude/.cc-port.lock`. It also scans `~/.claude/sessions/*.json` for
-entries whose recorded `pid` is alive on the host. If either check finds
-something, the invocation aborts before any files are touched.
+Before mutating shared files, mutating commands wrap their work in
+`lock.WithLock`. They provide the lock path and a witness callback. The callback
+runs before flock acquisition. Any witness result blocks the invocation before
+it writes files.
 
 The kernel releases the lock when cc-port exits, so a crash does not leave a
 stale block on the next invocation.
@@ -100,8 +88,7 @@ Called by:
 
 #### Refused
 
-- Skip the live-session check. `WithLock` runs it before taking the lock.
-  There is no `WithLockNoLiveCheck` alternative.
+- Skip the witness. `WithLock` requires a non-nil witness before taking the lock.
 - Take the lock without invoking `fn`. Every code path that reaches `TryLock`
   follows through to `fn` and the deferred release.
 
@@ -137,13 +124,12 @@ The cleanup exposes a narrow three-process race. See §Concurrency guard
 
 ## Tests
 
-Unit tests in `lock_test.go` (`package lock`, same-package access to the
-unexported `processAlive` and the `unlockFn` swap point; `FindActive` is
-exported and exercised directly):
+Unit tests in `lock_test.go` use the `unlockFn` swap point to simulate release
+failure:
 
 - Acquire with no live sessions.
 - Acquire when a session PID is dead.
-- Abort when a session PID is alive.
+- Abort when a witness reports a live writer.
 - Abort when another cc-port process holds the lock.
 - Acquire after a previous release.
 - `WithLock` calls `fn` with the lock held.

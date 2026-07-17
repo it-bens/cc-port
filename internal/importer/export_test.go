@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // RunWithRenameHook is a test-only wrapper around Run that installs

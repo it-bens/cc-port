@@ -1,4 +1,4 @@
-# internal/claude
+# internal/tool/claude
 
 ## Purpose
 
@@ -14,11 +14,6 @@ Not a rewriting package. The module produces locations and types.
 - **Path encoding**
   - `EncodePath(absPath string) string`: mirror of Claude Code's lossy
     encoding (`/`, `.`, space collapse to `-`, with a leading `-`).
-  - `ResolveProjectPath(path string) (string, error)`: resolves
-    user-supplied paths through symlinks, preserving any non-existent
-    tail. Delegates to `fsutil.ResolveExistingAncestor` (see
-    [`internal/fsutil/README.md`](../fsutil/README.md)) after calling
-    `filepath.Abs`.
 - **Home**
   - `NewHome(override string) (*Home, error)`: constructs a `~/.claude`
     root, honouring `--claude-dir`.
@@ -44,23 +39,18 @@ Not a rewriting package. The module produces locations and types.
     under each subdirectory other than `memory`/`sessions`). `move` rewrites
     this set; `stats` counts and sizes it.
 - **Session-keyed registry**
-  - `SessionKeyedGroup`: descriptor struct with `Name` (stable machine key
-    and display label), `Category` (the controlling `manifest.AllCategories`
-    entry name for export filtering),
-    `Files func(*ProjectLocations) []string`, and
-    `SidecarFilter func(name string) bool`.
-  - `SessionKeyedGroups`: ordered slice that is the registry. Slice order
-    is the display and iteration order used by every downstream consumer.
-  - `(*ProjectLocations).AllFlatFiles() iter.Seq2[SessionKeyedGroup, string]`:
+  - `RegistryEntry`: descriptor struct for Claude Code storage surfaces.
+  - `Registries`: ordered source of truth for all storage surfaces.
+  - `SessionKeyedGroups() iter.Seq[RegistryEntry]`: yields session-keyed
+    entries in registry order.
+  - `(*ProjectLocations).AllFlatFiles() iter.Seq2[RegistryEntry, string]`:
     yields `(group, absolute path)` pairs in registry order, applying
     each group's `SidecarFilter`. Performs no I/O and supports early
     termination via `break`.
 - **User-wide registry**
-  - `UserWideRewriteTarget`: descriptor struct with `Name` (stable machine
-    key and display label) and `Path func(*Home) string`.
-  - `UserWideRewriteTargets`: ordered slice that is the registry. Slice
-    order is the display and iteration order used by every downstream
-    consumer. Consumed by `internal/move`; `internal/export` and
+  - `UserWideRewriteTargets() iter.Seq[RegistryEntry]`: yields user-wide
+    rewrite entries in registry order. `internal/move` consumes them;
+    `internal/export` and
     `internal/importer` intentionally do not iterate it (these files are
     machine-local and do not belong in a cross-machine archive).
 - **Schemas**
@@ -105,8 +95,8 @@ The consumers that enforce the "refused on collision" behaviour:
 
 - Encoding input paths that contain `/`, `.`, or space: each is mapped to
   `-`. Paths that begin with `/` gain a leading `-`.
-- Symlink resolution via `ResolveProjectPath` before encoding, so the
-  result matches what Claude Code wrote.
+- `tool.ResolveProjectPath` resolves user input before encoding, so the result
+  matches what Claude Code wrote.
 
 #### Refused
 
@@ -234,17 +224,14 @@ categories are collected regardless.
 
 ### Session-keyed registry
 
-The session-keyed groups are published as a canonical registry.
-Downstream consumers (move, export, import, CLI renderers) iterate the
-registry rather than open-coding group names. Adding a new group requires
-one entry in `SessionKeyedGroups` and one index-aligned entry in
-`transport.SessionKeyedTargets`. The alignment test in `internal/transport`
-catches drift between those two slices.
+`Registries` is the canonical registry for session-keyed and user-wide surfaces.
+Downstream consumers iterate it rather than open-coding group names. Add a
+session-keyed directory as one row with a non-nil `Files` field.
 
 Each group's `Category` field names the `manifest.AllCategories` entry
 that gates its export. The two `usage-data/*` groups both carry
 `"usage-data"`, so a single category flag covers both subgroups.
-A drift-guard test in `internal/claude/session_keyed_groups_drift_test.go`
+A drift-guard test in `session_keyed_groups_drift_test.go`
 fails when a group ships with a Category outside `manifest.AllCategories`.
 
 #### Handled
@@ -268,7 +255,7 @@ fails when a group ships with a Category outside `manifest.AllCategories`.
 
 ### User-wide registry
 
-`UserWideRewriteTargets` lists the user-wide files whose bytes may contain
+`UserWideRewriteTargets` yields the user-wide files whose bytes may contain
 references to a project path and can be rewritten by component-boundary-aware
 byte replacement. Current entries: `settings` (`~/.claude/settings.json`),
 `plugins/installed_plugins` (`~/.claude/plugins/installed_plugins.json`),
@@ -276,16 +263,16 @@ byte replacement. Current entries: `settings` (`~/.claude/settings.json`),
 
 Files with structurally distinct rewriters stay outside the registry:
 `history.jsonl` (JSONL streaming), session files under
-`~/.claude/sessions/*.json` (JSON round-trip via `rewrite.SessionFile`), and
-`~/.claude.json` (JSON round-trip via `rewrite.UserConfig`). Forcing them in
+`~/.claude/sessions/*.json` (JSON round-trip via `RewriteSessionFile`), and
+`~/.claude.json` (JSON round-trip via `RewriteUserConfig`). Forcing them in
 would require a strategy field on every entry.
 
-Adding a user-wide file means one entry in `UserWideRewriteTargets` and one
-`Home` path-derivation method on `paths.go`.
+Adding a user-wide file means one `Registries` row and one `Home`
+path-derivation method on `home.go`.
 
 #### Handled
 
-- Registry iteration in `internal/move` walks `UserWideRewriteTargets` once
+- Registry iteration in `internal/move` walks `UserWideRewriteTargets()` once
   in `rewriteUserWideFiles` (Apply) and once in `countUserWideReplacements`
   (DryRun). Both use the same slice order.
 - Missing target files contribute zero to DryRun counts and are skipped at
@@ -293,16 +280,13 @@ Adding a user-wide file means one entry in `UserWideRewriteTargets` and one
 
 #### Refused
 
-- None at runtime. The registry is a package-level var. Callers read it and
+- None at runtime. `Registries` is a package-level var. Callers read it and
   do not add to it at runtime.
 
 #### Not covered
 
 - `internal/export` and `internal/importer` do not consume the registry.
-  Plugin-registry files are machine-local and stay out of archives. A future
-  iteration can add archive handling by introducing an index-aligned
-  descriptor slice, matching the
-  `SessionKeyedGroups` ↔ `transport.SessionKeyedTargets` pattern.
+  Plugin-registry files are machine-local and stay out of archives.
 
 ### Schema types
 
@@ -345,7 +329,7 @@ observable limit stays consistent across commands.
   up to the cap.
 - `bufio.Reader` readers wrap `bufio.NewReaderSize(src, 64<<10)`, read each
   line with `ReadBytes('\n')`, and reject any line longer than
-  `MaxHistoryLine`: `rewrite.StreamHistoryJSONL` (move's rewrite path) and
+  `MaxHistoryLine`: `StreamHistoryJSONL` (move's rewrite path) and
   `export.writeJSONLToZip` (the export path).
 - Both mechanisms report an oversized line as `bufio.ErrTooLong`, wrapped
   with `%w` so a caller reaches it through `errors.Is`.

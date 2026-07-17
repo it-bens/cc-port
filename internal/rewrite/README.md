@@ -14,10 +14,6 @@ Every path-rewriting command routes through this package so the boundary contrac
   - `CountPathInBytes(data []byte, path string) int`: counts bounded occurrences without rewriting, scanning without a rewritten copy. The counting analogue of `ReplacePathInBytes`.
   - `CountPathInBytesWithJSONEscape(data []byte, path string) int`: counts bounded occurrences across both the raw and JSON-escaped forms. The counting analogue of `ReplacePathInBytesWithJSONEscape`.
   - `EscapeSJSONKey(key string) string`: escapes a key for use as a single segment in an sjson path expression.
-- **Typed file helpers**
-  - `StreamHistoryJSONL(ctx context.Context, src io.Reader, dst io.Writer, oldProject, newProject string) (int, []int, error)`: streams `history.jsonl` line by line, writing the rewritten output to dst; returns changed-line count, malformed-line numbers, and error. Caps one line at `claude.MaxHistoryLine`. Routes through `ReplacePathInBytesWithJSONEscape` so escape-form slashes in emitted JSON are rewritten.
-  - `SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites a session JSON file. Uses the JSON-escape variant for the same reason.
-  - `UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites `~/.claude.json`. The raw-block pass uses the JSON-escape variant.
 - **Atomic rename**
   - `NewSafeRenamePromoter() *SafeRenamePromoter`: constructor for the staged-write promoter used by `import`.
   - `SafeRenamePromoter` type with methods:
@@ -49,10 +45,8 @@ rewriter. `ReplacePathInBytesWithJSONEscape` runs the raw pass first, then
 a second pass keyed on `oldPath` and `newPath` with every `/` replaced by
 `\/`. The boundary check applies independently to each pass, so
 `\/Users\/me\/foo\/bar` still matches while `\/Users\/me\/foobar` does not.
-`StreamHistoryJSONL`, `SessionFile`, and `UserConfig` route through this
-variant; callers rewriting raw filesystem bytes (memory files,
-session-keyed flat files) stay on `ReplacePathInBytes` because a second
-pass would be noise.
+Tool-specific helpers choose this variant when their JSON surfaces require it.
+Callers rewriting raw filesystem bytes stay on `ReplacePathInBytes`.
 
 `CountPathInBytes` and `CountPathInBytesWithJSONEscape` apply the identical
 boundary rule but report only the match count; `stats` uses them to inventory
@@ -87,9 +81,8 @@ rewriting sentence-ending prose references.
 
 ## Tests
 
-Unit tests in `rewrite_test.go` cover `StreamHistoryJSONL`, `ReplacePathInBytes`
-(including dot-boundary lookahead), `SessionFile`, `UserConfig`,
-`SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
+Unit tests in `rewrite_test.go` cover `ReplacePathInBytes` (including
+dot-boundary lookahead), `SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
 `ContainsBoundedPath`, the `Count*` primitives (boundary cases, the
 JSON-escaped form, and parity with their `Replace*` counterparts), and
 `SafeWriteFile`.

@@ -8,9 +8,9 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // rewriteGlobalFiles rewrites history.jsonl, session files, settings.json, and
@@ -50,12 +50,12 @@ func rewriteSessionKeyedFiles(
 	tracker *globalFileTracker,
 	phase progress.PhaseHandle,
 ) error {
-	collected := make(map[string][]string, len(claude.SessionKeyedGroups))
+	collected := make(map[string][]string)
 	for group, path := range locations.AllFlatFiles() {
 		collected[group.Name] = append(collected[group.Name], path)
 	}
 
-	for _, group := range claude.SessionKeyedGroups {
+	for group := range claude.SessionKeyedGroups() {
 		paths := collected[group.Name]
 		groupPhase := phase.SubPhase(group.Name, int64(len(paths)), progress.UnitFiles)
 		for _, path := range paths {
@@ -135,7 +135,7 @@ func inMemoryHistoryRewrite(
 	}
 
 	var rewritten bytes.Buffer
-	_, malformed, err := rewrite.StreamHistoryJSONL(
+	_, malformed, err := claude.StreamHistoryJSONL(
 		ctx, bytes.NewReader(original), &rewritten, moveOptions.OldPath, moveOptions.NewPath,
 	)
 	if err != nil {
@@ -175,7 +175,7 @@ func siblingHistoryRewrite(
 		return nil, fmt.Errorf("create history rewrite temp: %w", err)
 	}
 
-	_, malformed, streamErr := rewrite.StreamHistoryJSONL(
+	_, malformed, streamErr := claude.StreamHistoryJSONL(
 		ctx, source, destination, moveOptions.OldPath, moveOptions.NewPath,
 	)
 	if streamErr != nil {
@@ -210,7 +210,7 @@ func rewriteSessionFiles(
 		if err != nil {
 			return fmt.Errorf("read session file %s for backup: %w", sessionFilePath, err)
 		}
-		rewritten, _, err := rewrite.SessionFile(original, moveOptions.OldPath, moveOptions.NewPath)
+		rewritten, _, err := claude.RewriteSessionFile(original, moveOptions.OldPath, moveOptions.NewPath)
 		if err != nil {
 			return fmt.Errorf("rewrite session file %s: %w", sessionFilePath, err)
 		}
@@ -236,11 +236,11 @@ func rewriteUserWideFiles(
 	tracker *globalFileTracker,
 	phase progress.PhaseHandle,
 ) error {
-	for _, target := range claude.UserWideRewriteTargets {
+	for target := range claude.UserWideRewriteTargets() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		path := target.Path(claudeHome)
+		path := target.RewritePath(claudeHome)
 		present := true
 		if _, err := os.Stat(path); err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
@@ -297,7 +297,7 @@ func rewriteConfigFile(
 	if err != nil {
 		return fmt.Errorf("read config file for backup: %w", err)
 	}
-	rewritten, _, err := rewrite.UserConfig(original, moveOptions.OldPath, moveOptions.NewPath)
+	rewritten, _, err := claude.RewriteUserConfig(original, moveOptions.OldPath, moveOptions.NewPath)
 	if err != nil {
 		return fmt.Errorf("rewrite config file: %w", err)
 	}

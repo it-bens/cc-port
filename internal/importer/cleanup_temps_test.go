@@ -10,8 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/progress"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // TestBuildImportPlan_CleanupReclaimsFileHistoryTempOnCapFailure drives a

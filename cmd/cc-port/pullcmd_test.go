@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
@@ -20,6 +19,8 @@ import (
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 func TestPull_RejectsMissingTo(t *testing.T) {
@@ -71,7 +72,7 @@ func TestPull_DryRunDoesNotImport(t *testing.T) {
 	if !strings.Contains(buf.String(), "[dry-run]") {
 		t.Fatalf("expected dry-run header in output:\n%s", buf.String())
 	}
-	resolved, err := claude.ResolveProjectPath(targetPath)
+	resolved, err := tool.ResolveProjectPath(targetPath)
 	require.NoError(t, err)
 	encodedDir := filepath.Join(claudeFixtureDir, "projects", claude.EncodePath(resolved))
 	if _, statErr := os.Stat(encodedDir); !errors.Is(statErr, os.ErrNotExist) {
@@ -98,7 +99,7 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.NoError(t, err)
-	resolved, err := claude.ResolveProjectPath(targetPath)
+	resolved, err := tool.ResolveProjectPath(targetPath)
 	require.NoError(t, err)
 	encodedDir := filepath.Join(claudeFixtureDir, "projects", claude.EncodePath(resolved))
 	if _, statErr := os.Stat(encodedDir); statErr != nil {

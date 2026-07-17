@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // rewriteNewProjectDir rewrites the copied project dir: transcripts and memory

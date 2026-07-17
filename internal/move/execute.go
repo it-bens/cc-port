@@ -8,10 +8,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // ErrEncodedDirAmbiguous is returned by checkEncodedDirCollision when the old
@@ -225,7 +225,7 @@ func (t *globalFileTracker) restore() error {
 
 // checkEncodedDirCollision refuses moves that would overwrite existing encoded
 // storage or collapse old and new onto the same directory.
-// see internal/claude/README.md §Path encoding for the lossy encoding the check defends against.
+// see internal/tool/claude/README.md §Path encoding for the lossy encoding the check defends against.
 func checkEncodedDirCollision(claudeHome *claude.Home, oldPath, newPath string) error {
 	oldEncodedDir := claudeHome.ProjectDir(oldPath)
 	newEncodedDir := claudeHome.ProjectDir(newPath)

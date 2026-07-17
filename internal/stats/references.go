@@ -10,8 +10,8 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // referenceSurfaces is the canonical order of reference surfaces: the global
@@ -23,10 +23,10 @@ import (
 // scanned for references.
 func referenceSurfaces() []string {
 	surfaces := []string{"history", "sessions", "transcripts", "memory", "config"}
-	for _, target := range claude.UserWideRewriteTargets {
+	for target := range claude.UserWideRewriteTargets() {
 		surfaces = append(surfaces, target.Name)
 	}
-	for _, group := range claude.SessionKeyedGroups {
+	for group := range claude.SessionKeyedGroups() {
 		surfaces = append(surfaces, group.Name)
 	}
 	return surfaces
@@ -81,11 +81,11 @@ func countReferences(
 	}
 	counts["config"] = configCount
 
-	for _, target := range claude.UserWideRewriteTargets {
+	for target := range claude.UserWideRewriteTargets() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		targetCount, err := countOptionalFile(target.Path(claudeHome), projectPath, rewrite.CountPathInBytes)
+		targetCount, err := countOptionalFile(target.RewritePath(claudeHome), projectPath, rewrite.CountPathInBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +202,7 @@ func countHistoryReferences(ctx context.Context, claudeHome *claude.Home, projec
 
 // countConfigReferences counts JSON-escape-aware occurrences across the whole
 // ~/.claude.json — the occurrence-across-the-file lens, deliberately broader
-// than what an apply rewrites. rewrite.UserConfig rewrites only occurrences
+// than what an apply rewrites. claude.RewriteUserConfig rewrites only occurrences
 // inside the matched project block, so a path appearing in another project's
 // mcpServers args/env or in a top-level field is counted here yet left untouched
 // by a move.

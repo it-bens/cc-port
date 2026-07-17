@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // DiskUsage is the file count and total byte size of one category's owned data.

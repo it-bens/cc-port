@@ -9,8 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/stats"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // newStatsCmd returns the stats subcommand. With a project argument it reports
@@ -56,7 +57,7 @@ func runStatsProject(
 	rawPath string,
 	asJSON bool,
 ) error {
-	projectPath, err := claude.ResolveProjectPath(rawPath)
+	projectPath, err := tool.ResolveProjectPath(rawPath)
 	if err != nil {
 		return fmt.Errorf("resolve project path: %w", err)
 	}

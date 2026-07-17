@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // deadSessionPID exceeds the Linux/macOS PID ceiling but stays below int32 max, so Kill(pid, 0) returns ESRCH.
@@ -137,7 +137,7 @@ func findFixtureDir(t *testing.T) string {
 
 	// Walk upward looking for a testdata/ that contains our dotclaude/ fixture.
 	// A bare testdata/ check would match a package-local fuzz corpus (e.g.
-	// internal/claude/testdata/fuzz/) and stop before the repo-root testdata/,
+	// internal/tool/claude/testdata/fuzz/) and stop before the repo-root testdata/,
 	// leading to a confusing "no such file or directory" on dotclaude.
 	for {
 		candidate := filepath.Join(currentDir, "testdata")

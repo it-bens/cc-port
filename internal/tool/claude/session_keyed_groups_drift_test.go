@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // TestSessionKeyedGroups_CategoriesAreManifestCategories asserts every
@@ -18,7 +18,7 @@ func TestSessionKeyedGroups_CategoriesAreManifestCategories(t *testing.T) {
 	for _, spec := range manifest.AllCategories {
 		known[spec.Name] = true
 	}
-	for _, group := range claude.SessionKeyedGroups {
+	for group := range claude.SessionKeyedGroups() {
 		assert.True(t, known[group.Category],
 			"SessionKeyedGroup %q has Category %q not in manifest.AllCategories",
 			group.Name, group.Category)

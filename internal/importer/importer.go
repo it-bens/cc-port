@@ -18,14 +18,14 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/scan"
-	"github.com/it-bens/cc-port/internal/transport"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // dirPerm — 0o755, so group/others can traverse project subdirs shared with tooling.
@@ -157,79 +157,83 @@ func Run(ctx context.Context, claudeHome *claude.Home, importOptions *Options) (
 		importOptions.Reporter = progress.Noop()
 	}
 	var report scan.Report
-	err := lock.WithLock(claudeHome, func() error {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("canceled: %w", err)
-		}
-
-		preflightPhase := importOptions.Reporter.Phase("preflight", 0, progress.UnitItems)
-		if err := ValidateResolutions(importOptions.Resolutions); err != nil {
-			return fmt.Errorf("validate resolutions: %w", err)
-		}
-
-		encodedProjectDir := claudeHome.ProjectDir(importOptions.TargetPath)
-		if err := CheckConflict(encodedProjectDir); err != nil {
-			return fmt.Errorf("conflict check: %w", err)
-		}
-
-		if err := checkStagingFilesystems(claudeHome, encodedProjectDir); err != nil {
-			return err
-		}
-		preflightPhase.End("")
-
-		manifestPhase := importOptions.Reporter.Phase("manifest", 0, progress.UnitItems)
-		metadata, err := manifest.ReadManifestFromZip(importOptions.Source, importOptions.Size)
-		if err != nil {
-			return fmt.Errorf("read metadata from archive: %w", err)
-		}
-		if _, err := manifest.ApplyCategoryEntries(metadata.Export.Categories); err != nil {
-			return fmt.Errorf("manifest categories: %w", err)
-		}
-
-		presentDeclaredKeys, err := classifyPresentDeclaredKeys(ctx, importOptions.Source, importOptions.Size, metadata)
-		if err != nil {
-			return err
-		}
-
-		resolutions := withImplicitAnchors(
-			importOptions.Resolutions, importOptions.TargetPath, importOptions.HomePath, encodedProjectDir,
-		)
-
-		if err := runPreflight(presentDeclaredKeys, metadata, resolutions); err != nil {
-			return err
-		}
-
-		entryTotal, err := countNonMetadataEntries(importOptions.Source, importOptions.Size)
-		if err != nil {
-			return fmt.Errorf("count archive entries: %w", err)
-		}
-		manifestPhase.End("")
-
-		extractPhase := importOptions.Reporter.Phase("extract", entryTotal, progress.UnitEntries)
-		plan, err := buildImportPlan(
-			ctx, claudeHome, importOptions.Source, importOptions.Size,
-			importOptions.TargetPath, encodedProjectDir, resolutions, extractPhase,
-		)
-		if err != nil {
-			// Clean up whatever temp paths the plan managed to create before
-			// the error. buildImportPlan always returns a non-nil plan
-			// (including on early failures), but guard explicitly so static
-			// analysis is happy.
-			if plan != nil {
-				_ = plan.cleanupTemps()
+	err := lock.WithLock(
+		filepath.Join(claudeHome.Dir, lock.FileName),
+		func() ([]tool.ActiveWriter, error) { return claude.FindActive(claudeHome) },
+		func() error {
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("canceled: %w", err)
 			}
-			return err
-		}
-		extractPhase.End("")
 
-		promotePhase := importOptions.Reporter.Phase("promote", stagedFileCount(plan), progress.UnitItems)
-		if err := promotePlan(plan, importOptions.renameHook); err != nil {
-			return err
-		}
-		promotePhase.End("")
-		report = scan.ScanReport(claudeHome.RulesDir(), importOptions.TargetPath)
-		return nil
-	})
+			preflightPhase := importOptions.Reporter.Phase("preflight", 0, progress.UnitItems)
+			if err := ValidateResolutions(importOptions.Resolutions); err != nil {
+				return fmt.Errorf("validate resolutions: %w", err)
+			}
+
+			encodedProjectDir := claudeHome.ProjectDir(importOptions.TargetPath)
+			if err := CheckConflict(encodedProjectDir); err != nil {
+				return fmt.Errorf("conflict check: %w", err)
+			}
+
+			if err := checkStagingFilesystems(claudeHome, encodedProjectDir); err != nil {
+				return err
+			}
+			preflightPhase.End("")
+
+			manifestPhase := importOptions.Reporter.Phase("manifest", 0, progress.UnitItems)
+			metadata, err := manifest.ReadManifestFromZip(importOptions.Source, importOptions.Size)
+			if err != nil {
+				return fmt.Errorf("read metadata from archive: %w", err)
+			}
+			if _, err := manifest.ApplyCategoryEntries(metadata.Export.Categories); err != nil {
+				return fmt.Errorf("manifest categories: %w", err)
+			}
+
+			presentDeclaredKeys, err := classifyPresentDeclaredKeys(ctx, importOptions.Source, importOptions.Size, metadata)
+			if err != nil {
+				return err
+			}
+
+			resolutions := withImplicitAnchors(
+				importOptions.Resolutions, importOptions.TargetPath, importOptions.HomePath, encodedProjectDir,
+			)
+
+			if err := runPreflight(presentDeclaredKeys, metadata, resolutions); err != nil {
+				return err
+			}
+
+			entryTotal, err := countNonMetadataEntries(importOptions.Source, importOptions.Size)
+			if err != nil {
+				return fmt.Errorf("count archive entries: %w", err)
+			}
+			manifestPhase.End("")
+
+			extractPhase := importOptions.Reporter.Phase("extract", entryTotal, progress.UnitEntries)
+			plan, err := buildImportPlan(
+				ctx, claudeHome, importOptions.Source, importOptions.Size,
+				importOptions.TargetPath, encodedProjectDir, resolutions, extractPhase,
+			)
+			if err != nil {
+				// Clean up whatever temp paths the plan managed to create before
+				// the error. buildImportPlan always returns a non-nil plan
+				// (including on early failures), but guard explicitly so static
+				// analysis is happy.
+				if plan != nil {
+					_ = plan.cleanupTemps()
+				}
+				return err
+			}
+			extractPhase.End("")
+
+			promotePhase := importOptions.Reporter.Phase("promote", stagedFileCount(plan), progress.UnitItems)
+			if err := promotePlan(plan, importOptions.renameHook); err != nil {
+				return err
+			}
+			promotePhase.End("")
+			report = scan.ScanReport(claudeHome.RulesDir(), importOptions.TargetPath)
+			return nil
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -603,16 +607,16 @@ func routeArchiveEntry(
 }
 
 // dispatchSessionKeyed streams one session-keyed entry against the first
-// matching ZipPrefix in transport.SessionKeyedTargets. First prefix match
+// matching ZipPrefix in Claude's merged registry. First prefix match
 // wins. Returns (handled, bytesRead, err).
 func dispatchSessionKeyed(
 	claudeHome *claude.Home, plan *importPlan, zipFile *zip.File, resolutions map[string]string,
 ) (handled bool, bytesRead int64, err error) {
-	for _, target := range transport.SessionKeyedTargets {
+	for target := range claude.SessionKeyedGroups() {
 		if !strings.HasPrefix(zipFile.Name, target.ZipPrefix) {
 			continue
 		}
-		staged, bytesRead, err := stageSessionKeyedFileFromZip(claudeHome, target, zipFile, resolutions)
+		staged, bytesRead, err := stageSessionKeyedFileFromZip(claudeHome, &target, zipFile, resolutions)
 		// Record any temp the stager created, even on error, so cleanupTemps
 		// can reclaim it. An empty tempPath means no temp was created.
 		if staged.tempPath != "" {
@@ -741,7 +745,7 @@ func stageFileHistoryFromZip(
 // a sibling temp path under the target group's home base directory.
 // Placeholder resolution runs in-stream.
 func stageSessionKeyedFileFromZip(
-	claudeHome *claude.Home, target transport.SessionKeyedTarget,
+	claudeHome *claude.Home, target *claude.RegistryEntry,
 	zipFile *zip.File, resolutions map[string]string,
 ) (stagedFile, int64, error) {
 	relative := strings.TrimPrefix(zipFile.Name, target.ZipPrefix)
@@ -756,7 +760,7 @@ func stageSessionKeyedFileFromZip(
 	}
 	// Record the temp before any call that may create it on disk, so the
 	// error paths below return a record cleanupTemps can reclaim.
-	staged := stagedFile{group: target.Group, finalPath: finalPath, tempPath: tempPath}
+	staged := stagedFile{group: target.Name, finalPath: finalPath, tempPath: tempPath}
 	bytesRead, err := streamResolveToTemp(tempPath, zipFile, resolutions, filePerm)
 	if err != nil {
 		return staged, bytesRead, err

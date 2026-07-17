@@ -4,11 +4,13 @@ package move
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/scan"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // Options holds the parameters for a project move operation.
@@ -49,10 +51,10 @@ type Plan struct {
 // a tail counter.
 var planCategories = func() []string {
 	out := []string{"history", "sessions"}
-	for _, target := range claude.UserWideRewriteTargets {
+	for target := range claude.UserWideRewriteTargets() {
 		out = append(out, target.Name)
 	}
-	for _, group := range claude.SessionKeyedGroups {
+	for group := range claude.SessionKeyedGroups() {
 		out = append(out, group.Name)
 	}
 	out = append(out, "file-history-snapshots")
@@ -165,21 +167,25 @@ func Apply(ctx context.Context, claudeHome *claude.Home, moveOptions Options) er
 	if moveOptions.Reporter == nil {
 		moveOptions.Reporter = progress.Noop()
 	}
-	return lock.WithLock(claudeHome, func() error {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("canceled: %w", err)
-		}
-		if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
-			return err
-		}
+	return lock.WithLock(
+		filepath.Join(claudeHome.Dir, lock.FileName),
+		func() ([]tool.ActiveWriter, error) { return claude.FindActive(claudeHome) },
+		func() error {
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("canceled: %w", err)
+			}
+			if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
+				return err
+			}
 
-		locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
-		if err != nil {
-			return fmt.Errorf("locate project: %w", err)
-		}
+			locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
+			if err != nil {
+				return fmt.Errorf("locate project: %w", err)
+			}
 
-		oldProjectDir := claudeHome.ProjectDir(moveOptions.OldPath)
-		newProjectDir := claudeHome.ProjectDir(moveOptions.NewPath)
-		return executeMove(ctx, claudeHome, locations, oldProjectDir, newProjectDir, moveOptions)
-	})
+			oldProjectDir := claudeHome.ProjectDir(moveOptions.OldPath)
+			newProjectDir := claudeHome.ProjectDir(moveOptions.NewPath)
+			return executeMove(ctx, claudeHome, locations, oldProjectDir, newProjectDir, moveOptions)
+		},
+	)
 }

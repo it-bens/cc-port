@@ -7,13 +7,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/file"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // newImportCmd returns the import subcommand with closure-scoped flag
@@ -38,7 +39,7 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			archivePath := args[0]
-			targetPath, err := claude.ResolveProjectPath(args[1])
+			targetPath, err := tool.ResolveProjectPath(args[1])
 			if err != nil {
 				return fmt.Errorf("resolve target path: %w", err)
 			}

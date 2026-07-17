@@ -7,13 +7,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // newPushCmd returns the push subcommand with closure-scoped flag locals.
@@ -128,7 +129,7 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string, banner Bann
 		return err
 	}
 
-	projectPath, err := claude.ResolveProjectPath(args[0])
+	projectPath, err := tool.ResolveProjectPath(args[0])
 	if err != nil {
 		return fmt.Errorf("resolve project path: %w", err)
 	}

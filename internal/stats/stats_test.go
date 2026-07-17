@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/stats"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 const fixtureProject = "/Users/test/Projects/myproject"
@@ -135,10 +135,10 @@ func TestComputeFootprint_ReferenceSurfacesDeriveFromRegistries(t *testing.T) {
 	for _, reference := range footprint.References {
 		present[reference.Surface] = true
 	}
-	for _, target := range claude.UserWideRewriteTargets {
+	for target := range claude.UserWideRewriteTargets() {
 		assert.True(t, present[target.Name], "user-wide target %q must be a reference surface", target.Name)
 	}
-	for _, group := range claude.SessionKeyedGroups {
+	for group := range claude.SessionKeyedGroups() {
 		assert.True(t, present[group.Name], "session-keyed group %q must be a reference surface", group.Name)
 	}
 	assert.False(t, present["file-history"], "file-history snapshots are opaque and carry no references")

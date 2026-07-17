@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // TestCancellationStopsCountAndDiskScans verifies that countReferences and

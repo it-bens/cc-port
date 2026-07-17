@@ -7,15 +7,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
-	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/progress"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
-// findActive is the test seam for lock.FindActive. Swapped in
+// findActive is the test seam for claude.FindActive. Swapped in
 // movecmd_test.go via withMoveSeams.
-var findActive = lock.FindActive
+var findActive = claude.FindActive
 
 // newMoveCmd returns the move subcommand with closure-scoped flag locals.
 // claudeDir points at the persistent root flag's local; cobra populates
@@ -71,11 +71,11 @@ func newMoveCmd(claudeDir *string) *cobra.Command {
 // move.Options. Kept pure (no lock, no domain call) so it is
 // unit-testable in isolation.
 func parseMoveOptions(cmd *cobra.Command, args []string) (move.Options, error) {
-	oldPath, err := claude.ResolveProjectPath(args[0])
+	oldPath, err := tool.ResolveProjectPath(args[0])
 	if err != nil {
 		return move.Options{}, fmt.Errorf("resolve old path: %w", err)
 	}
-	newPath, err := claude.ResolveProjectPath(args[1])
+	newPath, err := tool.ResolveProjectPath(args[1])
 	if err != nil {
 		return move.Options{}, fmt.Errorf("resolve new path: %w", err)
 	}

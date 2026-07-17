@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 func TestSelfPusher_OnConfiguredMachineReturnsHostUser(t *testing.T) {

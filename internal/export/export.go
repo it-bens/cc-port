@@ -17,12 +17,11 @@ import (
 	"sort"
 	"time"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/scan"
-	"github.com/it-bens/cc-port/internal/transport"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // now is a seam reassigned under t.Cleanup so tests can pin timestamps.
@@ -326,7 +325,7 @@ func exportMemory(
 // under one sub-phase while keeping the registry's group association needed
 // to compute each entry's zip name.
 type sessionKeyedPair struct {
-	group claude.SessionKeyedGroup
+	group claude.RegistryEntry
 	path  string
 }
 
@@ -343,13 +342,6 @@ func exportSessionKeyed(
 	placeholders []manifest.Placeholder,
 	archivePhase progress.PhaseHandle,
 ) error {
-	baseByGroup := make(map[string]string, len(transport.SessionKeyedTargets))
-	prefixByGroup := make(map[string]string, len(transport.SessionKeyedTargets))
-	for _, target := range transport.SessionKeyedTargets {
-		baseByGroup[target.Group] = target.HomeBaseDir(claudeHome)
-		prefixByGroup[target.Group] = target.ZipPrefix
-	}
-
 	categoryOrder, pairsByCategory := collectSessionKeyedPairs(locations)
 
 	for _, category := range categoryOrder {
@@ -369,11 +361,11 @@ func exportSessionKeyed(
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			relative, err := filepath.Rel(baseByGroup[pair.group.Name], pair.path)
+			relative, err := filepath.Rel(pair.group.HomeBaseDir(claudeHome), pair.path)
 			if err != nil {
 				return fmt.Errorf("compute relative path for %s: %w", pair.path, err)
 			}
-			zipName := prefixByGroup[pair.group.Name] + filepath.ToSlash(relative)
+			zipName := pair.group.ZipPrefix + filepath.ToSlash(relative)
 			// Session-keyed bodies are small JSON or JSONL. streamJSONLEntry
 			// applies placeholders per line; since paths never straddle '\n',
 			// the output matches a whole-file transform byte-for-byte.
@@ -395,8 +387,8 @@ func collectSessionKeyedPairs(
 ) (categoryOrder []string, pairsByCategory map[string][]sessionKeyedPair) {
 	pairsByCategory = make(map[string][]sessionKeyedPair)
 
-	seen := make(map[string]struct{}, len(claude.SessionKeyedGroups))
-	for _, group := range claude.SessionKeyedGroups {
+	seen := make(map[string]struct{})
+	for group := range claude.SessionKeyedGroups() {
 		if _, already := seen[group.Category]; already {
 			continue
 		}

@@ -9,7 +9,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/file"
@@ -18,6 +17,8 @@ import (
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/scan"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
@@ -195,7 +196,7 @@ func runExportManifest(cmd *cobra.Command, args []string, claudeDir string, bann
 		return err
 	}
 
-	projectPath, err := claude.ResolveProjectPath(args[0])
+	projectPath, err := tool.ResolveProjectPath(args[0])
 	if err != nil {
 		return fmt.Errorf("resolve project path: %w", err)
 	}
@@ -235,7 +236,7 @@ func runExportManifest(cmd *cobra.Command, args []string, claudeDir string, bann
 // (ProjectPath, FromManifest) and the output path. Categories and
 // Placeholders are filled in by applyCategorySelection in the caller.
 func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, string, error) {
-	projectPath, err := claude.ResolveProjectPath(args[0])
+	projectPath, err := tool.ResolveProjectPath(args[0])
 	if err != nil {
 		return export.Options{}, "", fmt.Errorf("resolve project path: %w", err)
 	}
@@ -355,7 +356,7 @@ func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {
 	}
 }
 
-// resolveHomeAnchor mirrors claude.ResolveProjectPath: a symlinked HOME
+// resolveHomeAnchor mirrors tool.ResolveProjectPath: a symlinked HOME
 // must resolve to its target before the anchor filter compares against
 // project paths, otherwise every home-rooted candidate is silently
 // dropped. Rejecting `/` and non-absolute values prevents the anchor

@@ -14,12 +14,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // now is a seam reassigned under t.Cleanup so tests can pin timestamps.

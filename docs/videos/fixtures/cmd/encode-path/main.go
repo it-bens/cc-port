@@ -9,14 +9,15 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 func encodeArg(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path argument is required")
 	}
-	resolved, err := claude.ResolveProjectPath(path)
+	resolved, err := tool.ResolveProjectPath(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", path, err)
 	}

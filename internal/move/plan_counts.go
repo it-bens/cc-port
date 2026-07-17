@@ -10,8 +10,8 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // scanHistoryFile opens history.jsonl and walks it one line at a time,
@@ -72,7 +72,7 @@ func countSessionFileReplacements(
 		if err != nil {
 			return 0, fmt.Errorf("read session file %s: %w", sessionFilePath, err)
 		}
-		_, changed, err := rewrite.SessionFile(data, moveOptions.OldPath, moveOptions.NewPath)
+		_, changed, err := claude.RewriteSessionFile(data, moveOptions.OldPath, moveOptions.NewPath)
 		if err != nil {
 			return 0, fmt.Errorf("analyze session file %s: %w", sessionFilePath, err)
 		}
@@ -93,11 +93,11 @@ func countUserWideReplacements(
 	claudeHome *claude.Home,
 	moveOptions Options,
 ) error {
-	for _, target := range claude.UserWideRewriteTargets {
+	for target := range claude.UserWideRewriteTargets() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		path := target.Path(claudeHome)
+		path := target.RewritePath(claudeHome)
 		if _, err := os.Stat(path); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
@@ -126,7 +126,7 @@ func checkConfigBlockRekey(ctx context.Context, claudeHome *claude.Home, moveOpt
 	if err != nil {
 		return false, fmt.Errorf("read config file: %w", err)
 	}
-	_, rekeyed, err := rewrite.UserConfig(data, moveOptions.OldPath, moveOptions.NewPath)
+	_, rekeyed, err := claude.RewriteUserConfig(data, moveOptions.OldPath, moveOptions.NewPath)
 	if err != nil {
 		return false, fmt.Errorf("analyze config file: %w", err)
 	}

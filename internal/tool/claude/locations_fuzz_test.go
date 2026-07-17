@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // FuzzVerifyProjectIdentity asserts the identity guard's three-state outcome

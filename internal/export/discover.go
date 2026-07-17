@@ -63,7 +63,7 @@ func AutoDetectPlaceholders(prefixes []string, projectPath, homePath string) []P
 // DiscoverPlaceholders returns placeholder suggestions for path references
 // in content, anchored under projectPath and homePath. Both anchors must be
 // cleaned absolute non-root paths; the CLI layer enforces this via
-// resolveHomeAnchor and claude.ResolveProjectPath.
+// resolveHomeAnchor and tool.ResolveProjectPath.
 func DiscoverPlaceholders(content []byte, projectPath, homePath string) []PlaceholderSuggestion {
 	candidates := DiscoverPaths(content)
 	filtered := filterAnchored(candidates, projectPath, homePath)

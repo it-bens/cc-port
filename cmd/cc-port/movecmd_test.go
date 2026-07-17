@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
-	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 func TestParseMoveOptions_ResolvesPaths(t *testing.T) {
@@ -168,7 +168,7 @@ func TestRenderPlanWarningsReportsRulesFileMatches(t *testing.T) {
 
 func TestReportActiveSessionOnSourceSilentWhenNoneActive(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) {
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) {
 		return nil, nil
 	})
 	var stderr bytes.Buffer
@@ -181,8 +181,8 @@ func TestReportActiveSessionOnSourceSilentWhenNoneActive(t *testing.T) {
 
 func TestReportActiveSessionOnSourceSilentWhenActiveSessionElsewhere(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) {
-		return []lock.ActiveSession{{Pid: 4242, Cwd: "/Users/test/Projects/other"}}, nil
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) {
+		return []tool.ActiveWriter{{Pid: 4242, Cwd: "/Users/test/Projects/other"}}, nil
 	})
 	var stderr bytes.Buffer
 
@@ -194,8 +194,8 @@ func TestReportActiveSessionOnSourceSilentWhenActiveSessionElsewhere(t *testing.
 
 func TestReportActiveSessionOnSourcePrintsNoteWhenActiveSessionMatches(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) {
-		return []lock.ActiveSession{{Pid: 4242, Cwd: "/Users/test/Projects/myproject"}}, nil
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) {
+		return []tool.ActiveWriter{{Pid: 4242, Cwd: "/Users/test/Projects/myproject"}}, nil
 	})
 	var stderr bytes.Buffer
 
@@ -210,7 +210,7 @@ func TestReportActiveSessionOnSourcePrintsNoteWhenActiveSessionMatches(t *testin
 func TestReportActiveSessionOnSourceWrapsLockError(t *testing.T) {
 	sentinel := errors.New("simulated FindActive failure")
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) {
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) {
 		return nil, sentinel
 	})
 	var stderr bytes.Buffer
@@ -223,7 +223,7 @@ func TestReportActiveSessionOnSourceWrapsLockError(t *testing.T) {
 
 func TestRunMoveDryRunPrintsDirectoryRename(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) { return nil, nil })
 	var stdout, stderr bytes.Buffer
 	opts := move.Options{
 		OldPath: "/Users/test/Projects/myproject",
@@ -240,7 +240,7 @@ func TestRunMoveDryRunPrintsDirectoryRename(t *testing.T) {
 
 func TestRunMoveDryRunPrintsApplyHint(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) { return nil, nil })
 	var stdout, stderr bytes.Buffer
 	opts := move.Options{
 		OldPath: "/Users/test/Projects/myproject",
@@ -255,7 +255,7 @@ func TestRunMoveDryRunPrintsApplyHint(t *testing.T) {
 
 func TestRunMoveDryRunOmitsTranscriptCountsWhenFlagOff(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) { return nil, nil })
 	var stdout, stderr bytes.Buffer
 	opts := move.Options{
 		OldPath:            "/Users/test/Projects/myproject",
@@ -271,7 +271,7 @@ func TestRunMoveDryRunOmitsTranscriptCountsWhenFlagOff(t *testing.T) {
 
 func TestRunMoveDryRunPrintsTranscriptCountsWhenFlagOn(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) { return nil, nil })
 	var stdout, stderr bytes.Buffer
 	opts := move.Options{
 		OldPath:            "/Users/test/Projects/myproject",
@@ -290,7 +290,7 @@ func TestRunMoveDryRunPrintsTranscriptCountsWhenFlagOn(t *testing.T) {
 
 func TestRunMoveDryRunPrintsFileHistorySnapshotsLine(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, nil })
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) { return nil, nil })
 	var stdout, stderr bytes.Buffer
 	opts := move.Options{
 		OldPath: "/Users/test/Projects/myproject",
@@ -308,7 +308,7 @@ func TestRunMoveDryRunPrintsFileHistorySnapshotsLine(t *testing.T) {
 func TestRunMoveDryRunPropagatesActiveSessionError(t *testing.T) {
 	sentinel := errors.New("simulated FindActive failure")
 	home := testutil.SetupFixture(t)
-	withMoveSeams(t, func(*claude.Home) ([]lock.ActiveSession, error) { return nil, sentinel })
+	withMoveSeams(t, func(*claude.Home) ([]tool.ActiveWriter, error) { return nil, sentinel })
 	var stdout, stderr bytes.Buffer
 	opts := move.Options{
 		OldPath: "/Users/test/Projects/myproject",
@@ -323,7 +323,7 @@ func TestRunMoveDryRunPropagatesActiveSessionError(t *testing.T) {
 // withMoveSeams swaps the package-level findActive seam for the duration
 // of t and restores the original via t.Cleanup. Mirrors withSeams in
 // internal/ui/prompt_test.go.
-func withMoveSeams(t *testing.T, find func(*claude.Home) ([]lock.ActiveSession, error)) {
+func withMoveSeams(t *testing.T, find func(*claude.Home) ([]tool.ActiveWriter, error)) {
 	t.Helper()
 	original := findActive
 	t.Cleanup(func() { findActive = original })

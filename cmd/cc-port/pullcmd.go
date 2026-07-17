@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/importer"
@@ -17,6 +16,8 @@ import (
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // newPullCmd returns the pull subcommand with closure-scoped flag locals.
@@ -205,7 +206,7 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		return syncc.PullOptions{}, nil, "", err
 	}
 
-	targetPath, err := claude.ResolveProjectPath(toPath)
+	targetPath, err := tool.ResolveProjectPath(toPath)
 	if err != nil {
 		return syncc.PullOptions{}, nil, "", fmt.Errorf("resolve target path: %w", err)
 	}

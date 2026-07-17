@@ -1,24 +1,14 @@
-// Package rewrite provides functions for rewriting Claude Code data files
-// when a project is moved from one path to another.
+// Package rewrite provides substrate-generic path and file rewrite primitives.
 package rewrite
 
 import (
-	"bufio"
 	"bytes"
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
-
-	"github.com/it-bens/cc-port/internal/claude"
 )
 
 // EscapeSJSONKey escapes `\` and `.` so an arbitrary string can be used as a
@@ -219,168 +209,6 @@ func countBoundedPath(data []byte, path string) int {
 		cursor = nextIndex
 	}
 	return count
-}
-
-// StreamHistoryJSONL streams src line by line, rewriting every well-formed
-// entry so oldProject becomes newProject (in the structured `project` field
-// AND in any free-text reference such as `display` or `pastedContents`),
-// using path-boundary-aware substring replacement so unrelated paths sharing
-// a prefix (e.g. "myproject-extras") are not corrupted.
-//
-// Returns the count of lines whose contents changed and the 1-based line
-// numbers of malformed (non-JSON) lines. Malformed lines are preserved
-// verbatim — cc-port cannot reliably repair data that was already broken
-// before the move. Callers should surface the line numbers so the malformed
-// entries can be inspected manually.
-//
-// The output is byte-for-byte equivalent to the previous whole-file path:
-// empty lines are preserved, and the trailing newline (or its absence) is
-// mirrored from the input. Lines exceeding claude.MaxHistoryLine fail with
-// bufio.ErrTooLong rather than being silently truncated.
-//
-// Cancellation: ctx is checked at each line boundary; a canceled ctx
-// short-circuits the stream and returns ctx.Err() after a best-effort flush.
-func StreamHistoryJSONL(
-	ctx context.Context,
-	src io.Reader,
-	dst io.Writer,
-	oldProject, newProject string,
-) (count int, malformed []int, err error) {
-	reader := bufio.NewReaderSize(src, 64<<10)
-	writer := bufio.NewWriterSize(dst, 64<<10)
-
-	lineNumber := 0
-	for {
-		if err := ctx.Err(); err != nil {
-			return 0, nil, err
-		}
-
-		line, readErr := reader.ReadBytes('\n')
-		if len(line) > claude.MaxHistoryLine {
-			return 0, nil, fmt.Errorf(
-				"history.jsonl line %d exceeds %d bytes: %w",
-				lineNumber+1, claude.MaxHistoryLine, bufio.ErrTooLong,
-			)
-		}
-
-		if len(line) > 0 {
-			lineNumber++
-			body, terminator := splitLineTerminator(line)
-
-			out, isMalformed := rewriteHistoryLine(body, oldProject, newProject, &count)
-			if isMalformed {
-				malformed = append(malformed, lineNumber)
-			}
-
-			if _, err := writer.Write(out); err != nil {
-				return 0, nil, fmt.Errorf("write history line %d: %w", lineNumber, err)
-			}
-			if len(terminator) > 0 {
-				if _, err := writer.Write(terminator); err != nil {
-					return 0, nil, fmt.Errorf("write history line %d terminator: %w", lineNumber, err)
-				}
-			}
-		}
-
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return 0, nil, fmt.Errorf("read history line %d: %w", lineNumber+1, readErr)
-		}
-	}
-
-	if err := writer.Flush(); err != nil {
-		return 0, nil, fmt.Errorf("flush history output: %w", err)
-	}
-	return count, malformed, nil
-}
-
-// splitLineTerminator separates a line read by bufio.Reader.ReadBytes('\n')
-// into its body and the trailing '\n' terminator (empty when the last line
-// has no terminator). Exposed separately so the rewrite loop never writes a
-// terminator that was not present in the source.
-func splitLineTerminator(line []byte) (body, terminator []byte) {
-	if len(line) > 0 && line[len(line)-1] == '\n' {
-		return line[:len(line)-1], line[len(line)-1:]
-	}
-	return line, nil
-}
-
-// rewriteHistoryLine applies the per-line transform. Empty lines round-trip
-// unchanged; malformed lines are preserved verbatim; well-formed lines go
-// through ReplacePathInBytes and bump *count when at least one match lands.
-func rewriteHistoryLine(body []byte, oldProject, newProject string, count *int) ([]byte, bool) {
-	if len(bytes.TrimSpace(body)) == 0 {
-		return body, false
-	}
-	var probe claude.HistoryEntry
-	if err := json.Unmarshal(body, &probe); err != nil {
-		return body, true
-	}
-	rewritten, replaced := ReplacePathInBytesWithJSONEscape(body, oldProject, newProject)
-	if replaced > 0 {
-		*count++
-	}
-	return rewritten, false
-}
-
-// SessionFile rewrites every occurrence of oldProject to newProject inside
-// the session JSON using path-boundary-aware substitution. The top-level
-// `cwd` field is covered, as is any occurrence embedded elsewhere in the
-// file, including nested values that JSON-decode into the preserved Extra map.
-//
-// Uses json.Unmarshal against the typed claude.SessionFile shape to validate
-// the input: the typed validator rejects structurally invalid files before any
-// bytes are rewritten. (UserConfig uses gjson.ValidBytes instead because sjson
-// does the mutation and only byte-level JSON validity matters there.)
-//
-// The bool return indicates whether at least one occurrence was rewritten.
-func SessionFile(data []byte, oldProject, newProject string) (rewritten []byte, changed bool, err error) {
-	var sessionFile claude.SessionFile
-	if err := json.Unmarshal(data, &sessionFile); err != nil {
-		return nil, false, fmt.Errorf("unmarshal session file: %w", err)
-	}
-
-	body, count := ReplacePathInBytesWithJSONEscape(data, oldProject, newProject)
-	return body, count > 0, nil
-}
-
-// UserConfig rewrites ~/.claude.json to re-key the project entry from
-// oldProject to newProject. Path references embedded in the block's
-// contents (e.g. mcpServers.*.args, mcpServers.*.env.*, mcpContextUris,
-// exampleFiles) are rewritten with path-boundary-aware substitution so
-// values that hard-coded the old project path follow the rename.
-//
-// The operation uses sjson to splice only the projects object, which
-// preserves every byte outside the rekeyed entry — original key order,
-// indent style, and trailing newlines all survive.
-//
-// The bool return indicates whether the old key was found and moved. Other
-// project keys and top-level fields are left untouched.
-func UserConfig(data []byte, oldProject, newProject string) (updated []byte, rekeyed bool, err error) {
-	if !gjson.ValidBytes(data) {
-		return nil, false, fmt.Errorf("invalid user config JSON")
-	}
-
-	oldPath := "projects." + EscapeSJSONKey(oldProject)
-	existing := gjson.GetBytes(data, oldPath)
-	if !existing.Exists() {
-		return data, false, nil
-	}
-
-	rewrittenBlock, _ := ReplacePathInBytesWithJSONEscape([]byte(existing.Raw), oldProject, newProject)
-
-	updated, err = sjson.DeleteBytes(data, oldPath)
-	if err != nil {
-		return nil, false, fmt.Errorf("delete old project key: %w", err)
-	}
-	newPath := "projects." + EscapeSJSONKey(newProject)
-	updated, err = sjson.SetRawBytes(updated, newPath, rewrittenBlock)
-	if err != nil {
-		return nil, false, fmt.Errorf("insert new project key: %w", err)
-	}
-	return updated, true, nil
 }
 
 // renameEntry captures one pending rename operation handled by

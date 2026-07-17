@@ -14,13 +14,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 const (
@@ -1367,11 +1367,11 @@ func TestApply_GlobalReferenceSubPhasesCoverEveryRegistry(t *testing.T) {
 
 	subPhaseNames := globalReferenceSubPhaseNames(recorder.Events())
 
-	for _, target := range claude.UserWideRewriteTargets {
+	for target := range claude.UserWideRewriteTargets() {
 		assert.Contains(t, subPhaseNames, target.Name,
 			"user-wide rewrite target %q must open a sub-phase", target.Name)
 	}
-	for _, group := range claude.SessionKeyedGroups {
+	for group := range claude.SessionKeyedGroups() {
 		assert.Contains(t, subPhaseNames, group.Name,
 			"session-keyed group %q must open a sub-phase", group.Name)
 	}
@@ -1395,7 +1395,7 @@ func TestApply_OpensSubPhaseForSessionKeyedGroupWithNoFiles(t *testing.T) {
 
 	subPhaseNames := globalReferenceSubPhaseNames(recorder.Events())
 
-	for _, group := range claude.SessionKeyedGroups {
+	for group := range claude.SessionKeyedGroups() {
 		assert.Contains(t, subPhaseNames, group.Name,
 			"empty session-keyed group %q must still open a sub-phase", group.Name)
 	}
@@ -1484,10 +1484,10 @@ func TestPlanCategoriesReturnsCanonicalOrder(t *testing.T) {
 	assert.Equal(t, "sessions", got[1])
 	assert.Equal(t, "file-history-snapshots", got[len(got)-1])
 
-	for _, target := range claude.UserWideRewriteTargets {
+	for target := range claude.UserWideRewriteTargets() {
 		assert.Contains(t, got, target.Name, "user-wide rewrite target %q must appear", target.Name)
 	}
-	for _, group := range claude.SessionKeyedGroups {
+	for group := range claude.SessionKeyedGroups() {
 		assert.Contains(t, got, group.Name, "session-keyed group %q must appear", group.Name)
 	}
 }

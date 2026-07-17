@@ -16,9 +16,13 @@ func TestSessionKeyedGroups_CanonicalOrder(t *testing.T) {
 		"plugins-data",
 		"tasks",
 	}
-	require.Len(t, SessionKeyedGroups, len(want))
-	for i, group := range SessionKeyedGroups {
-		assert.Equal(t, want[i], group.Name, "position %d", i)
+	got := make([]string, 0, len(want))
+	for group := range SessionKeyedGroups() {
+		got = append(got, group.Name)
+	}
+	require.Len(t, got, len(want))
+	for i, name := range got {
+		assert.Equal(t, want[i], name, "position %d", i)
 	}
 }
 
