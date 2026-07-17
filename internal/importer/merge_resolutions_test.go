@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
@@ -20,6 +21,16 @@ func TestMergeResolutions_IgnoresImplicitManifestResolution(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/target/path", resolutions["{{PROJECT_PATH}}"])
+}
+
+func TestMergeResolutions_RejectsRelativeResolutionValue(t *testing.T) {
+	block := manifest.Tool{Name: "claude", Placeholders: []manifest.Placeholder{{Key: "{{DECLARED}}", Resolve: "relative/path"}}}
+
+	_, err := mergeResolutions(block, nil, nil)
+
+	var invalid *archive.InvalidResolutionsError
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, []string{"{{DECLARED}}"}, invalid.Keys)
 }
 
 func TestMergeResolutions_RejectsUndeclaredManifestResolution(t *testing.T) {

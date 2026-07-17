@@ -264,6 +264,18 @@ func TestMetadata_ToolBlock(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestReadManifest_RejectsDuplicateToolBlocks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+	data := []byte(xml.Header + `<cc-port><tool name="claude"/><tool name="claude"/></cc-port>`)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	_, err := manifest.ReadManifest(path)
+
+	var duplicate *manifest.DuplicateToolError
+	require.ErrorAs(t, err, &duplicate)
+	assert.Equal(t, "claude", duplicate.Tool)
+}
+
 // createTestZip creates a ZIP archive at zipPath containing the file at
 // sourcePath stored as metadata.xml.
 func createTestZip(zipPath, sourcePath string) error {

@@ -19,7 +19,7 @@ Every path-rewriting command routes through this package so the boundary contrac
 - **Atomic rename**
   - `NewSafeRenamePromoter() *SafeRenamePromoter`: constructor for the staged-write promoter used by `import`.
   - `SafeRenamePromoter` type with methods:
-    - `StageFile`, `StageDir`: register destinations.
+    - `StageFile`: registers a destination.
     - `Promote`: runs the rename chain.
     - `Rollback`: reverses completed renames.
     - `SetRenameFunc`: injects a test hook.

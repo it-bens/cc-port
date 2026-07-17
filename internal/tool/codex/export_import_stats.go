@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 
 const (
 	codexHomeKey        = "{{CODEX_HOME}}"
+	codexProjectPathKey = "{{CODEX_PROJECT_PATH}}"
 	codexHistoryFile    = "history.jsonl"
 	sessionIndexFile    = "session_index.jsonl"
 	maxCodexJSONLLine   = 16 << 20
@@ -53,20 +56,19 @@ type historyRecord struct {
 }
 
 type threadSidecar struct {
-	ThreadID   string          `json:"thread_id"`
-	ArchivedAt any             `json:"archived_at"`
-	Title      any             `json:"title"`
-	Git        json.RawMessage `json:"git"`
+	ThreadID   string      `json:"thread_id"`
+	ArchivedAt *int64      `json:"archived_at"`
+	Title      *string     `json:"title"`
+	Git        *sidecarGit `json:"git"`
 }
 
 type sidecarGit struct {
-	SHA       any `json:"sha"`
-	Branch    any `json:"branch"`
-	OriginURL any `json:"origin_url"`
+	SHA       *string `json:"sha"`
+	Branch    *string `json:"branch"`
+	OriginURL *string `json:"origin_url"`
 }
 
-// Placeholders declares Codex's machine-local home anchor. A project with no
-// associated structured rollout is unknown to this adapter.
+// Placeholders declares Codex's machine-local home and project anchors.
 func (workspace *Workspace) Placeholders(project string, _ map[string]bool) ([]manifest.Placeholder, error) {
 	known, err := workspace.knowsProject(project)
 	if err != nil {
@@ -75,18 +77,25 @@ func (workspace *Workspace) Placeholders(project string, _ map[string]bool) ([]m
 	if !known {
 		return nil, tool.ErrProjectAbsent
 	}
-	return []manifest.Placeholder{{Key: codexHomeKey, Original: workspace.home.Dir}}, nil
+	return []manifest.Placeholder{
+		{Key: codexProjectPathKey, Original: project},
+		{Key: codexHomeKey, Original: workspace.home.Dir},
+	}, nil
 }
 
 // Export writes selected project state under the Codex archive namespace.
 func (workspace *Workspace) Export(ctx context.Context, project string, selected map[string]bool, sink *archive.Sink) (tool.ExportResult, error) {
 	result := tool.ExportResult{Categories: make(map[string][]tool.ArchiveEntry)}
-	rollouts, eraA, err := workspace.projectRollouts(ctx, project)
+	known, err := workspace.knowsProject(project)
 	if err != nil {
 		return result, err
 	}
-	if len(rollouts) == 0 {
+	if !known {
 		return result, tool.ErrProjectAbsent
+	}
+	rollouts, eraA, err := workspace.projectRollouts(ctx, project)
+	if err != nil {
+		return result, err
 	}
 	result.Skipped = append(result.Skipped, eraA...)
 	if len(eraA) > 0 {
@@ -96,7 +105,10 @@ func (workspace *Workspace) Export(ctx context.Context, project string, selected
 		))
 	}
 
-	threadIDs := make(map[string]struct{}, len(rollouts))
+	threadIDs, err := workspace.projectThreadIDs(project)
+	if err != nil {
+		return result, err
+	}
 	rolloutLines := make(map[string][][]byte, len(rollouts))
 	for _, rollout := range rollouts {
 		if err := ctx.Err(); err != nil {
@@ -295,10 +307,11 @@ func (workspace *Workspace) exportThreadSidecar(sink *archive.Sink, result *tool
 		return nil
 	}
 	var output bytes.Buffer
-	databases, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
+	databases, err := workspace.stateDatabasesNewestFirst()
 	if err != nil {
 		return err
 	}
+	seen := make(map[string]struct{}, len(threadIDs))
 	for _, path := range databases {
 		database, err := openReadOnlyDatabase(path)
 		if err != nil {
@@ -323,6 +336,10 @@ func (workspace *Workspace) exportThreadSidecar(sink *archive.Sink, result *tool
 			if _, ok := threadIDs[id]; !ok {
 				continue
 			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
 			line, err := json.Marshal(map[string]any{
 				"thread_id": id, "archived_at": nullableInt64(archivedAt), "title": nullableString(title),
 				"git": map[string]any{
@@ -403,15 +420,16 @@ func (workspace *Workspace) PreflightDirs(string) []string {
 	}
 }
 
-// ImplicitAnchors resolves Codex's declared home anchor on the destination.
-func (workspace *Workspace) ImplicitAnchors(string) (map[string]string, error) {
-	return map[string]string{codexHomeKey: workspace.home.Dir}, nil
+// ImplicitAnchors resolves Codex's declared home and project anchors on the destination.
+func (workspace *Workspace) ImplicitAnchors(project string) (map[string]string, error) {
+	return map[string]string{codexHomeKey: workspace.home.Dir, codexProjectPathKey: project}, nil
 }
 
 // Stage routes regular rollout files for atomic promotion and retains merge
 // inputs for Finalize. Imported rollouts remain decompressed .jsonl files:
 // Codex reads both forms, and this preserves the archive's portable bytes.
-func (workspace *Workspace) Stage(_ context.Context, _ string, entry archive.Entry, resolutions map[string]string) ([]archive.Staged, error) {
+func (workspace *Workspace) Stage(_ context.Context, project string, entry archive.Entry, resolutions map[string]string) ([]archive.Staged, error) {
+	resolutions = codexImportResolutions(project, resolutions)
 	switch {
 	case strings.HasPrefix(entry.Name, archiveSessionRoot):
 		return workspace.stageRollout(
@@ -422,33 +440,42 @@ func (workspace *Workspace) Stage(_ context.Context, _ string, entry archive.Ent
 			entry, strings.TrimPrefix(entry.Name, archiveArchivedRoot), filepath.Join(workspace.home.Dir, archivedSessionsSubdir), resolutions,
 		)
 	case entry.Name == "session-index/"+sessionIndexFile:
-		data, err := entry.ReadAll()
+		resolved, err := archive.ResolveEntryBytes(entry, resolutions)
 		if err != nil {
 			return nil, err
 		}
-		workspace.indexAppends = append(workspace.indexAppends, archive.ApplyResolutions(data, resolutions))
+		workspace.indexAppends = append(workspace.indexAppends, resolved)
 		return nil, nil
 	case entry.Name == "threads-sidecar.jsonl":
-		data, err := entry.ReadAll()
+		resolved, err := archive.ResolveEntryBytes(entry, resolutions)
 		if err != nil {
 			return nil, err
 		}
-		workspace.sidecarAppends = append(workspace.sidecarAppends, archive.ApplyResolutions(data, resolutions))
+		workspace.sidecarAppends = append(workspace.sidecarAppends, resolved)
 		return nil, nil
 	case entry.Name == "history/"+codexHistoryFile:
-		data, err := entry.ReadAll()
+		resolved, err := archive.ResolveEntryBytes(entry, resolutions)
 		if err != nil {
 			return nil, err
 		}
-		workspace.historyAppends = append(workspace.historyAppends, archive.ApplyResolutions(data, resolutions))
+		workspace.historyAppends = append(workspace.historyAppends, resolved)
 		return nil, nil
 	default:
 		return nil, &UnknownArchiveEntryError{Name: entry.Name}
 	}
 }
 
+func codexImportResolutions(project string, resolutions map[string]string) map[string]string {
+	resolved := make(map[string]string, len(resolutions)+1)
+	for key, value := range resolutions {
+		resolved[key] = value
+	}
+	resolved[codexProjectPathKey] = project
+	return resolved
+}
+
 func (workspace *Workspace) stageRollout(entry archive.Entry, relative, root string, resolutions map[string]string) ([]archive.Staged, error) {
-	if relative == "" || strings.HasSuffix(relative, zstSuffix) {
+	if !validArchiveRolloutName(relative, strings.HasPrefix(entry.Name, archiveArchivedRoot)) {
 		return nil, &UnknownArchiveEntryError{Name: entry.Name}
 	}
 	staged, _, err := archive.StageSibling(root, filepath.FromSlash(relative), entry, resolutions, importFilePerm, entry.Modified)
@@ -461,9 +488,42 @@ func (workspace *Workspace) stageRollout(entry archive.Entry, relative, root str
 	return []archive.Staged{staged}, nil
 }
 
+func validArchiveRolloutName(relative string, archived bool) bool {
+	segments := strings.Split(relative, "/")
+	if archived {
+		if len(segments) != 1 {
+			return false
+		}
+	} else if len(segments) != 4 {
+		return false
+	}
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	if !archived {
+		for index, width := range []int{4, 2, 2} {
+			if len(segments[index]) != width {
+				return false
+			}
+			for _, char := range segments[index] {
+				if char < '0' || char > '9' {
+					return false
+				}
+			}
+		}
+	}
+	filename := segments[len(segments)-1]
+	return strings.HasPrefix(filename, "rollout-") && strings.HasSuffix(filename, ".jsonl")
+}
+
 // Finalize appends deduplicated line stores without replacing their inodes,
 // then applies sidecar rows only to existing threads through sqlrewrite.
-func (workspace *Workspace) Finalize(_ context.Context, _ string, _ *archive.StagedSet) ([]string, error) {
+func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archive.StagedSet) ([]string, error) {
+	if project == "" {
+		return nil, fmt.Errorf("finalize Codex import: target project is empty")
+	}
 	if err := appendUniqueHistory(filepath.Join(workspace.home.Dir, codexHistoryFile), workspace.historyAppends); err != nil {
 		return nil, err
 	}
@@ -620,13 +680,10 @@ func (workspace *Workspace) applyThreadSidecars() (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		for _, line := range lines {
-			var sidecar threadSidecar
-			if err := json.Unmarshal(line, &sidecar); err != nil {
-				return 0, fmt.Errorf("parse threads sidecar: %w", err)
-			}
-			if sidecar.ThreadID == "" {
-				return 0, fmt.Errorf("parse threads sidecar: thread_id is empty")
+		for lineNumber, line := range lines {
+			sidecar, err := parseThreadSidecar(line)
+			if err != nil {
+				return 0, fmt.Errorf("parse threads sidecar line %d: %w", lineNumber+1, err)
 			}
 			sidecars = append(sidecars, sidecar)
 		}
@@ -651,12 +708,7 @@ func (workspace *Workspace) applyThreadSidecars() (int, error) {
 				_ = database.Close()
 				return 0, err
 			}
-			values, err := sidecarColumns(sidecar)
-			if err != nil {
-				_ = transaction.Rollback()
-				_ = database.Close()
-				return 0, err
-			}
+			values := sidecarColumns(sidecar)
 			count, err := database.UpdateColumnsByKey(transaction, threadsTable, "id", sidecar.ThreadID, values)
 			if err == nil {
 				err = transaction.Commit()
@@ -682,12 +734,10 @@ func (workspace *Workspace) applyThreadSidecars() (int, error) {
 	return unapplied, nil
 }
 
-func sidecarColumns(sidecar threadSidecar) (map[string]any, error) {
+func sidecarColumns(sidecar threadSidecar) map[string]any {
 	git := sidecarGit{}
-	if len(sidecar.Git) > 0 && string(sidecar.Git) != "null" {
-		if err := json.Unmarshal(sidecar.Git, &git); err != nil {
-			return nil, fmt.Errorf("parse sidecar git: %w", err)
-		}
+	if sidecar.Git != nil {
+		git = *sidecar.Git
 	}
 	return map[string]any{
 		"archived_at":    sidecar.ArchivedAt,
@@ -695,11 +745,37 @@ func sidecarColumns(sidecar threadSidecar) (map[string]any, error) {
 		"git_sha":        git.SHA,
 		"git_branch":     git.Branch,
 		"git_origin_url": git.OriginURL,
-	}, nil
+	}
+}
+
+func parseThreadSidecar(line []byte) (threadSidecar, error) {
+	var sidecar threadSidecar
+	decoder := json.NewDecoder(bytes.NewReader(line))
+	decoder.UseNumber()
+	if err := decoder.Decode(&sidecar); err != nil {
+		return threadSidecar{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return threadSidecar{}, errors.New("contains multiple JSON values")
+		}
+		return threadSidecar{}, err
+	}
+	if sidecar.ThreadID == "" {
+		return threadSidecar{}, errors.New("thread_id must be a non-empty string")
+	}
+	return sidecar, nil
 }
 
 // ReferenceSurfaces reports the native reference counts for one project.
 func (workspace *Workspace) ReferenceSurfaces(project string) ([]tool.CountSurface, error) {
+	known, err := workspace.knowsProject(project)
+	if err != nil {
+		return nil, err
+	}
+	if !known {
+		return nil, tool.ErrProjectAbsent
+	}
 	rollouts, _, err := workspace.projectRollouts(context.Background(), project)
 	if err != nil {
 		return nil, err
@@ -796,6 +872,13 @@ func countIndexForIDs(path string, ids map[string]struct{}) (int, error) {
 
 // DiskCategories reports all on-disk files that Codex attributes to a project.
 func (workspace *Workspace) DiskCategories(project string) ([]tool.SizeCategory, error) {
+	known, err := workspace.knowsProject(project)
+	if err != nil {
+		return nil, err
+	}
+	if !known {
+		return nil, tool.ErrProjectAbsent
+	}
 	rollouts, _, err := workspace.projectRollouts(context.Background(), project)
 	if err != nil {
 		return nil, err
@@ -814,14 +897,7 @@ func (workspace *Workspace) DiskCategories(project string) ([]tool.SizeCategory,
 			active.Bytes += info.Size()
 		}
 	}
-	historyInfo, err := os.Stat(filepath.Join(workspace.home.Dir, codexHistoryFile))
 	history := tool.SizeCategory{Name: categoryHistory}
-	if err == nil {
-		history.Files = 1
-		history.Bytes = historyInfo.Size()
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
 	return []tool.SizeCategory{active, archived, history}, nil
 }
 
@@ -904,4 +980,71 @@ func (workspace *Workspace) knowsProject(project string) (bool, error) {
 	}
 	count, err := workspace.countThreadRows(project)
 	return count > 0, err
+}
+
+func (workspace *Workspace) projectThreadIDs(project string) (map[string]struct{}, error) {
+	threadIDs := make(map[string]struct{})
+	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range paths {
+		database, err := openReadOnlyDatabase(path)
+		if err != nil {
+			return nil, err
+		}
+		const projectThreadIDsQuery = `SELECT id FROM threads
+			WHERE cwd = ? OR substr(cwd, 1, length(?)+1) = ? || '/'`
+		rows, err := database.QueryContext(
+			context.Background(), projectThreadIDsQuery, project, project, project,
+		)
+		if err != nil {
+			_ = database.Close()
+			return nil, fmt.Errorf("query project thread IDs in database %s: %w", path, err)
+		}
+		for rows.Next() {
+			var threadID string
+			if err := rows.Scan(&threadID); err != nil {
+				_ = rows.Close()
+				_ = database.Close()
+				return nil, fmt.Errorf("scan project thread ID in database %s: %w", path, err)
+			}
+			threadIDs[threadID] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			_ = database.Close()
+			return nil, fmt.Errorf("iterate project thread IDs in database %s: %w", path, err)
+		}
+		_ = rows.Close()
+		_ = database.Close()
+	}
+	return threadIDs, nil
+}
+
+func (workspace *Workspace) stateDatabasesNewestFirst() ([]string, error) {
+	databases, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
+	if err != nil {
+		return nil, err
+	}
+	type generationPath struct {
+		path       string
+		generation int
+	}
+	parsed := make([]generationPath, 0, len(databases))
+	for _, path := range databases {
+		name := filepath.Base(path)
+		number := strings.TrimSuffix(strings.TrimPrefix(name, "state_"), ".sqlite")
+		generation, parseErr := strconv.Atoi(number)
+		if parseErr != nil || generation < 0 || "state_"+number+".sqlite" != name {
+			return nil, fmt.Errorf("parse state database generation from %s", path)
+		}
+		parsed = append(parsed, generationPath{path: path, generation: generation})
+	}
+	sort.Slice(parsed, func(left, right int) bool { return parsed[left].generation > parsed[right].generation })
+	ordered := make([]string, 0, len(parsed))
+	for _, database := range parsed {
+		ordered = append(ordered, database.path)
+	}
+	return ordered, nil
 }

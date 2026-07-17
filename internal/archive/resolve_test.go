@@ -17,8 +17,9 @@ func TestApplyResolutions_SubstitutesEveryOccurrence(t *testing.T) {
 		"__PROJECT_PATH__": "/home/user/myproject",
 	}
 
-	result := archive.ApplyResolutions(content, resolutions)
+	result, err := archive.ApplyResolutions(content, resolutions)
 
+	require.NoError(t, err)
 	assert.Equal(t, []byte("path is /home/user/myproject and again /home/user/myproject"), result)
 }
 
@@ -28,8 +29,9 @@ func TestApplyResolutions_UnresolvedLeft(t *testing.T) {
 		"__KNOWN__": "/home/user/known",
 	}
 
-	result := archive.ApplyResolutions(content, resolutions)
+	result, err := archive.ApplyResolutions(content, resolutions)
 
+	require.NoError(t, err)
 	assert.Equal(t, []byte("known: /home/user/known unknown: __UNKNOWN__"), result)
 }
 
@@ -59,13 +61,15 @@ func FuzzApplyResolutions(f *testing.F) {
 			t.Skip()
 		}
 
-		emptyResolutionOutput := archive.ApplyResolutions(data, map[string]string{})
+		emptyResolutionOutput, err := archive.ApplyResolutions(data, map[string]string{})
+		require.NoError(t, err)
 		if !bytes.Equal(emptyResolutionOutput, data) {
 			t.Fatalf("empty resolutions modified input: got %q", emptyResolutionOutput)
 		}
 
 		if !bytes.Contains(data, []byte(key)) {
-			absentKeyOutput := archive.ApplyResolutions(data, map[string]string{key: value})
+			absentKeyOutput, err := archive.ApplyResolutions(data, map[string]string{key: value})
+			require.NoError(t, err)
 			if !bytes.Equal(absentKeyOutput, data) {
 				t.Fatalf("absent key mutated input: got %q", absentKeyOutput)
 			}
@@ -73,7 +77,8 @@ func FuzzApplyResolutions(f *testing.F) {
 		}
 
 		occurrenceCount := bytes.Count(data, []byte(key))
-		presentKeyOutput := archive.ApplyResolutions(data, map[string]string{key: value})
+		presentKeyOutput, err := archive.ApplyResolutions(data, map[string]string{key: value})
+		require.NoError(t, err)
 		expectedLength := len(data) + occurrenceCount*(len(value)-len(key))
 		if len(presentKeyOutput) != expectedLength {
 			t.Fatalf(
@@ -83,6 +88,15 @@ func FuzzApplyResolutions(f *testing.F) {
 			)
 		}
 	})
+}
+
+func TestApplyResolutions_RejectsExpandedEntryOverCap(t *testing.T) {
+	restore := archive.SetCaps(archive.Caps{MaxEntryBytes: 8, MaxAggregateBytes: 64})
+	t.Cleanup(restore)
+
+	_, err := archive.ApplyResolutions([]byte("{{X}}"), map[string]string{"{{X}}": "/expanded/"})
+
+	require.ErrorIs(t, err, archive.ErrEntryCapExceeded)
 }
 
 func TestResolvePlaceholdersStream_PassesThroughWhenNoResolutions(t *testing.T) {

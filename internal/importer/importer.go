@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/it-bens/cc-port/internal/archive"
@@ -279,7 +280,19 @@ func mergeResolutions(
 		}
 	}
 	for key, value := range anchors {
+		if !filepath.IsAbs(value) {
+			return nil, fmt.Errorf("implicit anchor %q is not absolute: %q", key, value)
+		}
 		resolutions[key] = value
+	}
+	nonImplicit := make(map[string]string, len(resolutions))
+	for key, value := range resolutions {
+		if _, implicit := anchors[key]; !implicit {
+			nonImplicit[key] = value
+		}
+	}
+	if err := archive.ValidateResolutions(nonImplicit); err != nil {
+		return nil, fmt.Errorf("invalid resolutions for %s: %w", block.Name, err)
 	}
 	return resolutions, nil
 }

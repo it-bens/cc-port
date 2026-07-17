@@ -130,11 +130,11 @@ func (workspace *Workspace) Stage(
 		return []archive.Staged{staged}, nil
 
 	case name == "history/history.jsonl":
-		data, err := entry.ReadAll()
+		resolved, err := archive.ResolveEntryBytes(entry, resolutions)
 		if err != nil {
 			return nil, err
 		}
-		workspace.historyAppends = append(workspace.historyAppends, archive.ApplyResolutions(data, resolutions))
+		workspace.historyAppends = append(workspace.historyAppends, resolved)
 		return nil, nil
 
 	case strings.HasPrefix(name, "file-history/"):
@@ -148,11 +148,11 @@ func (workspace *Workspace) Stage(
 		return []archive.Staged{staged}, nil
 
 	case name == "config.json":
-		data, err := entry.ReadAll()
+		resolved, err := archive.ResolveEntryBytes(entry, resolutions)
 		if err != nil {
 			return nil, err
 		}
-		workspace.configBlock = archive.ApplyResolutions(data, resolutions)
+		workspace.configBlock = resolved
 		return nil, nil
 
 	default:

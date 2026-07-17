@@ -102,7 +102,7 @@ func applyMtime(path string, mtime time.Time) error {
 // opaque bytes such as Claude file-history snapshots). baseDir gates
 // relativePath through an os.Root handle before any write, containing
 // zip-slip escapes. Returns the Staged record for the caller's StagedSet
-// plus the number of bytes read from entry.
+// plus the number of bytes written after placeholder expansion.
 func StageSibling(
 	baseDir, relativePath string, entry Entry, resolutions map[string]string, perm os.FileMode, mtime time.Time,
 ) (Staged, int64, error) {
@@ -130,7 +130,8 @@ func StageSibling(
 
 // streamToPath streams entry's capped body into path (creating parent
 // directories as needed), resolving placeholder tokens via resolutions
-// (nil = verbatim copy). Returns the number of bytes read from entry.
+// (nil = verbatim copy). Returns the number of bytes written after placeholder
+// expansion.
 func streamToPath(path string, entry Entry, resolutions map[string]string, perm os.FileMode) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
 		return 0, fmt.Errorf("create directories for %q: %w", path, err)
@@ -178,32 +179,36 @@ func streamEntry(entry Entry, writer *os.File, resolutions map[string]string) (i
 		return bytesRead, nil
 	}
 
-	counter := &countingReader{inner: capped}
-	if err := ResolvePlaceholdersStream(counter, writer, resolutions); err != nil {
-		if aggregateErr := entry.addAggregate(counter.bytesRead); aggregateErr != nil {
-			return counter.bytesRead, errors.Join(fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err), aggregateErr)
+	expanded := &countingWriter{inner: writer, name: entry.file.Name, limit: activeCaps.MaxEntryBytes}
+	if err := ResolvePlaceholdersStream(capped, expanded, resolutions); err != nil {
+		if aggregateErr := entry.addAggregate(expanded.bytesWritten); aggregateErr != nil {
+			return expanded.bytesWritten, errors.Join(fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err), aggregateErr)
 		}
-		return counter.bytesRead, fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err)
+		return expanded.bytesWritten, fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err)
 	}
-	if err := entry.addAggregate(counter.bytesRead); err != nil {
-		return counter.bytesRead, err
+	// Aggregate accounting tracks staged output here, not decoded input: a
+	// placeholder expansion is what consumes destination disk and memory.
+	if err := entry.addAggregate(expanded.bytesWritten); err != nil {
+		return expanded.bytesWritten, err
 	}
-	if err := enforcePostDecodeCap(entry.file.Name, counter.bytesRead); err != nil {
-		return counter.bytesRead, err
-	}
-	return counter.bytesRead, nil
+	return expanded.bytesWritten, nil
 }
 
-// countingReader wraps an io.Reader and remembers the total number of bytes
-// successfully read, so cap bookkeeping reflects actual observed bytes
-// rather than the archive's declared sizes.
-type countingReader struct {
-	inner     io.Reader
-	bytesRead int64
+// countingWriter bounds bytes emitted after placeholder expansion. The source
+// reader remains capped separately because expansion and decompression are
+// independent resource risks.
+type countingWriter struct {
+	inner        io.Writer
+	name         string
+	limit        int64
+	bytesWritten int64
 }
 
-func (r *countingReader) Read(p []byte) (int, error) {
-	n, err := r.inner.Read(p)
-	r.bytesRead += int64(n)
+func (w *countingWriter) Write(p []byte) (int, error) {
+	if w.bytesWritten+int64(len(p)) > w.limit {
+		return 0, &EntryCapError{Name: w.name, Bytes: uint64(w.bytesWritten + int64(len(p))), Limit: w.limit} //nolint:gosec // byte counts are non-negative
+	}
+	n, err := w.inner.Write(p)
+	w.bytesWritten += int64(n)
 	return n, err
 }

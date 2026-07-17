@@ -36,10 +36,13 @@ func (*applyTestTool) Open(string) (tool.Workspace, error) {
 }
 
 type applyTestWorkspace struct {
-	lockPath   string
-	surfaces   []tool.Surface
-	warnings   []string
-	warningErr error
+	lockPath          string
+	surfaces          []tool.Surface
+	warnings          []string
+	warningErr        error
+	warningSequence   [][]string
+	warningErrs       []error
+	residualCallCount int
 }
 
 func (*applyTestWorkspace) Root() string                                { return "/apply-test" }
@@ -49,6 +52,18 @@ func (workspace *applyTestWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surf
 	return workspace.surfaces, nil
 }
 func (workspace *applyTestWorkspace) ResidualWarnings(tool.MoveRequest) ([]string, error) {
+	if len(workspace.warningSequence) > 0 {
+		index := workspace.residualCallCount
+		workspace.residualCallCount++
+		if index >= len(workspace.warningSequence) {
+			index = len(workspace.warningSequence) - 1
+		}
+		var err error
+		if index < len(workspace.warningErrs) {
+			err = workspace.warningErrs[index]
+		}
+		return workspace.warningSequence[index], err
+	}
 	return workspace.warnings, workspace.warningErr
 }
 func (*applyTestWorkspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
@@ -142,6 +157,39 @@ func TestApply_MovesProjectAndUpdatesReferences(t *testing.T) {
 	historyBytes, err := os.ReadFile(home.HistoryFile())
 	require.NoError(t, err)
 	assert.Contains(t, string(historyBytes), newPath)
+	require.NotEmpty(t, result.ByTool[0].Warnings)
+	assert.Contains(t, result.ByTool[0].Warnings[0], "file-history snapshot(s) preserved verbatim; bodies may still contain the old project path")
+}
+
+func TestClaudeMoveSurfaces_RefusePhysicalDestinationBeforeAnySurface(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+	oldPath := testutil.FixtureProjectPath()
+
+	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: t.TempDir()})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "destination project directory already exists")
+}
+
+func TestClaudeMoveSurfaces_RefusePhysicalDestinationNestedUnderSource(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+	oldPath := testutil.FixtureProjectPath()
+
+	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: oldPath + "/nested"})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "into itself")
+}
+
+func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+
+	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: testutil.FixtureProjectPath(), NewPath: t.TempDir(), RefsOnly: true})
+
+	require.NoError(t, err)
 }
 
 func TestApply_CancellationRestoresCompletedSurfaces(t *testing.T) {
@@ -194,6 +242,39 @@ func TestApply_ReportsResidualWarningInspectionFailureNonFatally(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.ByTool[0].Success)
 	assert.Contains(t, result.ByTool[0].Warnings, "could not inspect residual warnings: assert.AnError general error for testing")
+}
+
+func TestApply_KeepsResidualWarningsWhenInspectionAlsoFails(t *testing.T) {
+	workspace := &applyTestWorkspace{warnings: []string{"unrewritten snapshot"}, warningErr: assert.AnError}
+
+	result, err := move.Apply(context.Background(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
+
+	require.NoError(t, err)
+	require.True(t, result.ByTool[0].Success)
+	assert.Contains(t, result.ByTool[0].Warnings, "unrewritten snapshot")
+	assert.Contains(t, result.ByTool[0].Warnings, "could not inspect residual warnings: assert.AnError general error for testing")
+}
+
+func TestApply_UsesOnlyPostApplyResidualWarnings(t *testing.T) {
+	workspace := &applyTestWorkspace{warningSequence: [][]string{{"pre-apply residual"}, {"checkpoint after apply"}}}
+
+	result, err := move.Apply(context.Background(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"checkpoint after apply"}, result.ByTool[0].Warnings)
+}
+
+func TestDryRunAndApply_WarnWhenNoSelectedToolMovesProjectDirectory(t *testing.T) {
+	workspace := &applyTestWorkspace{}
+	targets := applyTestTarget(t, workspace)
+
+	plan, err := move.DryRun(context.Background(), targets, move.Options{OldPath: "/old", NewPath: "/new"})
+	require.NoError(t, err)
+	assert.Contains(t, plan.Warnings, move.NoPhysicalMoveWarning)
+
+	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: "/old", NewPath: "/new"})
+	require.NoError(t, err)
+	assert.Contains(t, result.Warnings, move.NoPhysicalMoveWarning)
 }
 
 // claudeWorkspaceHome extracts the underlying *claude.Home for assertions

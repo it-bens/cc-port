@@ -140,6 +140,9 @@ func runMoveDryRun(ctx context.Context, stdout io.Writer, targets []tool.Target,
 		}
 		_, _ = fmt.Fprintln(stdout)
 	}
+	for _, warning := range movePlan.Warnings {
+		_, _ = fmt.Fprintf(stdout, "  ! %s\n", warning)
+	}
 
 	_, _ = fmt.Fprintln(stdout, "  Run with --apply to execute.")
 	return nil
@@ -168,5 +171,8 @@ func renderApplyResult(stdout io.Writer, result *move.ApplyResult) {
 		default:
 			_, _ = fmt.Fprintf(stdout, "  [%s] FAILED: %v\n", toolResult.Tool, toolResult.Err)
 		}
+	}
+	for _, warning := range result.Warnings {
+		_, _ = fmt.Fprintf(stdout, "  ! %s\n", warning)
 	}
 }

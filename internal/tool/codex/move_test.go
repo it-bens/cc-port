@@ -232,7 +232,7 @@ func TestResidualWarningsReportsEraAAndGitBaselineLeftInPlace(t *testing.T) {
 	warnings, err := workspace.ResidualWarnings(req)
 
 	require.NoError(t, err)
-	assert.Len(t, warnings, 2, "one era-A warning, one git-baseline-left-in-place warning: %v", warnings)
+	assert.Len(t, warnings, 3, "era-A, marketplace residual, and git-baseline-left-in-place warnings: %v", warnings)
 }
 
 func TestGoalsWarningReportsOnlyPopulatedGoalsDatabases(t *testing.T) {
@@ -590,4 +590,49 @@ func TestAgentsMarketplaceSurfaceSkippedWhenAgentsDirAbsent(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
 	}
+}
+
+func TestAgentsMarketplaceRewritesStructuredSourceWithDottedKeys(t *testing.T) {
+	agentsDir := FixtureAgentsDir(t)
+	marketplacePath := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
+	contents := `{"plugins.with.dot":[{"source":{"source":"local","path":"` + FixtureProjectPath() + `/plugin"}}]}`
+	require.NoError(t, os.WriteFile(marketplacePath, []byte(contents), 0o600))
+
+	planned, err := planAgentsMarketplace(agentsDir, FixtureProjectPath())
+	require.NoError(t, err)
+	undo := tool.NewRestorer()
+	applied, err := applyAgentsMarketplace(agentsDir, FixtureProjectPath(), "/Users/fixture/renamed-project", undo)
+	require.NoError(t, err)
+	undo.Cleanup()
+
+	assert.Equal(t, 1, planned)
+	assert.Equal(t, planned, applied)
+	updated, err := os.ReadFile(marketplacePath) //nolint:gosec // test-controlled fixture path
+	require.NoError(t, err)
+	assert.Contains(t, string(updated), "/Users/fixture/renamed-project/plugin")
+	assert.Contains(t, string(updated), `"source":"local"`)
+}
+
+func TestAgentsMarketplaceLeavesTagOnlySourceUntouched(t *testing.T) {
+	agentsDir := FixtureAgentsDir(t)
+	marketplacePath := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
+	contents := `{"entries":[{"source":"local"}]}`
+	require.NoError(t, os.WriteFile(marketplacePath, []byte(contents), 0o600))
+
+	planned, err := planAgentsMarketplace(agentsDir, FixtureProjectPath())
+	require.NoError(t, err)
+
+	assert.Zero(t, planned)
+}
+
+func TestResidualAgentsWarningIncludesMarketplaceMisses(t *testing.T) {
+	agentsDir := FixtureAgentsDir(t)
+	marketplacePath := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
+	contents := `{"entries":[{"source":"local","unrecognized_path":"` + FixtureProjectPath() + `/plugin"}]}`
+	require.NoError(t, os.WriteFile(marketplacePath, []byte(contents), 0o600))
+
+	warning, err := residualAgentsWarning(agentsDir, FixtureProjectPath())
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, warning)
 }

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -29,6 +30,8 @@ var ErrEncodedDirCollision = errors.New("refusing to move: new project directory
 // removed but the on-disk source directory cannot be deleted.
 var ErrResidualSourceDir = errors.New("on-disk source directory still present")
 
+var removeAll = os.RemoveAll
+
 // MoveSurfaces implements tool.Mover. Surfaces run in the returned order:
 // each rewrite surface is individually atomic (a sibling-temp write via
 // rewrite.SafeWriteFile) and registers its pre-image with the Restorer, so
@@ -44,6 +47,23 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	}
 	if err := checkEncodedDirCollision(workspace.home, req.OldPath, req.NewPath); err != nil {
 		return nil, err
+	}
+	if !req.RefsOnly {
+		if err := checkPhysicalDestination(req.OldPath, req.NewPath); err != nil {
+			return nil, err
+		}
+	}
+	workspace.clearMoveWarnings()
+	locations, err := LocateProject(workspace.home, req.OldPath)
+	if err != nil {
+		return nil, fmt.Errorf("locate project for file-history warning: %w", err)
+	}
+	snapshots, err := snapshotPaths(context.Background(), locations)
+	if err != nil {
+		return nil, fmt.Errorf("inspect file-history snapshots: %w", err)
+	}
+	if len(snapshots) > 0 {
+		workspace.addMoveWarning(fileHistoryWarning(len(snapshots)))
 	}
 
 	// Ordering is load-bearing: every surface but "sessions" and
@@ -70,23 +90,79 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 // ResidualWarnings implements tool.Mover: content a move preserves verbatim
 // and cannot fully rewrite.
 func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, error) {
+	warnings := workspace.moveWarningSnapshot()
 	ctx := context.Background()
 	locations, err := LocateProject(workspace.home, req.OldPath)
 	if err != nil {
-		return nil, fmt.Errorf("locate project: %w", err)
+		if errors.Is(err, tool.ErrProjectAbsent) {
+			return warnings, nil
+		}
+		return warnings, fmt.Errorf("locate project: %w", err)
 	}
 	paths, err := snapshotPaths(ctx, locations)
 	if err != nil {
-		return nil, err
+		return warnings, err
 	}
 	if len(paths) == 0 {
-		return nil, nil
+		return warnings, nil
 	}
-	return []string{fmt.Sprintf(
+	warnings = appendUniqueMoveWarnings(warnings, fileHistoryWarning(len(paths)))
+	return warnings, nil
+}
+
+func fileHistoryWarning(count int) string {
+	return fmt.Sprintf(
 		"%d file-history snapshot(s) preserved verbatim; bodies may still contain the old project path "+
 			"(Claude Code reads them by filename for in-session rewinds, not as path references)",
-		len(paths),
-	)}, nil
+		count,
+	)
+}
+
+func appendUniqueMoveWarnings(warnings []string, warning string) []string {
+	for _, existing := range warnings {
+		if existing == warning {
+			return warnings
+		}
+	}
+	return append(warnings, warning)
+}
+
+func checkPhysicalDestination(oldPath, newPath string) error {
+	if isPathWithin(oldPath, newPath) {
+		return fmt.Errorf("refusing to move project directory into itself: %s", newPath)
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return fmt.Errorf("refusing to move: destination project directory already exists: %s", newPath)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("stat destination project directory %s: %w", newPath, err)
+	}
+	return nil
+}
+
+func isPathWithin(parent, candidate string) bool {
+	relative, err := filepath.Rel(parent, candidate)
+	if err != nil {
+		return false
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
+}
+
+func (workspace *Workspace) clearMoveWarnings() {
+	workspace.moveWarningMutex.Lock()
+	defer workspace.moveWarningMutex.Unlock()
+	workspace.moveWarnings = nil
+}
+
+func (workspace *Workspace) addMoveWarning(warning string) {
+	workspace.moveWarningMutex.Lock()
+	defer workspace.moveWarningMutex.Unlock()
+	workspace.moveWarnings = append(workspace.moveWarnings, warning)
+}
+
+func (workspace *Workspace) moveWarningSnapshot() []string {
+	workspace.moveWarningMutex.Lock()
+	defer workspace.moveWarningMutex.Unlock()
+	return append([]string(nil), workspace.moveWarnings...)
 }
 
 func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string) error {
@@ -389,7 +465,10 @@ func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
 			}
 			data, err := os.ReadFile(workspace.home.ConfigFile)
 			if err != nil {
-				return 0, nil //nolint:nilerr // absent config contributes zero, matching the apply-side stat gate
+				if errors.Is(err, fs.ErrNotExist) {
+					return 0, nil
+				}
+				return 0, fmt.Errorf("read config file: %w", err)
 			}
 			_, rekeyed, err := RewriteUserConfig(data, req.OldPath, req.NewPath)
 			if err != nil {
@@ -573,12 +652,12 @@ func rewriteTwicePreservingMtime(
 
 // projectDirectorySurface performs the actual rename: copying the encoded
 // storage directory (and, unless RefsOnly, the on-disk project directory)
-// to the new path and removing the originals. Its Plan reports whether the
-// directory move would run at all (1) or is suppressed (0, never — the
-// directory always moves; RefsOnly only suppresses the on-disk copy).
+// to the new path and removing the originals. Its Plan reports one because
+// Claude always relocates its encoded project directory; RefsOnly suppresses
+// only the physical project-directory copy.
 func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
-		Name: "project-directory",
+		Name: tool.SurfaceProjectDirectory,
 		Plan: func(_ context.Context) (int, error) {
 			return 1, nil
 		},
@@ -613,17 +692,13 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 		}
 	}
 
-	if err := os.RemoveAll(oldProjectDir); err != nil {
-		return fmt.Errorf("remove old project data dir: %w", err)
-	}
 	if !req.RefsOnly {
-		if err := os.RemoveAll(req.OldPath); err != nil {
-			return fmt.Errorf(
-				"%w: remove old project dir %s: %w; encoded project data is already gone and cannot be recovered; "+
-					"complete the filesystem move manually with `mv %s %s`",
-				ErrResidualSourceDir, req.OldPath, err, req.OldPath, req.NewPath,
-			)
+		if err := removeAll(req.OldPath); err != nil {
+			workspace.addMoveWarning(fmt.Sprintf("%v: %s: %v", ErrResidualSourceDir, req.OldPath, err))
 		}
+	}
+	if err := removeAll(oldProjectDir); err != nil {
+		workspace.addMoveWarning(fmt.Sprintf("old encoded project data directory still present: %s: %v", oldProjectDir, err))
 	}
 	return nil
 }

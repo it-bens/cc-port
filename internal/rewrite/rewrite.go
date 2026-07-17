@@ -330,20 +330,11 @@ type renameEntry struct {
 	backupBytes []byte
 	// backupMode is the pre-promote mode of `final`.
 	backupMode os.FileMode
-	// isDir is true when the entry represents a directory rename rather
-	// than a file rename. Directory backups are stored as temp paths on
-	// disk (see backupDir) because in-memory buffering is unbounded.
-	isDir bool
-	// backupDir is the path where the replaced directory (if any) was
-	// relocated before the promote. On rollback, it is renamed back into
-	// place. Empty when `final` did not previously exist or when the
-	// entry is a file.
-	backupDir string
 }
 
 // SafeRenamePromoter stages a sequence of rename operations and applies them
 // atomically from the caller's perspective. Each entry is a
-// (temp, final) pair; Stage records the intent, Promote renames each temp
+// (temp, final) file pair; Stage records the intent, Promote renames each temp
 // onto its final in registration order (saving any displaced content as a
 // backup), and Rollback walks the promoted entries in reverse order,
 // restoring backups and removing any content that did not previously exist.
@@ -383,21 +374,13 @@ func (p *SafeRenamePromoter) StageFile(temp, final string) {
 	p.entries = append(p.entries, &renameEntry{temp: temp, final: final})
 }
 
-// StageDir records an intent to rename a staged directory at temp onto
-// final at Promote time. If final already exists at promote time, it is
-// relocated to a sibling backup path so Rollback can restore it.
-func (p *SafeRenamePromoter) StageDir(temp, final string) {
-	p.entries = append(p.entries, &renameEntry{temp: temp, final: final, isDir: true})
-}
-
 // Promote applies each staged rename in order. On the first failure, it
 // calls Rollback and returns the promote error; callers should not invoke
 // Rollback themselves in that case.
 func (p *SafeRenamePromoter) Promote() error {
 	for _, entry := range p.entries {
 		if err := p.promoteEntry(entry); err != nil {
-			p.Rollback()
-			return fmt.Errorf("promote %s: %w", entry.final, err)
+			return errors.Join(fmt.Errorf("promote %s: %w", entry.final, err), p.Rollback())
 		}
 	}
 	return nil
@@ -411,19 +394,11 @@ func (p *SafeRenamePromoter) promoteEntry(entry *renameEntry) error {
 	case err == nil:
 		entry.existed = true
 		entry.backupMode = info.Mode()
-		if entry.isDir {
-			backupDir := entry.final + ".cc-port-rollback"
-			if renameErr := p.doRename(entry.final, backupDir); renameErr != nil {
-				return fmt.Errorf("stash existing directory: %w", renameErr)
-			}
-			entry.backupDir = backupDir
-		} else {
-			data, readErr := os.ReadFile(entry.final)
-			if readErr != nil {
-				return fmt.Errorf("read existing file for backup: %w", readErr)
-			}
-			entry.backupBytes = data
+		data, readErr := os.ReadFile(entry.final)
+		if readErr != nil {
+			return fmt.Errorf("read existing file for backup: %w", readErr)
 		}
+		entry.backupBytes = data
 	case errors.Is(err, fs.ErrNotExist):
 		entry.existed = false
 	default:
@@ -431,10 +406,6 @@ func (p *SafeRenamePromoter) promoteEntry(entry *renameEntry) error {
 	}
 
 	if err := p.doRename(entry.temp, entry.final); err != nil {
-		// Best-effort restore of any backup already relocated for this entry.
-		if entry.isDir && entry.backupDir != "" {
-			_ = p.doRename(entry.backupDir, entry.final)
-		}
 		return err
 	}
 	entry.promoted = true
@@ -449,44 +420,38 @@ func (p *SafeRenamePromoter) doRename(oldpath, newpath string) error {
 }
 
 // Rollback walks promoted entries in reverse order and restores the
-// pre-promote state on disk: backups are renamed or rewritten into their
-// finals, and content that did not previously exist is removed. Best
-// effort: errors from a single entry's restore are swallowed and the
-// remaining entries are still attempted.
-func (p *SafeRenamePromoter) Rollback() {
+// pre-promote state on disk: backups are rewritten into their finals, and
+// content that did not previously exist is removed. It attempts every entry
+// and joins cleanup errors so callers can see residual promotion state.
+func (p *SafeRenamePromoter) Rollback() error {
+	var rollbackErrors []error
 	for index := len(p.entries) - 1; index >= 0; index-- {
 		entry := p.entries[index]
 		if !entry.promoted {
-			// Not yet promoted; best-effort clean up the temp if it still
-			// exists. Ignore errors — the import is already failing.
-			if entry.isDir {
-				_ = os.RemoveAll(entry.temp)
-			} else {
-				_ = os.Remove(entry.temp)
+			if err := os.Remove(entry.temp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove unpromoted temp %s: %w", entry.temp, err))
 			}
 			continue
 		}
-		p.rollbackEntry(entry)
+		if err := p.rollbackEntry(entry); err != nil {
+			rollbackErrors = append(rollbackErrors, err)
+		}
 	}
+	return errors.Join(rollbackErrors...)
 }
 
-func (p *SafeRenamePromoter) rollbackEntry(entry *renameEntry) {
+func (p *SafeRenamePromoter) rollbackEntry(entry *renameEntry) error {
 	if !entry.existed {
-		if entry.isDir {
-			_ = os.RemoveAll(entry.final)
-		} else {
-			_ = os.Remove(entry.final)
+		if err := os.Remove(entry.final); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove promoted file %s: %w", entry.final, err)
 		}
-		return
+		return nil
 	}
 
-	if entry.isDir {
-		_ = os.RemoveAll(entry.final)
-		_ = p.doRename(entry.backupDir, entry.final)
-		return
+	if err := SafeWriteFile(entry.final, entry.backupBytes, entry.backupMode); err != nil {
+		return fmt.Errorf("restore promoted file %s: %w", entry.final, err)
 	}
-
-	_ = SafeWriteFile(entry.final, entry.backupBytes, entry.backupMode)
+	return nil
 }
 
 // SafeWriteFile writes data to a temporary file in the same directory as path,

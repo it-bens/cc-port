@@ -55,9 +55,9 @@ func (*Adapter) DisplayName() string { return "OpenAI Codex" }
 // Categories implements tool.Tool.
 func (*Adapter) Categories() []tool.Category { return categories }
 
-// ImplicitAnchorKeys implements tool.Tool. {{CODEX_HOME}} is resolved to the
-// destination workspace home during import.
-func (*Adapter) ImplicitAnchorKeys() []string { return []string{codexHomeKey} }
+// ImplicitAnchorKeys implements tool.Tool. Codex home and project anchors are
+// resolved to the destination workspace during import.
+func (*Adapter) ImplicitAnchorKeys() []string { return []string{codexHomeKey, codexProjectPathKey} }
 
 // Detect implements tool.Tool: it reports whether the default ~/.codex
 // directory exists, independent of any --codex-home override.

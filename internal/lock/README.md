@@ -41,7 +41,7 @@ witness blocks mutation while a live writer is present.
   from `move.Apply`, which returns it unchanged from `lock.WithLock`.
 - `ErrConcurrentInvocation`: returned by `WithLock` when another cc-port
   invocation already holds the advisory lock. The wrapping message names the
-  contended home directory; tests assert via `errors.Is`.
+  contended lock directory; tests assert via `errors.Is`.
 - `ErrUnlockFailure`: returned by `WithLock` when releasing the lock fails on the
   `fn`-success path. Joins the underlying unlock cause via `%w`, so `errors.Is`
   matches both this sentinel and the cause.

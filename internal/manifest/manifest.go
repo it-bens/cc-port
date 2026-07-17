@@ -78,6 +78,17 @@ var ErrManifestEntryTooLarge = errors.New("manifest entry too large")
 // importer.ErrSourceNil.
 var ErrNilSource = errors.New("manifest: src is nil; pipeline missing MaterializeStage?")
 
+// DuplicateToolError identifies a manifest carrying more than one block for a
+// tool. Refusing it keeps ToolBlock and importer routing from selecting
+// different blocks for the same tool.
+type DuplicateToolError struct {
+	Tool string
+}
+
+func (e *DuplicateToolError) Error() string {
+	return fmt.Sprintf("manifest contains duplicate tool block %q", e.Tool)
+}
+
 // WriteManifest marshals metadata to indented XML and writes it to path.
 func WriteManifest(path string, metadata *Metadata) error {
 	data, err := xml.MarshalIndent(metadata, "", "  ")
@@ -113,6 +124,9 @@ func ReadManifest(path string) (*Metadata, error) {
 	var metadata Metadata
 	if err := xml.Unmarshal(data, &metadata); err != nil {
 		return nil, fmt.Errorf("unmarshal manifest: %w", err)
+	}
+	if err := validateTools(&metadata); err != nil {
+		return nil, err
 	}
 
 	return &metadata, nil
@@ -165,5 +179,19 @@ func readManifestEntry(file *zip.File) (*Metadata, error) {
 	if err := xml.Unmarshal(data, &metadata); err != nil {
 		return nil, fmt.Errorf("unmarshal manifest from zip: %w", err)
 	}
+	if err := validateTools(&metadata); err != nil {
+		return nil, err
+	}
 	return &metadata, nil
+}
+
+func validateTools(metadata *Metadata) error {
+	seen := make(map[string]struct{}, len(metadata.Tools))
+	for _, block := range metadata.Tools {
+		if _, exists := seen[block.Name]; exists {
+			return &DuplicateToolError{Tool: block.Name}
+		}
+		seen[block.Name] = struct{}{}
+	}
+	return nil
 }

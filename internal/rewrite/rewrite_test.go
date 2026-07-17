@@ -215,28 +215,7 @@ func TestSafeRenamePromoter_Files(t *testing.T) {
 	t.Run("rollback removes a promoted file that did not exist before", assertRollbackRemovesNewFile)
 }
 
-func TestSafeRenamePromoter_Dirs(t *testing.T) {
-	t.Run("promotes a directory onto a non-existent final", func(t *testing.T) {
-		dir := t.TempDir()
-		final := filepath.Join(dir, "project")
-		temp := filepath.Join(dir, "project.tmp")
-		require.NoError(t, os.MkdirAll(filepath.Join(temp, "sub"), 0o750))
-		require.NoError(t, os.WriteFile(filepath.Join(temp, "sub", "x.txt"), []byte("x"), 0o600))
-
-		promoter := rewrite.NewSafeRenamePromoter()
-		promoter.StageDir(temp, final)
-		require.NoError(t, promoter.Promote())
-
-		data, err := os.ReadFile(filepath.Join(final, "sub", "x.txt")) //nolint:gosec // G304: t.TempDir() path
-		require.NoError(t, err)
-		assert.Equal(t, "x", string(data))
-		assert.NoDirExists(t, temp)
-	})
-
-	t.Run("rollback restores an overwritten directory", assertRollbackRestoresDir)
-}
-
-func TestSafeRenamePromoter_PreservesMtimeOnFileAndDirRenames(t *testing.T) {
+func TestSafeRenamePromoter_PreservesMtimeOnFileRename(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// File-rename case: a temp file with a known mtime promoted via StageFile.
@@ -246,32 +225,34 @@ func TestSafeRenamePromoter_PreservesMtimeOnFileAndDirRenames(t *testing.T) {
 	require.NoError(t, os.WriteFile(fileTemp, []byte("body"), 0o600), "write file temp")
 	require.NoError(t, os.Chtimes(fileTemp, fileMtime, fileMtime), "set file temp mtime")
 
-	// Dir-rename case: a temp directory containing a file with a known mtime
-	// promoted via StageDir. The per-file mtime inside the directory is what
-	// pattern-A staging relies on.
-	dirMtime := time.Date(2024, 7, 16, 10, 0, 0, 0, time.UTC)
-	dirTemp := filepath.Join(tempDir, "dir.tmp")
-	dirFinal := filepath.Join(tempDir, "dir.final")
-	require.NoError(t, os.MkdirAll(dirTemp, 0o750), "create dir temp")
-	nestedFile := filepath.Join(dirTemp, "nested")
-	require.NoError(t, os.WriteFile(nestedFile, []byte("body"), 0o600), "write nested file")
-	require.NoError(t, os.Chtimes(nestedFile, dirMtime, dirMtime), "set nested file mtime")
-
 	promoter := rewrite.NewSafeRenamePromoter()
 	promoter.StageFile(fileTemp, fileFinal)
-	promoter.StageDir(dirTemp, dirFinal)
-	require.NoError(t, promoter.Promote(), "promote both stages")
+	require.NoError(t, promoter.Promote(), "promote staged file")
 
 	fileStat, err := os.Stat(fileFinal)
 	require.NoError(t, err, "stat promoted file")
 	require.WithinDuration(t, fileMtime, fileStat.ModTime(), time.Second,
 		"StageFile must preserve mtime on the renamed file")
+}
 
-	nestedFinal := filepath.Join(dirFinal, "nested")
-	nestedStat, err := os.Stat(nestedFinal)
-	require.NoError(t, err, "stat nested file under promoted dir")
-	require.WithinDuration(t, dirMtime, nestedStat.ModTime(), time.Second,
-		"StageDir must preserve mtime on files inside the renamed directory")
+func TestSafeRenamePromoter_PromotionErrorIncludesRollbackFailure(t *testing.T) {
+	dir := t.TempDir()
+	firstTemp := filepath.Join(dir, "first.tmp")
+	secondTemp := filepath.Join(dir, "second.tmp")
+	require.NoError(t, os.WriteFile(firstTemp, []byte("first"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(secondTemp, "nested"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(secondTemp, "nested", "body"), []byte("second"), 0o600))
+
+	promoter := rewrite.NewSafeRenamePromoter()
+	promoter.StageFile(firstTemp, filepath.Join(dir, "first"))
+	promoter.StageFile(secondTemp, filepath.Join(dir, "second"))
+	promoter.SetRenameFunc(failOnCallN(2))
+
+	err := promoter.Promote()
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "simulated failure")
+	assert.ErrorContains(t, err, "remove unpromoted temp")
 }
 
 func assertRollbackRestoresFile(t *testing.T) {
@@ -322,35 +303,6 @@ func assertRollbackRemovesNewFile(t *testing.T) {
 
 	assert.NoFileExists(t, finalA)
 	assert.NoFileExists(t, finalB)
-}
-
-func assertRollbackRestoresDir(t *testing.T) {
-	dir := t.TempDir()
-	final := filepath.Join(dir, "project")
-	temp := filepath.Join(dir, "project.tmp")
-
-	require.NoError(t, os.MkdirAll(final, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(final, "old.txt"), []byte("old"), 0o600))
-	require.NoError(t, os.MkdirAll(temp, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(temp, "new.txt"), []byte("new"), 0o600))
-
-	other := filepath.Join(dir, "other.txt")
-	otherTemp := filepath.Join(dir, "other.txt.tmp")
-	require.NoError(t, os.WriteFile(otherTemp, []byte("o"), 0o600))
-
-	promoter := rewrite.NewSafeRenamePromoter()
-	promoter.StageDir(temp, final)
-	promoter.StageFile(otherTemp, other)
-	// call 1: stash dir backup; 2: promote dir; 3: promote file (fail).
-	promoter.SetRenameFunc(failOnCallN(3))
-
-	err := promoter.Promote()
-	require.Error(t, err)
-
-	got, readErr := os.ReadFile(filepath.Join(final, "old.txt")) //nolint:gosec // G304: t.TempDir() path
-	require.NoError(t, readErr)
-	assert.Equal(t, "old", string(got))
-	assert.NoFileExists(t, filepath.Join(final, "new.txt"))
 }
 
 // failOnCallN returns a rename hook that invokes os.Rename on every call

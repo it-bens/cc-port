@@ -21,32 +21,38 @@ import (
 // reported, never rewritten.
 const agentsPluginsMarketplaceFile = "plugins/marketplace.json"
 
-// marketplaceSourcePaths walks a generically decoded JSON document and
-// returns the gjson/sjson dot-path of every object key literally named
-// "source" whose value is a string, at any depth. This makes no
-// assumption about the document's top-level shape (array or object),
-// since that shape is unverified from any vendored source.
-func marketplaceSourcePaths(value any, prefix string) []string {
+// marketplacePathBearingStringPaths walks the documented marketplace source
+// shapes. A source is either a string, or an object whose path-bearing fields
+// are path, url, and package. Every key is escaped for gjson/sjson paths.
+func marketplacePathBearingStringPaths(value any, prefix string) []string {
 	var paths []string
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
-			childPrefix := key
+			childPrefix := gjson.Escape(key)
 			if prefix != "" {
-				childPrefix = prefix + "." + key
+				childPrefix = prefix + "." + childPrefix
 			}
 			if key == "source" {
-				if _, isString := child.(string); isString {
+				switch source := child.(type) {
+				case string:
 					paths = append(paths, childPrefix)
-					continue
+				case map[string]any:
+					for sourceKey, sourceValue := range source {
+						if sourceKey == "path" || sourceKey == "url" || sourceKey == "package" {
+							if _, isString := sourceValue.(string); isString {
+								paths = append(paths, childPrefix+"."+gjson.Escape(sourceKey))
+							}
+						}
+					}
 				}
 			}
-			paths = append(paths, marketplaceSourcePaths(child, childPrefix)...)
+			paths = append(paths, marketplacePathBearingStringPaths(child, childPrefix)...)
 		}
 	case []any:
 		for index, child := range typed {
 			childPrefix := fmt.Sprintf("%s.%d", prefix, index)
-			paths = append(paths, marketplaceSourcePaths(child, childPrefix)...)
+			paths = append(paths, marketplacePathBearingStringPaths(child, childPrefix)...)
 		}
 	}
 	return paths
@@ -68,7 +74,7 @@ func planAgentsMarketplace(agentsDir, oldPath string) (int, error) {
 		return 0, nil
 	}
 	total := 0
-	for _, path := range marketplaceSourcePaths(document, "") {
+	for _, path := range marketplacePathBearingStringPaths(document, "") {
 		value := gjson.GetBytes(data, path).String()
 		total += rewrite.CountPathInBytesWithJSONEscape([]byte(value), oldPath)
 	}
@@ -86,7 +92,7 @@ func applyAgentsMarketplace(agentsDir, oldPath, newPath string, undo *tool.Resto
 	if json.Unmarshal(data, &document) != nil {
 		return 0, nil
 	}
-	sourcePaths := marketplaceSourcePaths(document, "")
+	sourcePaths := marketplacePathBearingStringPaths(document, "")
 	if len(sourcePaths) == 0 {
 		return 0, nil
 	}
@@ -138,15 +144,13 @@ func readAgentsMarketplace(agentsDir string) (data []byte, ok bool, err error) {
 	return data, true, nil
 }
 
-// residualAgentsWarning reports whether ~/.agents contains any file, other
-// than the one this adapter rewrites, that still references oldPath —
-// informational only: cc-port owns exactly one artifact in this
-// shared-home directory until a second consumer exists (spec §6.2).
+// residualAgentsWarning reports whether ~/.agents contains any file that
+// still references oldPath. marketplace.json is included so a schema-shaped
+// value the targeted rewrite intentionally leaves alone cannot be silent.
 func residualAgentsWarning(agentsDir, oldPath string) (string, error) {
 	if agentsDir == "" {
 		return "", nil
 	}
-	skip := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
 	count := 0
 	walkErr := filepath.WalkDir(agentsDir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -155,7 +159,7 @@ func residualAgentsWarning(agentsDir, oldPath string) (string, error) {
 			}
 			return err
 		}
-		if entry.IsDir() || path == skip {
+		if entry.IsDir() {
 			return nil
 		}
 		data, readErr := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled ~/.agents walk

@@ -158,6 +158,33 @@ func TestCodexImportLeavesConfigTOMLByteIdentical(t *testing.T) {
 	assertFileBytes(t, filepath.Join(destinationHome.Dir, configTOMLFileName), config)
 }
 
+func TestCodexRoundTripRekeysProjectPathsToImportTarget(t *testing.T) {
+	sourceHome := SetupFixture(t)
+	history, index := writeRoundTripLineStores(t, sourceHome)
+	archiveBytes := exportFixtureArchive(t, sourceHome)
+	destinationHome, config := setupImportDestination(t)
+	importTarget := "/Users/recipient/relocated-project"
+
+	result := importFixtureArchiveToTarget(t, archiveBytes, destinationHome, importTarget)
+
+	assert.Empty(t, result.Warnings)
+	for _, relative := range []string{eraCPath, eraBPath, "archived_sessions/rollout-2026-07-10T09-00-00-00000000-0000-4000-8000-000000000002.jsonl"} {
+		data := readFileBytes(t, filepath.Join(destinationHome.Dir, filepath.FromSlash(relative)))
+		assert.NotContains(t, string(data), FixtureProjectPath())
+		assert.Contains(t, string(data), `"cwd":"`+importTarget+`"`)
+		if relative == eraCPath {
+			assert.Contains(t, string(data), `"workspace_roots":["`+importTarget+`"]`)
+		}
+	}
+	archiveRollout := readArchiveEntry(
+		t, archiveBytes, "codex/sessions/2026/07/17/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl",
+	)
+	assert.Contains(t, string(archiveRollout), codexProjectPathKey)
+	assertFileBytes(t, filepath.Join(destinationHome.Dir, configTOMLFileName), config)
+	assertFileBytes(t, filepath.Join(destinationHome.Dir, codexHistoryFile), history)
+	assertFileBytes(t, filepath.Join(destinationHome.Dir, sessionIndexFile), index)
+}
+
 func TestCodexImportRerunDoesNotDuplicateHistoryOrSessionIndex(t *testing.T) {
 	sourceHome := SetupFixture(t)
 	history, index := writeRoundTripLineStores(t, sourceHome)
@@ -198,6 +225,101 @@ func TestCodexSidecarRerunAppliesThreadCreatedAfterFirstImport(t *testing.T) {
 	})
 }
 
+func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
+	home := SetupFixture(t)
+	workspace := quietTestWorkspace(home)
+	sidecar := `{"thread_id":"` + fixtureThreadOne + `","archived_at":"not-an-integer",` +
+		`"title":null,"git":{"sha":null,"branch":null,"origin_url":null}}` + "\n"
+	workspace.sidecarAppends = [][]byte{[]byte(sidecar)}
+
+	_, err := workspace.applyThreadSidecars()
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "line 1")
+	require.ErrorContains(t, err, "archived_at")
+}
+
+func TestCodexSidecarExportKeepsNewestStateGenerationForDuplicateThread(t *testing.T) {
+	home := SetupFixture(t)
+	setThreadTitle(t, filepath.Join(home.SQLiteDir, "state_5.sqlite"), fixtureThreadOne, "older title")
+	buildFixtureStateDB(t, filepath.Join(home.SQLiteDir, "state_12.sqlite"))
+	setThreadTitle(t, filepath.Join(home.SQLiteDir, "state_12.sqlite"), fixtureThreadOne, "newer title")
+
+	archiveBytes := exportFixtureArchive(t, home)
+	sidecar := readArchiveEntry(t, archiveBytes, "codex/threads-sidecar.jsonl")
+
+	assert.Contains(t, string(sidecar), `"title":"newer title"`)
+	assert.NotContains(t, string(sidecar), `"title":"older title"`)
+	assert.Equal(t, 1, bytes.Count(sidecar, []byte(fixtureThreadOne)))
+}
+
+func TestCodexStageRejectsHostileRolloutNamesAndAcceptsRecorderNames(t *testing.T) {
+	workspace := quietTestWorkspace(SetupFixture(t))
+	for _, name := range []string{
+		"sessions/unexpected.txt",
+		"sessions/2026/07/17/nested/rollout-2026-07-17T10-00-00-id.jsonl",
+		"sessions/202x/07/17/rollout-2026-07-17T10-00-00-id.jsonl",
+		"sessions/2026/7/17/rollout-2026-07-17T10-00-00-id.jsonl",
+		"sessions/2026/07/1x/rollout-2026-07-17T10-00-00-id.jsonl",
+		"archived-sessions/nested/rollout-2026-07-17T10-00-00-id.jsonl",
+	} {
+		entry := archiveEntryForTest(t, "codex/"+name)
+		_, err := workspace.Stage(t.Context(), FixtureProjectPath(), entry, nil)
+		var unknown *UnknownArchiveEntryError
+		require.ErrorAs(t, err, &unknown, name)
+	}
+	for _, name := range []string{
+		"sessions/2026/07/17/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl",
+		"archived-sessions/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl",
+	} {
+		entry := archiveEntryForTest(t, "codex/"+name)
+		staged, err := workspace.Stage(t.Context(), FixtureProjectPath(), entry, nil)
+		require.NoError(t, err, name)
+		require.Len(t, staged, 1, name)
+		_ = os.Remove(staged[0].Temp)
+	}
+}
+
+func TestCodexAuditsRejectUnknownProjectsAndDoNotAttributeSharedHistoryBytes(t *testing.T) {
+	home := SetupFixture(t)
+	secondProject := "/Users/fixture/second-project"
+	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, stateDBFileName), "second-thread", secondProject, threadRowMetadata{})
+	history := []byte(
+		`{"session_id":"` + fixtureThreadOne + `","ts":1}` + "\n" +
+			`{"session_id":"second-thread","ts":2}` + "\n",
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, codexHistoryFile), history, 0o600))
+	workspace := quietTestWorkspace(home)
+
+	_, err := workspace.ReferenceSurfaces("/Users/fixture/unknown-project")
+	require.ErrorIs(t, err, tool.ErrProjectAbsent)
+	_, err = workspace.DiskCategories("/Users/fixture/unknown-project")
+	require.ErrorIs(t, err, tool.ErrProjectAbsent)
+	first, err := workspace.DiskCategories(FixtureProjectPath())
+	require.NoError(t, err)
+	second, err := workspace.DiskCategories(secondProject)
+	require.NoError(t, err)
+	assert.Zero(t, sizeCategoryNamed(first, categoryHistory).Bytes)
+	assert.Zero(t, sizeCategoryNamed(second, categoryHistory).Bytes)
+}
+
+func TestCodexExportsThreadOnlyProjectState(t *testing.T) {
+	home := SetupFixture(t)
+	require.NoError(t, os.RemoveAll(filepath.Join(home.Dir, sessionsSubdir)))
+	require.NoError(t, os.RemoveAll(filepath.Join(home.Dir, archivedSessionsSubdir)))
+	history, _ := writeRoundTripLineStores(t, home)
+	workspace := quietTestWorkspace(home)
+	var archiveBytes bytes.Buffer
+	writer := zip.NewWriter(&archiveBytes)
+	sink := archive.NewSink(writer, toolName, nil)
+
+	_, err := workspace.Export(t.Context(), FixtureProjectPath(), map[string]bool{categorySessions: true, categoryHistory: true}, sink)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	assert.Equal(t, bytes.SplitAfter(history, []byte("\n"))[0], readArchiveEntry(t, archiveBytes.Bytes(), "codex/history/"+codexHistoryFile))
+	assert.NotEmpty(t, readArchiveEntry(t, archiveBytes.Bytes(), "codex/threads-sidecar.jsonl"))
+}
+
 func writeRoundTripLineStores(t *testing.T, home *Home) (history, index []byte) {
 	t.Helper()
 	history = []byte(
@@ -231,15 +353,55 @@ func exportFixtureArchive(t *testing.T, home *Home) []byte {
 }
 
 func importFixtureArchive(t *testing.T, data []byte, home *Home) *importer.Result {
+	return importFixtureArchiveToTarget(t, data, home, FixtureProjectPath())
+}
+
+func importFixtureArchiveToTarget(t *testing.T, data []byte, home *Home, target string) *importer.Result {
 	t.Helper()
 	adapter := New()
 	set := tool.NewSet(adapter)
 	reader := bytes.NewReader(data)
 	result, err := importer.Run(t.Context(), set, []tool.Target{{Tool: adapter, Workspace: quietTestWorkspace(home)}}, &importer.Options{
-		Source: reader, Size: int64(reader.Len()), TargetPath: FixtureProjectPath(),
+		Source: reader, Size: int64(reader.Len()), TargetPath: target,
 	})
 	require.NoError(t, err)
 	return result
+}
+
+func archiveEntryForTest(t *testing.T, name string) archive.Entry {
+	t.Helper()
+	var data bytes.Buffer
+	writer := zip.NewWriter(&data)
+	entryWriter, err := writer.Create(name)
+	require.NoError(t, err)
+	_, err = entryWriter.Write([]byte("{}\n"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	reader, err := archive.OpenReader(bytes.NewReader(data.Bytes()), int64(data.Len()))
+	require.NoError(t, err)
+	entries, err := reader.RawEntries()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	return entries[0].Entry
+}
+
+func readArchiveEntry(t *testing.T, data []byte, name string) []byte {
+	t.Helper()
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	require.NoError(t, err)
+	for _, file := range reader.File {
+		if file.Name != name {
+			continue
+		}
+		body, openErr := file.Open()
+		require.NoError(t, openErr)
+		contents, readErr := io.ReadAll(body)
+		require.NoError(t, readErr)
+		require.NoError(t, body.Close())
+		return contents
+	}
+	t.Fatalf("archive entry %s was not found", name)
+	return nil
 }
 
 func quietTestWorkspace(home *Home) *Workspace {
@@ -287,6 +449,10 @@ type threadRowMetadata struct {
 }
 
 func insertThreadRow(t *testing.T, path, id string, metadata threadRowMetadata) {
+	insertThreadRowForProject(t, path, id, FixtureProjectPath(), metadata)
+}
+
+func insertThreadRowForProject(t *testing.T, path, id, project string, metadata threadRowMetadata) {
 	t.Helper()
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
@@ -295,11 +461,29 @@ func insertThreadRow(t *testing.T, path, id string, metadata threadRowMetadata) 
 		(id, rollout_path, created_at, updated_at, source, model_provider, cwd, title, sandbox_policy, approval_mode,
 		 archived_at, git_sha, git_branch, git_origin_url)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, "archived_sessions/rollout-"+id+".jsonl", 1, 1, "cli", "openai", FixtureProjectPath(), metadata.Title,
+		id, "archived_sessions/rollout-"+id+".jsonl", 1, 1, "cli", "openai", project, metadata.Title,
 		"workspace-write", "on-request", nullableInt64Argument(metadata.ArchivedAt), nullableStringArgument(metadata.GitSHA),
 		nullableStringArgument(metadata.GitBranch), nullableStringArgument(metadata.GitOriginURL),
 	)
 	require.NoError(t, err)
+}
+
+func setThreadTitle(t *testing.T, path, id, title string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	_, err = database.ExecContext(t.Context(), `UPDATE threads SET title = ? WHERE id = ?`, title, id)
+	require.NoError(t, err)
+}
+
+func sizeCategoryNamed(categories []tool.SizeCategory, name string) tool.SizeCategory {
+	for _, category := range categories {
+		if category.Name == name {
+			return category
+		}
+	}
+	return tool.SizeCategory{Name: name}
 }
 
 func nullableInt64Argument(value int64) any {

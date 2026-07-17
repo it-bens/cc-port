@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -87,6 +88,9 @@ type Workspace struct {
 	// promotion, so neither produces an archive.Staged record.
 	historyAppends [][]byte
 	configBlock    []byte
+
+	moveWarningMutex sync.Mutex
+	moveWarnings     []string
 }
 
 // Root implements tool.Workspace.

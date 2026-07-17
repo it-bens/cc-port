@@ -35,8 +35,9 @@ neither.
   - `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`:
     stream-level token substitution bounded by the longest declared key, not
     by source size.
-  - `ApplyResolutions(content []byte, resolutions map[string]string) []byte`:
-    in-memory substitution via `bytes.ReplaceAll`.
+  - `ApplyResolutions(content []byte, resolutions map[string]string) ([]byte, error)`:
+    in-memory substitution via `bytes.ReplaceAll`, refusing output over the
+    active per-entry cap.
   - `ValidateResolutions(resolutions map[string]string) error`: every
     resolution must be a non-empty absolute path.
 - **Writing**
@@ -70,6 +71,9 @@ neither.
 - The post-decode byte count is checked again after streaming, so an entry
   that misdeclares its size in the central directory cannot slip through the
   declared-size check.
+- Placeholder expansion is also capped at `Caps.MaxEntryBytes`. For streamed
+  staging, aggregate accounting uses expanded output bytes rather than source
+  bytes, so substitutions cannot inflate disk usage beyond either budget.
 - `AggregateCounter` tallies every entry an archive read observes, including
   bytes read for a placeholder classification pass, and refuses once the
   running total passes `Caps.MaxAggregateBytes` (4 GiB by default). Per-entry

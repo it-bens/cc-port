@@ -60,6 +60,8 @@ Persistent progress flags are available on every subcommand: `--quiet` (`-q`) su
 
 Rewrite every reference to `<old-path>` to `<new-path>`, across every detected tool. Default is dry-run. `--apply` copies, verifies, then deletes the old encoded directory (Claude) or rewrites the relevant SQLite and TOML state in place (Codex). `--refs-only` updates references only and leaves the project directory in place on disk. `--deep` also rewrites paths inside narrative bodies such as session transcripts.
 
+When the selected tools only rewrite state references, cc-port warns that none moves the project directory on disk.
+
 ```
 cc-port move /Users/me/old-project /Users/me/new-project --apply
 ```

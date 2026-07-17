@@ -51,8 +51,13 @@ type ToolPlan struct {
 
 // Plan holds the results of a dry-run move operation across every target.
 type Plan struct {
-	ByTool []ToolPlan
+	ByTool   []ToolPlan
+	Warnings []string
 }
+
+// NoPhysicalMoveWarning reports a selected tool set that only rewrites state
+// references and does not relocate the project directory on disk.
+const NoPhysicalMoveWarning = "no selected tool moves the project directory on disk"
 
 // DryRun computes the move plan without writing any files; lock-free
 // contrast to Apply.
@@ -73,7 +78,24 @@ func DryRun(ctx context.Context, targets []tool.Target, options Options) (*Plan,
 		}
 		plan.ByTool = append(plan.ByTool, toolPlan)
 	}
+	if !options.RefsOnly && !planContainsProjectDirectory(plan) {
+		plan.Warnings = append(plan.Warnings, NoPhysicalMoveWarning)
+	}
 	return plan, nil
+}
+
+func planContainsProjectDirectory(plan *Plan) bool {
+	for _, toolPlan := range plan.ByTool {
+		if toolPlan.Absent {
+			continue
+		}
+		for _, surface := range toolPlan.Surfaces {
+			if surface.Name == tool.SurfaceProjectDirectory {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func planTarget(ctx context.Context, target tool.Target, req tool.MoveRequest) (ToolPlan, error) {
@@ -115,7 +137,8 @@ type ToolResult struct {
 
 // ApplyResult is the per-tool outcome of an Apply run.
 type ApplyResult struct {
-	ByTool []ToolResult
+	ByTool   []ToolResult
+	Warnings []string
 }
 
 // Failed reports whether any target failed.
@@ -193,6 +216,23 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 		toolResult := applyTarget(ctx, entry.target, entry.surfaces, req, options.Reporter)
 		result.ByTool = append(result.ByTool, toolResult)
 	}
+	if !options.RefsOnly {
+		hasProjectDirectory := false
+		for _, entry := range preparedTargets {
+			if entry.absent {
+				continue
+			}
+			for _, surface := range entry.surfaces {
+				if surface.Name == tool.SurfaceProjectDirectory {
+					hasProjectDirectory = true
+					break
+				}
+			}
+		}
+		if !hasProjectDirectory {
+			result.Warnings = append(result.Warnings, NoPhysicalMoveWarning)
+		}
+	}
 
 	return result, nil
 }
@@ -200,6 +240,10 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surface, req tool.MoveRequest, reporter progress.Reporter) ToolResult {
 	toolResult := ToolResult{Tool: target.Tool.Name()}
 	phase := reporter.Phase(target.Tool.Name(), int64(len(surfaces)), progress.UnitItems)
+	_, preApplyWarningErr := target.Workspace.ResidualWarnings(req)
+	if preApplyWarningErr != nil {
+		toolResult.Warnings = append(toolResult.Warnings, fmt.Sprintf("could not inspect residual warnings: %v", preApplyWarningErr))
+	}
 
 	undo := tool.NewRestorer()
 	var err error
@@ -223,10 +267,13 @@ func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surfac
 	}
 	phase.End("")
 
-	warnings, warningErr := target.Workspace.ResidualWarnings(req)
-	toolResult.Warnings = warnings
-	if warningErr != nil {
-		toolResult.Warnings = append(toolResult.Warnings, fmt.Sprintf("could not inspect residual warnings: %v", warningErr))
+	postApplyWarnings, postApplyWarningErr := target.Workspace.ResidualWarnings(req)
+	// Post-apply inspection is authoritative: Apply can remove pre-existing
+	// findings and Codex records checkpoint warnings while it runs.
+	toolResult.Warnings = appendUniqueWarnings(toolResult.Warnings, postApplyWarnings)
+	if postApplyWarningErr != nil {
+		inspectionWarning := fmt.Sprintf("could not inspect residual warnings: %v", postApplyWarningErr)
+		toolResult.Warnings = appendUniqueWarnings(toolResult.Warnings, []string{inspectionWarning})
 	}
 	if err != nil {
 		toolResult.Err = err
@@ -234,4 +281,19 @@ func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surfac
 	}
 	toolResult.Success = true
 	return toolResult
+}
+
+func appendUniqueWarnings(existing, candidates []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(candidates))
+	for _, warning := range existing {
+		seen[warning] = struct{}{}
+	}
+	for _, warning := range candidates {
+		if _, exists := seen[warning]; exists {
+			continue
+		}
+		existing = append(existing, warning)
+		seen[warning] = struct{}{}
+	}
+	return existing
 }

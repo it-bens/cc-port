@@ -1,7 +1,7 @@
 //go:build darwin || linux
 
-// Package lock guards ~/.claude against concurrent cc-port runs and live
-// Claude Code sessions.
+// Package lock guards tool state against concurrent cc-port runs and live
+// writers.
 package lock
 
 import (
@@ -16,8 +16,8 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
-// FileName is the name of the advisory-lock file cc-port creates inside
-// the Claude Code home directory.
+// FileName is the name of the advisory-lock file cc-port creates inside a
+// tool's state directory.
 const FileName = ".cc-port.lock"
 
 // unlockFn is the function used to release the advisory lock. Tests swap
@@ -26,17 +26,17 @@ const FileName = ".cc-port.lock"
 var unlockFn = (*flock.Flock).Unlock
 
 // ErrConcurrentInvocation is returned by WithLock when another cc-port run
-// already holds the advisory lock. Callers discriminate via errors.Is; the
-// wrapping message names the contended home directory.
-var ErrConcurrentInvocation = errors.New("another cc-port invocation is operating on the Claude home")
+// already holds a tool's advisory lock. Callers discriminate via errors.Is;
+// the wrapping message names the contended lock directory.
+var ErrConcurrentInvocation = errors.New("another cc-port invocation is operating on this tool's state")
 
 // ErrUnlockFailure is returned by WithLock when releasing the advisory lock
 // fails on the fn-success path. The wrapping error joins the underlying
 // unlock cause via %w, so errors.Is matches both this sentinel and the cause.
 var ErrUnlockFailure = errors.New("release cc-port lock")
 
-// LiveSessionsError is returned by WithLock when one or more live Claude Code
-// sessions are detected before the lock is taken. Sessions carries the witness
+// LiveSessionsError is returned by WithLock when one or more live writers are
+// detected before the lock is taken. Sessions carries the witness
 // list; callers inspect it via errors.As. WithLock takes the lock only when the
 // list is empty.
 type LiveSessionsError struct {
@@ -57,7 +57,7 @@ func (e *LiveSessionsError) Error() string {
 		descriptors[index] = fmt.Sprintf("pid=%d cwd=%q", session.Pid, session.Cwd)
 	}
 	return fmt.Sprintf(
-		"refusing to run: %d live Claude Code session(s) detected: [%s]",
+		"refusing to run: %d live writer process(es) detected: [%s]",
 		len(e.Sessions),
 		strings.Join(descriptors, "; "),
 	)

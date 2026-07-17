@@ -15,9 +15,9 @@ import (
 
 func newTestLockPath(t *testing.T) string {
 	t.Helper()
-	claudeDir := filepath.Join(t.TempDir(), "dotclaude")
-	require.NoError(t, os.MkdirAll(claudeDir, 0o750))
-	return filepath.Join(claudeDir, FileName)
+	toolDir := filepath.Join(t.TempDir(), "tool-state")
+	require.NoError(t, os.MkdirAll(toolDir, 0o750))
+	return filepath.Join(toolDir, FileName)
 }
 
 func noActive() ([]tool.ActiveWriter, error) {
@@ -77,6 +77,7 @@ func TestWithLock_AbortsWhenSessionPIDIsAlive(t *testing.T) {
 	var liveErr *LiveSessionsError
 	require.ErrorAs(t, err, &liveErr)
 	assert.Len(t, liveErr.Sessions, 1)
+	assert.ErrorContains(t, err, "live writer process")
 }
 
 func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
@@ -95,6 +96,7 @@ func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
 
 	err = WithLock(lockPath, noActive, func() error { return nil })
 	require.ErrorIs(t, err, ErrConcurrentInvocation)
+	assert.ErrorContains(t, err, "this tool's state")
 }
 
 func TestWithLock_SucceedsAfterPreviousReleased(t *testing.T) {

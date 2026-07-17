@@ -2,14 +2,47 @@ package claude
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/tool"
 )
+
+func TestConfigSurfacePlan_PropagatesUnreadableConfigFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; chmod cannot make the config unreadable")
+	}
+	configFile := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configFile, []byte(`{"projects":{}}`), 0o600))
+	require.NoError(t, os.Chmod(configFile, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(configFile, 0o600) })
+	workspace := NewWorkspace(&Home{Dir: t.TempDir(), ConfigFile: configFile})
+
+	_, err := workspace.configSurface(tool.MoveRequest{OldPath: "/old", NewPath: "/new"}).Plan(context.Background())
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "read config file")
+}
+
+func TestHistorySurfaceApply_IsIdempotent(t *testing.T) {
+	home := &Home{Dir: t.TempDir()}
+	require.NoError(t, os.WriteFile(home.HistoryFile(), []byte(`{"project":"/old/project"}`+"\n"), 0o600))
+	workspace := NewWorkspace(home)
+	surface := workspace.historySurface(tool.MoveRequest{OldPath: "/old/project", NewPath: "/new/project"})
+
+	first, err := surface.Apply(context.Background(), tool.NewRestorer())
+	require.NoError(t, err)
+	second, err := surface.Apply(context.Background(), tool.NewRestorer())
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, first)
+	assert.Zero(t, second)
+}
 
 func TestRewriteTracked_HappyPath(t *testing.T) {
 	dir := t.TempDir()
@@ -82,4 +115,36 @@ func TestRewriteTracked_WriteFails_ReadOnlyDir(t *testing.T) {
 
 	_, err := rewriteTracked(path, "/old/proj", "/new/proj", tool.NewRestorer())
 	require.Error(t, err, "expected error writing into read-only dir")
+}
+
+func TestApplyProjectDirectoryMove_ReportsResidualRemovalWithoutRollback(t *testing.T) {
+	root := t.TempDir()
+	oldPath := filepath.Join(root, "old-project")
+	newPath := filepath.Join(root, "new-project")
+	home := &Home{Dir: filepath.Join(root, "dotclaude")}
+	oldEncodedDir := home.ProjectDir(oldPath)
+	require.NoError(t, os.MkdirAll(oldPath, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(oldPath, "source.txt"), []byte("source"), 0o600))
+	require.NoError(t, os.MkdirAll(oldEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(oldEncodedDir, "state.json"), []byte("state"), 0o600))
+
+	originalRemoveAll := removeAll
+	t.Cleanup(func() { removeAll = originalRemoveAll })
+	removeAll = func(path string) error {
+		if path == oldPath {
+			return os.ErrPermission
+		}
+		return os.RemoveAll(path)
+	}
+	workspace := NewWorkspace(home)
+
+	err := workspace.applyProjectDirectoryMove(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath}, tool.NewRestorer())
+
+	require.NoError(t, err)
+	assert.DirExists(t, newPath)
+	assert.DirExists(t, home.ProjectDir(newPath))
+	assert.DirExists(t, oldPath)
+	assert.NoDirExists(t, oldEncodedDir)
+	require.NotEmpty(t, workspace.moveWarningSnapshot())
+	assert.Contains(t, workspace.moveWarningSnapshot()[0], "on-disk source directory still present")
 }

@@ -96,24 +96,60 @@ func ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[str
 // of another under the upper-snake key grammar — so a boundary check would
 // incorrectly refuse to substitute when the byte after `}}` happens to be a
 // path component (e.g. `{{PROJECT_PATH}}.` in prose).
-func ApplyResolutions(content []byte, resolutions map[string]string) []byte {
+func ApplyResolutions(content []byte, resolutions map[string]string) ([]byte, error) {
 	for placeholder, value := range resolutions {
 		content = bytes.ReplaceAll(content, []byte(placeholder), []byte(value))
 	}
-	return content
+	if err := enforcePostDecodeCap("resolved archive entry", int64(len(content))); err != nil {
+		return nil, err
+	}
+	return content, nil
+}
+
+// ResolveEntryBytes reads and resolves an entry retained in memory. ReadAll
+// accounts decoded input; this adds only positive expansion so aggregate
+// staging accounting matches the streaming path's destination-byte budget.
+func ResolveEntryBytes(entry Entry, resolutions map[string]string) ([]byte, error) {
+	content, err := entry.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := ApplyResolutions(content, resolutions)
+	if err != nil {
+		return nil, err
+	}
+	if delta := int64(len(resolved) - len(content)); delta > 0 {
+		if err := entry.addAggregate(delta); err != nil {
+			return nil, err
+		}
+	}
+	return resolved, nil
 }
 
 // ValidateResolutions checks that every resolution is a non-empty absolute
 // path. Empty values are always rejected: a missing resolution means the
 // caller forgot to fill one in.
 func ValidateResolutions(resolutions map[string]string) error {
+	invalid := make([]string, 0)
 	for placeholder, value := range resolutions {
-		if value == "" {
-			return fmt.Errorf("resolution for %q is empty", placeholder)
-		}
-		if !filepath.IsAbs(value) {
-			return fmt.Errorf("resolution for %q is not an absolute path: %q", placeholder, value)
+		if value == "" || !filepath.IsAbs(value) {
+			invalid = append(invalid, placeholder)
 		}
 	}
+	if len(invalid) > 0 {
+		sort.Strings(invalid)
+		return &InvalidResolutionsError{Keys: invalid}
+	}
 	return nil
+}
+
+// InvalidResolutionsError identifies resolution keys whose values are empty or
+// not absolute paths. Callers inspect it with errors.As to report malformed
+// manifest input without parsing an error string.
+type InvalidResolutionsError struct {
+	Keys []string
+}
+
+func (e *InvalidResolutionsError) Error() string {
+	return fmt.Sprintf("resolution values must be non-empty absolute paths for keys: %v", e.Keys)
 }

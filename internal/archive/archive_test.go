@@ -104,9 +104,27 @@ func TestResolvePlaceholdersStream_SubstitutesLongestMatchFirst(t *testing.T) {
 	assert.Equal(t, "path is /new/path end", out.String())
 }
 
+func TestSink_ApplyPlaceholdersSubstitutesNestedValuesLongestFirst(t *testing.T) {
+	var buf bytes.Buffer
+	sink := archive.NewSink(zip.NewWriter(&buf), "claude", []manifest.Placeholder{
+		{Key: "{{HOME}}", Original: "/Users/test"},
+		{Key: "{{PROJECT_PATH}}", Original: "/Users/test/project"},
+	})
+
+	got := sink.ApplyPlaceholders([]byte("cwd=/Users/test/project/file.go home=/Users/test/.claude"))
+
+	assert.Equal(t, "cwd={{PROJECT_PATH}}/file.go home={{HOME}}/.claude", string(got))
+}
+
 func TestValidateResolutions_RejectsEmptyAndRelative(t *testing.T) {
-	require.Error(t, archive.ValidateResolutions(map[string]string{"{{X}}": ""}))
-	require.Error(t, archive.ValidateResolutions(map[string]string{"{{X}}": "relative/path"}))
+	for name, value := range map[string]string{"empty": "", "relative": "relative/path"} {
+		t.Run(name, func(t *testing.T) {
+			err := archive.ValidateResolutions(map[string]string{"{{X}}": value})
+			var invalid *archive.InvalidResolutionsError
+			require.ErrorAs(t, err, &invalid)
+			assert.Equal(t, []string{"{{X}}"}, invalid.Keys)
+		})
+	}
 	require.NoError(t, archive.ValidateResolutions(map[string]string{"{{X}}": "/absolute/path"}))
 }
 
@@ -140,6 +158,58 @@ func TestStageSibling_StreamsBodyAndResolvesPlaceholders(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "home is /Users/test", string(written))
 	assert.Equal(t, filepath.Join(baseDir, "note.txt"), staged.Final)
+}
+
+func TestStageSibling_RejectsExpandedEntryOverCap(t *testing.T) {
+	restore := archive.SetCaps(archive.Caps{MaxEntryBytes: 8, MaxAggregateBytes: 64})
+	t.Cleanup(restore)
+
+	body := buildZip(t, map[string]string{"claude/note.txt": "{{X}}"})
+	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)))
+	require.NoError(t, err)
+	entries, err := reader.RawEntries()
+	require.NoError(t, err)
+
+	_, _, err = archive.StageSibling(
+		t.TempDir(), "note.txt", entries[0].Entry, map[string]string{"{{X}}": "/expanded/"}, 0o600, entries[0].Entry.Modified,
+	)
+
+	require.ErrorIs(t, err, archive.ErrEntryCapExceeded)
+}
+
+func TestStageSibling_AggregateCapCountsExpandedBytes(t *testing.T) {
+	restore := archive.SetCaps(archive.Caps{MaxEntryBytes: 16, MaxAggregateBytes: 9})
+	t.Cleanup(restore)
+
+	body := buildZip(t, map[string]string{"claude/note.txt": "{{X}}"})
+	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)))
+	require.NoError(t, err)
+	entries, err := reader.RawEntries()
+	require.NoError(t, err)
+	counter := &archive.AggregateCounter{}
+
+	_, _, err = archive.StageSibling(
+		t.TempDir(), "note.txt", entries[0].Entry.WithAggregateCounter(counter),
+		map[string]string{"{{X}}": "/expanded/"}, 0o600, entries[0].Entry.Modified,
+	)
+
+	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
+}
+
+func TestResolveEntryBytes_AggregateCapCountsExpandedBytes(t *testing.T) {
+	restore := archive.SetCaps(archive.Caps{MaxEntryBytes: 16, MaxAggregateBytes: 9})
+	t.Cleanup(restore)
+
+	body := buildZip(t, map[string]string{"claude/history.jsonl": "{{X}}"})
+	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)))
+	require.NoError(t, err)
+	entries, err := reader.RawEntries()
+	require.NoError(t, err)
+	counter := &archive.AggregateCounter{}
+
+	_, err = archive.ResolveEntryBytes(entries[0].Entry.WithAggregateCounter(counter), map[string]string{"{{X}}": "/expanded/"})
+
+	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
 }
 
 func TestSink_WriteBytesAppliesPlaceholdersAndPrefix(t *testing.T) {

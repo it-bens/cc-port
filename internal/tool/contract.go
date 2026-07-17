@@ -64,6 +64,11 @@ type Surface struct {
 	Apply func(ctx context.Context, undo *Restorer) (count int, err error)
 }
 
+// SurfaceProjectDirectory is the well-known surface name for a move that
+// relocates the project directory itself on disk. Command orchestration uses
+// it without importing a tool adapter.
+const SurfaceProjectDirectory = "project-directory"
+
 // Mover produces the ordered list of Surfaces a move touches, plus any
 // warnings about content a move cannot fully rewrite (e.g. opaque snapshot
 // bytes that may still reference the old path).
