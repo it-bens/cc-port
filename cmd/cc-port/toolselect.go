@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -62,9 +63,13 @@ func resolveTargets(toolSet *tool.Set, flags *toolFlags) ([]tool.Target, error) 
 	}
 
 	targets := make([]tool.Target, 0, len(selectedTools))
+	explicitSelection := len(flags.selected) > 0
 	for _, selectedTool := range selectedTools {
 		workspace, err := selectedTool.Open(*flags.homeOverrides[selectedTool.Name()])
 		if err != nil {
+			if !explicitSelection && errors.Is(err, tool.ErrToolAbsent) {
+				continue
+			}
 			return nil, fmt.Errorf("open %s: %w", selectedTool.Name(), err)
 		}
 		targets = append(targets, tool.Target{Tool: selectedTool, Workspace: workspace})

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,9 +18,11 @@ import (
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
 func allSelected(t tool.Tool) map[string]bool {
@@ -104,6 +107,87 @@ func TestRun_ReRunDoesNotDuplicateHistoryLines(t *testing.T) {
 	for line, count := range seen {
 		assert.Equalf(t, 1, count, "history line must not be duplicated by a re-import: %s", line)
 	}
+}
+
+// TestRun_MultiToolArchiveImportsClaudeAndCodex exercises multi-tool mutation
+// below the CLI. A real Codex CLI process is itself valid witness evidence, so
+// cmd-level Codex import tests must refuse rather than weakening the witness.
+func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
+	sharedProject := codex.FixtureProjectPath()
+	claudeSource := testutil.SetupFixture(t)
+	claudeTool, codexTool := claude.New(), codex.New()
+
+	moveResult, err := move.Apply(t.Context(), []tool.Target{{
+		Tool: claudeTool, Workspace: claude.NewWorkspace(claudeSource),
+	}}, move.Options{OldPath: testutil.FixtureProjectPath(), NewPath: sharedProject, RefsOnly: true})
+	require.NoError(t, err)
+	require.False(t, moveResult.Failed())
+
+	codexSource := codex.SetupFixture(t)
+	claudeSelection := map[string]bool{"sessions": true}
+	codexSelection := map[string]bool{"sessions": true}
+	claudeWorkspace := claude.NewWorkspace(claudeSource)
+	codexWorkspace := quietCodexWorkspace(codexSource)
+	claudePlaceholders, err := claudeWorkspace.Placeholders(sharedProject, claudeSelection)
+	require.NoError(t, err)
+	codexPlaceholders, err := codexWorkspace.Placeholders(sharedProject, codexSelection)
+	require.NoError(t, err)
+
+	var archiveBytes bytes.Buffer
+	_, err = export.Run(t.Context(), []tool.Target{
+		{Tool: claudeTool, Workspace: claudeWorkspace},
+		{Tool: codexTool, Workspace: codexWorkspace},
+	}, &export.Options{
+		ProjectPath: sharedProject,
+		Output:      &archiveBytes,
+		Selected: map[string]map[string]bool{
+			claudeTool.Name(): claudeSelection,
+			codexTool.Name():  codexSelection,
+		},
+		Placeholders: map[string][]manifest.Placeholder{
+			claudeTool.Name(): claudePlaceholders,
+			codexTool.Name():  codexPlaceholders,
+		},
+	})
+	require.NoError(t, err)
+
+	claudeDestination := blankHome(t)
+	codexDestinationDir := filepath.Join(t.TempDir(), "dotcodex")
+	require.NoError(t, os.MkdirAll(codexDestinationDir, 0o750))
+	config := []byte("# recipient config remains local\n[projects.\"/recipient/only\"]\ntrust_level = \"trusted\"\n")
+	require.NoError(t, os.WriteFile(filepath.Join(codexDestinationDir, "config.toml"), config, 0o600))
+	codexDestination := &codex.Home{Dir: codexDestinationDir, SQLiteDir: codexDestinationDir}
+
+	registry := tool.NewSet(claudeTool, codexTool)
+	reader := bytes.NewReader(archiveBytes.Bytes())
+	result, err := importer.Run(t.Context(), registry, []tool.Target{
+		{Tool: claudeTool, Workspace: claude.NewWorkspace(claudeDestination)},
+		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
+	}, &importer.Options{Source: reader, Size: int64(reader.Len()), TargetPath: sharedProject})
+	require.NoError(t, err)
+
+	require.FileExists(t, filepath.Join(
+		claudeDestination.ProjectDir(sharedProject), "a1b2c3d4-0000-0000-0000-000000000001.jsonl",
+	))
+	require.FileExists(t, filepath.Join(
+		codexDestination.Dir, "sessions", "2026", "07", "17",
+		"rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl",
+	))
+	actualConfig, err := os.ReadFile(filepath.Join(codexDestination.Dir, "config.toml"))
+	require.NoError(t, err)
+	assert.Equal(t, config, actualConfig, "Codex config.toml must remain byte-identical")
+	require.NotEmpty(t, result.Warnings[codexTool.Name()])
+	assert.Contains(t, result.Warnings[codexTool.Name()][0], "threads sidecar row(s) could not be applied")
+}
+
+func quietCodexWorkspace(home *codex.Home) *codex.Workspace {
+	return codex.NewWorkspaceForTest(
+		home,
+		func(string) string { return "" },
+		func() ([]codex.ProcessInfo, error) { return nil, nil },
+		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) },
+		func(int) bool { return false },
+	)
 }
 
 func TestRun_RejectsIncomingHistoryLineAtScannerCapWithoutChangingTarget(t *testing.T) {

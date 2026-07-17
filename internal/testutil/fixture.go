@@ -18,6 +18,36 @@ import (
 // deadSessionPID exceeds the Linux/macOS PID ceiling but stays below int32 max, so Kill(pid, 0) returns ESRCH.
 const deadSessionPID = 2_000_000_001
 
+// IsolateHome redirects HOME to a newly created directory with only an empty
+// .claude marker. The marker keeps legacy Claude-only command tests selected
+// while ensuring Codex is never detected; fixture homes are still passed by
+// explicit flags. The returned cleanup restores HOME and removes the directory.
+func IsolateHome() (func(), error) {
+	dir, err := os.MkdirTemp("", "cc-port-test-home-")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Mkdir(filepath.Join(dir, ".claude"), 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+
+	previous, hadPrevious := os.LookupEnv("HOME")
+	if err := os.Setenv("HOME", dir); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+
+	return func() {
+		if hadPrevious {
+			_ = os.Setenv("HOME", previous)
+		} else {
+			_ = os.Unsetenv("HOME")
+		}
+		_ = os.RemoveAll(dir)
+	}, nil
+}
+
 // SetupFixture stages testdata/dotclaude under t.TempDir(), sanitizes session PIDs, and returns a Home pointing to it.
 func SetupFixture(t *testing.T) *claude.Home {
 	t.Helper()

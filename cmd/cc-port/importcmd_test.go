@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/xml"
 	"os"
 	"path/filepath"
@@ -13,6 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
 func TestImportManifestCmd_HasOutputFlag(t *testing.T) {
@@ -52,6 +56,20 @@ func TestImportManifestCmd_PassphraseFlagsRegistered(t *testing.T) {
 		"--passphrase-env should be registered on import manifest")
 	require.NotNil(t, cmd.Flags().Lookup("passphrase-file"),
 		"--passphrase-file should be registered on import manifest")
+}
+
+func TestImportWarningsNameTheirToolDuringMultiToolImport(t *testing.T) {
+	var stderr bytes.Buffer
+	targets := []tool.Target{{Tool: claude.New()}, {Tool: codex.New()}}
+
+	err := renderImportWarnings(&stderr, targets, map[string][]string{
+		"codex": {"1 thread row is not ready; rerun import after opening the project"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(
+		t, "Warning (OpenAI Codex): 1 thread row is not ready; rerun import after opening the project\n", stderr.String(),
+	)
 }
 
 // buildMinimalArchive writes a zip archive containing a valid metadata.xml

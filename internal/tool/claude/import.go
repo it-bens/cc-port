@@ -185,18 +185,18 @@ func matchSessionKeyedPrefix(name string) (RegistryEntry, string, bool) {
 // append and config block, each idempotently, so a re-run of the same
 // import never duplicates a history line or re-splices an identical config
 // block differently.
-func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archive.StagedSet) error {
+func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archive.StagedSet) ([]string, error) {
 	if len(workspace.historyAppends) > 0 {
 		if err := workspace.finalizeHistory(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if workspace.configBlock != nil {
 		if err := workspace.finalizeConfig(project); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // finalizeHistory appends every new line from workspace.historyAppends to

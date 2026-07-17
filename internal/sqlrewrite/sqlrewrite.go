@@ -230,6 +230,45 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 	return count, nil
 }
 
+// UpdateColumnsByKey updates columns on an existing row identified by its
+// declared single-column primary key. It never inserts a row; callers use it
+// for foreign derived stores where reconstitution belongs to the owner.
+func (database *DB) UpdateColumnsByKey(transaction *Tx, table, primaryKeyColumn string, primaryKey any, values map[string]any) (int, error) {
+	if transaction == nil || transaction.transaction == nil {
+		return 0, fmt.Errorf("update SQLite columns by key: transaction is nil")
+	}
+	if len(values) == 0 {
+		return 0, fmt.Errorf("update SQLite columns by key: no columns supplied")
+	}
+	columns := make([]string, 0, len(values))
+	for column := range values {
+		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+	if err := requirePrimaryKeyAndColumns(transaction.transaction, table, primaryKeyColumn, columns...); err != nil {
+		return 0, err
+	}
+
+	assignments := make([]string, 0, len(columns))
+	arguments := make([]any, 0, len(columns)+1)
+	for _, column := range columns {
+		assignments = append(assignments, quoteIdentifier(column)+" = ?")
+		arguments = append(arguments, values[column])
+	}
+	arguments = append(arguments, primaryKey)
+	// #nosec G201 -- table and column names are quoted identifiers, never values.
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?", quoteIdentifier(table), strings.Join(assignments, ", "), quoteIdentifier(primaryKeyColumn))
+	result, err := transaction.transaction.ExecContext(context.Background(), query, arguments...)
+	if err != nil {
+		return 0, fmt.Errorf("update columns in %s by %s: %w", table, primaryKeyColumn, err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count updated rows in %s by %s: %w", table, primaryKeyColumn, err)
+	}
+	return int(count), nil
+}
+
 func checkpointTruncate(database *sql.DB) error {
 	var busy, logFrames, checkpointedFrames int
 	checkpoint := database.QueryRowContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)")
@@ -306,6 +345,10 @@ func requireColumns(querier schemaQuerier, table string, columns ...string) erro
 }
 
 func requirePrimaryKeyAndColumn(querier schemaQuerier, table, primaryKeyColumn, column string) error {
+	return requirePrimaryKeyAndColumns(querier, table, primaryKeyColumn, column)
+}
+
+func requirePrimaryKeyAndColumns(querier schemaQuerier, table, primaryKeyColumn string, columns ...string) error {
 	observed, err := schema(querier, table)
 	if err != nil {
 		return err
@@ -319,8 +362,10 @@ func requirePrimaryKeyAndColumn(querier schemaQuerier, table, primaryKeyColumn, 
 			return fmt.Errorf("unexpected schema for table %q: composite primary keys are unsupported; observed %s", table, formatSchema(observed))
 		}
 	}
-	if _, ok := observed[column]; !ok {
-		return fmt.Errorf("unexpected schema for table %q: missing column %q; observed %s", table, column, formatSchema(observed))
+	for _, column := range columns {
+		if _, ok := observed[column]; !ok {
+			return fmt.Errorf("unexpected schema for table %q: missing column %q; observed %s", table, column, formatSchema(observed))
+		}
 	}
 	return nil
 }

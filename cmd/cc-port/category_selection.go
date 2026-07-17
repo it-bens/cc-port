@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -38,6 +39,10 @@ func resolveCategoriesAndPlaceholders(
 	placeholders = make(map[string][]manifest.Placeholder, len(targets))
 	for _, target := range targets {
 		discovered, discoverErr := target.Workspace.Placeholders(projectPath, selection[target.Tool.Name()])
+		if errors.Is(discoverErr, tool.ErrProjectAbsent) {
+			placeholders[target.Tool.Name()] = nil
+			continue
+		}
 		if discoverErr != nil {
 			return nil, nil, fmt.Errorf("discover placeholders for %s: %w", target.Tool.Name(), discoverErr)
 		}

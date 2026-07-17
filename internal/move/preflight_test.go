@@ -100,8 +100,8 @@ func (workspace *preflightWorkspace) ImplicitAnchors(string) (map[string]string,
 func (workspace *preflightWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, nil
 }
-func (workspace *preflightWorkspace) Finalize(context.Context, string, *archive.StagedSet) error {
-	return nil
+func (workspace *preflightWorkspace) Finalize(context.Context, string, *archive.StagedSet) ([]string, error) {
+	return nil, nil
 }
 func (workspace *preflightWorkspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {
 	return nil, nil

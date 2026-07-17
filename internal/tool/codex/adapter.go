@@ -2,7 +2,6 @@
 package codex
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,9 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/lock"
-	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
@@ -24,13 +21,6 @@ var (
 	_ tool.Tool      = (*Adapter)(nil)
 	_ tool.Workspace = (*Workspace)(nil)
 )
-
-// errNotImplementedYet is returned by every Exporter/Importer/Auditor
-// method: this bundle implements the move side only (export, import, and
-// stats land in the next bundle). Loud and explicit rather than a silent
-// empty success, since nothing calls these methods yet — Codex is not
-// registered in cmd/cc-port/tools.go until that bundle lands.
-var errNotImplementedYet = errors.New("codex: not implemented until the export/import/stats bundle")
 
 // Adapter implements tool.Tool for OpenAI Codex. Environment lookups,
 // process enumeration, and the clock enter via these fields rather than
@@ -65,9 +55,9 @@ func (*Adapter) DisplayName() string { return "OpenAI Codex" }
 // Categories implements tool.Tool.
 func (*Adapter) Categories() []tool.Category { return categories }
 
-// ImplicitAnchorKeys implements tool.Tool. Codex declares no implicit
-// placeholder anchors in this bundle; export/import land in the next one.
-func (*Adapter) ImplicitAnchorKeys() []string { return nil }
+// ImplicitAnchorKeys implements tool.Tool. {{CODEX_HOME}} is resolved to the
+// destination workspace home during import.
+func (*Adapter) ImplicitAnchorKeys() []string { return []string{codexHomeKey} }
 
 // Detect implements tool.Tool: it reports whether the default ~/.codex
 // directory exists, independent of any --codex-home override.
@@ -136,19 +126,35 @@ func NewWorkspace(home *Home, getenv func(string) string, listProcesses ProcessL
 	return newWorkspace(home, getenv, listProcesses, now, processAlive)
 }
 
+// NewWorkspaceForTest returns a workspace with every external witness seam
+// supplied by the caller. It is for cross-package adapter tests that must
+// exercise import orchestration without scanning the host process table.
+func NewWorkspaceForTest(
+	home *Home,
+	getenv func(string) string,
+	listProcesses ProcessLister,
+	now func() time.Time,
+	pidAlive func(int) bool,
+) *Workspace {
+	return newWorkspace(home, getenv, listProcesses, now, pidAlive)
+}
+
 func newWorkspace(home *Home, getenv func(string) string, listProcesses ProcessLister, now func() time.Time, pidAlive func(int) bool) *Workspace {
 	return &Workspace{home: home, getenv: getenv, listProcesses: listProcesses, now: now, pidAlive: pidAlive}
 }
 
 // Workspace implements tool.Workspace for one resolved Codex home.
 type Workspace struct {
-	home          *Home
-	getenv        func(string) string
-	listProcesses ProcessLister
-	now           func() time.Time
-	pidAlive      func(int) bool
-	applyWarnings []string
-	warningMutex  sync.Mutex
+	home           *Home
+	getenv         func(string) string
+	listProcesses  ProcessLister
+	now            func() time.Time
+	pidAlive       func(int) bool
+	applyWarnings  []string
+	warningMutex   sync.Mutex
+	historyAppends [][]byte
+	indexAppends   [][]byte
+	sidecarAppends [][]byte
 }
 
 // Root implements tool.Workspace.
@@ -157,48 +163,4 @@ func (workspace *Workspace) Root() string { return workspace.home.Dir }
 // LockPath implements tool.Workspace.
 func (workspace *Workspace) LockPath() string {
 	return filepath.Join(workspace.home.Dir, lock.FileName)
-}
-
-// Placeholders implements tool.Exporter. Deferred to the export/import bundle.
-func (*Workspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
-	return nil, errNotImplementedYet
-}
-
-// Export implements tool.Exporter. Deferred to the export/import bundle.
-func (*Workspace) Export(context.Context, string, map[string]bool, *archive.Sink) (tool.ExportResult, error) {
-	return tool.ExportResult{}, errNotImplementedYet
-}
-
-// PreflightDirs implements tool.Importer. Deferred to the export/import
-// bundle: Stage does not exist yet, so there is nothing to preflight.
-func (*Workspace) PreflightDirs(string) []string { return nil }
-
-// ImplicitAnchors implements tool.Importer. Deferred to the export/import bundle.
-func (*Workspace) ImplicitAnchors(string) (map[string]string, error) {
-	return nil, errNotImplementedYet
-}
-
-// Stage implements tool.Importer. Deferred to the export/import bundle.
-func (*Workspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
-	return nil, errNotImplementedYet
-}
-
-// Finalize implements tool.Importer. Deferred to the export/import bundle.
-func (*Workspace) Finalize(context.Context, string, *archive.StagedSet) error {
-	return errNotImplementedYet
-}
-
-// ReferenceSurfaces implements tool.Auditor. Deferred to the stats bundle.
-func (*Workspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {
-	return nil, errNotImplementedYet
-}
-
-// DiskCategories implements tool.Auditor. Deferred to the stats bundle.
-func (*Workspace) DiskCategories(string) ([]tool.SizeCategory, error) {
-	return nil, errNotImplementedYet
-}
-
-// EnumerateProjects implements tool.Auditor. Deferred to the stats bundle.
-func (*Workspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
-	return nil, errNotImplementedYet
 }

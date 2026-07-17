@@ -123,6 +123,42 @@ func TestRewriteTextColumnPreservesTextAndBlobStorage(t *testing.T) {
 	assert.Equal(t, "blob", blobType)
 }
 
+func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "update.sqlite")
+	database := openSQLite(t, path)
+	require.NoError(t, prepareWAL(database))
+	require.NoError(t, execute(database, "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, archived_at INTEGER)"))
+	require.NoError(t, execute(database, "INSERT INTO threads (id, title, archived_at) VALUES (?, ?, ?)", "present", "old", nil))
+	require.NoError(t, database.Close())
+
+	rewriter, err := sqlrewrite.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	transaction, err := rewriter.Begin()
+	require.NoError(t, err)
+	updated, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "present", map[string]any{"title": "new", "archived_at": 42})
+	require.NoError(t, err)
+	absent, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "missing", map[string]any{"title": "never inserted", "archived_at": 42})
+	require.NoError(t, err)
+	require.NoError(t, transaction.Commit())
+
+	assert.Equal(t, 1, updated)
+	assert.Zero(t, absent)
+	check := openSQLite(t, path)
+	t.Cleanup(func() { require.NoError(t, check.Close()) })
+	var title string
+	var archivedAt int
+	err = check.QueryRowContext(
+		context.Background(), "SELECT title, archived_at FROM threads WHERE id = 'present'",
+	).Scan(&title, &archivedAt)
+	require.NoError(t, err)
+	assert.Equal(t, "new", title)
+	assert.Equal(t, 42, archivedAt)
+	var rows int
+	require.NoError(t, check.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM threads").Scan(&rows))
+	assert.Equal(t, 1, rows)
+}
+
 func TestPathPredicateAgreesWithByteRewriter(t *testing.T) {
 	cases := []struct {
 		name    string

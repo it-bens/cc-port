@@ -125,7 +125,7 @@ type Importer interface {
 	// every tool's staged files have promoted. Every Finalize append
 	// deduplicates against existing content, so import is re-runnable and
 	// a re-run never duplicates history or index lines.
-	Finalize(ctx context.Context, project string, staged *archive.StagedSet) error
+	Finalize(ctx context.Context, project string, staged *archive.StagedSet) ([]string, error)
 }
 
 // CountSurface is one named path-reference surface stats reports on: how

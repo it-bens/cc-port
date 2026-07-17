@@ -73,7 +73,7 @@ func findFixtureDir(t *testing.T) string {
 	}
 
 	for {
-		candidate := filepath.Join(currentDir, "testdata")
+		candidate := filepath.Join(currentDir, "internal", "tool", "codex", "testdata")
 		if info, statErr := os.Stat(filepath.Join(candidate, "dotcodex")); statErr == nil && info.IsDir() {
 			return candidate
 		}

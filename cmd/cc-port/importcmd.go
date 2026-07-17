@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -103,6 +104,9 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 					return fmt.Errorf("write skipped-tools note: %w", err)
 				}
 			}
+			if err := renderImportWarnings(cmd.ErrOrStderr(), targets, result.Warnings); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
@@ -124,6 +128,22 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 
 	cmd.AddCommand(newImportManifestCmd())
 	return cmd
+}
+
+func renderImportWarnings(stderr io.Writer, targets []tool.Target, warningsByTool map[string][]string) error {
+	multi := len(targets) > 1
+	for _, target := range targets {
+		for _, warning := range warningsByTool[target.Tool.Name()] {
+			prefix := "Warning: "
+			if multi {
+				prefix = fmt.Sprintf("Warning (%s): ", target.Tool.DisplayName())
+			}
+			if _, err := fmt.Fprintf(stderr, "%s%s\n", prefix, warning); err != nil {
+				return fmt.Errorf("write import warning: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // newImportManifestCmd returns the `import manifest` subcommand.

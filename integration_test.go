@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ import (
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
 const (
@@ -36,6 +38,16 @@ const (
 	destinationProjectPath = "/home/newuser/projects/cool-project"
 	destinationHomeDir     = "/home/newuser"
 )
+
+func TestMain(m *testing.M) {
+	restore, err := testutil.IsolateHome()
+	if err != nil {
+		panic(err)
+	}
+	exitCode := m.Run()
+	restore()
+	os.Exit(exitCode)
+}
 
 // targetsFor wraps home as the single-claude-tool target slice every
 // generic command entry point (move, export, importer) now expects.
@@ -186,6 +198,55 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 	})
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
+}
+
+// TestIntegration_MultiToolArchiveExportsClaudeAndCodex covers the real CLI
+// export path. Import is intentionally covered by importer tests: a Codex
+// mutation run from this test process correctly sees the running Codex CLI in
+// its process-table witness and must refuse the operation.
+func TestIntegration_MultiToolArchiveExportsClaudeAndCodex(t *testing.T) {
+	sharedProject := codex.FixtureProjectPath()
+	claudeSource := testutil.SetupFixture(t)
+	moveResult, err := move.Apply(t.Context(), targetsFor(claudeSource), move.Options{
+		OldPath: fixtureProjectPath, NewPath: sharedProject, RefsOnly: true,
+	})
+	require.NoError(t, err)
+	require.False(t, moveResult.Failed())
+	codexSource := codex.SetupFixture(t)
+
+	archivePath := filepath.Join(t.TempDir(), "multi-tool.zip")
+	//nolint:gosec // G204: every argument is a test-controlled fixture or temporary path.
+	command := exec.CommandContext(t.Context(), "go", "run", "./cmd/cc-port",
+		"export", sharedProject,
+		"--tool", "claude",
+		"--tool", "codex",
+		"--claude-home", claudeSource.Dir,
+		"--codex-home", codexSource.Dir,
+		"--all",
+		"--output", archivePath,
+	)
+	output, err := command.CombinedOutput()
+	require.NoErrorf(t, err, "real CLI export failed:\n%s", output)
+	assert.Contains(t, string(output), "Exported to "+archivePath)
+	assertArchiveCarriesToolPrefixes(t, archivePath, "claude/", "codex/")
+}
+
+func assertArchiveCarriesToolPrefixes(t *testing.T, path string, prefixes ...string) {
+	t.Helper()
+	reader, err := zip.OpenReader(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reader.Close()) }()
+	found := make(map[string]bool, len(prefixes))
+	for _, file := range reader.File {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(file.Name, prefix) {
+				found[prefix] = true
+			}
+		}
+	}
+	for _, prefix := range prefixes {
+		assert.True(t, found[prefix], "archive must contain a %s entry", prefix)
+	}
 }
 
 func runExportRoundTrip(t *testing.T, sourceHome *claude.Home, archivePath string) {

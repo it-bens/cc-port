@@ -64,8 +64,8 @@ func (*applyTestWorkspace) ImplicitAnchors(string) (map[string]string, error) {
 func (*applyTestWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, errors.New("not exercised")
 }
-func (*applyTestWorkspace) Finalize(context.Context, string, *archive.StagedSet) error {
-	return errors.New("not exercised")
+func (*applyTestWorkspace) Finalize(context.Context, string, *archive.StagedSet) ([]string, error) {
+	return nil, errors.New("not exercised")
 }
 func (*applyTestWorkspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {
 	return nil, errors.New("not exercised")

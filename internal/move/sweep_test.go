@@ -67,8 +67,8 @@ func (w *fakeWorkspace) Stage(context.Context, string, archive.Entry, map[string
 	return nil, errors.New("not exercised")
 }
 
-func (w *fakeWorkspace) Finalize(context.Context, string, *archive.StagedSet) error {
-	return errors.New("not exercised")
+func (w *fakeWorkspace) Finalize(context.Context, string, *archive.StagedSet) ([]string, error) {
+	return nil, errors.New("not exercised")
 }
 
 func (w *fakeWorkspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {

@@ -39,6 +39,9 @@ type Result struct {
 	// which the archive's manifest carried no <tool> block: the archive
 	// simply has no data for them.
 	SkippedTools []string
+
+	// Warnings contains non-fatal finalize notices keyed by tool wire name.
+	Warnings map[string][]string
 }
 
 // Run imports a cc-port archive into every target's Workspace. allTools is
@@ -121,33 +124,9 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	}
 	entriesByTool := groupEntriesByTool(entries)
 
-	var result Result
-	present := make([]tool.Target, 0, len(targets))
-	resolutionsByTool := make(map[string]map[string]string, len(targets))
-
-	for _, target := range targets {
-		name := target.Tool.Name()
-		block, ok := blocksByTool[name]
-		if !ok {
-			result.SkippedTools = append(result.SkippedTools, name)
-			continue
-		}
-		if _, err := manifest.ApplyToolCategories(name, categoryNames(target.Tool), block.Categories); err != nil {
-			return nil, fmt.Errorf("manifest categories for %s: %w", name, err)
-		}
-		anchors, err := target.Workspace.ImplicitAnchors(options.TargetPath)
-		if err != nil {
-			return nil, fmt.Errorf("implicit anchors for %s: %w", name, err)
-		}
-		resolutions, err := mergeResolutions(block, options.FromManifest, anchors)
-		if err != nil {
-			return nil, err
-		}
-		if err := checkMissingResolutions(name, block, anchors, resolutions, entriesByTool[name]); err != nil {
-			return nil, err
-		}
-		resolutionsByTool[name] = resolutions
-		present = append(present, target)
+	result, present, resolutionsByTool, err := preflightTargets(targets, options, blocksByTool, entriesByTool)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := preflightStagingDirs(present, options.TargetPath); err != nil {
@@ -170,14 +149,56 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 
 	finalizePhase := options.Reporter.Phase("finalize", int64(len(present)), progress.UnitItems)
 	for _, target := range present {
-		if err := target.Workspace.Finalize(ctx, options.TargetPath, stagedSet); err != nil {
+		warnings, err := target.Workspace.Finalize(ctx, options.TargetPath, stagedSet)
+		if err != nil {
 			return nil, fmt.Errorf("finalize %s: %w", target.Tool.Name(), err)
+		}
+		if len(warnings) > 0 {
+			result.Warnings[target.Tool.Name()] = append(result.Warnings[target.Tool.Name()], warnings...)
 		}
 		finalizePhase.Advance(1)
 	}
 	finalizePhase.End("")
 
 	return &result, nil
+}
+
+func preflightTargets(
+	targets []tool.Target,
+	options *Options,
+	blocksByTool map[string]manifest.Tool,
+	entriesByTool map[string][]archive.RawEntry,
+) (Result, []tool.Target, map[string]map[string]string, error) {
+	result := Result{Warnings: make(map[string][]string)}
+	present := make([]tool.Target, 0, len(targets))
+	resolutionsByTool := make(map[string]map[string]string, len(targets))
+
+	for _, target := range targets {
+		name := target.Tool.Name()
+		block, ok := blocksByTool[name]
+		if !ok {
+			result.SkippedTools = append(result.SkippedTools, name)
+			continue
+		}
+		if _, err := manifest.ApplyToolCategories(name, categoryNames(target.Tool), block.Categories); err != nil {
+			return Result{}, nil, nil, fmt.Errorf("manifest categories for %s: %w", name, err)
+		}
+		anchors, err := target.Workspace.ImplicitAnchors(options.TargetPath)
+		if err != nil {
+			return Result{}, nil, nil, fmt.Errorf("implicit anchors for %s: %w", name, err)
+		}
+		resolutions, err := mergeResolutions(block, options.FromManifest, anchors)
+		if err != nil {
+			return Result{}, nil, nil, err
+		}
+		if err := checkMissingResolutions(name, block, anchors, resolutions, entriesByTool[name]); err != nil {
+			return Result{}, nil, nil, err
+		}
+		resolutionsByTool[name] = resolutions
+		present = append(present, target)
+	}
+
+	return result, present, resolutionsByTool, nil
 }
 
 // verifyManifestTools hard-fails when the manifest declares a <tool> block
