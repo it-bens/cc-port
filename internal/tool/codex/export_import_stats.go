@@ -17,8 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pelletier/go-toml/v2"
-
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/sqlrewrite"
@@ -901,7 +899,8 @@ func (workspace *Workspace) DiskCategories(project string) ([]tool.SizeCategory,
 	return []tool.SizeCategory{active, archived, history}, nil
 }
 
-// EnumerateProjects unions database thread cwd values with [projects] TOML keys.
+// EnumerateProjects unions database thread cwd values with every
+// config.toml/profile file's [projects] TOML keys.
 func (workspace *Workspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
 	projects := make(map[string]struct{})
 	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
@@ -935,19 +934,18 @@ func (workspace *Workspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
 		_ = rows.Close()
 		_ = database.Close()
 	}
-	data, err := os.ReadFile(filepath.Join(workspace.home.Dir, configTOMLFileName))
-	if err == nil {
-		var config struct {
-			Projects map[string]any `toml:"projects"`
-		}
-		if err := toml.Unmarshal(data, &config); err != nil {
-			return nil, fmt.Errorf("parse config.toml projects: %w", err)
-		}
-		for project := range config.Projects {
-			projects[project] = struct{}{}
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	configFiles, err := discoverConfigTOMLFiles(workspace.home)
+	if err != nil {
 		return nil, err
+	}
+	for _, path := range configFiles {
+		keys, err := configTOMLProjectKeys(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range keys {
+			projects[key] = struct{}{}
+		}
 	}
 	names := make([]string, 0, len(projects))
 	for project := range projects {
@@ -970,6 +968,10 @@ func (workspace *Workspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
 	return result, nil
 }
 
+// knowsProject reports whether Codex has any record of project: a rollout's
+// structured cwd, a thread row, or a config.toml/profile projects key. A
+// config-key-only project (a trust entry with no sessions yet) still
+// counts, matching the three-way association projectKnown uses for move.
 func (workspace *Workspace) knowsProject(project string) (bool, error) {
 	rollouts, _, err := workspace.projectRollouts(context.Background(), project)
 	if err != nil {
@@ -979,7 +981,13 @@ func (workspace *Workspace) knowsProject(project string) (bool, error) {
 		return true, nil
 	}
 	count, err := workspace.countThreadRows(project)
-	return count > 0, err
+	if err != nil {
+		return false, err
+	}
+	if count > 0 {
+		return true, nil
+	}
+	return configTOMLKnowsProject(workspace.home, project)
 }
 
 func (workspace *Workspace) projectThreadIDs(project string) (map[string]struct{}, error) {

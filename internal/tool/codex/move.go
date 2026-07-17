@@ -59,18 +59,12 @@ func (workspace *Workspace) projectKnown(oldPath string) (bool, error) {
 		return true, nil
 	}
 
-	configFiles, err := discoverConfigTOMLFiles(workspace.home)
+	configKnown, err := configTOMLKnowsProject(workspace.home, oldPath)
 	if err != nil {
 		return false, err
 	}
-	for _, path := range configFiles {
-		count, err := planConfigTOMLFile(path, oldPath, oldPath)
-		if err != nil {
-			return false, err
-		}
-		if count > 0 {
-			return true, nil
-		}
+	if configKnown {
+		return true, nil
 	}
 
 	rolloutFiles, err := discoverRolloutFiles(workspace.home)

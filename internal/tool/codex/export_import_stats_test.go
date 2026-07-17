@@ -303,6 +303,124 @@ func TestCodexAuditsRejectUnknownProjectsAndDoNotAttributeSharedHistoryBytes(t *
 	assert.Zero(t, sizeCategoryNamed(second, categoryHistory).Bytes)
 }
 
+// TestKnowsProjectHonorsConfigOnlyProjects guards knowsProject's third
+// association: a config.toml [projects] key alone must count as known even
+// when the project has no thread row and no rollout, matching move.go's
+// projectKnown. Before this, EnumerateProjects would enumerate such a
+// project and then have its own DiskCategories call reject it, failing the
+// whole stats run.
+func TestKnowsProjectHonorsConfigOnlyProjects(t *testing.T) {
+	home := SetupFixture(t)
+	workspace := quietTestWorkspace(home)
+
+	tests := []struct {
+		name    string
+		project string
+		want    bool
+	}{
+		{name: "config key with no threads or rollouts counts as known", project: "/Users/fixture/other-project", want: true},
+		{name: "project absent from every source stays unknown", project: "/Users/fixture/unknown-project", want: false},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			known, err := workspace.knowsProject(testCase.project)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, known)
+		})
+	}
+}
+
+// TestEnumerateProjectsIncludesConfigOnlyProjectWithZeroFootprint is the
+// end-to-end regression for the same bug: EnumerateProjects must list a
+// config-key-only project with a zero footprint, and DiskCategories and
+// ReferenceSurfaces must both succeed with zeros for it, instead of the
+// whole stats run failing with tool.ErrProjectAbsent.
+func TestEnumerateProjectsIncludesConfigOnlyProjectWithZeroFootprint(t *testing.T) {
+	home := SetupFixture(t)
+	workspace := quietTestWorkspace(home)
+	const configOnlyProject = "/Users/fixture/other-project"
+
+	projects, err := workspace.EnumerateProjects()
+	require.NoError(t, err)
+
+	var info tool.ProjectInfo
+	found := false
+	for _, candidate := range projects {
+		if candidate.Label == configOnlyProject {
+			info, found = candidate, true
+			break
+		}
+	}
+	require.True(t, found, "EnumerateProjects must list the config-key-only project")
+	assert.Zero(t, info.Files)
+	assert.Zero(t, info.Bytes)
+
+	disk, err := workspace.DiskCategories(configOnlyProject)
+	require.NoError(t, err)
+	for _, category := range disk {
+		assert.Zero(t, category.Files, "category %s", category.Name)
+		assert.Zero(t, category.Bytes, "category %s", category.Name)
+	}
+
+	references, err := workspace.ReferenceSurfaces(configOnlyProject)
+	require.NoError(t, err)
+	for _, surface := range references {
+		assert.Zero(t, surface.Count, "surface %s", surface.Name)
+	}
+}
+
+// TestConfigCommentOrValueDoesNotConferProjectKnowledge guards the precision
+// of configTOMLKnowsProject: it parses the "projects" table rather than
+// scanning raw bytes, so a path occurring only in a comment or in an
+// unrelated (non-projects) value must never be mistaken for a [projects]
+// table key.
+func TestConfigCommentOrValueDoesNotConferProjectKnowledge(t *testing.T) {
+	dir := t.TempDir()
+	home := &Home{Dir: dir, SQLiteDir: dir}
+	const commentOnlyProject = "/Users/fixture/comment-only-project"
+	config := "# see " + commentOnlyProject + " for context\n" +
+		"note = \"" + commentOnlyProject + "\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), []byte(config), 0o600))
+	workspace := quietTestWorkspace(home)
+
+	known, err := workspace.knowsProject(commentOnlyProject)
+	require.NoError(t, err)
+	assert.False(t, known, "a path in a comment or unrelated value must not confer project knowledge")
+
+	_, err = workspace.DiskCategories(commentOnlyProject)
+	require.ErrorIs(t, err, tool.ErrProjectAbsent)
+	_, err = workspace.ReferenceSurfaces(commentOnlyProject)
+	require.ErrorIs(t, err, tool.ErrProjectAbsent)
+}
+
+// TestEnumerateProjectsIncludesProfileOnlyProject guards the second
+// precision gap: EnumerateProjects must read every *.config.toml profile
+// overlay, not only the top-level config.toml, so a project trusted solely
+// through a profile is still enumerated with a zero footprint.
+func TestEnumerateProjectsIncludesProfileOnlyProject(t *testing.T) {
+	dir := t.TempDir()
+	home := &Home{Dir: dir, SQLiteDir: dir}
+	const profileOnlyProject = "/Users/fixture/profile-only-project"
+	profileConfig := "[projects.\"" + profileOnlyProject + "\"]\ntrust_level = \"trusted\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "work.config.toml"), []byte(profileConfig), 0o600))
+	workspace := quietTestWorkspace(home)
+
+	projects, err := workspace.EnumerateProjects()
+	require.NoError(t, err)
+
+	var info tool.ProjectInfo
+	found := false
+	for _, candidate := range projects {
+		if candidate.Label == profileOnlyProject {
+			info, found = candidate, true
+			break
+		}
+	}
+	require.True(t, found, "EnumerateProjects must include a project known only via a *.config.toml profile overlay")
+	assert.Zero(t, info.Files)
+	assert.Zero(t, info.Bytes)
+}
+
 func TestCodexExportsThreadOnlyProjectState(t *testing.T) {
 	home := SetupFixture(t)
 	require.NoError(t, os.RemoveAll(filepath.Join(home.Dir, sessionsSubdir)))
