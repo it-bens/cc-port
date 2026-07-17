@@ -2,12 +2,16 @@ package move_test
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/archive"
+	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -18,6 +22,65 @@ func fixtureTargets(t *testing.T) []tool.Target {
 	t.Helper()
 	home := testutil.SetupFixture(t)
 	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+}
+
+type applyTestTool struct{}
+
+func (*applyTestTool) Name() string                 { return "apply-test" }
+func (*applyTestTool) DisplayName() string          { return "apply-test" }
+func (*applyTestTool) Categories() []tool.Category  { return nil }
+func (*applyTestTool) Detect() (bool, error)        { return true, nil }
+func (*applyTestTool) ImplicitAnchorKeys() []string { return nil }
+func (*applyTestTool) Open(string) (tool.Workspace, error) {
+	return nil, errors.New("not exercised")
+}
+
+type applyTestWorkspace struct {
+	lockPath   string
+	surfaces   []tool.Surface
+	warnings   []string
+	warningErr error
+}
+
+func (*applyTestWorkspace) Root() string                                { return "/apply-test" }
+func (workspace *applyTestWorkspace) LockPath() string                  { return workspace.lockPath }
+func (*applyTestWorkspace) ActiveWriters() ([]tool.ActiveWriter, error) { return nil, nil }
+func (workspace *applyTestWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error) {
+	return workspace.surfaces, nil
+}
+func (workspace *applyTestWorkspace) ResidualWarnings(tool.MoveRequest) ([]string, error) {
+	return workspace.warnings, workspace.warningErr
+}
+func (*applyTestWorkspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
+	return nil, errors.New("not exercised")
+}
+func (*applyTestWorkspace) Export(context.Context, string, map[string]bool, *archive.Sink) (tool.ExportResult, error) {
+	return tool.ExportResult{}, errors.New("not exercised")
+}
+func (*applyTestWorkspace) PreflightDirs(string) []string { return nil }
+func (*applyTestWorkspace) ImplicitAnchors(string) (map[string]string, error) {
+	return nil, errors.New("not exercised")
+}
+func (*applyTestWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
+	return nil, errors.New("not exercised")
+}
+func (*applyTestWorkspace) Finalize(context.Context, string, *archive.StagedSet) error {
+	return errors.New("not exercised")
+}
+func (*applyTestWorkspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {
+	return nil, errors.New("not exercised")
+}
+func (*applyTestWorkspace) DiskCategories(string) ([]tool.SizeCategory, error) {
+	return nil, errors.New("not exercised")
+}
+func (*applyTestWorkspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
+	return nil, errors.New("not exercised")
+}
+
+func applyTestTarget(t *testing.T, workspace *applyTestWorkspace) []tool.Target {
+	t.Helper()
+	workspace.lockPath = filepath.Join(t.TempDir(), ".cc-port.lock")
+	return []tool.Target{{Tool: &applyTestTool{}, Workspace: workspace}}
 }
 
 func TestDryRun_ReportsSurfaceCountsPerTool(t *testing.T) {
@@ -79,6 +142,58 @@ func TestApply_MovesProjectAndUpdatesReferences(t *testing.T) {
 	historyBytes, err := os.ReadFile(home.HistoryFile())
 	require.NoError(t, err)
 	assert.Contains(t, string(historyBytes), newPath)
+}
+
+func TestApply_CancellationRestoresCompletedSurfaces(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	restored := false
+	workspace := &applyTestWorkspace{surfaces: []tool.Surface{
+		{
+			Name: "first",
+			Plan: func(context.Context) (int, error) { return 0, nil },
+			Apply: func(context.Context, *tool.Restorer) (int, error) {
+				return 0, nil
+			},
+		},
+		{
+			Name:  "second",
+			Plan:  func(context.Context) (int, error) { return 0, nil },
+			Apply: func(context.Context, *tool.Restorer) (int, error) { return 0, nil },
+		},
+	}}
+	workspace.surfaces[0].Apply = func(_ context.Context, undo *tool.Restorer) (int, error) {
+		undo.RegisterUndo(func() error { restored = true; return nil })
+		cancel()
+		return 1, nil
+	}
+
+	result, err := move.Apply(ctx, applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
+
+	require.NoError(t, err)
+	require.True(t, restored)
+	require.True(t, result.Failed())
+	require.ErrorIs(t, result.ByTool[0].Err, context.Canceled)
+}
+
+func TestApply_CarriesResidualWarnings(t *testing.T) {
+	workspace := &applyTestWorkspace{warnings: []string{"left untouched by design"}}
+
+	result, err := move.Apply(context.Background(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
+
+	require.NoError(t, err)
+	require.True(t, result.ByTool[0].Success)
+	assert.Equal(t, []string{"left untouched by design"}, result.ByTool[0].Warnings)
+}
+
+func TestApply_ReportsResidualWarningInspectionFailureNonFatally(t *testing.T) {
+	workspace := &applyTestWorkspace{warningErr: assert.AnError}
+
+	result, err := move.Apply(context.Background(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
+
+	require.NoError(t, err)
+	require.True(t, result.ByTool[0].Success)
+	assert.Contains(t, result.ByTool[0].Warnings, "could not inspect residual warnings: assert.AnError general error for testing")
 }
 
 // claudeWorkspaceHome extracts the underlying *claude.Home for assertions

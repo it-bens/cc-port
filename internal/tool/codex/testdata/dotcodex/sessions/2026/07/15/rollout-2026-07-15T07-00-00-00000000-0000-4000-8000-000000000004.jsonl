@@ -1,0 +1,2 @@
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"era-A fixture: predates structured cwd tracking, references /Users/fixture/codexproject only in prose"}]}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"acknowledged /Users/fixture/codexproject"}}

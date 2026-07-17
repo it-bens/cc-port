@@ -162,6 +162,9 @@ func renderApplyResult(stdout io.Writer, result *move.ApplyResult) {
 			_, _ = fmt.Fprintf(stdout, "  [%s] project unknown to this tool; skipped\n", toolResult.Tool)
 		case toolResult.Success:
 			_, _ = fmt.Fprintf(stdout, "  [%s] OK\n", toolResult.Tool)
+			for _, warning := range toolResult.Warnings {
+				_, _ = fmt.Fprintf(stdout, "    ! %s\n", warning)
+			}
 		default:
 			_, _ = fmt.Fprintf(stdout, "  [%s] FAILED: %v\n", toolResult.Tool, toolResult.Err)
 		}

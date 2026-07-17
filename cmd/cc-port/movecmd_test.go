@@ -98,3 +98,15 @@ func TestRunMoveDryRun_WarnsAboutActiveWriter(t *testing.T) {
 	assert.Contains(t, stdout.String(), "active Claude Code writer")
 	assert.Contains(t, stdout.String(), "pid=")
 }
+
+func TestRenderApplyResultPrintsResidualWarnings(t *testing.T) {
+	var stdout bytes.Buffer
+
+	result := &move.ApplyResult{ByTool: []move.ToolResult{{
+		Tool: "codex", Success: true,
+		Warnings: []string{"codex-dev.db contains path references and is never rewritten"},
+	}}}
+	renderApplyResult(&stdout, result)
+
+	assert.Contains(t, stdout.String(), "! codex-dev.db contains path references and is never rewritten")
+}

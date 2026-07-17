@@ -110,6 +110,7 @@ type ToolResult struct {
 	Success  bool
 	Err      error
 	Surfaces []SurfaceCount
+	Warnings []string
 }
 
 // ApplyResult is the per-tool outcome of an Apply run.
@@ -189,14 +190,14 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 			result.ByTool = append(result.ByTool, ToolResult{Tool: entry.target.Tool.Name(), Absent: true})
 			continue
 		}
-		toolResult := applyTarget(ctx, entry.target, entry.surfaces, options.Reporter)
+		toolResult := applyTarget(ctx, entry.target, entry.surfaces, req, options.Reporter)
 		result.ByTool = append(result.ByTool, toolResult)
 	}
 
 	return result, nil
 }
 
-func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surface, reporter progress.Reporter) ToolResult {
+func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surface, req tool.MoveRequest, reporter progress.Reporter) ToolResult {
 	toolResult := ToolResult{Tool: target.Tool.Name()}
 	phase := reporter.Phase(target.Tool.Name(), int64(len(surfaces)), progress.UnitItems)
 
@@ -204,6 +205,8 @@ func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surfac
 	var err error
 	for _, surface := range surfaces {
 		if err = ctx.Err(); err != nil {
+			restoreErr := undo.Restore()
+			err = errors.Join(fmt.Errorf("apply canceled: %w", err), restoreErr)
 			break
 		}
 		count, applyErr := surface.Apply(ctx, undo)
@@ -220,6 +223,11 @@ func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surfac
 	}
 	phase.End("")
 
+	warnings, warningErr := target.Workspace.ResidualWarnings(req)
+	toolResult.Warnings = warnings
+	if warningErr != nil {
+		toolResult.Warnings = append(toolResult.Warnings, fmt.Sprintf("could not inspect residual warnings: %v", warningErr))
+	}
 	if err != nil {
 		toolResult.Err = err
 		return toolResult
