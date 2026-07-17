@@ -23,11 +23,13 @@ func FixtureProjectPath() string {
 }
 
 // SetupFixture stages testdata/dotcodex under t.TempDir() and builds
-// fixture state_5.sqlite and memories_1.sqlite databases alongside it —
-// SQLite files are binary, so they are built by test code rather than
-// committed, following the testutil.SetupFixture pattern. sqlite_home
-// resolves to the same directory (config.toml declares no sqlite_home
-// key and $CODEX_SQLITE_HOME is unset in the fixture environment).
+// fixture state_5.sqlite and memories_1.sqlite databases, plus the
+// memories/.git no-remote baseline, alongside it — SQLite files are
+// binary and nested .git directories are untrackable by the outer repo,
+// so both are built by test code rather than committed, following the
+// testutil.SetupFixture pattern. sqlite_home resolves to the same
+// directory (config.toml declares no sqlite_home key and
+// $CODEX_SQLITE_HOME is unset in the fixture environment).
 func SetupFixture(t *testing.T) *Home {
 	t.Helper()
 
@@ -39,6 +41,7 @@ func SetupFixture(t *testing.T) *Home {
 
 	buildFixtureStateDB(t, filepath.Join(codexDir, stateDBFileName))
 	buildFixtureMemoriesDB(t, filepath.Join(codexDir, memoriesDBFileName))
+	buildFixtureMemoriesGitBaseline(t, filepath.Join(codexDir, memoriesWorktreeSubdir))
 
 	return &Home{Dir: codexDir, SQLiteDir: codexDir}
 }
@@ -89,6 +92,22 @@ const (
 	stateDBFileName    = "state_5.sqlite"
 	memoriesDBFileName = "memories_1.sqlite"
 )
+
+// buildFixtureMemoriesGitBaseline creates a no-remote memories/.git
+// baseline at runtime: git never tracks a nested .git directory, so —
+// like the SQLite fixtures below — test code builds it instead of
+// committing it.
+func buildFixtureMemoriesGitBaseline(t *testing.T, memoriesDir string) {
+	t.Helper()
+	gitDir := filepath.Join(memoriesDir, gitDirName)
+	if err := os.MkdirAll(gitDir, 0o750); err != nil {
+		t.Fatalf("create fixture memories git baseline: %v", err)
+	}
+	const config = "[core]\n\trepositoryformatversion = 0\n"
+	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0o600); err != nil {
+		t.Fatalf("write fixture memories git baseline config: %v", err)
+	}
+}
 
 func buildFixtureStateDB(t *testing.T, path string) {
 	t.Helper()
