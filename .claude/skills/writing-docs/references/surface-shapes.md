@@ -67,13 +67,13 @@ CORRECT: ## Contracts
 
 **Job:** cross-module narrative + invariant ownership index.
 
-**Shape:** layout tree (directory tour), invariant-to-owner table (one row per invariant, one link per owner), cross-cutting policies with no single-module owner.
+**Shape:** layout tree (directory tour), tool-contract narrative (registry, adapter boundaries, sweep semantics, construction seams), invariant-to-owner table (one row per invariant, one link per owner), cross-cutting policy sections, crash and idempotence contract.
 
 Index rows are *links* to the owning module's README §<section>, not restatements of the contract. The index says "X is enforced by module Y, see §Z" — the actual contract lives at §Z.
 
 ### Cross-cutting policies
 
-Cross-cutting invariants with no single-module owner live in `docs/architecture.md` as a *Cross-cutting policies* section. Framing only, with one-line links to per-command handling in each owning module's README. File-history is the current (and only) instance of a cross-cutting policy. Before adding a second, confirm no single module enforces the invariant; if one does, the contract belongs there and the architecture index gets a link, not a duplicate.
+Cross-cutting invariants with no single-module owner live in `docs/architecture.md` as top-level sections tagged `(cross-cutting)` in the heading. Each carries the policy itself plus links to per-module handling. Before adding one, confirm no single module enforces the invariant; if one does, the contract belongs in that module's README and the architecture index gets a link, not a duplicate.
 
 ## Root README
 

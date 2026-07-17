@@ -49,7 +49,7 @@ Skip when: the call mechanically repeats an idiom already established in the sam
 
 Load `references/go-doc.md` for the query-shape table (single symbol vs `-short` vs package overview vs full dump with sizes), the escalation criteria to `-src`, and the don't-consult exceptions.
 
-When the call would mutate path-shaped strings, edit a user-owned config file, or scan untrusted bytes, the project usually wraps the stdlib primitive in a domain helper that carries the right invariants. Search the repo for the helper before reaching for the stdlib call directly. `go doc` confirms the call works the way you remember; the in-repo lookup confirms it's the right call to make at all. Load `references/in-repo-primitives.md` for the lookup table and the decision test.
+When the call would mutate path-shaped strings (in memory or inside a SQLite database), edit a user-owned config file (JSON or TOML), or scan untrusted bytes, the project usually wraps the stdlib primitive in a domain helper that carries the right invariants. Search the repo for the helper before reaching for the stdlib call directly. `go doc` confirms the call works the way you remember; the in-repo lookup confirms it's the right call to make at all. Load `references/in-repo-primitives.md` for the lookup table and the decision test.
 
 ### Confirm dependencies and surface scope
 

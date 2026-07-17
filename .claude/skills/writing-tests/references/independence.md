@@ -1,6 +1,6 @@
 # Test Independence (reference)
 
-cc-port uses `t.TempDir` per test for filesystem state. No `t.Parallel()` today. No package-level mutable vars in test files. `TestMain` is not used. `time.Now()` appears only inside `manifest.Info{Created: time.Now()}` fixture constructors, never as an asserted value. No UUID generation in test assertions; session UUIDs in `testdata/` are fixed strings.
+cc-port uses `t.TempDir` per test for filesystem state. No `t.Parallel()` today. No package-level mutable vars in test files. `TestMain` appears only in `cmd/cc-port` and the root integration package, where it runs `testutil.IsolateHome()` so command tests never observe the live `~/.claude` or `~/.codex`; fixture homes still travel by explicit flags. `time.Now()` feeds fixture constructors and clock-seam inputs (`manifest.Info{Created: time.Now()}`, progress event timestamps, `workspace.now` overrides), never an asserted value. No UUID generation in test assertions; session UUIDs in `testdata/` are fixed strings.
 
 ## ISOLATION-001 — Shared mutable state
 
@@ -14,6 +14,7 @@ Go tests do not share mutable state across test functions or subtests. Four real
 ### Do NOT flag
 
 - Read-only values loaded once in `TestMain` (compiled regex, golden file)
+- `HOME` redirection via `testutil.IsolateHome()` in `TestMain`, restored by its returned cleanup
 - Values produced by a helper called per test (`t.TempDir`, `testutil.SetupFixture(t)`)
 - `sync.Once`-gated lazy init of immutable data
 - Per-test locals passed explicitly into subtests

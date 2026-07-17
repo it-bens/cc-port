@@ -7,7 +7,9 @@ External file dependencies (`os.ReadFile`, `os.Open`, `//go:embed`) point to a f
 ### Acceptable
 
 - `testdata/` (Go toolchain ignores this directory for builds)
-- Test-local fixtures via `testutil.SetupFixture(t)` sourced from the repo `testdata/` tree
+- Test-local fixtures via `testutil.SetupFixture(t)` sourced from the repo `testdata/dotclaude/` tree
+- Codex fixtures via `codex.SetupFixture(t)` sourced from `internal/tool/codex/testdata/dotcodex/` — the SQLite databases and the `memories/.git` baseline are built at runtime by the helper, because git cannot track a nested `.git`; never add on-disk copies of these to the fixture tree
+- `testutil.WriteFixtureArchive(t)` for a known-good export archive; `testutil.FixtureProjectPath()` / `codex.FixtureProjectPath()` for the canonical project key the fixture trees are staged around
 - `//go:embed testdata/foo.json` at the test package level
 
 ### Flag
@@ -118,7 +120,7 @@ If two or more tests repeat 5+ consecutive lines of construction with identical 
 | Helper function with `t.Helper()`: `func newRewriter(t *testing.T, opts ...Option) *rewrite.Replacer` | Most common. Test-local, fails at the real call site, accepts overrides. |
 | `t.Cleanup(func(){...})` inside a helper | Temp dirs, file handles, background goroutines. |
 | Per-row `setup func(t *testing.T) *Service` field in a table | Table-driven tests where rows need distinct construction variants. |
-| `testutil.SetupFixture(t)` | Anything needing the full staged `~/.claude` fixture. Extend this helper before inventing a new one. |
+| `testutil.SetupFixture(t)` / `codex.SetupFixture(t)` | Anything needing the full staged `~/.claude` or `~/.codex` fixture. Extend these helpers before inventing a new one. |
 | `TestMain(m *testing.M)` | Process-global setup only (env, temp workspace). Do NOT use for per-test state; that crosses into ISOLATION-001. |
 
 ### Do NOT extract
@@ -158,35 +160,35 @@ func newRewriter(t *testing.T) (fsRoot string, r *rewrite.Replacer) {
 
 Tests that materialize hundreds of MiB or multi-GiB fixtures to exercise cap-rejection guards, aggregate-size limits, or stream-buffer overflow do not belong in CI. Two-test pattern:
 
-- The production-scale test lives in a sibling file gated by `//go:build large`. The maintainer runs it locally before merging changes to cap-guarded code: `go test -tags large ./internal/<pkg>/...`.
-- A small-cap CI variant exercises the same branches at 1-2 MiB by overriding the cap variable through a test-only seam (`SetMaxEntryBytes(t, 1<<20)`), restored via `t.Cleanup`.
+- The production-scale test lives in a sibling file gated by `//go:build large`. The maintainer runs the tagged suites locally before merging changes to cap-guarded code: `go test -tags large ./internal/importer/... ./internal/tool/codex/...`.
+- A small-cap variant in the untagged suite exercises the same branches at KiB scale by overriding the caps through the package's restore-func seam (`restore := archive.SetCaps(archive.Caps{...})` followed by `t.Cleanup(restore)`; `codex.SetTranscodeCaps` is the zstd counterpart).
 
-Neither test replaces the other. The small-cap variant is the regression guard CI runs on every PR and confirms that the rejection branch fires. The large-tag variant confirms the threshold actually holds at production scale and that no hidden buffer (default `bufio.Scanner`, intermediate slice) breaks before the cap. CI workflows do not pass `-tags large`; the local Makefile target opts in.
+Neither test replaces the other. The small-cap variant confirms on every run that the rejection branch fires. The large-tag variant confirms the threshold actually holds at production scale and that no hidden buffer (default `bufio.Scanner`, intermediate slice) breaks before the cap. CI runs both tagged suites in a dedicated step; `make test-large` covers them locally.
 
 ### Pattern
 
 ```go
-// In the package under test, expose the cap as a var with an override seam.
-var maxArchiveBytes int64 = 1 << 32 // 4 GiB
+// In the package under test, expose the caps behind a restore-func seam.
+var caps = Caps{MaxEntryBytes: 1 << 32, MaxAggregateBytes: 1 << 33}
 
-func SetMaxArchiveBytes(t *testing.T, n int64) {
-    t.Helper()
-    prev := maxArchiveBytes
-    t.Cleanup(func() { maxArchiveBytes = prev })
-    maxArchiveBytes = n
+func SetCaps(next Caps) (restore func()) {
+    previous := caps
+    caps = next
+    return func() { caps = previous }
 }
 
-// CI variant: small cap, fast.
+// Small-cap variant: untagged, fast.
 func TestRejectsAggregateAtSmallCap(t *testing.T) {
-    SetMaxArchiveBytes(t, 2<<20) // 2 MiB
-    // build a 3 MiB archive; assert rejection
+    restore := archive.SetCaps(archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072})
+    t.Cleanup(restore)
+    // build a ~4 KiB archive; assert rejection
 }
 
-// large-tag variant: production cap, slow, local-only.
+// large-tag variant: production caps, slow.
 //go:build large
 
 func TestRejectsAggregateAtProductionCap(t *testing.T) {
-    // build a 5 GiB archive; assert rejection at 4 GiB
+    // build a multi-GiB archive; assert rejection at the production cap
 }
 ```
 

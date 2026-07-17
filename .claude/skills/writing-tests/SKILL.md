@@ -5,7 +5,7 @@ description: Use when authoring, editing, or reviewing a Go test in cc-port — 
 
 # Writing Tests
 
-cc-port tests use `testutil.SetupFixture(t)` against `testdata/dotclaude/`. testify `require` for preconditions, `assert` for behavioral claims after the act. Table-driven via `t.Run`.
+cc-port tests use `testutil.SetupFixture(t)` against `testdata/dotclaude/` and `codex.SetupFixture(t)` against `internal/tool/codex/testdata/dotcodex/`. testify `require` for preconditions, `assert` for behavioral claims after the act. Table-driven via `t.Run`.
 
 ## Workflow
 
@@ -45,7 +45,7 @@ digraph test_workflow {
 
 Articulate the behavior in one sentence using business language. The test name is a paraphrase of that sentence (`TestApplyRelocatesProjectDir`, not `TestFilepathJoinUsage`). If the sentence contains `and`, you have two tests. If it names an implementation choice (which dependency was called, internal call order, algorithmic decomposition), you have no test.
 
-When the behavior is real but not observable through the current exported API, the diamond branches three ways: introduce a production-code seam (an `io.Writer` parameter, a `WithX` option, an exported pure helper, or a package-level fn-var the test swaps under `t.Cleanup`) so the behavior becomes observable through the seam; reframe the test at an exported surface that already covers the behavior; or delete the candidate as implementation detail. Choose seam-introduction only when the seam will outlive the test — when production code wants the injection point regardless of testability. A seam introduced solely to test through is the same `package foo` internal-test smell, dressed in a `With*` option.
+When the behavior is real but not observable through the current exported API, the diamond branches three ways: introduce a production-code seam (an `io.Writer` parameter, a constructor-injected dependency, an exported pure helper, or a package-level fn-var the test swaps under `t.Cleanup`) so the behavior becomes observable through the seam; reframe the test at an exported surface that already covers the behavior; or delete the candidate as implementation detail. Choose seam-introduction only when the seam will outlive the test — when production code wants the injection point regardless of testability. A seam introduced solely to test through is the same `package foo` internal-test smell, dressed in a `With*` option.
 
 Load `references/behavior.md` and classify the candidate against the do-test / don't-test list, the carve-outs (`package foo` for invariants that cannot be observed externally; constructors that validate or transform; drift-guard tests that assert registry parity), and the four seam patterns surfaced by past coverage work.
 
