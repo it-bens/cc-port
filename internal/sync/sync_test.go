@@ -47,14 +47,14 @@ func TestSelfPusher_EmptyUsernameReturnsError(t *testing.T) {
 
 func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
 	r := newFileRemote(t)
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 
 	prior := openPriorForTest(t, r, "fresh-name", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome:  home,
+		Targets:     targets,
 		ProjectPath: projectPath,
 		Name:        "fresh-name",
-		Categories:  allCategoriesSet(),
+		Selected:    allSelection(),
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -69,20 +69,20 @@ func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
 
 func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 	r := newFileRemote(t)
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 
 	priorA := openPriorForTest(t, r, "k", "")
 	planA, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
 	}, priorA)
 	if err != nil {
 		t.Fatalf("PlanPush A: %v", err)
 	}
 	writerA := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
 	}, planA, writerA); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
@@ -92,8 +92,8 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 
 	priorB := openPriorForTest(t, r, "k", "")
 	planB, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
 	}, priorB)
 	if err != nil {
 		t.Fatalf("PlanPush B: %v", err)
@@ -110,11 +110,11 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 	r := newFileRemote(t)
 	injectArchiveWithPusher(t, r, "k", "different-host-different-user", time.Now().UTC().Add(-1*time.Hour))
 
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 	prior := openPriorForTest(t, r, "k", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -127,12 +127,12 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 
 func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	r := newFileRemote(t)
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 
 	prior := openPriorForTest(t, r, "k", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -143,8 +143,8 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 
 	writer := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
 	}, plan, writer); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
@@ -176,52 +176,53 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	r := newFileRemote(t)
 	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
-	home, _ := buildTestHomeAndProject(t)
+	targets, _ := buildTestTargets(t)
 
 	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
+		AllTools: toolSetForTest(), Targets: targets, Name: "k", TargetPath: t.TempDir(),
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
-	if len(plan.UnresolvedPlaceholders) != 1 || plan.UnresolvedPlaceholders[0] != "{{ORG}}" {
-		t.Fatalf("UnresolvedPlaceholders = %v, want [{{ORG}}]", plan.UnresolvedPlaceholders)
+	unresolved := plan.UnresolvedPlaceholders["claude"]
+	if len(unresolved) != 1 || unresolved[0] != "{{ORG}}" {
+		t.Fatalf("UnresolvedPlaceholders[claude] = %v, want [{{ORG}}]", unresolved)
 	}
 }
 
 func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 	r := newFileRemote(t)
 	injectArchiveWithSenderResolve(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
-	home, _ := buildTestHomeAndProject(t)
+	targets, _ := buildTestTargets(t)
 	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
+		AllTools: toolSetForTest(), Targets: targets, Name: "k", TargetPath: t.TempDir(),
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
-	if len(plan.UnresolvedPlaceholders) != 0 {
-		t.Fatalf("UnresolvedPlaceholders = %v, want empty (sender Resolve covers)", plan.UnresolvedPlaceholders)
+	if len(plan.UnresolvedPlaceholders["claude"]) != 0 {
+		t.Fatalf("UnresolvedPlaceholders[claude] = %v, want empty (sender Resolve covers)", plan.UnresolvedPlaceholders["claude"])
 	}
 }
 
 func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	r := newFileRemote(t)
-	homeA, projectPathA := buildTestHomeAndProject(t)
+	targetsA, projectPathA := buildTestTargets(t)
 
 	priorA := openPriorForTest(t, r, "k", "")
 	planA, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: homeA, ProjectPath: projectPathA, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
+		Selected: allSelection(),
 	}, priorA)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
 	}
 	writerA := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: homeA, ProjectPath: projectPathA, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
+		Selected: allSelection(),
 	}, planA, writerA); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
@@ -230,20 +231,21 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	}
 
 	homeB := buildTestHomeBlank(t)
+	targetsB := targetsFor(homeB)
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
 	source := openSourceForTest(t, r, "k", "")
 	planB, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
+		AllTools: toolSetForTest(), Targets: targetsB, Name: "k", TargetPath: targetPath,
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
-	if len(planB.UnresolvedPlaceholders) != 0 {
-		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders)
+	if len(planB.UnresolvedPlaceholders["claude"]) != 0 {
+		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders["claude"])
 	}
 	if _, err := ExecutePull(context.Background(), PullOptions{
-		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
+		AllTools: toolSetForTest(), Targets: targetsB, Name: "k", TargetPath: targetPath,
 	}, planB, source); err != nil {
 		t.Fatalf("ExecutePull: %v", err)
 	}

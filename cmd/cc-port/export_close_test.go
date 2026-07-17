@@ -12,12 +12,13 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // closeFailingSinkStage is a pipeline leaf whose writer accepts every byte
 // but errors on Close. Used to assert that runExportWithStages wraps the
-// close-time fault as "close output pipeline" — the wrap that previously
-// lived inside internal/export as "close archive file".
+// close-time fault as "close output pipeline".
 type closeFailingSinkStage struct{}
 
 func (s *closeFailingSinkStage) Open(_ context.Context, _ io.Writer) (io.Writer, io.Closer, error) {
@@ -34,20 +35,21 @@ func (c *closeFailingCloser) Close() error {
 
 // TestRunExportWithStages_OutputCloseErrorWrapsAsCloseOutputPipeline drives
 // the cmd-layer helper directly so the deferred writer.Close error path
-// surfaces. Confirms: (a) a successful export still propagates the Close
-// fault, (b) the error message carries the cmd-layer "close output
-// pipeline" wrap, and (c) the underlying sink error sits in the chain.
+// surfaces.
 func TestRunExportWithStages_OutputCloseErrorWrapsAsCloseOutputPipeline(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	home := testutil.SetupFixture(t)
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 
 	_, err := runExportWithStages(
-		t.Context(), claudeHome,
+		t.Context(), targets,
 		&export.Options{
 			ProjectPath: "/Users/test/Projects/myproject",
-			Categories:  manifest.CategorySet{Sessions: true},
-			Placeholders: []manifest.Placeholder{
-				{Key: "{{PROJECT_PATH}}", Original: "/Users/test/Projects/myproject"},
-				{Key: "{{HOME}}", Original: "/Users/test"},
+			Selected:    map[string]map[string]bool{"claude": {"sessions": true}},
+			Placeholders: map[string][]manifest.Placeholder{
+				"claude": {
+					{Key: "{{PROJECT_PATH}}", Original: "/Users/test/Projects/myproject"},
+					{Key: "{{HOME}}", Original: "/Users/test"},
+				},
 			},
 		},
 		[]pipeline.WriterStage{&closeFailingSinkStage{}},

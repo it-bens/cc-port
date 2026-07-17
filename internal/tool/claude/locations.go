@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // uuidPattern matches the canonical 8-4-4-4-12 UUID string format,
@@ -46,7 +48,7 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 
 	if _, err := os.Stat(projectDir); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("project directory not found: %s", projectDir)
+			return nil, fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, projectDir)
 		}
 		return nil, fmt.Errorf("stat project directory: %w", err)
 	}
@@ -116,7 +118,7 @@ func collectProjectDirEntries(locations *ProjectLocations, projectDir string) ([
 		name := entry.Name()
 
 		if entry.IsDir() {
-			if name == "memory" || name == "sessions" {
+			if name == categoryMemory || name == categorySessions {
 				continue
 			}
 			if uuidPattern.MatchString(name) {

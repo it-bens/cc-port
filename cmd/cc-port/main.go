@@ -22,18 +22,18 @@ func (e *usageError) Error() string { return e.err.Error() }
 func (e *usageError) Unwrap() error { return e.err }
 
 // newRootCmd returns a fully-wired root cobra.Command. main() and tests
-// each call it once. Closure-scoped claudeDir replaces the package-level
-// var; persistent flag binding uses the same closure local. Subcommand
-// constructors take a *string so their RunE closures can dereference the
-// flag value at call time, after cobra's flag parse has populated it.
+// each call it once. toolSet is the composition root's registry; toolFlags
+// carries the generated --tool / --<name>-home persistent flag locals so
+// every subcommand's RunE can call resolveTargets at call time, after
+// cobra's flag parse has populated them.
 func newRootCmd(banner Banner) *cobra.Command {
-	var claudeDir string
+	toolSet := newToolSet()
 	rootCmd := &cobra.Command{
 		Use:   "cc-port",
-		Short: "Claude Code project portability tool",
-		Long:  "Move, export, and import Claude Code project configuration and history.",
+		Short: "Coding-tool project portability tool",
+		Long:  "Move, export, and import coding-tool project configuration and history.",
 	}
-	rootCmd.PersistentFlags().StringVar(&claudeDir, "claude-dir", "", "override ~/.claude location")
+	toolFlags := registerToolFlags(rootCmd, toolSet)
 	// -v is reserved for --version because rootCmd.Version is set, so --verbose
 	// takes no shorthand.
 	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "suppress progress output, show only errors")
@@ -75,12 +75,12 @@ func newRootCmd(banner Banner) *cobra.Command {
 	rootCmd.SetVersionTemplate("{{ccPortVersionBanner}}")
 
 	rootCmd.AddCommand(newVersionCmd(banner))
-	rootCmd.AddCommand(newMoveCmd(&claudeDir))
-	rootCmd.AddCommand(newExportCmd(&claudeDir, banner))
-	rootCmd.AddCommand(newImportCmd(&claudeDir))
-	rootCmd.AddCommand(newPushCmd(&claudeDir, banner))
-	rootCmd.AddCommand(newPullCmd(&claudeDir))
-	rootCmd.AddCommand(newStatsCmd(&claudeDir))
+	rootCmd.AddCommand(newMoveCmd(toolSet, toolFlags))
+	rootCmd.AddCommand(newExportCmd(toolSet, toolFlags, banner))
+	rootCmd.AddCommand(newImportCmd(toolSet, toolFlags))
+	rootCmd.AddCommand(newPushCmd(toolSet, toolFlags, banner))
+	rootCmd.AddCommand(newPullCmd(toolSet, toolFlags))
+	rootCmd.AddCommand(newStatsCmd(toolSet, toolFlags))
 
 	return rootCmd
 }

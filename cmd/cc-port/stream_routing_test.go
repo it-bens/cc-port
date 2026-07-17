@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -77,9 +78,13 @@ func driveExportManifest(t *testing.T, projectPath string) (home *claude.Home, s
 	t.Helper()
 	home = stageMinimalHome(t, projectPath)
 
+	toolSet := newToolSet()
+	root := &cobra.Command{}
+	flags := registerToolFlags(root, toolSet)
+	*flags.homeOverrides["claude"] = home.Dir
+
 	var out, errBuf bytes.Buffer
-	claudeDir := home.Dir
-	cmd := newExportManifestCmd(&claudeDir, noopBanner{})
+	cmd := newExportManifestCmd(toolSet, flags, noopBanner{})
 	cmd.SetOut(&out)
 	cmd.SetErr(&errBuf)
 

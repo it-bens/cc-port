@@ -50,5 +50,7 @@ func TestWriteFixtureArchive_ProducesValidArchive(t *testing.T) {
 	defer func() { _ = file.Close() }()
 	metadata, err := manifest.ReadManifestFromZip(file, info.Size())
 	require.NoError(t, err)
-	assert.NotEmpty(t, metadata.Export.Categories)
+	block, ok := metadata.ToolBlock("claude")
+	require.True(t, ok, "manifest must carry a claude tool block")
+	assert.NotEmpty(t, block.Categories)
 }

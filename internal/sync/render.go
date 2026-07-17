@@ -3,10 +3,9 @@ package sync
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
-
-	"github.com/it-bens/cc-port/internal/manifest"
 )
 
 // Render writes the dry-run preview for a push plan to w. The cmd
@@ -29,7 +28,7 @@ func (p *PushPlan) Render(w io.Writer) error {
 
 	fmt.Fprintf(&b, "[dry-run] cc-port push %s\n\n", p.Name)
 	fmt.Fprintf(&b, "  Pipeline: %s\n", pipelineDesc)
-	fmt.Fprintf(&b, "  Categories: %s\n", categoriesSummary(p.Categories))
+	fmt.Fprintf(&b, "  Categories: %s\n", selectionSummary(p.Selected))
 	fmt.Fprintf(&b, "  Encryption: %s\n\n", encStatus)
 
 	if p.PriorPushedBy != "" {
@@ -75,18 +74,24 @@ func (p *PullPlan) Render(w io.Writer) error {
 	fmt.Fprintf(&b, "    Pushed by:   %s\n", p.RemotePushedBy)
 	fmt.Fprintf(&b, "    Pushed at:   %s\n", p.RemotePushedAt.Format(time.RFC3339))
 	fmt.Fprintf(&b, "    Size:        %s\n", humanizeBytes(p.RemoteSize))
-	fmt.Fprintf(&b, "    Categories:  %s\n\n", categoriesSummary(p.Categories))
+	fmt.Fprintf(&b, "    Tools:       %s\n\n", strings.Join(p.Tools, ", "))
 
-	if len(p.DeclaredPlaceholders) > 0 {
-		fmt.Fprintln(&b, "  Required resolutions:")
-		unresolvedSet := make(map[string]bool, len(p.UnresolvedPlaceholders))
-		for _, key := range p.UnresolvedPlaceholders {
+	totalUnresolved := 0
+	for _, toolName := range p.Tools {
+		declared := p.DeclaredPlaceholders[toolName]
+		if len(declared) == 0 {
+			continue
+		}
+		unresolvedSet := make(map[string]bool, len(p.UnresolvedPlaceholders[toolName]))
+		for _, key := range p.UnresolvedPlaceholders[toolName] {
 			unresolvedSet[key] = true
 		}
-		for _, placeholder := range p.DeclaredPlaceholders {
+		fmt.Fprintf(&b, "  Required resolutions (%s):\n", toolName)
+		for _, placeholder := range declared {
 			if unresolvedSet[placeholder.Key] {
 				fmt.Fprintf(&b, "    %s     <unresolved>        (MISSING; supply --from-manifest with <resolve> for %s)\n",
 					placeholder.Key, placeholder.Key)
+				totalUnresolved++
 			} else {
 				fmt.Fprintf(&b, "    %s     <provided>          (resolved)\n", placeholder.Key)
 			}
@@ -94,9 +99,8 @@ func (p *PullPlan) Render(w io.Writer) error {
 		fmt.Fprintln(&b)
 	}
 
-	if len(p.UnresolvedPlaceholders) > 0 {
-		fmt.Fprintf(&b, "  ! %d placeholder unresolved. Pull will fail at apply time.\n",
-			len(p.UnresolvedPlaceholders))
+	if totalUnresolved > 0 {
+		fmt.Fprintf(&b, "  ! %d placeholder unresolved. Pull will fail at apply time.\n", totalUnresolved)
 	}
 
 	_, err := io.WriteString(w, b.String())
@@ -129,21 +133,30 @@ func yesNo(b bool) string {
 	return "no"
 }
 
-// categoriesSummary returns "all" if every known category is set,
-// else a comma-separated list of enabled category names in
-// AllCategories order.
-func categoriesSummary(set manifest.CategorySet) string {
-	enabled := make([]string, 0, len(manifest.AllCategories))
-	allSet := true
-	for _, spec := range manifest.AllCategories {
-		if spec.Value(&set) {
-			enabled = append(enabled, spec.Name)
-		} else {
-			allSet = false
+// selectionSummary renders a tool -> category selection as
+// "<tool>: all" or "<tool>: cat1, cat2", one clause per tool in
+// alphabetical tool-name order (stable regardless of map iteration).
+func selectionSummary(selected map[string]map[string]bool) string {
+	if len(selected) == 0 {
+		return "none"
+	}
+	toolNames := make([]string, 0, len(selected))
+	for name := range selected {
+		toolNames = append(toolNames, name)
+	}
+	sort.Strings(toolNames)
+
+	clauses := make([]string, 0, len(toolNames))
+	for _, name := range toolNames {
+		categories := selected[name]
+		enabled := make([]string, 0, len(categories))
+		for category, included := range categories {
+			if included {
+				enabled = append(enabled, category)
+			}
 		}
+		sort.Strings(enabled)
+		clauses = append(clauses, fmt.Sprintf("%s: %s", name, strings.Join(enabled, ", ")))
 	}
-	if allSet {
-		return "all"
-	}
-	return strings.Join(enabled, ", ")
+	return strings.Join(clauses, "; ")
 }

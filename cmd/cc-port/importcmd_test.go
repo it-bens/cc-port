@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -36,8 +37,9 @@ func TestImportManifestCmd_OverwriteGuard(t *testing.T) {
 }
 
 func TestImportCmd_PassphraseFlagsRegistered(t *testing.T) {
-	var claudeDir string
-	cmd := newImportCmd(&claudeDir)
+	toolSet := newToolSet()
+	flags := registerToolFlags(&cobra.Command{}, toolSet)
+	cmd := newImportCmd(toolSet, flags)
 	require.NotNil(t, cmd.Flags().Lookup("passphrase-env"),
 		"--passphrase-env should be registered on import")
 	require.NotNil(t, cmd.Flags().Lookup("passphrase-file"),
@@ -68,11 +70,7 @@ func buildMinimalArchive(t *testing.T) string {
 	require.NoError(t, err)
 
 	metadata := &manifest.Metadata{
-		Export: manifest.Info{
-			Created:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-			Categories: []manifest.Category{},
-		},
-		Placeholders: []manifest.Placeholder{},
+		Created: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	data, err := xml.Marshal(metadata)
 	require.NoError(t, err)

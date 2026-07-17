@@ -16,12 +16,11 @@ import (
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // newFileRemote opens a Remote against a per-test file:// directory.
-// Replaces the prior memblob-backed helper after the cc-port mux
-// stopped registering mem://.
 func newFileRemote(t *testing.T) *remote.Remote {
 	t.Helper()
 	dir := t.TempDir()
@@ -40,10 +39,20 @@ func buildTestHomeAndProject(t *testing.T) (home *claude.Home, projectPath strin
 	return home, "/Users/test/Projects/myproject"
 }
 
+// buildTestTargets returns a single-claude-tool target slice bound to a
+// staged fixture home, plus the fixture project path.
+func buildTestTargets(t *testing.T) (targets []tool.Target, projectPath string) {
+	t.Helper()
+	home, projectPath := buildTestHomeAndProject(t)
+	return targetsFor(home), projectPath
+}
+
+func targetsFor(home *claude.Home) []tool.Target {
+	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+}
+
 // buildTestHomeBlank returns a Home rooted under a fresh t.TempDir() with
-// Dir already created. ExecutePull's importer mkdir-then-rename steps
-// require Dir to exist; the bare struct from the plan sketch fails the
-// first os.Stat unless Dir is materialized here.
+// Dir already created.
 func buildTestHomeBlank(t *testing.T) *claude.Home {
 	t.Helper()
 	dir := t.TempDir()
@@ -57,20 +66,23 @@ func buildTestHomeBlank(t *testing.T) *claude.Home {
 	return home
 }
 
-func allCategoriesSet() manifest.CategorySet {
-	var set manifest.CategorySet
-	for _, spec := range manifest.AllCategories {
-		spec.Apply(&set, true)
+func allSelection() map[string]map[string]bool {
+	claudeTool := claude.New()
+	selected := make(map[string]bool)
+	for _, category := range claudeTool.Categories() {
+		selected[category.Name] = true
 	}
-	return set
+	return map[string]map[string]bool{claudeTool.Name(): selected}
 }
+
+func toolSetForTest() *tool.Set { return tool.NewSet(claude.New()) }
 
 // injectArchiveWithPusher writes a minimal valid cc-port archive to r at
 // name with SyncPushedBy/SyncPushedAt set. The archive is plaintext.
 func injectArchiveWithPusher(t *testing.T, r *remote.Remote, name, pusher string, at time.Time) {
 	t.Helper()
-	home, projectPath := buildTestHomeAndProject(t)
-	body := buildArchiveBytes(t, home, projectPath, pusher, at, "", nil, "")
+	targets, projectPath := buildTestTargets(t)
+	body := buildArchiveBytes(t, targets, projectPath, pusher, at, "", nil, "")
 	uploadBytes(t, r, name, body)
 }
 
@@ -78,9 +90,9 @@ func injectArchiveWithPusher(t *testing.T, r *remote.Remote, name, pusher string
 // declares one placeholder with the given Key and Original (no Resolve).
 func injectArchiveWithDeclaredPlaceholder(t *testing.T, r *remote.Remote, name, key, original, pusher string) {
 	t.Helper()
-	home, projectPath := buildTestHomeAndProject(t)
-	placeholders := []manifest.Placeholder{{Key: key, Original: original}}
-	body := buildArchiveBytes(t, home, projectPath, pusher, time.Now().UTC(), "", placeholders, "")
+	targets, projectPath := buildTestTargets(t)
+	placeholders := map[string][]manifest.Placeholder{"claude": {{Key: key, Original: original}}}
+	body := buildArchiveBytes(t, targets, projectPath, pusher, time.Now().UTC(), "", placeholders, "")
 	uploadBytes(t, r, name, body)
 }
 
@@ -89,11 +101,11 @@ func injectArchiveWithDeclaredPlaceholder(t *testing.T, r *remote.Remote, name, 
 // sender ran with their own paths resolved before the push.
 func injectArchiveWithSenderResolve(t *testing.T, r *remote.Remote, name, key, original, pusher string) {
 	t.Helper()
-	home, projectPath := buildTestHomeAndProject(t)
-	placeholders := []manifest.Placeholder{
-		{Key: key, Original: original, Resolve: "/Users/sender-resolved"},
+	targets, projectPath := buildTestTargets(t)
+	placeholders := map[string][]manifest.Placeholder{
+		"claude": {{Key: key, Original: original, Resolve: "/Users/sender-resolved"}},
 	}
-	body := buildArchiveBytes(t, home, projectPath, pusher, time.Now().UTC(), "", placeholders, "")
+	body := buildArchiveBytes(t, targets, projectPath, pusher, time.Now().UTC(), "", placeholders, "")
 	uploadBytes(t, r, name, body)
 }
 
@@ -103,11 +115,11 @@ func injectArchiveWithSenderResolve(t *testing.T, r *remote.Remote, name, key, o
 // archive-naming context; current callers pass "".
 func buildArchiveBytes(
 	t *testing.T,
-	home *claude.Home,
+	targets []tool.Target,
 	projectPath, pusher string,
 	at time.Time,
 	pass string,
-	placeholders []manifest.Placeholder,
+	placeholders map[string][]manifest.Placeholder,
 	_ string,
 ) []byte {
 	t.Helper()
@@ -123,12 +135,12 @@ func buildArchiveBytes(
 	opts := export.Options{
 		ProjectPath:  projectPath,
 		Output:       w,
-		Categories:   allCategoriesSet(),
+		Selected:     allSelection(),
 		Placeholders: placeholders,
 		SyncPushedBy: pusher,
 		SyncPushedAt: at,
 	}
-	if _, err := export.Run(context.Background(), home, &opts); err != nil {
+	if _, err := export.Run(context.Background(), targets, &opts); err != nil {
 		_ = w.Close()
 		t.Fatalf("export.Run: %v", err)
 	}
@@ -168,12 +180,7 @@ type bufferSinkCloser struct{}
 
 func (b *bufferSinkCloser) Close() error { return nil }
 
-// openPriorForTest opens the prior reader pipeline for sync_test.go. Mirrors
-// cmd's openPriorRead success path: returns *PriorRead on a readable prior,
-// returns nil on remote.ErrNotFound, t.Fatalf on any other error. t.Cleanup
-// registers Source.Close so individual tests do not need to defer it.
-// Plaintext-prior happy path only; encrypted-prior dispatch tests live in
-// cmd/cc-port and call openPriorRead directly.
+// openPriorForTest opens the prior reader pipeline for sync_test.go.
 //
 //nolint:unparam // pass mirrors openPriorRead; reserved for a future encrypted-prior test.
 func openPriorForTest(t *testing.T, r *remote.Remote, name, pass string) *PriorRead {
@@ -193,9 +200,7 @@ func openPriorForTest(t *testing.T, r *remote.Remote, name, pass string) *PriorR
 	return &PriorRead{Source: src, WasEncrypted: src.Meta.WasEncrypted}
 }
 
-// openSourceForTest opens the strict reader pipeline for pull tests. Returns
-// the opened pipeline.Source; t.Cleanup registers Close. t.Fatalf on any
-// error so test bodies stay flat.
+// openSourceForTest opens the strict reader pipeline for pull tests.
 //
 //nolint:unparam // name mirrors the production archive key; current callers share one key.
 func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeline.Source {
@@ -213,11 +218,6 @@ func openSourceForTest(t *testing.T, r *remote.Remote, name, pass string) pipeli
 }
 
 // openWriterForTest opens the writer pipeline for ExecutePush tests.
-// Returns the outermost io.WriteCloser; the caller owns Close. No
-// t.Cleanup safety net: pipeline.RunWriter wraps the chain in an
-// idempotent close that delegates to the bucket writer, but the upload
-// commits inside that explicit Close, so a missed Close is a test bug
-// the caller must surface.
 //
 //nolint:unparam // name mirrors the production archive key; current callers share one key.
 func openWriterForTest(t *testing.T, r *remote.Remote, name, pass string) io.WriteCloser {

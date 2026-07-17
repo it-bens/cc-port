@@ -19,15 +19,15 @@ type RegistryEntry struct {
 // Registries is the ordered source of truth for Claude Code storage surfaces.
 var Registries = []RegistryEntry{
 	{
-		Name:        "todos",
-		Category:    "todos",
+		Name:        categoryTodos,
+		Category:    categoryTodos,
 		Files:       func(locations *ProjectLocations) []string { return locations.TodoFiles },
 		ZipPrefix:   "todos/",
 		HomeBaseDir: (*Home).TodosDir,
 	},
 	{
 		Name:      "usage-data/session-meta",
-		Category:  "usage-data",
+		Category:  categoryUsageData,
 		Files:     func(locations *ProjectLocations) []string { return locations.UsageDataSessionMeta },
 		ZipPrefix: "usage-data/session-meta/",
 		HomeBaseDir: func(home *Home) string {
@@ -36,7 +36,7 @@ var Registries = []RegistryEntry{
 	},
 	{
 		Name:      "usage-data/facets",
-		Category:  "usage-data",
+		Category:  categoryUsageData,
 		Files:     func(locations *ProjectLocations) []string { return locations.UsageDataFacets },
 		ZipPrefix: "usage-data/facets/",
 		HomeBaseDir: func(home *Home) string {
@@ -44,15 +44,15 @@ var Registries = []RegistryEntry{
 		},
 	},
 	{
-		Name:        "plugins-data",
-		Category:    "plugins-data",
+		Name:        categoryPluginsData,
+		Category:    categoryPluginsData,
 		Files:       func(locations *ProjectLocations) []string { return locations.PluginsDataFiles },
 		ZipPrefix:   "plugins-data/",
 		HomeBaseDir: (*Home).PluginsDataDir,
 	},
 	{
-		Name:          "tasks",
-		Category:      "tasks",
+		Name:          categoryTasks,
+		Category:      categoryTasks,
 		Files:         func(locations *ProjectLocations) []string { return locations.TaskFiles },
 		SidecarFilter: isTaskSidecar,
 		ZipPrefix:     "tasks/",

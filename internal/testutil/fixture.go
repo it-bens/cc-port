@@ -11,7 +11,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/fsutil"
-	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
@@ -111,17 +111,21 @@ func WriteFixtureArchive(t *testing.T) string {
 	}
 	defer func() { _ = file.Close() }()
 
-	var allCategories manifest.CategorySet
-	for _, spec := range manifest.AllCategories {
-		spec.Apply(&allCategories, true)
+	claudeTool := claude.New()
+	workspace := claude.NewWorkspace(home)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: workspace}}
+
+	selected := make(map[string]bool)
+	for _, category := range claudeTool.Categories() {
+		selected[category.Name] = true
 	}
 
 	options := export.Options{
 		ProjectPath: FixtureProjectPath(),
 		Output:      file,
-		Categories:  allCategories,
+		Selected:    map[string]map[string]bool{claudeTool.Name(): selected},
 	}
-	if _, err := export.Run(context.Background(), home, &options); err != nil {
+	if _, err := export.Run(context.Background(), targets, &options); err != nil {
 		t.Fatalf("export fixture: %v", err)
 	}
 	return archivePath

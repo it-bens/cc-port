@@ -61,7 +61,7 @@ func TestPull_DryRunDoesNotImport(t *testing.T) {
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 	})
@@ -90,7 +90,7 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--apply",
@@ -119,7 +119,7 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--from-manifest", emptyManifestPath,
@@ -144,7 +144,7 @@ func TestPull_AcceptsValidCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--credentials-file", credentialsPath,
@@ -165,7 +165,7 @@ func TestPull_AcceptsNoPromptFlag(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--no-prompt",
@@ -191,7 +191,7 @@ func TestPull_RejectsTooPermissiveCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--credentials-file", credentialsPath,
@@ -214,7 +214,7 @@ func TestPull_RejectsMalformedCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--credentials-file", malformedCredentialsPath,

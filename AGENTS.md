@@ -6,9 +6,9 @@ Go CLI that rewrites Claude Code project state. See `README.md` for the project 
 
 - Never inspect or rewrite file-history snapshot contents. (docs/architecture.md §File-history policy (cross-cutting))
 - Add any new session-keyed directory as one row in `claude.Registries`. (internal/tool/claude/README.md §Session-keyed registry)
-- Register every export category in `manifest.AllCategories`. Never hard-code a parallel category list. (internal/manifest/README.md §Category manifest)
+- Register every export category in the owning tool's `Categories()` (e.g. `internal/tool/claude`); validate a manifest's category list through `manifest.ApplyToolCategories`. Never hard-code a parallel category list. (internal/manifest/README.md §Category manifest)
 - Route every path-substring rewrite or count through the `rewrite` primitives. Never call `strings.ReplaceAll` or `strings.Count` on user paths. (internal/rewrite/README.md §Boundary rules)
-- Wrap every mutating command body (`move --apply`, `import`) in `lock.WithLock` before any write. (internal/lock/README.md §Concurrency guard)
+- For `move --apply`, preflight every selected tool with witness-first `lock.Acquire` in registry order, hold all flocks through apply, and release in reverse order; wrap `import` in `lock.WithLock`. (internal/lock/README.md §Concurrency guard)
 - Contain adversarial archive paths with `os.Root` and bound decompressed reads with `io.LimitReader`. (internal/importer/README.md §Import contract)
 - After editing archive cap-guard code, run `go test -tags large ./internal/importer/...` locally. (internal/importer/README.md §Tests)
 - Set an explicit `bufio.Scanner.Buffer` cap on any new line-scanned read over untrusted input. (internal/scan/README.md §Rules files preserved)

@@ -40,6 +40,16 @@ func TestWithLock_RemovesLockFileOnSuccess(t *testing.T) {
 	assert.NoFileExists(t, lockPath)
 }
 
+func TestHeld_SecondReleaseIsNoOpAndRemovesLockFile(t *testing.T) {
+	lockPath := newTestLockPath(t)
+	held, err := Acquire(lockPath, noActive)
+	require.NoError(t, err)
+
+	require.NoError(t, held.Release())
+	require.NoError(t, held.Release())
+	assert.NoFileExists(t, lockPath)
+}
+
 func TestWithLock_RemovesLockFileOnFnError(t *testing.T) {
 	lockPath := newTestLockPath(t)
 

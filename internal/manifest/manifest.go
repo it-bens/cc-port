@@ -12,20 +12,25 @@ import (
 	"time"
 )
 
-// Metadata is the root element of the manifest XML file.
+// Metadata is the root element of the manifest XML file. One Tool block
+// exists per tool the export touched; a tool that did not know the project
+// still writes an empty block (per-tool categories all excluded, no
+// placeholders) rather than omitting itself.
 type Metadata struct {
-	XMLName      xml.Name      `xml:"cc-port"`
-	Export       Info          `xml:"export"`
-	Placeholders []Placeholder `xml:"placeholders>placeholder"`
-	SyncPushedBy string        `xml:"sync-pushed-by,omitempty"`
-	SyncPushedAt string        `xml:"sync-pushed-at,omitempty"` // RFC3339
+	XMLName      xml.Name  `xml:"cc-port"`
+	Created      time.Time `xml:"created"`
+	Tools        []Tool    `xml:"tool"`
+	SyncPushedBy string    `xml:"sync-pushed-by,omitempty"`
+	SyncPushedAt string    `xml:"sync-pushed-at,omitempty"` // RFC3339
 }
 
-// Info contains information about the export, including when it was created
-// and which categories were included or excluded.
-type Info struct {
-	Created    time.Time  `xml:"created"`
-	Categories []Category `xml:"categories>category"`
+// Tool is one tool's block inside metadata.xml: its category selection and
+// its placeholder set. Placeholder keys are scoped to this tool; the same
+// key text in two different tools' blocks resolves independently.
+type Tool struct {
+	Name         string        `xml:"name,attr"`
+	Categories   []Category    `xml:"categories>category"`
+	Placeholders []Placeholder `xml:"placeholders>placeholder"`
 }
 
 // Category describes a named category and whether it was included in the export.
@@ -40,6 +45,17 @@ type Placeholder struct {
 	Key      string `xml:"key,attr"`
 	Original string `xml:"original,attr"`
 	Resolve  string `xml:"resolve,attr,omitempty"`
+}
+
+// ToolBlock returns the named tool's block and true, or a zero Tool and
+// false when metadata carries no block for that name.
+func (metadata *Metadata) ToolBlock(name string) (Tool, bool) {
+	for _, block := range metadata.Tools {
+		if block.Name == name {
+			return block, true
+		}
+	}
+	return Tool{}, false
 }
 
 // maxManifestBytes caps the size of metadata.xml when read from a path or

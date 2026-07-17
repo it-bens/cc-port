@@ -45,13 +45,13 @@ func TestExecutePush_ExportSubPhasesNest(t *testing.T) {
 	recorder := progresstest.NewRecorder()
 	reporter := recorder.Reporter(progress.LevelInfo)
 
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 
 	opts := PushOptions{
-		ClaudeHome:  home,
+		Targets:     targets,
 		ProjectPath: projectPath,
 		Name:        "k",
-		Categories:  allCategoriesSet(),
+		Selected:    allSelection(),
 		Reporter:    reporter,
 	}
 	plan, err := PlanPush(context.Background(), opts, nil)
@@ -71,10 +71,10 @@ func TestExecutePush_ExportSubPhasesNest(t *testing.T) {
 
 	assert.Contains(t, topLevelPhaseNames(events), "export",
 		"ExecutePush opens a top-level export phase on its reporter")
-	assert.Contains(t, phasePaths(events), "export/locate",
-		"export's locate sub-phase nests under the export phase")
 	assert.Contains(t, phasePaths(events), "export/archive",
 		"export's archive sub-phase nests under the export phase")
+	assert.Contains(t, phasePaths(events), "export/archive/claude",
+		"export's per-tool sub-phase nests under the archive phase")
 }
 
 // TestExecutePull_ImportSubPhasesNest pushes a fixture archive, then pulls it
@@ -83,32 +83,33 @@ func TestExecutePush_ExportSubPhasesNest(t *testing.T) {
 // "import" phase ExecutePull brackets.
 func TestExecutePull_ImportSubPhasesNest(t *testing.T) {
 	r := newFileRemote(t)
-	homeA, projectPathA := buildTestHomeAndProject(t)
+	targetsA, projectPathA := buildTestTargets(t)
 
 	planA, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: homeA, ProjectPath: projectPathA, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
+		Selected: allSelection(),
 	}, openPriorForTest(t, r, "k", ""))
 	require.NoError(t, err)
 	writerA := openWriterForTest(t, r, "k", "")
 	require.NoError(t, ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: homeA, ProjectPath: projectPathA, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
+		Selected: allSelection(),
 	}, planA, writerA))
 	require.NoError(t, writerA.Close())
 
 	homeB := buildTestHomeBlank(t)
+	targetsB := targetsFor(homeB)
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
 	recorder := progresstest.NewRecorder()
 	source := openSourceForTest(t, r, "k", "")
 	pullOpts := PullOptions{
-		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
+		AllTools: toolSetForTest(), Targets: targetsB, Name: "k", TargetPath: targetPath,
 		Reporter: recorder.Reporter(progress.LevelInfo),
 	}
 	planB, err := PlanPull(context.Background(), pullOpts, source)
 	require.NoError(t, err)
-	require.Empty(t, planB.UnresolvedPlaceholders)
+	require.Empty(t, planB.UnresolvedPlaceholders["claude"])
 
 	_, err = ExecutePull(context.Background(), pullOpts, planB, source)
 	require.NoError(t, err)
@@ -118,7 +119,7 @@ func TestExecutePull_ImportSubPhasesNest(t *testing.T) {
 	assert.Contains(t, topLevelPhaseNames(events), "import",
 		"ExecutePull opens a top-level import phase on its reporter")
 	paths := phasePaths(events)
-	for _, sub := range []string{"preflight", "manifest", "extract", "promote"} {
+	for _, sub := range []string{"preflight", "extract", "promote", "finalize"} {
 		assert.Contains(t, paths, "import/"+sub,
 			"importer's "+sub+" phase nests under the import phase")
 	}

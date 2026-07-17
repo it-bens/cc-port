@@ -20,8 +20,9 @@ witness blocks mutation while a live writer is present.
   3. `fn` returns a non-nil error: that error is returned. The deferred release
      still runs, and its error (if any) is dropped because the caller's
      operational error takes precedence.
-  4. `fn` returns nil: any deferred release error surfaces wrapped as
-     `release cc-port lock: %w`.
+  4. `fn` returns nil: a deferred unlock error surfaces wrapped as
+     `release cc-port lock: %w`; if unlock succeeds but removing the lock
+     file fails, the error surfaces as `remove cc-port lock file: %w`.
 - `tool.ActiveWriter`: witness result with `Pid int` and `Cwd string`.
   `internal/tool/claude.FindActive` supplies Claude Code evidence.
 - `FileName`: constant. The name (`.cc-port.lock`) of the advisory-lock file
@@ -45,18 +46,23 @@ witness blocks mutation while a live writer is present.
 
 ### Concurrency guard
 
-Before mutating shared files, mutating commands wrap their work in
-`lock.WithLock`. They provide the lock path and a witness callback. The callback
-runs before flock acquisition. Any witness result blocks the invocation before
-it writes files.
+Before mutating shared files, `importer.Run` nests `lock.WithLock` for every
+selected tool in registry order. `move.Apply` instead preflights each selected
+target's `MoveSurfaces`, then calls `lock.Acquire`; no target applies until every
+witness and flock succeeds. Move holds all acquired locks through the full apply
+and releases them in reverse order.
+
+`Acquire` runs the witness before flock acquisition. `WithLock` is the
+single-lock convenience wrapper around `Acquire` and deferred `Held.Release`.
+Any witness result blocks the invocation before it writes files.
 
 The kernel releases the lock when cc-port exits, so a crash does not leave a
 stale block on the next invocation.
 
 Guarded commands (these take the lock and run the live-session check):
 
-- `cc-port move --apply`
-- `cc-port import`
+- `cc-port move --apply` (direct `Acquire` across selected tools)
+- `cc-port import` (nested `WithLock` across selected tools)
 
 Not guarded (these are read-only with respect to `~/.claude/` and run without
 locking or session detection):
@@ -71,10 +77,10 @@ locking or session detection):
 
 Called by:
 
-- `internal/move/README.md §Apply contract` (`move.Apply` wraps its body in
-  `lock.WithLock`).
-- `internal/importer/README.md §Import contract` (`importer.Run` wraps its
-  body in `lock.WithLock`).
+- `internal/move/README.md §Apply contract` (`move.Apply` preflights and retains
+  one `lock.Acquire` result per selected tool).
+- `internal/importer/README.md §Import contract` (`importer.Run` nests
+  `lock.WithLock` across selected tools).
 
 #### Handled
 

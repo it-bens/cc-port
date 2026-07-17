@@ -17,13 +17,10 @@ import (
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
 	"github.com/it-bens/cc-port/internal/tool"
-	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // newPullCmd returns the pull subcommand with closure-scoped flag locals.
-// claudeDir points at the persistent root flag's local; runPullCmd reads
-// it via *claudeDir at call time.
-func newPullCmd(claudeDir *string) *cobra.Command {
+func newPullCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 	var (
 		toPath          string
 		remoteURL       string
@@ -38,8 +35,8 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 		Use:   "pull <name>",
 		Short: "Pull a project archive from a remote and apply it locally",
 		Long: "Pulls a cc-port archive from a remote storage backend " +
-			"(file:// or s3://) and applies it to the local target path. " +
-			"Dry-run by default; pass --apply to commit. " +
+			"(file:// or s3://) and applies it, across every selected tool, to the local " +
+			"target path. Dry-run by default; pass --apply to commit. " +
 			"Refuses to apply when declared placeholders remain unresolved.\n\n" +
 			remote.URLDoc,
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -49,7 +46,7 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPullCmd(cmd, args, *claudeDir)
+			return runPullCmd(cmd, args, toolSet, flags)
 		},
 	}
 	cmd.Flags().StringVar(&toPath, "to", "",
@@ -75,11 +72,7 @@ func newPullCmd(claudeDir *string) *cobra.Command {
 	return cmd
 }
 
-// openArchiveSource opens the strict reader pipeline for pull. The counting
-// stage is inserted after remote.Source so the download phase measures the
-// encrypted bytes coming off the remote — the real network transfer — exactly
-// once. Translates remote.ErrNotFound and encrypt.ErrPassphraseRequired into
-// sync sentinels; other errors propagate wrapped.
+// openArchiveSource opens the strict reader pipeline for pull.
 func openArchiveSource(
 	ctx context.Context,
 	r *remote.Remote,
@@ -105,14 +98,11 @@ func openArchiveSource(
 	return src, nil
 }
 
-// runPullCmd is the pull subcommand body. The named return on the
-// runWithProgress closure is load-bearing: source.Close error must surface
-// joined into the closure's return value. The remote close defer sits outside
-// the closure so it covers both pipeline errors and successful drains.
-func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error) {
+// runPullCmd is the pull subcommand body.
+func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *toolFlags) (err error) {
 	apply, _ := cmd.Flags().GetBool("apply")
 
-	opts, r, passphrase, err := buildPullOptions(cmd, args[0], claudeDir)
+	opts, r, passphrase, err := buildPullOptions(cmd, args[0], toolSet, flags)
 	if err != nil {
 		return err
 	}
@@ -152,12 +142,12 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 			return nil
 		}
 
-		if len(plan.UnresolvedPlaceholders) > 0 {
-			return fmt.Errorf(
-				"%w: %s",
-				syncc.ErrUnresolvedPlaceholder,
-				strings.Join(plan.UnresolvedPlaceholders, ", "),
-			)
+		var allUnresolved []string
+		for _, toolName := range plan.Tools {
+			allUnresolved = append(allUnresolved, plan.UnresolvedPlaceholders[toolName]...)
+		}
+		if len(allUnresolved) > 0 {
+			return fmt.Errorf("%w: %s", syncc.ErrUnresolvedPlaceholder, strings.Join(allUnresolved, ", "))
 		}
 
 		runResult, err := syncc.ExecutePull(ctx, opts, plan, source)
@@ -168,14 +158,10 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 		return nil
 	})
 
-	// result is non-nil only on the committed-apply path. Gating success
-	// output on result (not on progErr) keeps a renderer-teardown error in
-	// progErr from hiding the rules report and confirmation after the import
-	// already mutated local state. The rules report must stay here, after
-	// runWithProgress returned: Finalize has stopped the live ledger, so this
-	// stderr write no longer interleaves with the program's repaint.
 	if apply && result != nil {
-		renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
+		if len(result.SkippedTools) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "))
+		}
 		if _, werr := fmt.Fprintf(cmd.OutOrStdout(), "Pulled: %s\n", opts.TargetPath); werr != nil {
 			progErr = errors.Join(progErr, fmt.Errorf("write pull confirmation: %w", werr))
 		}
@@ -184,9 +170,8 @@ func runPullCmd(cmd *cobra.Command, args []string, claudeDir string) (err error)
 }
 
 // buildPullOptions validates flags, resolves the target path, opens the
-// remote, and assembles syncc.PullOptions. The caller owns the returned
-// remote handle and the passphrase value; opts no longer carries them.
-func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
+// remote, and assembles syncc.PullOptions.
+func buildPullOptions(cmd *cobra.Command, name string, toolSet *tool.Set, flags *toolFlags,
 ) (syncc.PullOptions, *remote.Remote, string, error) {
 	toPath, _ := cmd.Flags().GetString("to")
 	remoteURL, _ := cmd.Flags().GetString("remote")
@@ -211,7 +196,7 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		return syncc.PullOptions{}, nil, "", fmt.Errorf("resolve target path: %w", err)
 	}
 
-	claudeHome, err := claude.NewHome(claudeDir)
+	targets, err := resolveTargets(toolSet, flags)
 	if err != nil {
 		return syncc.PullOptions{}, nil, "", err
 	}
@@ -240,16 +225,11 @@ func buildPullOptions(cmd *cobra.Command, name string, claudeDir string,
 		return syncc.PullOptions{}, nil, "", err
 	}
 
-	homePath, err := resolveHomeAnchor()
-	if err != nil {
-		return syncc.PullOptions{}, nil, "", err
-	}
-
 	opts := syncc.PullOptions{
-		ClaudeHome:        claudeHome,
+		AllTools:          toolSet,
+		Targets:           targets,
 		Name:              name,
 		TargetPath:        targetPath,
-		HomePath:          homePath,
 		FromManifest:      fromManifest,
 		EncryptionEnabled: passphrase != "",
 	}

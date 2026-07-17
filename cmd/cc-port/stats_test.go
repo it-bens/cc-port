@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/stats"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
@@ -25,7 +24,7 @@ func driveStats(t *testing.T, claudeDir string, args ...string) (stdout string, 
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetOut(&outBuffer)
 	rootCmd.SetErr(&errBuffer)
-	rootCmd.SetArgs(append([]string{"stats", "--claude-dir", claudeDir}, args...))
+	rootCmd.SetArgs(append([]string{"stats", "--claude-home", claudeDir}, args...))
 	err = rootCmd.Execute()
 	return outBuffer.String(), err
 }
@@ -38,6 +37,7 @@ func TestStatsCmd_ResultRoutedToStdout(t *testing.T) {
 
 	// A bare fmt.Println would write to os.Stdout and leave this buffer empty.
 	assert.Contains(t, stdout, "cc-port stats: "+testutil.FixtureProjectPath())
+	assert.Contains(t, stdout, "[claude]")
 	assert.Contains(t, stdout, "References")
 	assert.Contains(t, stdout, "Disk footprint")
 }
@@ -52,10 +52,12 @@ func TestStatsCmd_JSONFlagEmitsFootprintDTO(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &footprint))
 
 	assert.Equal(t, testutil.FixtureProjectPath(), footprint.ProjectPath)
-	assert.Len(t, footprint.Disk, len(manifest.AllCategories),
-		"the disk DTO carries every manifest category, including zero ones")
-	assert.NotEmpty(t, footprint.References)
-	assert.Positive(t, footprint.ReferenceTotal)
+	require.Len(t, footprint.ByTool, 1)
+	claudeFootprint := footprint.ByTool[0]
+	assert.Equal(t, "claude", claudeFootprint.Tool)
+	assert.NotEmpty(t, claudeFootprint.Disk)
+	assert.NotEmpty(t, claudeFootprint.References)
+	assert.Positive(t, claudeFootprint.ReferenceTotal)
 }
 
 func TestStatsCmd_JSONFlagEmitsAllProjectsDTO(t *testing.T) {
@@ -71,9 +73,7 @@ func TestStatsCmd_JSONFlagEmitsAllProjectsDTO(t *testing.T) {
 
 // TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes drives all-projects
 // mode against a single witness-less project and asserts the renderer flags the
-// missing witness and humanizes the byte total. A 2 KiB transcript pins the KiB
-// branch of humanizeBytes, and the absent sessions/ directory leaves the project
-// unresolved so the "(no session witness)" suffix renders.
+// missing witness and humanizes the byte total.
 func TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes(t *testing.T) {
 	claudeDir := filepath.Join(t.TempDir(), "dotclaude")
 	orphanDir := filepath.Join(claudeDir, "projects", "-tmp-orphan")

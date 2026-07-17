@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -14,14 +15,10 @@ import (
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/tool"
-	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
-// newImportCmd returns the import subcommand with closure-scoped flag
-// locals. claudeDir points at the persistent root flag's local; cobra
-// populates it on flag parse, so the RunE closure must dereference at
-// call time.
-func newImportCmd(claudeDir *string) *cobra.Command {
+// newImportCmd returns the import subcommand with closure-scoped flag locals.
+func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 	var (
 		fromManifest   string
 		passphraseEnv  string
@@ -30,7 +27,7 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import <archive.zip> <target-path>",
 		Short: "Import a project from a cc-port ZIP archive",
-		Long:  "Imports Claude Code project data from a ZIP archive into the given target path.",
+		Long:  "Imports project data across every selected tool from a ZIP archive into the given target path.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
 				return &usageError{err: err}
@@ -44,7 +41,7 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				return fmt.Errorf("resolve target path: %w", err)
 			}
 
-			claudeHome, err := claude.NewHome(*claudeDir)
+			targets, err := resolveTargets(toolSet, flags)
 			if err != nil {
 				return err
 			}
@@ -68,28 +65,25 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 				}
 			}()
 
-			resolutions, err := composeImportResolutions(source, fromManifest)
-			if err != nil {
-				return err
-			}
-
-			homePath, err := resolveHomeAnchor()
-			if err != nil {
-				return err
+			var fromManifestMeta *manifest.Metadata
+			if fromManifest != "" {
+				fromManifestMeta, err = manifest.ReadManifest(fromManifest)
+				if err != nil {
+					return fmt.Errorf("read manifest: %w", err)
+				}
 			}
 
 			importOptions := importer.Options{
-				Source:      source.ReaderAt,
-				Size:        source.Size,
-				TargetPath:  targetPath,
-				HomePath:    homePath,
-				Resolutions: resolutions,
+				Source:       source.ReaderAt,
+				Size:         source.Size,
+				TargetPath:   targetPath,
+				FromManifest: fromManifestMeta,
 			}
 
 			var result *importer.Result
 			if err := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
 				importOptions.Reporter = reporter
-				runResult, runErr := importer.Run(ctx, claudeHome, &importOptions)
+				runResult, runErr := importer.Run(ctx, toolSet, targets, &importOptions)
 				if runErr != nil {
 					return fmt.Errorf("import: %w", runErr)
 				}
@@ -102,9 +96,13 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Imported to %s\n", targetPath); err != nil {
 				return fmt.Errorf("write success line: %w", err)
 			}
-
-			renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
-
+			if len(result.SkippedTools) > 0 {
+				if _, err := fmt.Fprintf(
+					cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "),
+				); err != nil {
+					return fmt.Errorf("write skipped-tools note: %w", err)
+				}
+			}
 			return nil
 		},
 	}
@@ -128,9 +126,7 @@ func newImportCmd(claudeDir *string) *cobra.Command {
 	return cmd
 }
 
-// newImportManifestCmd returns the `import manifest` subcommand. Output
-// and passphrase flag values live as closure-scoped locals on the cmd;
-// runImportManifest reads them via cmd.Flags().GetString.
+// newImportManifestCmd returns the `import manifest` subcommand.
 func newImportManifestCmd() *cobra.Command {
 	var (
 		output         string
@@ -161,10 +157,8 @@ func newImportManifestCmd() *cobra.Command {
 	return cmd
 }
 
-// runImportManifest is the import manifest subcommand body, extracted so
-// tests can drive it without re-wiring the whole cobra tree. Refuses to
-// overwrite an existing output file; the user deletes it or picks a
-// different path with --output.
+// runImportManifest is the import manifest subcommand body. Refuses to
+// overwrite an existing output file.
 func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 	output, _ := cmd.Flags().GetString("output")
 	passphraseEnv, _ := cmd.Flags().GetString("passphrase-env")
@@ -200,8 +194,10 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 		return fmt.Errorf("read manifest from zip: %w", err)
 	}
 
-	for i := range metadata.Placeholders {
-		metadata.Placeholders[i].Resolve = ""
+	for t := range metadata.Tools {
+		for p := range metadata.Tools[t].Placeholders {
+			metadata.Tools[t].Placeholders[p].Resolve = ""
+		}
 	}
 
 	if err := manifest.WriteManifest(output, metadata); err != nil {
@@ -215,32 +211,4 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 		return fmt.Errorf("write follow-up hint: %w", err)
 	}
 	return nil
-}
-
-// composeImportResolutions reads the archive's manifest, optionally loads a
-// --from-manifest override, and delegates the merge to
-// importer.ResolvePlaceholders. Refuses imports with unresolved non-implicit
-// keys via MissingResolutionsError.
-func composeImportResolutions(
-	source pipeline.Source, fromManifest string,
-) (map[string]string, error) {
-	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
-	if err != nil {
-		return nil, fmt.Errorf("read manifest from zip: %w", err)
-	}
-
-	var fromManifestMeta *manifest.Metadata
-	if fromManifest != "" {
-		fromManifestMeta, err = manifest.ReadManifest(fromManifest)
-		if err != nil {
-			return nil, fmt.Errorf("read manifest: %w", err)
-		}
-	}
-
-	unresolved := make([]string, 0, len(metadata.Placeholders))
-	for _, placeholder := range metadata.Placeholders {
-		unresolved = append(unresolved, placeholder.Key)
-	}
-
-	return importer.ResolvePlaceholders(unresolved, fromManifestMeta)
 }

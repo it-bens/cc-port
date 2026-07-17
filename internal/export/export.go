@@ -1,48 +1,32 @@
-// Package export produces cc-port ZIP archives for one Claude Code project.
+// Package export produces cc-port ZIP archives across every selected tool.
 package export
 
 import (
 	"archive/zip"
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"sort"
 	"time"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/progress"
-	"github.com/it-bens/cc-port/internal/rewrite"
-	"github.com/it-bens/cc-port/internal/scan"
-	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // now is a seam reassigned under t.Cleanup so tests can pin timestamps.
 var now = time.Now
 
-// Options holds all parameters for an export operation. FromManifest is
-// a CLI-layer carrier only: when non-empty the CLI loads categories and
-// placeholders from that file instead of discovering them. Run ignores
-// this field and behaves solely on Categories and Placeholders. Output
-// receives the archive bytes; the caller owns its lifecycle.
-//
-// SyncPushedBy and SyncPushedAt are optional fields populated only by
-// cc-port push (via internal/sync); cc-port export callers leave them at
-// the zero value, in which case buildMetadata omits the corresponding
-// elements from metadata.xml.
+// Options holds every parameter for one export run across the selected
+// targets. Selected and Placeholders are keyed by tool name; a tool absent
+// from Selected exports nothing (an empty category selection), matching
+// "a tool that does not know the project writes an empty tool block."
 type Options struct {
 	ProjectPath  string
 	Output       io.Writer
-	Categories   manifest.CategorySet
-	Placeholders []manifest.Placeholder
-	FromManifest string
+	Selected     map[string]map[string]bool
+	Placeholders map[string][]manifest.Placeholder
 	SyncPushedBy string
 	SyncPushedAt time.Time
 
@@ -51,823 +35,91 @@ type Options struct {
 	Reporter progress.Reporter
 }
 
-// ArchiveEntry names one file inside the produced archive. Bodies are not
-// retained; callers that need bytes reopen the zip. Keeping bodies out of
-// Result means a large session export does not pin every byte in memory
-// on the return path.
-type ArchiveEntry struct {
-	ArchivePath string
-	Size        int64
-}
-
-// Result summarizes the observable contents of a successful export.
-// Category slices appear in manifest.AllCategories order.
+// Result summarizes one export run: the archive-relative metadata entry
+// plus every selected tool's tool.ExportResult, keyed by tool name.
 type Result struct {
-	// Metadata is always populated with metadata.xml.
-	Metadata ArchiveEntry
-
-	Sessions    []ArchiveEntry
-	Memory      []ArchiveEntry
-	History     []ArchiveEntry // zero or one entry
-	FileHistory []ArchiveEntry
-	Config      []ArchiveEntry // zero or one entry
-	Todos       []ArchiveEntry
-	UsageData   []ArchiveEntry
-	PluginsData []ArchiveEntry
-	Tasks       []ArchiveEntry
-
-	// RulesReport carries the scan of ~/.claude/rules/*.md for paths
-	// matching ProjectPath. Populated unconditionally inside Run, before
-	// any archive bytes are written.
-	RulesReport scan.Report
+	Metadata archive.WrittenEntry
+	ByTool   map[string]tool.ExportResult
 }
 
-// categoryEntriesByName returns a pointer to the Result slice that receives
-// archive entries for the named category. Names come from
-// manifest.AllCategories; the drift-guard test in result_coverage_test.go
-// ensures every AllCategories entry has a case here.
-func categoryEntriesByName(result *Result, name string) (*[]ArchiveEntry, error) {
-	switch name {
-	case "sessions":
-		return &result.Sessions, nil
-	case "memory":
-		return &result.Memory, nil
-	case "history":
-		return &result.History, nil
-	case "file-history":
-		return &result.FileHistory, nil
-	case "config":
-		return &result.Config, nil
-	case "todos":
-		return &result.Todos, nil
-	case "usage-data":
-		return &result.UsageData, nil
-	case "plugins-data":
-		return &result.PluginsData, nil
-	case "tasks":
-		return &result.Tasks, nil
-	default:
-		return nil, fmt.Errorf("no Result slice for category %q", name)
-	}
-}
-
-// Run executes the export: locates project data and writes the requested
-// categories into Options.Output with path anonymization. File-history
-// snapshots are archived verbatim — their contents are treated as opaque
-// user-file bytes and are not scanned or rewritten. The returned Result
-// carries one ArchiveEntry per file written, grouped per category;
-// callers surface a warning when result.FileHistory is non-empty. The
-// caller owns Options.Output and its lifecycle; Run does not close it.
-func Run(
-	ctx context.Context, claudeHome *claude.Home, exportOptions *Options,
-) (result Result, err error) {
-	// Check ctx before any work so a cancel-before-start writes no bytes
-	// to Options.Output. Pre-existing test contract: cmd-layer guarantees
-	// require.NoFileExists when no bytes were written before the cancel.
+// Run executes the export: for every target, discovers or reuses that
+// tool's placeholders, streams its selected categories into the shared
+// archive under a "<tool>/" prefix, and writes one metadata.xml at the
+// archive root with one <tool> block per target. A target whose Export
+// reports tool.ErrProjectAbsent contributes an empty category block rather
+// than failing the run — that tool simply does not know this project.
+func Run(ctx context.Context, targets []tool.Target, options *Options) (result Result, err error) {
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("canceled: %w", err)
 	}
-
-	if exportOptions.Reporter == nil {
-		exportOptions.Reporter = progress.Noop()
+	if options.Reporter == nil {
+		options.Reporter = progress.Noop()
 	}
+	result.ByTool = make(map[string]tool.ExportResult, len(targets))
 
-	locatePhase := exportOptions.Reporter.Phase("locate", 0, progress.UnitItems)
-	locations, err := claude.LocateProject(claudeHome, exportOptions.ProjectPath)
-	if err != nil {
-		return result, fmt.Errorf("locate project: %w", err)
-	}
-
-	result.RulesReport = scan.ScanReport(claudeHome.RulesDir(), exportOptions.ProjectPath)
-	locatePhase.End("")
-
-	archiveWriter := zip.NewWriter(exportOptions.Output)
+	archiveWriter := zip.NewWriter(options.Output)
 	defer func() {
 		if cerr := archiveWriter.Close(); cerr != nil {
 			err = errors.Join(err, fmt.Errorf("finalize archive: %w", cerr))
 		}
 	}()
 
-	archivePhase := exportOptions.Reporter.Phase("archive", 0, progress.UnitItems)
-
-	if err := writeMetadataToZip(archiveWriter, exportOptions, &result); err != nil {
-		return result, err
+	metadata := &manifest.Metadata{Created: now()}
+	if options.SyncPushedBy != "" {
+		metadata.SyncPushedBy = options.SyncPushedBy
+	}
+	if !options.SyncPushedAt.IsZero() {
+		metadata.SyncPushedAt = options.SyncPushedAt.UTC().Format(time.RFC3339)
 	}
 
-	placeholders := exportOptions.Placeholders
-
-	if err := exportCoreCategories(
-		ctx, archiveWriter, &result, claudeHome, locations, exportOptions, placeholders, archivePhase,
-	); err != nil {
-		return result, err
-	}
-
-	if exportOptions.Categories.FileHistory {
-		if err := exportFileHistory(ctx, archiveWriter, &result, locations, archivePhase); err != nil {
+	archivePhase := options.Reporter.Phase("archive", int64(len(targets)), progress.UnitItems)
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-	}
+		toolPhase := archivePhase.SubPhase(target.Tool.Name(), 0, progress.UnitItems)
 
-	if exportOptions.Categories.Config {
-		if err := exportConfig(archiveWriter, &result, claudeHome, exportOptions, placeholders, archivePhase); err != nil {
-			return result, err
+		selected := options.Selected[target.Tool.Name()]
+		placeholders := options.Placeholders[target.Tool.Name()]
+		sink := archive.NewSink(archiveWriter, target.Tool.Name(), placeholders)
+
+		exportResult, exportErr := target.Workspace.Export(ctx, options.ProjectPath, selected, sink)
+		if exportErr != nil {
+			if !errors.Is(exportErr, tool.ErrProjectAbsent) {
+				return result, fmt.Errorf("export %s: %w", target.Tool.Name(), exportErr)
+			}
+			// This tool does not know the project: write an empty block
+			// (every category excluded, no placeholders) rather than
+			// failing the whole run.
+			exportResult = tool.ExportResult{Categories: map[string][]tool.ArchiveEntry{}}
+			selected = nil
+			placeholders = nil
 		}
+		result.ByTool[target.Tool.Name()] = exportResult
+		metadata.Tools = append(metadata.Tools, manifest.Tool{
+			Name:         target.Tool.Name(),
+			Categories:   manifest.BuildToolCategoryEntries(categoryNames(target.Tool), selected),
+			Placeholders: placeholders,
+		})
+		toolPhase.End("")
+		archivePhase.Advance(1)
 	}
-
 	archivePhase.End("")
+
+	written, err := archive.WriteMetadata(archiveWriter, metadata)
+	if err != nil {
+		return result, fmt.Errorf("write metadata.xml: %w", err)
+	}
+	result.Metadata = written
+
 	return result, nil
 }
 
-func writeMetadataToZip(archiveWriter *zip.Writer, exportOptions *Options, result *Result) error {
-	metadata := buildMetadata(exportOptions)
-	metadataXMLData, err := buildMetadataXML(metadata)
-	if err != nil {
-		return fmt.Errorf("build metadata XML: %w", err)
+func categoryNames(t tool.Tool) []string {
+	categories := t.Categories()
+	names := make([]string, len(categories))
+	for i, category := range categories {
+		names[i] = category.Name
 	}
-	size, err := writeToZip(archiveWriter, "metadata.xml", metadataXMLData, time.Time{})
-	if err != nil {
-		return fmt.Errorf("write metadata.xml: %w", err)
-	}
-	result.Metadata = ArchiveEntry{ArchivePath: "metadata.xml", Size: size}
-	return nil
-}
-
-// exportCoreCategories is extracted from Run to stay within the linter's
-// line-count budget.
-func exportCoreCategories(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result,
-	claudeHome *claude.Home, locations *claude.ProjectLocations,
-	exportOptions *Options, placeholders []manifest.Placeholder,
-	archivePhase progress.PhaseHandle,
-) error {
-	if exportOptions.Categories.Sessions {
-		if err := exportSessions(ctx, archiveWriter, result, locations, placeholders, archivePhase); err != nil {
-			return err
-		}
-	}
-	if exportOptions.Categories.Memory {
-		if err := exportMemory(ctx, archiveWriter, result, locations, placeholders, archivePhase); err != nil {
-			return err
-		}
-	}
-	if err := exportSessionKeyed(
-		ctx, archiveWriter, result, claudeHome, locations, exportOptions.Categories, placeholders, archivePhase,
-	); err != nil {
-		return err
-	}
-	if exportOptions.Categories.History {
-		if err := exportHistory(ctx, archiveWriter, result, claudeHome, exportOptions, placeholders, archivePhase); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func exportSessions(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result,
-	locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
-	archivePhase progress.PhaseHandle,
-) error {
-	total := int64(len(locations.SessionTranscripts) + len(locations.SessionSubdirs))
-	sessionsPhase := archivePhase.SubPhase("sessions", total, progress.UnitFiles)
-	for _, transcriptPath := range locations.SessionTranscripts {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		zipName := "sessions/" + filepath.Base(transcriptPath)
-		if err := streamJSONLEntry(
-			ctx, archiveWriter, result, "sessions", zipName, transcriptPath, placeholders,
-		); err != nil {
-			return fmt.Errorf("write %s: %w", zipName, err)
-		}
-		sessionsPhase.Advance(1)
-	}
-
-	for _, subdirPath := range locations.SessionSubdirs {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		dirName := filepath.Base(subdirPath)
-		zipPrefix := "sessions/" + dirName
-		if err := addDirToZip(ctx, archiveWriter, result, "sessions", subdirPath, zipPrefix, placeholders); err != nil {
-			return fmt.Errorf("add session subdir %s: %w", subdirPath, err)
-		}
-		sessionsPhase.Advance(1)
-	}
-	sessionsPhase.End("")
-	return nil
-}
-
-// streamJSONLEntry opens sourcePath, streams its contents line by line
-// through applyPlaceholders into a new ZIP entry, and records the entry on
-// result under category. Source file is closed before the function returns.
-func streamJSONLEntry(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result, category, zipName, sourcePath string,
-	placeholders []manifest.Placeholder,
-) error {
-	source, err := os.Open(sourcePath) //nolint:gosec // G304: path from trusted ClaudeHome
-	if err != nil {
-		return fmt.Errorf("open %s: %w", sourcePath, err)
-	}
-	defer func() { _ = source.Close() }()
-
-	sourceInfo, err := source.Stat()
-	if err != nil {
-		return fmt.Errorf("stat source for %s: %w", sourcePath, err)
-	}
-
-	size, err := writeJSONLToZip(ctx, archiveWriter, zipName, source, func(line []byte) []byte {
-		// Preserve blank lines: applyPlaceholders on an empty body routes
-		// through rewrite.ReplacePathInBytes which returns nil for empty
-		// inputs, and writeJSONLToZip treats nil as "drop line".
-		if len(line) == 0 {
-			return line
-		}
-		return applyPlaceholders(line, placeholders)
-	}, sourceInfo.ModTime())
-	if err != nil {
-		return err
-	}
-	entries, err := categoryEntriesByName(result, category)
-	if err != nil {
-		return err
-	}
-	*entries = append(*entries, ArchiveEntry{ArchivePath: zipName, Size: size})
-	return nil
-}
-
-func exportMemory(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result,
-	locations *claude.ProjectLocations, placeholders []manifest.Placeholder,
-	archivePhase progress.PhaseHandle,
-) error {
-	memoryPhase := archivePhase.SubPhase("memory", int64(len(locations.MemoryFiles)), progress.UnitFiles)
-	for _, memoryFilePath := range locations.MemoryFiles {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		zipName := "memory/" + filepath.Base(memoryFilePath)
-		if err := streamJSONLEntry(ctx, archiveWriter, result, "memory", zipName, memoryFilePath, placeholders); err != nil {
-			return fmt.Errorf("write %s: %w", zipName, err)
-		}
-		memoryPhase.Advance(1)
-	}
-	memoryPhase.End("")
-	return nil
-}
-
-// sessionKeyedPair carries one (group, absolute path) pair collected from
-// locations.AllFlatFiles() so a category's files can be written together
-// under one sub-phase while keeping the registry's group association needed
-// to compute each entry's zip name.
-type sessionKeyedPair struct {
-	group claude.RegistryEntry
-	path  string
-}
-
-// exportSessionKeyed drives the zip layout for the session-keyed groups from
-// the transport registry. It collects locations.AllFlatFiles() once, then
-// writes one sub-phase per selected category in first-seen registry order so
-// the two usage-data groups roll up into a single usage-data sub-phase. Files
-// within a category keep their AllFlatFiles() order, so the produced bytes
-// match the prior single-loop layout.
-func exportSessionKeyed(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result, claudeHome *claude.Home,
-	locations *claude.ProjectLocations, categories manifest.CategorySet,
-	placeholders []manifest.Placeholder,
-	archivePhase progress.PhaseHandle,
-) error {
-	categoryOrder, pairsByCategory := collectSessionKeyedPairs(locations)
-
-	for _, category := range categoryOrder {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		spec, ok := manifest.SpecByName(category)
-		if !ok {
-			return fmt.Errorf("session-keyed category %q is not a known manifest category", category)
-		}
-		if !spec.Value(&categories) {
-			continue
-		}
-		pairs := pairsByCategory[category]
-		categoryPhase := archivePhase.SubPhase(category, int64(len(pairs)), progress.UnitFiles)
-		for _, pair := range pairs {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			relative, err := filepath.Rel(pair.group.HomeBaseDir(claudeHome), pair.path)
-			if err != nil {
-				return fmt.Errorf("compute relative path for %s: %w", pair.path, err)
-			}
-			zipName := pair.group.ZipPrefix + filepath.ToSlash(relative)
-			// Session-keyed bodies are small JSON or JSONL. streamJSONLEntry
-			// applies placeholders per line; since paths never straddle '\n',
-			// the output matches a whole-file transform byte-for-byte.
-			if err := streamJSONLEntry(ctx, archiveWriter, result, category, zipName, pair.path, placeholders); err != nil {
-				return fmt.Errorf("write %s: %w", zipName, err)
-			}
-			categoryPhase.Advance(1)
-		}
-		categoryPhase.End("")
-	}
-	return nil
-}
-
-// categoryOrder lists the distinct categories of claude.SessionKeyedGroups in first-seen
-// registry order, so a selected category with zero present files still opens a (total 0)
-// sub-phase and a future registry addition cannot silently lose its bracket.
-func collectSessionKeyedPairs(
-	locations *claude.ProjectLocations,
-) (categoryOrder []string, pairsByCategory map[string][]sessionKeyedPair) {
-	pairsByCategory = make(map[string][]sessionKeyedPair)
-
-	seen := make(map[string]struct{})
-	for group := range claude.SessionKeyedGroups() {
-		if _, already := seen[group.Category]; already {
-			continue
-		}
-		seen[group.Category] = struct{}{}
-		categoryOrder = append(categoryOrder, group.Category)
-	}
-
-	for group, path := range locations.AllFlatFiles() {
-		pairsByCategory[group.Category] = append(
-			pairsByCategory[group.Category], sessionKeyedPair{group: group, path: path},
-		)
-	}
-	return categoryOrder, pairsByCategory
-}
-
-func exportHistory(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result,
-	claudeHome *claude.Home, exportOptions *Options, placeholders []manifest.Placeholder,
-	archivePhase progress.PhaseHandle,
-) error {
-	historyPhase := archivePhase.SubPhase("history", 1, progress.UnitFiles)
-
-	historyPath := claudeHome.HistoryFile()
-	historyFile, err := os.Open(historyPath) //nolint:gosec // G304: path from trusted ClaudeHome
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			historyPhase.End("absent")
-			return nil
-		}
-		return fmt.Errorf("open history file: %w", err)
-	}
-	defer func() { _ = historyFile.Close() }()
-
-	projectPath := exportOptions.ProjectPath
-	zipName := "history/history.jsonl"
-	size, err := writeJSONLToZip(ctx, archiveWriter, zipName, historyFile, func(line []byte) []byte {
-		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) == 0 {
-			return nil
-		}
-		if !historyLineBelongsToProject(trimmed, projectPath) {
-			return nil
-		}
-		return applyPlaceholders(trimmed, placeholders)
-	}, time.Time{})
-	if err != nil {
-		return fmt.Errorf("write history/history.jsonl: %w", err)
-	}
-	result.History = append(result.History, ArchiveEntry{ArchivePath: zipName, Size: size})
-	historyPhase.Advance(1)
-	historyPhase.End("history.jsonl")
-	return nil
-}
-
-// exportFileHistory archives every file under ~/.claude/file-history verbatim.
-// No body inspection, no anonymisation — opaque by policy.
-func exportFileHistory(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result, locations *claude.ProjectLocations,
-	archivePhase progress.PhaseHandle,
-) error {
-	fileHistoryPhase := archivePhase.SubPhase(
-		"file-history", int64(len(locations.FileHistoryDirs)), progress.UnitFiles,
-	)
-	for _, fileHistoryDir := range locations.FileHistoryDirs {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		dirName := filepath.Base(fileHistoryDir)
-		zipPrefix := "file-history/" + dirName
-		if err := addDirVerbatimToZip(ctx, archiveWriter, result, fileHistoryDir, zipPrefix); err != nil {
-			return fmt.Errorf("add file-history dir %s: %w", fileHistoryDir, err)
-		}
-		fileHistoryPhase.Advance(1)
-	}
-	fileHistoryPhase.End("")
-	return nil
-}
-
-func exportConfig(
-	archiveWriter *zip.Writer, result *Result,
-	claudeHome *claude.Home, exportOptions *Options, placeholders []manifest.Placeholder,
-	archivePhase progress.PhaseHandle,
-) error {
-	configPhase := archivePhase.SubPhase("config", 1, progress.UnitFiles)
-	configData, err := extractProjectConfig(claudeHome.ConfigFile, exportOptions.ProjectPath)
-	if err != nil {
-		return fmt.Errorf("extract project config: %w", err)
-	}
-	anonymizedConfig := applyPlaceholders(configData, placeholders)
-	if err := writeCategoryEntry(archiveWriter, result, "config", "config.json", anonymizedConfig); err != nil {
-		return fmt.Errorf("write config.json: %w", err)
-	}
-	configPhase.Advance(1)
-	configPhase.End("config.json")
-	return nil
-}
-
-// applyPlaceholders rewrites every placeholder's Original path to its Key
-// token in data, using rewrite.ReplacePathInBytes so sibling-path prefix
-// collisions (e.g. `/Users/x/myproject-extras` vs `/Users/x/myproject`) are
-// never corrupted by substring replacement.
-//
-// Placeholders are applied in descending Original length because
-// boundary-aware replacement only prevents collisions that cross a
-// path-component boundary (`myproject` vs `myproject-extras`); it does NOT
-// prevent a shorter placeholder from consuming a legitimate prefix of a
-// longer one that ends at a real `/` boundary. For example, substituting
-// `/Users/x` → `{{HOME}}` before `/Users/x/project` → `{{PROJECT_PATH}}`
-// would leave `{{HOME}}/project` where `{{PROJECT_PATH}}` was intended.
-// Sorting longest-first resolves this.
-func applyPlaceholders(data []byte, placeholders []manifest.Placeholder) []byte {
-	sorted := make([]manifest.Placeholder, len(placeholders))
-	copy(sorted, placeholders)
-	sort.Slice(sorted, func(i, j int) bool {
-		return len(sorted[i].Original) > len(sorted[j].Original)
-	})
-	for _, placeholder := range sorted {
-		data, _ = rewrite.ReplacePathInBytes(data, placeholder.Original, placeholder.Key)
-	}
-	return data
-}
-
-// createZipEntry returns an io.Writer for a new ZIP entry. When mtime is
-// zero, it uses (*zip.Writer).Create — yielding an entry whose Modified
-// field reads back as the MS-DOS epoch, which existing tests treat as "no
-// mtime carried." When mtime is non-zero, it uses CreateHeader so
-// archive/zip writes the Info-ZIP extended-timestamp (extTimeExtraID)
-// extra field at whole-second precision (the resolution the stdlib writer
-// emits for FileHeader.Modified).
-func createZipEntry(archiveWriter *zip.Writer, name string, mtime time.Time) (io.Writer, error) {
-	if mtime.IsZero() {
-		writer, err := archiveWriter.Create(name)
-		if err != nil {
-			return nil, fmt.Errorf("create zip entry %s: %w", name, err)
-		}
-		return writer, nil
-	}
-	header := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: mtime}
-	writer, err := archiveWriter.CreateHeader(header)
-	if err != nil {
-		return nil, fmt.Errorf("create zip entry %s: %w", name, err)
-	}
-	return writer, nil
-}
-
-// writeToZip creates and writes one archive entry. It returns the entry's
-// size (the length of data in bytes) so callers can record an ArchiveEntry
-// in the matching Result slice. A zero mtime omits the timestamp field
-// (Create-equivalent); a non-zero mtime is written via CreateHeader so the
-// archive carries it in the Info-ZIP extended-timestamp extra field.
-func writeToZip(archiveWriter *zip.Writer, name string, data []byte, mtime time.Time) (int64, error) {
-	writer, err := createZipEntry(archiveWriter, name, mtime)
-	if err != nil {
-		return 0, err
-	}
-	if _, err := writer.Write(data); err != nil {
-		return 0, fmt.Errorf("write zip entry %s: %w", name, err)
-	}
-	return int64(len(data)), nil
-}
-
-// writeReaderToZip streams src into a new ZIP entry named name. Honors ctx
-// so long streams abort promptly on cancellation. Returns the bytes written.
-// No transform is applied; chunk-level substring substitution would corrupt
-// content that straddles a read boundary, so callers needing byte
-// transforms must use writeJSONLToZip.
-func writeReaderToZip(
-	ctx context.Context,
-	archiveWriter *zip.Writer,
-	name string,
-	src io.Reader,
-	mtime time.Time,
-) (int64, error) {
-	entry, err := createZipEntry(archiveWriter, name, mtime)
-	if err != nil {
-		return 0, err
-	}
-	var written int64
-	buffer := make([]byte, 64<<10)
-	for {
-		if err := ctx.Err(); err != nil {
-			return written, err
-		}
-		n, readErr := src.Read(buffer)
-		if n > 0 {
-			if _, writeErr := entry.Write(buffer[:n]); writeErr != nil {
-				return written, fmt.Errorf("write zip entry %s: %w", name, writeErr)
-			}
-			written += int64(n)
-		}
-		if errors.Is(readErr, io.EOF) {
-			return written, nil
-		}
-		if readErr != nil {
-			return written, fmt.Errorf("read source for %s: %w", name, readErr)
-		}
-	}
-}
-
-// writeJSONLToZip streams src line by line through lineTransform (if
-// non-nil) into a new ZIP entry named name. The original line terminator
-// ('\n' or absence thereof) is preserved so the archive entry is
-// byte-identical to what a whole-file transform would produce. ctx is
-// checked at each line boundary. Oversized lines produce bufio.ErrTooLong
-// via claude.MaxHistoryLine. Returns the bytes written.
-//
-// A lineTransform that returns a nil slice drops the line entirely: the
-// body and its terminator are both skipped, so the output contains no
-// orphan blank line in place of a dropped entry. Returning an empty
-// non-nil slice (`[]byte{}`) is distinct: it writes a zero-byte body
-// followed by the preserved terminator.
-func writeJSONLToZip(
-	ctx context.Context,
-	archiveWriter *zip.Writer,
-	name string,
-	src io.Reader,
-	lineTransform func([]byte) []byte,
-	mtime time.Time,
-) (int64, error) {
-	entry, err := createZipEntry(archiveWriter, name, mtime)
-	if err != nil {
-		return 0, err
-	}
-	reader := bufio.NewReaderSize(src, 64<<10)
-	var written int64
-	lineNumber := 0
-	for {
-		if err := ctx.Err(); err != nil {
-			return written, err
-		}
-		line, readErr := reader.ReadBytes('\n')
-		if int64(len(line)) > claude.MaxHistoryLine {
-			return written, fmt.Errorf(
-				"%s line %d exceeds %d bytes: %w",
-				name, lineNumber+1, claude.MaxHistoryLine, bufio.ErrTooLong,
-			)
-		}
-		if len(line) > 0 {
-			lineNumber++
-			body, terminator := splitJSONLTerminator(line)
-			out := body
-			if lineTransform != nil {
-				out = lineTransform(body)
-			}
-			if out != nil {
-				if _, err := entry.Write(out); err != nil {
-					return written, fmt.Errorf("write zip entry %s: %w", name, err)
-				}
-				written += int64(len(out))
-				if len(terminator) > 0 {
-					if _, err := entry.Write(terminator); err != nil {
-						return written, fmt.Errorf("write zip entry %s: %w", name, err)
-					}
-					written += int64(len(terminator))
-				}
-			}
-		}
-		if errors.Is(readErr, io.EOF) {
-			return written, nil
-		}
-		if readErr != nil {
-			return written, fmt.Errorf("read source for %s: %w", name, readErr)
-		}
-	}
-}
-
-// splitJSONLTerminator separates a line read by bufio.Reader.ReadBytes('\n')
-// into its body and the trailing '\n' terminator (empty when the last line
-// has no terminator). Mirrors splitLineTerminator in internal/rewrite; kept
-// local so the zip writer owns its own primitive.
-func splitJSONLTerminator(line []byte) (body, terminator []byte) {
-	if len(line) > 0 && line[len(line)-1] == '\n' {
-		return line[:len(line)-1], line[len(line)-1:]
-	}
-	return line, nil
-}
-
-// writeCategoryEntry writes one archive entry and appends a matching
-// ArchiveEntry to the Result slice for category. Returns an error on
-// unknown category (drift guard — cannot happen for production category
-// names, and is caught at test time by TestResult_CoversEveryManifestCategory).
-func writeCategoryEntry(
-	archiveWriter *zip.Writer, result *Result, category, name string, data []byte,
-) error {
-	size, err := writeToZip(archiveWriter, name, data, time.Time{})
-	if err != nil {
-		return err
-	}
-	entries, err := categoryEntriesByName(result, category)
-	if err != nil {
-		return err
-	}
-	*entries = append(*entries, ArchiveEntry{ArchivePath: name, Size: size})
-	return nil
-}
-
-// addDirToZip is only called by exportSessions' session-subdir walk, whose
-// content is always textual (JSONL transcripts, subagent files, session-memory
-// entries).
-func addDirToZip(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result, category string,
-	sourceDir, zipPrefix string, placeholders []manifest.Placeholder,
-) error {
-	entries, err := os.ReadDir(sourceDir)
-	if err != nil {
-		return fmt.Errorf("read directory %s: %w", sourceDir, err)
-	}
-
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		entryPath := filepath.Join(sourceDir, entry.Name())
-		entryZipName := zipPrefix + "/" + entry.Name()
-
-		if entry.IsDir() {
-			if err := addDirToZip(ctx, archiveWriter, result, category, entryPath, entryZipName, placeholders); err != nil {
-				return err
-			}
-			continue
-		}
-
-		if err := streamJSONLEntry(ctx, archiveWriter, result, category, entryZipName, entryPath, placeholders); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// addDirVerbatimToZip is used for file-history snapshots, whose contents are
-// opaque user-file bytes that cc-port must not transform.
-func addDirVerbatimToZip(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result, sourceDir, zipPrefix string,
-) error {
-	entries, err := os.ReadDir(sourceDir)
-	if err != nil {
-		return fmt.Errorf("read directory %s: %w", sourceDir, err)
-	}
-
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		entryPath := filepath.Join(sourceDir, entry.Name())
-		entryZipName := zipPrefix + "/" + entry.Name()
-
-		if entry.IsDir() {
-			if err := addDirVerbatimToZip(ctx, archiveWriter, result, entryPath, entryZipName); err != nil {
-				return err
-			}
-			continue
-		}
-
-		if err := streamVerbatimEntry(ctx, archiveWriter, result, "file-history", entryZipName, entryPath); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// streamVerbatimEntry streams sourcePath straight into a ZIP entry with no
-// transform. Suited to opaque bytes (file-history snapshots) where any
-// byte-level rewrite would violate the opacity contract.
-func streamVerbatimEntry(
-	ctx context.Context,
-	archiveWriter *zip.Writer, result *Result, category, zipName, sourcePath string,
-) error {
-	source, err := os.Open(sourcePath) //nolint:gosec // G304: path is constructed from trusted input
-	if err != nil {
-		return fmt.Errorf("open %s: %w", sourcePath, err)
-	}
-	defer func() { _ = source.Close() }()
-
-	sourceInfo, err := source.Stat()
-	if err != nil {
-		return fmt.Errorf("stat source for %s: %w", sourcePath, err)
-	}
-
-	size, err := writeReaderToZip(ctx, archiveWriter, zipName, source, sourceInfo.ModTime())
-	if err != nil {
-		return err
-	}
-	entries, err := categoryEntriesByName(result, category)
-	if err != nil {
-		return err
-	}
-	*entries = append(*entries, ArchiveEntry{ArchivePath: zipName, Size: size})
-	return nil
-}
-
-// historyLineBelongsToProject reports whether one history.jsonl line
-// belongs to projectPath. A line belongs when any of the following hold:
-//
-//  1. Its structured `project` field equals projectPath (the primary signal:
-//     the authoritative tag Claude Code writes alongside each entry).
-//  2. Its `project` field is empty AND the line body contains a bounded
-//     reference to projectPath (e.g. inside `display` or `pastedContents`).
-//     This captures entries written without a structured tag whose only link
-//     to the project is a free-text path mention.
-//  3. The line is not parseable as JSON AND its raw bytes contain a bounded
-//     reference to projectPath. Such lines predate cc-port and cannot be
-//     repaired, but an obvious textual match is still worth preserving so the
-//     recipient sees what the sender saw.
-//
-// Lines whose `project` field names a different project are NEVER included,
-// even if they happen to quote projectPath in free text: that preserves the
-// privacy property that another project's structurally tagged entries are
-// not leaked just because they reference this project's path.
-//
-// The bounded reference check goes through rewrite.ContainsBoundedPath so
-// prefix-collision paths (e.g. "/a/myproject-extras" when projectPath is
-// "/a/myproject") are not misclassified as in-scope.
-func historyLineBelongsToProject(line []byte, projectPath string) bool {
-	var historyEntry claude.HistoryEntry
-	if err := json.Unmarshal(line, &historyEntry); err != nil {
-		// Malformed JSON — include only when the raw bytes carry a bounded
-		// reference to projectPath. Malformed lines with no such reference
-		// cannot be attributed to any project and are skipped.
-		return rewrite.ContainsBoundedPath(line, projectPath)
-	}
-
-	if historyEntry.Project == projectPath {
-		return true
-	}
-	if historyEntry.Project == "" {
-		return rewrite.ContainsBoundedPath(line, projectPath)
-	}
-	return false
-}
-
-func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
-	configData, err := os.ReadFile(configPath) //nolint:gosec // G304: path from trusted ClaudeHome
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("config file not found: %s", configPath)
-		}
-		return nil, fmt.Errorf("read config file: %w", err)
-	}
-
-	var userConfig claude.UserConfig
-	if err := json.Unmarshal(configData, &userConfig); err != nil {
-		return nil, fmt.Errorf("unmarshal config file: %w", err)
-	}
-
-	projectBlock, exists := userConfig.Projects[projectPath]
-	if !exists {
-		return nil, fmt.Errorf("project %s not found in config", projectPath)
-	}
-
-	return projectBlock, nil
-}
-
-func buildMetadata(exportOptions *Options) *manifest.Metadata {
-	metadata := &manifest.Metadata{
-		Export: manifest.Info{
-			Created:    now(),
-			Categories: manifest.BuildCategoryEntries(&exportOptions.Categories),
-		},
-		Placeholders: exportOptions.Placeholders,
-	}
-	if exportOptions.SyncPushedBy != "" {
-		metadata.SyncPushedBy = exportOptions.SyncPushedBy
-	}
-	if !exportOptions.SyncPushedAt.IsZero() {
-		metadata.SyncPushedAt = exportOptions.SyncPushedAt.UTC().Format(time.RFC3339)
-	}
-	return metadata
-}
-
-func buildMetadataXML(metadata *manifest.Metadata) ([]byte, error) {
-	xmlBody, err := xml.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshal metadata XML: %w", err)
-	}
-	return append([]byte(xml.Header), xmlBody...), nil
+	return names
 }

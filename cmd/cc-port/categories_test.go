@@ -7,56 +7,91 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
-func TestRegisterCategoryFlags_RegistersAllRegistrySpecsPlusAll(t *testing.T) {
+func TestRegisterCategoryFlags_RegistersAllAndInclude(t *testing.T) {
 	cmd := &cobra.Command{}
 
 	registerCategoryFlags(cmd, "push")
 
 	require.NotNil(t, cmd.Flag("all"), "--all must be registered")
-	for _, spec := range manifest.AllCategories {
-		assert.NotNil(t, cmd.Flag(spec.Name), "--%s must be registered", spec.Name)
-	}
+	require.NotNil(t, cmd.Flag("include"), "--include must be registered")
 }
 
-func TestResolveCategoriesFromCmd_AllSetsEverySpec(t *testing.T) {
+func TestResolveSelectionFromCmd_AllSetsEveryCategory(t *testing.T) {
 	cmd := &cobra.Command{}
 	registerCategoryFlags(cmd, "push")
 	require.NoError(t, cmd.Flags().Set("all", "true"))
 
-	set, err := resolveCategoriesFromCmd(cmd)
+	tools := []tool.Tool{claude.New()}
+	selection, err := resolveSelectionFromCmd(cmd, tools)
 
 	require.NoError(t, err)
-	for _, spec := range manifest.AllCategories {
-		assert.True(t, spec.Value(&set), "--all must enable %s", spec.Name)
+	for _, category := range claude.New().Categories() {
+		assert.True(t, selection["claude"][category.Name], "--all must enable %s", category.Name)
 	}
 }
 
-func TestResolveCategoriesFromCmd_ExplicitFlagSetsOnlyThatSpec(t *testing.T) {
+func TestResolveSelectionFromCmd_IncludeSetsOnlyNamedCategory(t *testing.T) {
 	cmd := &cobra.Command{}
 	registerCategoryFlags(cmd, "push")
-	require.NoError(t, cmd.Flags().Set("sessions", "true"))
+	require.NoError(t, cmd.Flags().Set("include", "claude/sessions"))
 
-	set, err := resolveCategoriesFromCmd(cmd)
+	tools := []tool.Tool{claude.New()}
+	selection, err := resolveSelectionFromCmd(cmd, tools)
 
 	require.NoError(t, err)
-	assert.True(t, set.Sessions, "explicit --sessions must set Sessions")
-	for _, spec := range manifest.AllCategories {
-		if spec.Name == "sessions" {
+	assert.True(t, selection["claude"]["sessions"], "explicit --include claude/sessions must set sessions")
+	for _, category := range claude.New().Categories() {
+		if category.Name == "sessions" {
 			continue
 		}
-		assert.False(t, spec.Value(&set), "--sessions must not enable %s", spec.Name)
+		assert.False(t, selection["claude"][category.Name], "--include claude/sessions must not enable %s", category.Name)
 	}
 }
 
-func TestResolveCategoriesFromCmd_NoFlagsReturnsZeroSet(t *testing.T) {
+func TestResolveSelectionFromCmd_AllAndIncludeAreMutuallyExclusive(t *testing.T) {
+	cmd := &cobra.Command{}
+	registerCategoryFlags(cmd, "push")
+	require.NoError(t, cmd.Flags().Set("all", "true"))
+	require.NoError(t, cmd.Flags().Set("include", "claude/sessions"))
+
+	_, err := resolveSelectionFromCmd(cmd, []tool.Tool{claude.New()})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
+func TestResolveSelectionFromCmd_UnknownCategoryIsRejected(t *testing.T) {
+	cmd := &cobra.Command{}
+	registerCategoryFlags(cmd, "push")
+	require.NoError(t, cmd.Flags().Set("include", "claude/unknown"))
+
+	_, err := resolveSelectionFromCmd(cmd, []tool.Tool{claude.New()})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "valid categories")
+	assert.Contains(t, err.Error(), "sessions")
+}
+
+func TestResolveSelectionFromCmd_BareCategoryNameRejected(t *testing.T) {
+	cmd := &cobra.Command{}
+	registerCategoryFlags(cmd, "push")
+	require.NoError(t, cmd.Flags().Set("include", "sessions"))
+
+	_, err := resolveSelectionFromCmd(cmd, []tool.Tool{claude.New()})
+
+	require.Error(t, err)
+}
+
+func TestResolveSelectionFromCmd_NoFlagsReturnsNil(t *testing.T) {
 	cmd := &cobra.Command{}
 	registerCategoryFlags(cmd, "push")
 
-	set, err := resolveCategoriesFromCmd(cmd)
+	selection, err := resolveSelectionFromCmd(cmd, []tool.Tool{claude.New()})
 
 	require.NoError(t, err)
-	assert.Equal(t, manifest.CategorySet{}, set)
+	assert.Nil(t, selection)
 }

@@ -1,191 +1,229 @@
-// Package move implements project directory move operations for Claude Code projects.
+// Package move implements project directory move operations across every
+// selected tool.
 package move
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/progress"
-	"github.com/it-bens/cc-port/internal/scan"
 	"github.com/it-bens/cc-port/internal/tool"
-	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // Options holds the parameters for a project move operation.
 type Options struct {
-	OldPath            string
-	NewPath            string
-	RewriteTranscripts bool
-	RefsOnly           bool
+	OldPath     string
+	NewPath     string
+	RefsOnly    bool
+	DeepRewrite bool
 
-	// Reporter receives the progress event stream and the warnings Apply
-	// emits (malformed history lines, file-history preservation). Defaults
-	// to progress.Noop() when nil. DryRun does not use it — it surfaces
-	// warnings through Plan instead.
+	// Reporter receives the progress event stream during Apply. Defaults
+	// to progress.Noop() when nil. DryRun does not use it.
 	Reporter progress.Reporter
 }
 
-// Plan holds the results of a dry-run move operation.
+func (options Options) request() tool.MoveRequest {
+	return tool.MoveRequest{
+		OldPath:     options.OldPath,
+		NewPath:     options.NewPath,
+		RefsOnly:    options.RefsOnly,
+		DeepRewrite: options.DeepRewrite,
+	}
+}
+
+// SurfaceCount is one surface's replacement count.
+type SurfaceCount struct {
+	Name  string
+	Count int
+}
+
+// ToolPlan is one target's dry-run contribution. Absent is true when the
+// target reported tool.ErrProjectAbsent: it simply does not know this
+// project, and Surfaces is empty rather than fabricated.
+type ToolPlan struct {
+	Tool     string
+	Absent   bool
+	Surfaces []SurfaceCount
+	Warnings []string
+}
+
+// Plan holds the results of a dry-run move operation across every target.
 type Plan struct {
-	OldProjectDir string
-	NewProjectDir string
-
-	// ReplacementsByCategory carries per-category replacement counts keyed
-	// on the canonical planCategories names. Missing keys read as zero.
-	ReplacementsByCategory map[string]int
-
-	ConfigBlockRekey       bool
-	TranscriptReplacements int
-	MemoryReplacements     int
-
-	HistoryMalformedLines []int
-	RulesReport           scan.Report
-	MoveProjectDir        bool
+	ByTool []ToolPlan
 }
 
-// planCategories is the canonical ordering of ReplacementsByCategory keys:
-// history, sessions, then the claude.UserWideRewriteTargets entries in order,
-// then the claude.SessionKeyedGroups in order, then file-history-snapshots as
-// a tail counter.
-var planCategories = func() []string {
-	out := []string{"history", "sessions"}
-	for target := range claude.UserWideRewriteTargets() {
-		out = append(out, target.Name)
-	}
-	for group := range claude.SessionKeyedGroups() {
-		out = append(out, group.Name)
-	}
-	out = append(out, "file-history-snapshots")
-	return out
-}()
-
-// PlanCategories returns the canonical ordering of ReplacementsByCategory
-// keys so CLI renderers iterate in a stable order.
-func PlanCategories() []string {
-	out := make([]string, len(planCategories))
-	copy(out, planCategories)
-	return out
-}
-
-// DryRun computes the move plan without writing any files; lock-free contrast to Apply.
-func DryRun(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (*Plan, error) {
+// DryRun computes the move plan without writing any files; lock-free
+// contrast to Apply.
+func DryRun(ctx context.Context, targets []tool.Target, options Options) (*Plan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("canceled: %w", err)
 	}
-	if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
-		return nil, err
-	}
+	req := options.request()
 
-	locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
-	if err != nil {
-		return nil, fmt.Errorf("locate project: %w", err)
+	plan := &Plan{}
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		toolPlan, err := planTarget(ctx, target, req)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", target.Tool.Name(), err)
+		}
+		plan.ByTool = append(plan.ByTool, toolPlan)
 	}
-
-	plan := &Plan{
-		OldProjectDir:          claudeHome.ProjectDir(moveOptions.OldPath),
-		NewProjectDir:          claudeHome.ProjectDir(moveOptions.NewPath),
-		MoveProjectDir:         !moveOptions.RefsOnly,
-		ReplacementsByCategory: make(map[string]int, len(planCategories)),
-	}
-
-	if err := populatePlanCounts(ctx, plan, claudeHome, locations, moveOptions); err != nil {
-		return nil, err
-	}
-
-	report := scan.ScanReport(claudeHome.RulesDir(), moveOptions.OldPath)
-	if report.Err != nil {
-		return nil, fmt.Errorf("scan rules: %w", report.Err)
-	}
-	plan.RulesReport = report
-
 	return plan, nil
 }
 
-// populatePlanCounts fills every counter on plan by walking each count helper
-// in ReplacementsByCategory order; keeps DryRun's top-level flow readable.
-func populatePlanCounts(
-	ctx context.Context,
-	plan *Plan,
-	claudeHome *claude.Home,
-	locations *claude.ProjectLocations,
-	moveOptions Options,
-) error {
-	historyCount, malformed, err := scanHistoryFile(ctx, claudeHome, moveOptions)
+func planTarget(ctx context.Context, target tool.Target, req tool.MoveRequest) (ToolPlan, error) {
+	toolPlan := ToolPlan{Tool: target.Tool.Name()}
+
+	surfaces, err := target.Workspace.MoveSurfaces(req)
 	if err != nil {
-		return err
-	}
-	plan.ReplacementsByCategory["history"] = historyCount
-	plan.HistoryMalformedLines = malformed
-
-	sessionCount, err := countSessionFileReplacements(ctx, locations, moveOptions)
-	if err != nil {
-		return err
-	}
-	plan.ReplacementsByCategory["sessions"] = sessionCount
-
-	if err := countUserWideReplacements(ctx, plan, claudeHome, moveOptions); err != nil {
-		return err
-	}
-
-	plan.ConfigBlockRekey, err = checkConfigBlockRekey(ctx, claudeHome, moveOptions)
-	if err != nil {
-		return err
-	}
-
-	if moveOptions.RewriteTranscripts {
-		plan.TranscriptReplacements, err = countTranscriptReplacements(
-			ctx, locations, moveOptions, plan.OldProjectDir, plan.NewProjectDir,
-		)
-		if err != nil {
-			return err
+		if errors.Is(err, tool.ErrProjectAbsent) {
+			toolPlan.Absent = true
+			return toolPlan, nil
 		}
+		return ToolPlan{}, err
+	}
+	for _, surface := range surfaces {
+		count, err := surface.Plan(ctx)
+		if err != nil {
+			return ToolPlan{}, fmt.Errorf("plan surface %s: %w", surface.Name, err)
+		}
+		toolPlan.Surfaces = append(toolPlan.Surfaces, SurfaceCount{Name: surface.Name, Count: count})
 	}
 
-	plan.MemoryReplacements, err = countMemoryReplacements(
-		ctx, locations, moveOptions, plan.OldProjectDir, plan.NewProjectDir,
-	)
+	warnings, err := target.Workspace.ResidualWarnings(req)
 	if err != nil {
-		return err
+		return ToolPlan{}, fmt.Errorf("residual warnings: %w", err)
 	}
-
-	snapshots, err := countFileHistorySnapshots(ctx, locations)
-	if err != nil {
-		return err
-	}
-	plan.ReplacementsByCategory["file-history-snapshots"] = snapshots
-
-	return countSessionKeyedReplacements(ctx, plan, locations, moveOptions)
+	toolPlan.Warnings = warnings
+	return toolPlan, nil
 }
 
-// Apply performs the project move via copy-verify-delete inside lock.WithLock.
-func Apply(ctx context.Context, claudeHome *claude.Home, moveOptions Options) error {
+// ToolResult is one target's apply outcome.
+type ToolResult struct {
+	Tool     string
+	Absent   bool
+	Success  bool
+	Err      error
+	Surfaces []SurfaceCount
+}
+
+// ApplyResult is the per-tool outcome of an Apply run.
+type ApplyResult struct {
+	ByTool []ToolResult
+}
+
+// Failed reports whether any target failed.
+func (result *ApplyResult) Failed() bool {
+	for _, toolResult := range result.ByTool {
+		if !toolResult.Success && !toolResult.Absent {
+			return true
+		}
+	}
+	return false
+}
+
+// Apply performs the project move. Every selected target is preflighted in
+// registry order (MoveSurfaces, writer witness, then flock) before any tool
+// applies. The flocks remain held until the full apply completes. Cross-tool
+// rollback does not exist: a target that has
+// already completed reflects the true new path even if a later target
+// fails, so the returned ApplyResult carries a per-tool success/failure
+// record and Failed reports whether the caller should exit non-zero.
+func Apply(ctx context.Context, targets []tool.Target, options Options) (result *ApplyResult, returnErr error) {
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("canceled: %w", err)
+		return nil, fmt.Errorf("canceled: %w", err)
 	}
-	if moveOptions.Reporter == nil {
-		moveOptions.Reporter = progress.Noop()
+	if options.Reporter == nil {
+		options.Reporter = progress.Noop()
 	}
-	return lock.WithLock(
-		filepath.Join(claudeHome.Dir, lock.FileName),
-		func() ([]tool.ActiveWriter, error) { return claude.FindActive(claudeHome) },
-		func() error {
-			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("canceled: %w", err)
-			}
-			if err := checkEncodedDirCollision(claudeHome, moveOptions.OldPath, moveOptions.NewPath); err != nil {
-				return err
-			}
+	req := options.request()
 
-			locations, err := claude.LocateProject(claudeHome, moveOptions.OldPath)
-			if err != nil {
-				return fmt.Errorf("locate project: %w", err)
+	type prepared struct {
+		target   tool.Target
+		surfaces []tool.Surface
+		held     *lock.Held
+		absent   bool
+	}
+	var preparedTargets []prepared
+	result = &ApplyResult{}
+	defer func() {
+		var releaseErrors []error
+		for index := len(preparedTargets) - 1; index >= 0; index-- {
+			if err := preparedTargets[index].held.Release(); err != nil {
+				releaseErrors = append(releaseErrors, fmt.Errorf("release %s lock: %w", preparedTargets[index].target.Tool.Name(), err))
 			}
+		}
+		if len(releaseErrors) > 0 {
+			returnErr = errors.Join(returnErr, errors.Join(releaseErrors...))
+		}
+	}()
 
-			oldProjectDir := claudeHome.ProjectDir(moveOptions.OldPath)
-			newProjectDir := claudeHome.ProjectDir(moveOptions.NewPath)
-			return executeMove(ctx, claudeHome, locations, oldProjectDir, newProjectDir, moveOptions)
-		},
-	)
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		surfaces, err := target.Workspace.MoveSurfaces(req)
+		absent := false
+		if err != nil {
+			if errors.Is(err, tool.ErrProjectAbsent) {
+				absent = true
+				surfaces = nil
+			} else {
+				return nil, fmt.Errorf("preflight %s: %w", target.Tool.Name(), err)
+			}
+		}
+		held, err := lock.Acquire(target.Workspace.LockPath(), target.Workspace.ActiveWriters)
+		if err != nil {
+			return nil, fmt.Errorf("preflight %s: %w", target.Tool.Name(), err)
+		}
+		preparedTargets = append(preparedTargets, prepared{target: target, surfaces: surfaces, held: held, absent: absent})
+	}
+
+	for _, entry := range preparedTargets {
+		if entry.absent {
+			result.ByTool = append(result.ByTool, ToolResult{Tool: entry.target.Tool.Name(), Absent: true})
+			continue
+		}
+		toolResult := applyTarget(ctx, entry.target, entry.surfaces, options.Reporter)
+		result.ByTool = append(result.ByTool, toolResult)
+	}
+
+	return result, nil
+}
+
+func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surface, reporter progress.Reporter) ToolResult {
+	toolResult := ToolResult{Tool: target.Tool.Name()}
+	phase := reporter.Phase(target.Tool.Name(), int64(len(surfaces)), progress.UnitItems)
+
+	undo := tool.NewRestorer()
+	var err error
+	for _, surface := range surfaces {
+		if err = ctx.Err(); err != nil {
+			break
+		}
+		count, applyErr := surface.Apply(ctx, undo)
+		if applyErr != nil {
+			restoreErr := undo.Restore()
+			err = errors.Join(fmt.Errorf("apply surface %s: %w", surface.Name, applyErr), restoreErr)
+			break
+		}
+		toolResult.Surfaces = append(toolResult.Surfaces, SurfaceCount{Name: surface.Name, Count: count})
+		phase.Advance(1)
+	}
+	if err == nil {
+		undo.Cleanup()
+	}
+	phase.End("")
+
+	if err != nil {
+		toolResult.Err = err
+		return toolResult
+	}
+	toolResult.Success = true
+	return toolResult
 }

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/it-bens/cc-port/internal/fsutil"
 )
 
 // EncodePath encodes an absolute, symlink-resolved path into the directory-name
@@ -121,4 +123,29 @@ func (claudeHome *Home) PluginsInstalledFile() string {
 // KnownMarketplacesFile returns the path to the ~/.claude/plugins/known_marketplaces.json file.
 func (claudeHome *Home) KnownMarketplacesFile() string {
 	return filepath.Join(claudeHome.Dir, "plugins", "known_marketplaces.json")
+}
+
+// homeAnchor returns the current machine's real user home directory,
+// resolved through any symlink, for use as the {{HOME}} placeholder anchor.
+// A symlinked HOME must resolve to its target before an anchor filter
+// compares it against project paths, otherwise every home-rooted candidate
+// is silently dropped. Rejects "/" and non-absolute values so the anchor
+// cannot match every absolute path in the corpus.
+func homeAnchor() (string, error) {
+	homePath, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("determine home directory: %w", err)
+	}
+	if !filepath.IsAbs(homePath) {
+		return "", fmt.Errorf("invalid home directory %q: must be absolute", homePath)
+	}
+	resolved, err := fsutil.ResolveExistingAncestor(homePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	cleaned := filepath.Clean(resolved)
+	if !filepath.IsAbs(cleaned) || cleaned == "/" {
+		return "", fmt.Errorf("invalid home directory %q", cleaned)
+	}
+	return cleaned, nil
 }

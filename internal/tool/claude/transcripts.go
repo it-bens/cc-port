@@ -36,7 +36,7 @@ func TranscriptFiles(ctx context.Context, projectDir string) ([]string, error) {
 			}
 			continue
 		}
-		if name == "memory" || name == "sessions" {
+		if name == categoryMemory || name == categorySessions {
 			continue
 		}
 		subdirFiles, err := fsutil.ListFilesRecursive(ctx, fullPath)

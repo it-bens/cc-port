@@ -10,22 +10,15 @@ import (
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/tool"
-	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
-// findActive is the test seam for claude.FindActive. Swapped in
-// movecmd_test.go via withMoveSeams.
-var findActive = claude.FindActive
-
 // newMoveCmd returns the move subcommand with closure-scoped flag locals.
-// claudeDir points at the persistent root flag's local; cobra populates
-// it on flag parse, so the RunE closure must dereference at call time.
-func newMoveCmd(claudeDir *string) *cobra.Command {
+func newMoveCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 	var apply bool
 	cmd := &cobra.Command{
 		Use:   "move <old-path> <new-path>",
-		Short: "Move a project and update Claude Code references",
-		Long: "Renames a project directory and rewrites all Claude Code references.\n" +
+		Short: "Move a project and update references across every selected tool",
+		Long: "Renames a project directory and rewrites every selected tool's references.\n" +
 			"Default is dry-run — use --apply to execute.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
@@ -41,17 +34,25 @@ func newMoveCmd(claudeDir *string) *cobra.Command {
 				return err
 			}
 
-			claudeHome, err := claude.NewHome(*claudeDir)
+			targets, err := resolveTargets(toolSet, flags)
 			if err != nil {
 				return err
 			}
 
 			if !apply {
-				return runMoveDryRun(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), claudeHome, moveOptions)
+				return runMoveDryRun(ctx, cmd.OutOrStdout(), targets, moveOptions)
 			}
 			return runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
 				moveOptions.Reporter = reporter
-				return move.Apply(ctx, claudeHome, moveOptions)
+				result, err := move.Apply(ctx, targets, moveOptions)
+				if err != nil {
+					return err
+				}
+				renderApplyResult(cmd.OutOrStdout(), result)
+				if result.Failed() {
+					return fmt.Errorf("one or more tools failed to move; see the table above")
+				}
+				return nil
 			})
 		},
 	}
@@ -61,8 +62,8 @@ func newMoveCmd(claudeDir *string) *cobra.Command {
 		"update references only, do not move project directory on disk",
 	)
 	cmd.Flags().Bool(
-		"rewrite-transcripts", false,
-		"also rewrite paths in session transcripts",
+		"deep", false,
+		"also rewrite paths in narrative bodies (e.g. session transcripts)",
 	)
 	return cmd
 }
@@ -83,145 +84,86 @@ func parseMoveOptions(cmd *cobra.Command, args []string) (move.Options, error) {
 		return move.Options{}, fmt.Errorf("old and new paths are identical after resolution")
 	}
 	refsOnly, _ := cmd.Flags().GetBool("refs-only")
-	rewriteTranscripts, _ := cmd.Flags().GetBool("rewrite-transcripts")
+	deepRewrite, _ := cmd.Flags().GetBool("deep")
 	return move.Options{
-		OldPath:            oldPath,
-		NewPath:            newPath,
-		RefsOnly:           refsOnly,
-		RewriteTranscripts: rewriteTranscripts,
+		OldPath:     oldPath,
+		NewPath:     newPath,
+		RefsOnly:    refsOnly,
+		DeepRewrite: deepRewrite,
 	}, nil
 }
 
-func runMoveDryRun(
-	ctx context.Context,
-	stdout, stderr io.Writer,
-	claudeHome *claude.Home,
-	moveOptions move.Options,
-) error {
-	movePlan, err := move.DryRun(ctx, claudeHome, moveOptions)
+func runMoveDryRun(ctx context.Context, stdout io.Writer, targets []tool.Target, moveOptions move.Options) error {
+	movePlan, err := move.DryRun(ctx, targets, moveOptions)
 	if err != nil {
 		return err
 	}
-
-	if err := reportActiveSessionOnSource(stderr, claudeHome, moveOptions.OldPath); err != nil {
-		return err
+	activeWriters := make(map[string][]tool.ActiveWriter, len(targets))
+	witnessErrors := make(map[string]error, len(targets))
+	for _, target := range targets {
+		writers, witnessErr := target.Workspace.ActiveWriters()
+		if witnessErr != nil {
+			witnessErrors[target.Tool.Name()] = witnessErr
+			continue
+		}
+		activeWriters[target.Tool.Name()] = writers
 	}
 
 	_, _ = fmt.Fprintln(stdout, "cc-port move (dry-run)")
-	_, _ = fmt.Fprintln(stdout)
-	_, _ = fmt.Fprintf(stdout, "  ┌ Directory Rename\n")
-	_, _ = fmt.Fprintf(stdout, "  │ %s\n", movePlan.OldProjectDir)
-	_, _ = fmt.Fprintf(stdout, "  │ -> %s\n", movePlan.NewProjectDir)
-	_, _ = fmt.Fprintln(stdout, "  │")
+	_, _ = fmt.Fprintf(stdout, "  %s -> %s\n\n", moveOptions.OldPath, moveOptions.NewPath)
 
-	renderReferencesBlock(stdout, movePlan)
-	_, _ = fmt.Fprintln(stdout, "  │")
-
-	if moveOptions.RewriteTranscripts {
-		_, _ = fmt.Fprintf(stdout, "  ├ Transcripts: %d replacements\n", movePlan.TranscriptReplacements)
-	} else {
-		_, _ = fmt.Fprintf(stdout, "  ├ Transcripts (--rewrite-transcripts not set, skipping)\n")
+	for _, toolPlan := range movePlan.ByTool {
+		_, _ = fmt.Fprintf(stdout, "  [%s]\n", toolPlan.Tool)
+		if toolPlan.Absent {
+			_, _ = fmt.Fprintln(stdout, "    (project unknown to this tool; nothing to move)")
+			continue
+		}
+		total := 0
+		for _, surface := range toolPlan.Surfaces {
+			total += surface.Count
+		}
+		_, _ = fmt.Fprintf(stdout, "    References (%d changes)\n", total)
+		for _, surface := range toolPlan.Surfaces {
+			if surface.Count == 0 {
+				continue
+			}
+			_, _ = fmt.Fprintf(stdout, "      %-24s %d\n", surface.Name, surface.Count)
+		}
+		for _, warning := range toolPlan.Warnings {
+			_, _ = fmt.Fprintf(stdout, "    ! %s\n", warning)
+		}
+		if witnessErr, ok := witnessErrors[toolPlan.Tool]; ok {
+			_, _ = fmt.Fprintf(stdout, "    ! could not inspect active writers: %v\n", witnessErr)
+		}
+		for _, writer := range activeWriters[toolPlan.Tool] {
+			_, _ = fmt.Fprintf(stdout, "    ! active %s writer: pid=%d cwd=%s\n", displayName(targets, toolPlan.Tool), writer.Pid, writer.Cwd)
+		}
+		_, _ = fmt.Fprintln(stdout)
 	}
-	_, _ = fmt.Fprintf(stdout, "  ├ Memory: %d replacements\n", movePlan.MemoryReplacements)
-	_, _ = fmt.Fprintln(stdout, "  │")
 
-	_, _ = fmt.Fprintf(
-		stdout,
-		"  ├ File-history snapshots: %d preserved verbatim "+
-			"(Claude Code reads them by filename for in-session rewinds, not as path references)\n",
-		movePlan.ReplacementsByCategory["file-history-snapshots"],
-	)
-	_, _ = fmt.Fprintln(stdout, "  │")
-
-	renderPlanWarnings(stdout, movePlan)
-
-	_, _ = fmt.Fprintln(stdout)
 	_, _ = fmt.Fprintln(stdout, "  Run with --apply to execute.")
 	return nil
 }
 
-// reportActiveSessionOnSource prints a heads-up to stderr for every live
-// Claude Code session whose recorded cwd equals oldProjectPath. Dry-run
-// runs before lock.WithLock would fire on --apply, so surfacing the
-// witness here lets an operator close the live session before typing
-// --apply instead of discovering the block at mutation time.
-func reportActiveSessionOnSource(stderr io.Writer, claudeHome *claude.Home, oldProjectPath string) error {
-	active, err := findActive(claudeHome)
-	if err != nil {
-		return fmt.Errorf("check active sessions: %w", err)
-	}
-	for _, session := range active {
-		if session.Cwd != oldProjectPath {
-			continue
+func displayName(targets []tool.Target, toolName string) string {
+	for _, target := range targets {
+		if target.Tool.Name() == toolName {
+			return target.Tool.DisplayName()
 		}
-		_, _ = fmt.Fprintf(
-			stderr,
-			"note: Claude Code is currently running on %s (pid %d); --apply will refuse until that session exits\n",
-			session.Cwd, session.Pid,
-		)
 	}
-	return nil
+	return toolName
 }
 
-// displayLabels maps planCategories keys to left-column labels used in the
-// dry-run output. Keys absent from this map fall back to the key itself.
-var displayLabels = map[string]string{
-	"history":                    "history.jsonl",
-	"sessions":                   "sessions/*.json",
-	"settings":                   "settings.json",
-	"plugins/installed_plugins":  "plugins/installed_plugins.json",
-	"plugins/known_marketplaces": "plugins/known_marketplaces.json",
-	"todos":                      "todos/",
-	"usage-data/session-meta":    "usage-data/session-meta/",
-	"usage-data/facets":          "usage-data/facets/",
-	"plugins-data":               "plugins/data/",
-	"tasks":                      "tasks/",
-}
-
-func renderReferencesBlock(stdout io.Writer, movePlan *move.Plan) {
-	totalChanges := 0
-	for _, key := range move.PlanCategories() {
-		if key == "file-history-snapshots" {
-			continue
+func renderApplyResult(stdout io.Writer, result *move.ApplyResult) {
+	_, _ = fmt.Fprintln(stdout, "cc-port move")
+	for _, toolResult := range result.ByTool {
+		switch {
+		case toolResult.Absent:
+			_, _ = fmt.Fprintf(stdout, "  [%s] project unknown to this tool; skipped\n", toolResult.Tool)
+		case toolResult.Success:
+			_, _ = fmt.Fprintf(stdout, "  [%s] OK\n", toolResult.Tool)
+		default:
+			_, _ = fmt.Fprintf(stdout, "  [%s] FAILED: %v\n", toolResult.Tool, toolResult.Err)
 		}
-		totalChanges += movePlan.ReplacementsByCategory[key]
-	}
-	if movePlan.ConfigBlockRekey {
-		totalChanges++
-	}
-	_, _ = fmt.Fprintf(stdout, "  ├ References (%d changes)\n", totalChanges)
-	for _, key := range move.PlanCategories() {
-		if key == "file-history-snapshots" {
-			continue
-		}
-		count := movePlan.ReplacementsByCategory[key]
-		if count == 0 {
-			continue
-		}
-		label, ok := displayLabels[key]
-		if !ok {
-			label = key
-		}
-		_, _ = fmt.Fprintf(stdout, "  │   %-32s %d replacements\n", label, count)
-	}
-	if movePlan.ConfigBlockRekey {
-		_, _ = fmt.Fprintf(stdout, "  │   %-32s re-key project block\n", "~/.claude.json")
-	}
-}
-
-func renderPlanWarnings(stdout io.Writer, movePlan *move.Plan) {
-	if len(movePlan.HistoryMalformedLines) > 0 {
-		_, _ = fmt.Fprintf(
-			stdout,
-			"  ├ Warning: history.jsonl has %d malformed line(s) at %v: preserved verbatim, not rewritten\n",
-			len(movePlan.HistoryMalformedLines), movePlan.HistoryMalformedLines,
-		)
-		_, _ = fmt.Fprintln(stdout, "  │")
-	}
-
-	if len(movePlan.RulesReport.Warnings) > 0 {
-		renderRulesReport(stdout, "  └ ", movePlan.RulesReport)
-	} else {
-		_, _ = fmt.Fprintf(stdout, "  └ No rules file warnings\n")
 	}
 }

@@ -23,7 +23,9 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/pipeline"
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
@@ -34,6 +36,73 @@ const (
 	destinationProjectPath = "/home/newuser/projects/cool-project"
 	destinationHomeDir     = "/home/newuser"
 )
+
+// targetsFor wraps home as the single-claude-tool target slice every
+// generic command entry point (move, export, importer) now expects.
+func targetsFor(home *claude.Home) []tool.Target {
+	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+}
+
+// toolSetFor returns a registry containing only the claude tool, matching
+// targetsFor's single-tool slice.
+func toolSetFor() *tool.Set { return tool.NewSet(claude.New()) }
+
+// selectionFor builds a one-tool selection map from the named categories.
+func selectionFor(categories ...string) map[string]map[string]bool {
+	selected := make(map[string]bool, len(categories))
+	for _, name := range categories {
+		selected[name] = true
+	}
+	return map[string]map[string]bool{"claude": selected}
+}
+
+// allCategoriesSelection selects every category claude.New() declares.
+func allCategoriesSelection() map[string]map[string]bool {
+	claudeTool := claude.New()
+	selected := make(map[string]bool, len(claudeTool.Categories()))
+	for _, category := range claudeTool.Categories() {
+		selected[category.Name] = true
+	}
+	return map[string]map[string]bool{"claude": selected}
+}
+
+// discoverPlaceholders mirrors what the cmd layer does before every export:
+// call Workspace.Placeholders to discover the anchors actually referenced in
+// the selected categories' content, so Export has something to anonymize.
+// ImplicitAnchors (the import-side default-resolution mechanism) plays no
+// part in this — export-side anonymization is driven entirely by the
+// placeholders the caller supplies.
+//
+// Auto-discovery anchors {{HOME}} on the *real* test-runner's
+// os.UserHomeDir(), which the fixture's fake "/Users/test" home never
+// matches, so {{HOME}} never auto-discovers here. Every test in this file
+// that asserts on {{HOME}} anonymization adds it explicitly, the same way a
+// user hand-editing a manifest would when auto-discovery misses an anchor.
+func discoverPlaceholders(
+	t *testing.T, home *claude.Home, selection map[string]map[string]bool,
+) map[string][]manifest.Placeholder {
+	t.Helper()
+	workspace := claude.NewWorkspace(home)
+	placeholders, err := workspace.Placeholders(fixtureProjectPath, selection["claude"])
+	require.NoError(t, err, "discover placeholders")
+	placeholders = append(placeholders, manifest.Placeholder{Key: "{{HOME}}", Original: fixtureHomeDir})
+	return map[string][]manifest.Placeholder{"claude": placeholders}
+}
+
+// findSurfaceCount returns the replacement count for surfaceName within
+// the single claude ToolPlan in plan, failing the test if the tool block
+// or the surface is absent.
+func findSurfaceCount(t *testing.T, plan *move.Plan, surfaceName string) int {
+	t.Helper()
+	require.Len(t, plan.ByTool, 1)
+	for _, surface := range plan.ByTool[0].Surfaces {
+		if surface.Name == surfaceName {
+			return surface.Count
+		}
+	}
+	t.Fatalf("surface %q not present in plan", surfaceName)
+	return 0
+}
 
 // openArchive opens archivePath for the duration of the test and returns
 // it as the (Source, Size) pair the importer's Options expects.
@@ -47,29 +116,42 @@ func openArchive(t *testing.T, archivePath string) (source io.ReaderAt, size int
 	return zipFile, zipInfo.Size()
 }
 
+// runImport is a thin wrapper around importer.Run against a single-claude
+// target, since {{PROJECT_PATH}} and {{HOME}} resolve automatically via
+// the adapter's ImplicitAnchors and no longer need caller-supplied
+// resolutions for the common case.
+func runImport(t *testing.T, home *claude.Home, options *importer.Options) *importer.Result {
+	t.Helper()
+	result, err := importer.Run(t.Context(), toolSetFor(), targetsFor(home), options)
+	require.NoError(t, err, "import should succeed")
+	return result
+}
+
 // TestIntegration_MoveRoundTrip verifies a full dry-run + apply move cycle using real packages.
 func TestIntegration_MoveRoundTrip(t *testing.T) {
 	sourceHome := testutil.SetupFixture(t)
+	targets := targetsFor(sourceHome)
 
 	oldPath := fixtureProjectPath
 	newPath := "/Users/test/Projects/renamed"
 
 	// Dry run: verify replacements are detected.
-	plan, err := move.DryRun(t.Context(), sourceHome, move.Options{
+	plan, err := move.DryRun(t.Context(), targets, move.Options{
 		OldPath:  oldPath,
 		NewPath:  newPath,
 		RefsOnly: true,
 	})
 	require.NoError(t, err)
-	assert.Positive(t, plan.ReplacementsByCategory["history"], "dry run should detect history replacements")
+	assert.Positive(t, findSurfaceCount(t, plan, "history"), "dry run should detect history replacements")
 
 	// Apply the move. RefsOnly=true avoids trying to copy a non-existent disk directory.
-	err = move.Apply(t.Context(), sourceHome, move.Options{
+	result, err := move.Apply(t.Context(), targets, move.Options{
 		OldPath:  oldPath,
 		NewPath:  newPath,
 		RefsOnly: true,
 	})
 	require.NoError(t, err)
+	require.False(t, result.Failed())
 
 	// Old encoded project data dir should be gone.
 	oldProjectDataDir := sourceHome.ProjectDir(oldPath)
@@ -97,18 +179,11 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 	destinationHome := setupDestinationHome(t)
 
 	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
+	runImport(t, destinationHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destinationProjectPath,
-			"{{HOME}}":         destinationHomeDir,
-		},
-	}
-
-	_, err := importer.Run(t.Context(), destinationHome, &importOptions)
-	require.NoError(t, err, "import should succeed")
+	})
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
 }
@@ -119,23 +194,15 @@ func runExportRoundTrip(t *testing.T, sourceHome *claude.Home, archivePath strin
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
 	require.NoError(t, err, "create archive file")
 
+	selection := selectionFor("sessions", "memory", "history", "file-history", "config")
 	exportOptions := export.Options{
-		ProjectPath: fixtureProjectPath,
-		Output:      archiveFile,
-		Categories: manifest.CategorySet{
-			Sessions:    true,
-			Memory:      true,
-			History:     true,
-			FileHistory: true,
-			Config:      true,
-		},
-		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
-			{Key: "{{HOME}}", Original: fixtureHomeDir},
-		},
+		ProjectPath:  fixtureProjectPath,
+		Output:       archiveFile,
+		Selected:     selection,
+		Placeholders: discoverPlaceholders(t, sourceHome, selection),
 	}
 
-	_, err = export.Run(t.Context(), sourceHome, &exportOptions)
+	_, err = export.Run(t.Context(), targetsFor(sourceHome), &exportOptions)
 	require.NoError(t, err, "export should succeed")
 	require.NoError(t, archiveFile.Close(), "close archive after export")
 	assert.FileExists(t, archivePath, "archive file should exist after export")
@@ -158,7 +225,7 @@ func verifyNoOriginalPathsInZip(t *testing.T, archivePath string) {
 		// opaque user-file bytes, not anonymised material. A snapshot may
 		// legitimately carry the original project path inside its body, and
 		// cc-port preserves that by design.
-		if strings.HasPrefix(zipFile.Name, "file-history/") {
+		if strings.HasPrefix(zipFile.Name, "claude/file-history/") {
 			continue
 		}
 		readCloser, err := zipFile.Open()
@@ -167,9 +234,14 @@ func verifyNoOriginalPathsInZip(t *testing.T, archivePath string) {
 		_ = readCloser.Close()
 		require.NoError(t, readErr, "should read zip entry %q", zipFile.Name)
 
-		assert.NotContains(t, string(content), fixtureProjectPath,
+		// Boundary-aware, not a plain substring check: the fixture's memory
+		// notes legitimately mention a sibling project
+		// (/Users/test/Projects/myproject-extras), and that sibling's real
+		// path must survive anonymization untouched. A naive Contains would
+		// misreport that correct behavior as a leak.
+		assert.False(t, rewrite.ContainsBoundedPath(content, fixtureProjectPath),
 			"file %q should not contain original project path", zipFile.Name)
-		assert.NotContains(t, string(content), fixtureHomeDir,
+		assert.False(t, rewrite.ContainsBoundedPath(content, fixtureHomeDir),
 			"file %q should not contain original home dir", zipFile.Name)
 	}
 }
@@ -241,12 +313,13 @@ func TestIntegration_MoveRefsOnly(t *testing.T) {
 	oldPath := fixtureProjectPath
 	newPath := "/Users/test/Projects/renamed-refsonly"
 
-	err := move.Apply(t.Context(), sourceHome, move.Options{
+	result, err := move.Apply(t.Context(), targetsFor(sourceHome), move.Options{
 		OldPath:  oldPath,
 		NewPath:  newPath,
 		RefsOnly: true,
 	})
 	require.NoError(t, err, "refs-only move should succeed")
+	require.False(t, result.Failed())
 
 	// New encoded project data dir should exist.
 	newProjectDataDir := sourceHome.ProjectDir(newPath)
@@ -266,7 +339,7 @@ func TestIntegration_MoveRefsOnly(t *testing.T) {
 }
 
 // TestIntegration_ExportImportRoundTrip_AllCategories verifies an end-to-end
-// export + import round-trip with all 9 categories enabled. It asserts that
+// export + import round-trip with all categories enabled. It asserts that
 // every category lands in the destination and that path rewriting worked
 // inside at least one session-keyed body (usage-data/session-meta).
 func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
@@ -276,24 +349,12 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
 	require.NoError(t, err, "create archive file")
 
-	_, err = export.Run(t.Context(), sourceHome, &export.Options{
-		ProjectPath: fixtureProjectPath,
-		Output:      archiveFile,
-		Categories: manifest.CategorySet{
-			Sessions:    true,
-			Memory:      true,
-			History:     true,
-			FileHistory: true,
-			Config:      true,
-			Todos:       true,
-			UsageData:   true,
-			PluginsData: true,
-			Tasks:       true,
-		},
-		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
-			{Key: "{{HOME}}", Original: fixtureHomeDir},
-		},
+	allCategories := allCategoriesSelection()
+	_, err = export.Run(t.Context(), targetsFor(sourceHome), &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		Output:       archiveFile,
+		Selected:     allCategories,
+		Placeholders: discoverPlaceholders(t, sourceHome, allCategories),
 	})
 	require.NoError(t, err, "export with all categories should succeed")
 	require.NoError(t, archiveFile.Close(), "close archive after export")
@@ -303,16 +364,11 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	destinationHome := setupDestinationHome(t)
 
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), destinationHome, &importer.Options{
+	runImport(t, destinationHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destinationProjectPath,
-			"{{HOME}}":         destinationHomeDir,
-		},
 	})
-	require.NoError(t, err, "import should succeed")
 
 	imported, err := claude.LocateProject(destinationHome, destinationProjectPath)
 	require.NoError(t, err, "LocateProject should succeed on imported project")
@@ -340,23 +396,23 @@ func assertArchiveHasAllCategoryPrefixes(t *testing.T, archivePath string) {
 	var hasTodos, hasSessionMeta, hasFacets, hasPluginsData, hasTasks bool
 	for _, f := range zipReader.File {
 		switch {
-		case strings.HasPrefix(f.Name, "todos/"):
+		case strings.HasPrefix(f.Name, "claude/todos/"):
 			hasTodos = true
-		case strings.HasPrefix(f.Name, "usage-data/session-meta/"):
+		case strings.HasPrefix(f.Name, "claude/usage-data/session-meta/"):
 			hasSessionMeta = true
-		case strings.HasPrefix(f.Name, "usage-data/facets/"):
+		case strings.HasPrefix(f.Name, "claude/usage-data/facets/"):
 			hasFacets = true
-		case strings.HasPrefix(f.Name, "plugins-data/"):
+		case strings.HasPrefix(f.Name, "claude/plugins-data/"):
 			hasPluginsData = true
-		case strings.HasPrefix(f.Name, "tasks/"):
+		case strings.HasPrefix(f.Name, "claude/tasks/"):
 			hasTasks = true
 		}
 	}
-	assert.True(t, hasTodos, "archive must include todos/ entries")
-	assert.True(t, hasSessionMeta, "archive must include usage-data/session-meta/ entries")
-	assert.True(t, hasFacets, "archive must include usage-data/facets/ entries")
-	assert.True(t, hasPluginsData, "archive must include plugins-data/ entries")
-	assert.True(t, hasTasks, "archive must include tasks/ entries")
+	assert.True(t, hasTodos, "archive must include claude/todos/ entries")
+	assert.True(t, hasSessionMeta, "archive must include claude/usage-data/session-meta/ entries")
+	assert.True(t, hasFacets, "archive must include claude/usage-data/facets/ entries")
+	assert.True(t, hasPluginsData, "archive must include claude/plugins-data/ entries")
+	assert.True(t, hasTasks, "archive must include claude/tasks/ entries")
 }
 
 func assertAllCategoriesImported(t *testing.T, imported *claude.ProjectLocations) {
@@ -374,51 +430,51 @@ func assertAllCategoriesImported(t *testing.T, imported *claude.ProjectLocations
 	assert.NotEmpty(t, imported.TaskFiles, "tasks must be imported")
 }
 
-// TestIntegration_ImportConflict verifies that importing back to a ClaudeHome where
-// the same project path already exists produces an "already exists" error.
-func TestIntegration_ImportConflict(t *testing.T) {
+// TestIntegration_ImportIsRerunnable verifies that importing back to a
+// ClaudeHome where the same project path already exists succeeds and
+// converges (no BC "already exists" refusal any more): import is
+// idempotent, so a re-run into the same home is the documented recovery
+// path for a partially failed import.
+func TestIntegration_ImportIsRerunnable(t *testing.T) {
 	sourceHome := testutil.SetupFixture(t)
 
-	archivePath := filepath.Join(t.TempDir(), "export-conflict.zip")
+	archivePath := filepath.Join(t.TempDir(), "export-rerun.zip")
 
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
 	require.NoError(t, err, "create archive file")
 
+	rerunSelection := selectionFor("sessions", "memory", "history", "config")
 	exportOptions := export.Options{
-		ProjectPath: fixtureProjectPath,
-		Output:      archiveFile,
-		Categories: manifest.CategorySet{
-			Sessions: true,
-			Memory:   true,
-			History:  true,
-			Config:   true,
-		},
-		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
-			{Key: "{{HOME}}", Original: fixtureHomeDir},
-		},
+		ProjectPath:  fixtureProjectPath,
+		Output:       archiveFile,
+		Selected:     rerunSelection,
+		Placeholders: discoverPlaceholders(t, sourceHome, rerunSelection),
 	}
 
-	_, err = export.Run(t.Context(), sourceHome, &exportOptions)
+	_, err = export.Run(t.Context(), targetsFor(sourceHome), &exportOptions)
 	require.NoError(t, err, "export should succeed")
 	require.NoError(t, archiveFile.Close(), "close archive after export")
 
-	// Try to import back to the same ClaudeHome at the same project path.
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": fixtureProjectPath,
-			"{{HOME}}":         fixtureHomeDir,
-		},
+	// Import back to the same ClaudeHome at the same project path, twice.
+	for range 2 {
+		source, size := openArchive(t, archivePath)
+		runImport(t, sourceHome, &importer.Options{
+			Source:     source,
+			Size:       size,
+			TargetPath: fixtureProjectPath,
+		})
 	}
 
-	_, err = importer.Run(t.Context(), sourceHome, &importOptions)
-	require.Error(t, err, "import to existing project should fail with a conflict error")
-	assert.Contains(t, err.Error(), "already exists",
-		"conflict error message should mention 'already exists'")
+	historyBytes, err := os.ReadFile(sourceHome.HistoryFile())
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimRight(string(historyBytes), "\n"), "\n")
+	seen := make(map[string]int)
+	for _, line := range lines {
+		seen[line]++
+	}
+	for line, count := range seen {
+		assert.Equalf(t, 1, count, "history line must not be duplicated by a re-import: %s", line)
+	}
 }
 
 func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
@@ -437,23 +493,14 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 	writer, err := pipeline.RunWriter(t.Context(), writeStages)
 	require.NoError(t, err)
 
+	encryptedSelection := selectionFor("sessions", "memory", "history", "file-history", "config")
 	exportOptions := export.Options{
-		ProjectPath: fixtureProjectPath,
-		Output:      writer,
-		Categories: manifest.CategorySet{
-			Sessions:    true,
-			Memory:      true,
-			History:     true,
-			FileHistory: true,
-			Config:      true,
-		},
-		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
-			{Key: "{{HOME}}", Original: fixtureHomeDir},
-			{Key: "{{PROJECT_DIR}}", Original: sourceHome.ProjectDir(fixtureProjectPath)},
-		},
+		ProjectPath:  fixtureProjectPath,
+		Output:       writer,
+		Selected:     encryptedSelection,
+		Placeholders: discoverPlaceholders(t, sourceHome, encryptedSelection),
 	}
-	_, err = export.Run(t.Context(), sourceHome, &exportOptions)
+	_, err = export.Run(t.Context(), targetsFor(sourceHome), &exportOptions)
 	require.NoError(t, err, "encrypted export should succeed")
 	require.NoError(t, writer.Close(), "writer Close should flush age trailer and close file sink")
 
@@ -480,18 +527,11 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = source.Close() })
 
 	destinationHome := setupDestinationHome(t)
-	importOptions := importer.Options{
+	runImport(t, destinationHome, &importer.Options{
 		Source:     source.ReaderAt,
 		Size:       source.Size,
 		TargetPath: destinationProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destinationProjectPath,
-			"{{HOME}}":         destinationHomeDir,
-		},
-	}
-	_, importErr := importer.Run(t.Context(), destinationHome, &importOptions)
-	require.NoError(t, importErr,
-		"import from decrypted source should succeed")
+	})
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
 
@@ -578,7 +618,7 @@ func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
 	require.NoError(t, os.Chtimes(snapshotPath, fileHistoryMtime, fileHistoryMtime),
 		"set source file-history mtime")
 
-	// Stamping a todos source file exercises stageSessionKeyedFileFromZip end-to-end.
+	// Stamping a todos source file exercises the session-keyed staging path end-to-end.
 	todosRoot := sourceHome.TodosDir()
 	todosPath := firstFileUnder(t, todosRoot)
 	require.NoError(t, os.Chtimes(todosPath, todosMtime, todosMtime),
@@ -586,43 +626,27 @@ func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
 
 	roundTripStartedAt := time.Now()
 
-	// Inline export.Options so Categories.Todos can be enabled — the shared
-	// runExportRoundTrip helper fixes the category set without todos.
 	archivePath := filepath.Join(t.TempDir(), "export.zip")
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
 	require.NoError(t, err, "create archive file")
 
-	_, err = export.Run(t.Context(), sourceHome, &export.Options{
-		ProjectPath: fixtureProjectPath,
-		Output:      archiveFile,
-		Categories: manifest.CategorySet{
-			Sessions:    true,
-			Memory:      true,
-			History:     true,
-			FileHistory: true,
-			Config:      true,
-			Todos:       true,
-		},
-		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
-			{Key: "{{HOME}}", Original: fixtureHomeDir},
-		},
+	mtimeSelection := selectionFor("sessions", "memory", "history", "file-history", "config", "todos")
+	_, err = export.Run(t.Context(), targetsFor(sourceHome), &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		Output:       archiveFile,
+		Selected:     mtimeSelection,
+		Placeholders: discoverPlaceholders(t, sourceHome, mtimeSelection),
 	})
 	require.NoError(t, err, "export should succeed")
 	require.NoError(t, archiveFile.Close(), "close archive after export")
 
 	destinationHome := setupDestinationHome(t)
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), destinationHome, &importer.Options{
+	runImport(t, destinationHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destinationProjectPath,
-			"{{HOME}}":         destinationHomeDir,
-		},
 	})
-	require.NoError(t, err, "import")
 
 	// Positive cases — verbatim entries carry source mtime through promotion.
 	encodedDestProjectDir := destinationHome.ProjectDir(destinationProjectPath)
@@ -703,8 +727,8 @@ func stageFixtureWorkflowTree(t *testing.T, home *claude.Home) string {
 // living inside a session subdir (projects/<encoded>/<sid>/workflows/** and
 // .../subagents/workflows/**) survives an export + import round-trip with its
 // project-path references rewritten to the destination. Workflows are not a
-// dedicated category: they ride the sessions category through addDirToZip on
-// export and the sessions/ prefix on import.
+// dedicated category: they ride the sessions category through the sessions/
+// staging path on both export and import.
 func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 	sourceHome := testutil.SetupFixture(t)
 
@@ -713,31 +737,23 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "export-workflows.zip")
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
 	require.NoError(t, err, "create archive file")
-	_, err = export.Run(t.Context(), sourceHome, &export.Options{
-		ProjectPath: fixtureProjectPath,
-		Output:      archiveFile,
-		Categories:  manifest.CategorySet{Sessions: true},
-		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: fixtureProjectPath},
-			{Key: "{{HOME}}", Original: fixtureHomeDir},
-			{Key: "{{PROJECT_DIR}}", Original: sourceHome.ProjectDir(fixtureProjectPath)},
-		},
+	workflowSelection := selectionFor("sessions")
+	_, err = export.Run(t.Context(), targetsFor(sourceHome), &export.Options{
+		ProjectPath:  fixtureProjectPath,
+		Output:       archiveFile,
+		Selected:     workflowSelection,
+		Placeholders: discoverPlaceholders(t, sourceHome, workflowSelection),
 	})
 	require.NoError(t, err, "export with sessions category should succeed")
 	require.NoError(t, archiveFile.Close(), "close archive after export")
 
 	destinationHome := setupDestinationHome(t)
 	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), destinationHome, &importer.Options{
+	runImport(t, destinationHome, &importer.Options{
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destinationProjectPath,
-			"{{HOME}}":         destinationHomeDir,
-		},
 	})
-	require.NoError(t, err, "import should succeed")
 
 	destProjectDir := destinationHome.ProjectDir(destinationProjectPath)
 	recordPath := filepath.Join(destProjectDir, sid, "workflows", "wf_ccport.json")
@@ -776,7 +792,7 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 
 // TestIntegration_MoveRewritesWorkflowTree verifies that move rewrites the
 // project-path references inside a session subdir's workflow tree when
-// RewriteTranscripts is enabled — the same opt-in gate that covers subagent
+// DeepRewrite is enabled — the same opt-in gate that covers subagent
 // transcripts. It also rewrites the encoded storage-dir segment (e.g. a run
 // record's scriptPath) from the old encoded dir to the new one.
 func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
@@ -785,13 +801,14 @@ func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
 	sid := stageFixtureWorkflowTree(t, sourceHome)
 
 	newPath := "/Users/test/Projects/renamed-workflows"
-	err := move.Apply(t.Context(), sourceHome, move.Options{
-		OldPath:            fixtureProjectPath,
-		NewPath:            newPath,
-		RefsOnly:           true,
-		RewriteTranscripts: true,
+	result, err := move.Apply(t.Context(), targetsFor(sourceHome), move.Options{
+		OldPath:     fixtureProjectPath,
+		NewPath:     newPath,
+		RefsOnly:    true,
+		DeepRewrite: true,
 	})
 	require.NoError(t, err, "move with transcript rewrite should succeed")
+	require.False(t, result.Failed())
 
 	recordPath := filepath.Join(sourceHome.ProjectDir(newPath), sid, "workflows", "wf_ccport.json")
 	require.FileExists(t, recordPath, "workflow run record should move with the project dir")

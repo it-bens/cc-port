@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 
 	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/term"
 
-	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // Banner is the consumer-defined interface for the interactive-prompt
@@ -56,85 +55,59 @@ func requireTTY(remediation string) error {
 	return fmt.Errorf("interactive prompt requires a TTY: %s", remediation)
 }
 
-// optionMeta carries UI-specific metadata for one export-category option.
-// Keyed by manifest.AllCategories.Name in categoryOptionMeta.
-type optionMeta struct {
-	Description string
-	Selected    bool
-}
-
-var categoryOptionMeta = map[string]optionMeta{
-	"sessions":     {Description: "Sessions (transcripts & subagent data)", Selected: true},
-	"memory":       {Description: "Memory (project-scoped auto-memory)", Selected: true},
-	"history":      {Description: "History (command history entries)", Selected: true},
-	"file-history": {Description: "File history (file version snapshots)"},
-	"config":       {Description: "Config (project config from ~/.claude.json)", Selected: true},
-	"todos":        {Description: "Todos (in-progress TodoWrite task lists)"},
-	"usage-data":   {Description: "Usage data (session metadata + token facets)"},
-	"plugins-data": {Description: "Plugin data (per-session plugin state)"},
-	"tasks":        {Description: "Tasks (numbered agent-task lists)"},
-}
-
 func categoryFlagsHelpText() string {
-	flags := make([]string, 0, len(manifest.AllCategories))
-	for _, spec := range manifest.AllCategories {
-		flags = append(flags, "--"+spec.Name)
-	}
-	return "rerun with --all or explicit category flags (" + strings.Join(flags, ", ") + ")"
+	return "rerun with --all or --include <tool>/<category>"
 }
 
-// SelectCategories presents an interactive multi-select for export categories.
-func SelectCategories(banner Banner) (manifest.CategorySet, error) {
+// SelectCategories presents an interactive multi-select for export
+// categories, grouped by tool, across every tool in tools. Returns the
+// selection as tool name -> category name -> included.
+func SelectCategories(banner Banner, tools []tool.Tool) (map[string]map[string]bool, error) {
 	if err := requireTTY(categoryFlagsHelpText()); err != nil {
-		return manifest.CategorySet{}, err
+		return nil, err
 	}
 	showInteractiveBanner(banner)
 
-	options := make([]huh.Option[string], 0, len(manifest.AllCategories))
-	for _, spec := range manifest.AllCategories {
-		meta, ok := categoryOptionMeta[spec.Name]
-		if !ok {
-			return manifest.CategorySet{}, fmt.Errorf("category %q has no UI option metadata", spec.Name)
-		}
-		opt := huh.NewOption(meta.Description, spec.Name)
-		if meta.Selected {
-			opt = opt.Selected(true)
-		}
-		options = append(options, opt)
+	type qualifiedOption struct {
+		toolName     string
+		categoryName string
 	}
 
-	var selectedCategories []string
+	var options []huh.Option[qualifiedOption]
+	for _, t := range tools {
+		for _, category := range t.Categories() {
+			label := category.Description
+			if len(tools) > 1 {
+				label = fmt.Sprintf("[%s] %s", t.DisplayName(), label)
+			}
+			opt := huh.NewOption(label, qualifiedOption{toolName: t.Name(), categoryName: category.Name})
+			if category.DefaultSelected {
+				opt = opt.Selected(true)
+			}
+			options = append(options, opt)
+		}
+	}
+
+	var selectedOptions []qualifiedOption
 	form := huh.NewForm(
 		huh.NewGroup(
-			huh.NewMultiSelect[string]().
+			huh.NewMultiSelect[qualifiedOption]().
 				Title("Select categories to export").
 				Options(options...).
-				Value(&selectedCategories),
+				Value(&selectedOptions),
 		),
 	)
 
 	if err := runForm(form); err != nil {
-		return manifest.CategorySet{}, fmt.Errorf("category selection canceled: %w", err)
+		return nil, fmt.Errorf("category selection canceled: %w", err)
 	}
 
-	result, err := categoriesFromSelections(selectedCategories)
-	if err != nil {
-		return manifest.CategorySet{}, fmt.Errorf("category selection: %w", err)
+	selection := make(map[string]map[string]bool)
+	for _, t := range tools {
+		selection[t.Name()] = make(map[string]bool)
 	}
-	return result, nil
-}
-
-// An unknown key means the form options literal in SelectCategories has
-// drifted out of sync with manifest.AllCategories; surface it rather than
-// silently dropping.
-func categoriesFromSelections(selections []string) (manifest.CategorySet, error) {
-	var result manifest.CategorySet
-	for _, key := range selections {
-		spec, ok := manifest.SpecByName(key)
-		if !ok {
-			return manifest.CategorySet{}, fmt.Errorf("unknown export category key %q", key)
-		}
-		spec.Apply(&result, true)
+	for _, option := range selectedOptions {
+		selection[option.toolName][option.categoryName] = true
 	}
-	return result, nil
+	return selection, nil
 }

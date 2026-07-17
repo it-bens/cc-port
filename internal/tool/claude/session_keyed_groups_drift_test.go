@@ -5,22 +5,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
-// TestSessionKeyedGroups_CategoriesAreManifestCategories asserts every
-// group's Category matches an entry in manifest.AllCategories. Adding a
-// session-keyed group with a Category outside the manifest registry must
+// TestSessionKeyedGroups_CategoriesAreDeclaredCategories asserts every
+// group's Category matches an entry in claude.New().Categories(). Adding a
+// session-keyed group with a Category outside the declared registry must
 // fail this test.
-func TestSessionKeyedGroups_CategoriesAreManifestCategories(t *testing.T) {
-	known := make(map[string]bool, len(manifest.AllCategories))
-	for _, spec := range manifest.AllCategories {
-		known[spec.Name] = true
+func TestSessionKeyedGroups_CategoriesAreDeclaredCategories(t *testing.T) {
+	known := make(map[string]bool)
+	for _, category := range claude.New().Categories() {
+		known[category.Name] = true
 	}
 	for group := range claude.SessionKeyedGroups() {
 		assert.True(t, known[group.Category],
-			"SessionKeyedGroup %q has Category %q not in manifest.AllCategories",
+			"SessionKeyedGroup %q has Category %q not in the declared category registry",
 			group.Name, group.Category)
 	}
 }
