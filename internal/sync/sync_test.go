@@ -6,17 +6,27 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
+func testHostname() (string, error) { return "test-host", nil }
+
+func testGetenv(string) string { return "test-user" }
+
+func testCurrentUser() (*user.User, error) { return &user.User{Username: "test-user"}, nil }
+
 func TestSelfPusher_OnConfiguredMachineReturnsHostUser(t *testing.T) {
-	got, err := selfPusher()
+	got, err := selfPusher(os.Hostname, os.Getenv, user.Current)
 	if err != nil {
 		t.Fatalf("selfPusher: %v", err)
 	}
@@ -34,7 +44,7 @@ func TestSelfPusher_EmptyUsernameReturnsError(t *testing.T) {
 	// exercises only the env-clearing path and accepts a pass when
 	// the platform-level fallback fills the username.
 	t.Setenv("USER", "")
-	got, err := selfPusher()
+	got, err := selfPusher(os.Hostname, os.Getenv, user.Current)
 	if err != nil {
 		// Empty-username branch fired; correct.
 		return
@@ -43,6 +53,17 @@ func TestSelfPusher_EmptyUsernameReturnsError(t *testing.T) {
 		t.Fatal("selfPusher returned empty string with no error")
 	}
 	// Platform supplied a username via os/user.Current(); also correct.
+}
+
+func TestSelfPusher_UsesIdentitySeams(t *testing.T) {
+	got, err := selfPusher(
+		func() (string, error) { return "test-host", nil },
+		func(string) string { return "test-user" },
+		func() (*user.User, error) { return nil, errors.New("should not be called") },
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "test-host-test-user", got)
 }
 
 func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
@@ -55,6 +76,9 @@ func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
 		ProjectPath: projectPath,
 		Name:        "fresh-name",
 		Selected:    allSelection(),
+		Hostname:    testHostname,
+		Getenv:      testGetenv,
+		CurrentUser: testCurrentUser,
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -75,6 +99,7 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 	planA, err := PlanPush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, priorA)
 	if err != nil {
 		t.Fatalf("PlanPush A: %v", err)
@@ -83,6 +108,7 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 	if err := ExecutePush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, planA, writerA); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
@@ -94,6 +120,7 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 	planB, err := PlanPush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, priorB)
 	if err != nil {
 		t.Fatalf("PlanPush B: %v", err)
@@ -115,6 +142,7 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 	plan, err := PlanPush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -133,6 +161,7 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	plan, err := PlanPush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -215,6 +244,7 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	planA, err := PlanPush(context.Background(), PushOptions{
 		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
 		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, priorA)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)

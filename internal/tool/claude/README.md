@@ -334,6 +334,26 @@ writes. Each type with an `Extra` field uses a custom `UnmarshalJSON` and
 - Schema validation beyond field presence. Callers that need value
   constraints must enforce them after unmarshaling.
 
+### Witness liveness
+
+`Workspace.ActiveWriters` reads session files and resolves each named PID
+through the workspace's injected liveness seam.
+
+#### Handled
+
+- A live PID produces its session's `Cwd` and PID as an active writer; a dead
+  PID produces no active writer.
+
+#### Refused
+
+- An unreadable-but-byte-present session file, including malformed JSON,
+  returns an error wrapping `tool.ErrNoWitness` rather than silently skipping
+  the evidence.
+
+#### Not covered
+
+- Process-table scanning. Claude checks only PIDs named in session files.
+
 ### History line cap
 
 The exported constant `MaxHistoryLine` (16 MiB) caps a single

@@ -35,7 +35,7 @@ func (workspace *Workspace) Placeholders(project string, selected map[string]boo
 		return nil, err
 	}
 
-	homePath, err := homeAnchor()
+	homePath, err := homeAnchor(workspace.getenv)
 	if err != nil {
 		return nil, err
 	}

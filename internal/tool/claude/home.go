@@ -38,6 +38,10 @@ type Home struct {
 // which panics on relative input. Converting operational input here
 // keeps the panic path reserved for real programmer errors.
 func NewHome(override string) (*Home, error) {
+	return newHome(override, os.Getenv)
+}
+
+func newHome(override string, getenv func(string) string) (*Home, error) {
 	if override != "" {
 		absOverride, err := filepath.Abs(override)
 		if err != nil {
@@ -49,9 +53,9 @@ func NewHome(override string) (*Home, error) {
 		}, nil
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("determine home directory: %w", err)
+	homeDir := getenv("HOME")
+	if homeDir == "" {
+		return nil, fmt.Errorf("determine home directory: $HOME is unset")
 	}
 
 	return &Home{
@@ -131,10 +135,10 @@ func (claudeHome *Home) KnownMarketplacesFile() string {
 // compares it against project paths, otherwise every home-rooted candidate
 // is silently dropped. Rejects "/" and non-absolute values so the anchor
 // cannot match every absolute path in the corpus.
-func homeAnchor() (string, error) {
-	homePath, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("determine home directory: %w", err)
+func homeAnchor(getenv func(string) string) (string, error) {
+	homePath := getenv("HOME")
+	if homePath == "" {
+		return "", fmt.Errorf("determine home directory: $HOME is unset")
 	}
 	if !filepath.IsAbs(homePath) {
 		return "", fmt.Errorf("invalid home directory %q: must be absolute", homePath)

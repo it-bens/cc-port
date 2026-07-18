@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/user"
 
 	"github.com/spf13/cobra"
 
@@ -162,6 +164,9 @@ func runPushCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 		Name:              asName,
 		Selected:          selection,
 		Placeholders:      placeholders,
+		Hostname:          os.Hostname,
+		Getenv:            os.Getenv,
+		CurrentUser:       user.Current,
 		Force:             force,
 		EncryptionEnabled: passphrase != "",
 	}

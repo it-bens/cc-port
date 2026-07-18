@@ -78,7 +78,7 @@ func (workspace *Workspace) PreflightDirs(project string) []string {
 // (independent of any --claude-home override), and {{PROJECT_DIR}} is the
 // target's encoded storage directory.
 func (workspace *Workspace) ImplicitAnchors(project string) (map[string]string, error) {
-	home, err := homeAnchor()
+	home, err := homeAnchor(workspace.getenv)
 	if err != nil {
 		return nil, err
 	}

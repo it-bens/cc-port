@@ -13,7 +13,7 @@ import (
 )
 
 // FindActive returns liveness evidence from Claude session files.
-func FindActive(claudeHome *Home) ([]tool.ActiveWriter, error) {
+func FindActive(claudeHome *Home, processLiveness func(int) bool) ([]tool.ActiveWriter, error) {
 	sessionsDir := claudeHome.SessionsDir()
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
@@ -35,10 +35,9 @@ func FindActive(claudeHome *Home) ([]tool.ActiveWriter, error) {
 		}
 		var sessionFile SessionFile
 		if err := json.Unmarshal(data, &sessionFile); err != nil {
-			// Unknown / future schema; skip rather than block.
-			continue
+			return nil, fmt.Errorf("%w: parse session file %s: %w", tool.ErrNoWitness, sessionFilePath, err)
 		}
-		if sessionFile.Pid <= 0 || !processAlive(sessionFile.Pid) {
+		if sessionFile.Pid <= 0 || !processLiveness(sessionFile.Pid) {
 			continue
 		}
 		active = append(active, tool.ActiveWriter{Pid: sessionFile.Pid, Cwd: sessionFile.Cwd})

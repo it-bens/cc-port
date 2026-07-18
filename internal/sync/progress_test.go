@@ -53,6 +53,9 @@ func TestExecutePush_ExportSubPhasesNest(t *testing.T) {
 		Name:        "k",
 		Selected:    allSelection(),
 		Reporter:    reporter,
+		Hostname:    testHostname,
+		Getenv:      testGetenv,
+		CurrentUser: testCurrentUser,
 	}
 	plan, err := PlanPush(context.Background(), opts, nil)
 	require.NoError(t, err)
@@ -88,6 +91,7 @@ func TestExecutePull_ImportSubPhasesNest(t *testing.T) {
 	planA, err := PlanPush(context.Background(), PushOptions{
 		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
 		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, openPriorForTest(t, r, "k", ""))
 	require.NoError(t, err)
 	writerA := openWriterForTest(t, r, "k", "")

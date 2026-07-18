@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/user"
 	"sort"
 	"time"
@@ -29,11 +28,17 @@ var now = time.Now
 // PushOptions carries the inputs cmd/cc-port push hands to PlanPush and
 // ExecutePush. Selected and Placeholders are keyed by tool name.
 type PushOptions struct {
-	Targets           []tool.Target
-	ProjectPath       string
-	Name              string
-	Selected          map[string]map[string]bool
-	Placeholders      map[string][]manifest.Placeholder
+	Targets      []tool.Target
+	ProjectPath  string
+	Name         string
+	Selected     map[string]map[string]bool
+	Placeholders map[string][]manifest.Placeholder
+	// Hostname, Getenv, and CurrentUser are the identity-lookup seams selfPusher uses to derive the
+	// cross-machine push identity. Real callers wire os.Hostname, os.Getenv, and user.Current;
+	// tests supply fakes.
+	Hostname          func() (string, error)
+	Getenv            func(string) string
+	CurrentUser       func() (*user.User, error)
 	Force             bool
 	EncryptionEnabled bool
 
@@ -103,8 +108,11 @@ func PlanPush(_ context.Context, opts PushOptions, prior *PriorRead) (*PushPlan,
 	if opts.Name == "" {
 		return nil, errors.New("sync.PlanPush: Name is empty")
 	}
+	if opts.Hostname == nil || opts.Getenv == nil || opts.CurrentUser == nil {
+		return nil, errors.New("sync.PlanPush: Hostname, Getenv, and CurrentUser identity seams are required")
+	}
 
-	pusher, err := selfPusher()
+	pusher, err := selfPusher(opts.Hostname, opts.Getenv, opts.CurrentUser)
 	if err != nil && !opts.Force {
 		return nil, fmt.Errorf("sync.PlanPush: derive self identity: %w", err)
 	}
@@ -292,8 +300,8 @@ var (
 )
 
 // selfPusher returns "hostname-username" for the current invocation.
-func selfPusher() (string, error) {
-	host, err := os.Hostname()
+func selfPusher(hostname func() (string, error), getenv func(string) string, currentUser func() (*user.User, error)) (string, error) {
+	host, err := hostname()
 	if err != nil {
 		return "", fmt.Errorf("sync: read hostname for cross-machine identity: %w", err)
 	}
@@ -303,9 +311,9 @@ func selfPusher() (string, error) {
 				"(set $HOSTNAME or use --force to override)",
 		)
 	}
-	name := os.Getenv("USER")
+	name := getenv("USER")
 	if name == "" {
-		u, err := user.Current()
+		u, err := currentUser()
 		if err != nil {
 			return "", fmt.Errorf("sync: resolve current user for cross-machine identity: %w", err)
 		}
