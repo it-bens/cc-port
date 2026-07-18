@@ -39,7 +39,7 @@ func TestExportDecompressesRolloutsAndReportsEraA(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(compressedPath, compressed, 0o600))
 
-	workspace := newWorkspace(home, func(string) string { return "" }, nil, nil, nil)
+	workspace := newWorkspace(home, func(string) string { return "" }, nil, nil, nil, DefaultTranscodeCaps())
 	var archiveBytes bytes.Buffer
 	writer := zip.NewWriter(&archiveBytes)
 	sink := archive.NewSink(writer, toolName, nil)
@@ -110,7 +110,7 @@ func TestStageRejectsUnknownCodexRelativeEntryWithoutStaging(t *testing.T) {
 	_, err = entryWriter.Write([]byte("payload"))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
-	reader, err := archive.OpenReader(bytes.NewReader(archiveBytes.Bytes()), int64(archiveBytes.Len()))
+	reader, err := archive.OpenReader(bytes.NewReader(archiveBytes.Bytes()), int64(archiveBytes.Len()), archive.DefaultCaps())
 	require.NoError(t, err)
 	entries, err := reader.RawEntries()
 	require.NoError(t, err)
@@ -480,7 +480,7 @@ func importFixtureArchiveToTarget(t *testing.T, data []byte, home *Home, target 
 	set := tool.NewSet(adapter)
 	reader := bytes.NewReader(data)
 	result, err := importer.Run(t.Context(), set, []tool.Target{{Tool: adapter, Workspace: quietTestWorkspace(home)}}, &importer.Options{
-		Source: reader, Size: int64(reader.Len()), TargetPath: target,
+		Source: reader, Size: int64(reader.Len()), TargetPath: target, Caps: archive.DefaultCaps(),
 	})
 	require.NoError(t, err)
 	return result
@@ -495,7 +495,7 @@ func archiveEntryForTest(t *testing.T, name string) archive.Entry {
 	_, err = entryWriter.Write([]byte("{}\n"))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
-	reader, err := archive.OpenReader(bytes.NewReader(data.Bytes()), int64(data.Len()))
+	reader, err := archive.OpenReader(bytes.NewReader(data.Bytes()), int64(data.Len()), archive.DefaultCaps())
 	require.NoError(t, err)
 	entries, err := reader.RawEntries()
 	require.NoError(t, err)
@@ -525,7 +525,7 @@ func readArchiveEntry(t *testing.T, data []byte, name string) []byte {
 func quietTestWorkspace(home *Home) *Workspace {
 	return newWorkspace(
 		home, func(string) string { return "" }, func() ([]ProcessInfo, error) { return nil, nil },
-		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) }, func(int) bool { return false },
+		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) }, func(int) bool { return false }, DefaultTranscodeCaps(),
 	)
 }
 

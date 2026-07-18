@@ -24,7 +24,7 @@ func TestTranscodeLinesRoundTripsPlainFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte("line one\nline two\n"), 0o600))
 
-	changed, err := TranscodeLines(path, func(line []byte) ([]byte, int) {
+	changed, err := TranscodeLines(path, DefaultTranscodeCaps(), func(line []byte) ([]byte, int) {
 		if bytes.Equal(line, []byte("line one")) {
 			return []byte("LINE ONE"), 1
 		}
@@ -42,7 +42,7 @@ func TestTranscodeLinesRoundTripsCompressedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl.zst")
 	writeZstdFixture(t, path, []string{"line one", "line two"})
 
-	changed, err := TranscodeLines(path, func(line []byte) ([]byte, int) {
+	changed, err := TranscodeLines(path, DefaultTranscodeCaps(), func(line []byte) ([]byte, int) {
 		if bytes.Equal(line, []byte("line one")) {
 			return []byte("LINE ONE"), 1
 		}
@@ -52,7 +52,7 @@ func TestTranscodeLinesRoundTripsCompressedFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, changed)
 
-	decoded, _, decoderErr := readRolloutLines(path)
+	decoded, _, decoderErr := readRolloutLines(path, DefaultTranscodeCaps())
 	require.NoError(t, decoderErr)
 	var got []string
 	for _, line := range decoded {
@@ -71,25 +71,29 @@ func TestTranscodeLinesRoundTripsCompressedFile(t *testing.T) {
 }
 
 func TestTranscodeLinesRejectsOversizedLine(t *testing.T) {
-	restore := SetTranscodeCaps(TranscodeCaps{MaxDecompressedBytes: 1 << 20, MaxLineBytes: 16})
-	defer restore()
-
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte(strings.Repeat("x", 64)+"\n"), 0o600))
 
-	_, _, err := readRolloutLines(path)
+	_, _, err := readRolloutLines(path, TranscodeCaps{MaxDecompressedBytes: 1 << 20, MaxLineBytes: 16})
 
 	require.Error(t, err)
 }
 
 func TestTranscodeLinesRejectsOversizedDecompressedStream(t *testing.T) {
-	restore := SetTranscodeCaps(TranscodeCaps{MaxDecompressedBytes: 32, MaxLineBytes: 16 << 20})
-	defer restore()
-
 	path := filepath.Join(t.TempDir(), "rollout.jsonl.zst")
 	writeZstdFixture(t, path, []string{strings.Repeat("a", 100)})
 
-	_, _, err := readRolloutLines(path)
+	_, _, err := readRolloutLines(path, TranscodeCaps{MaxDecompressedBytes: 32, MaxLineBytes: 16 << 20})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+func TestReadRolloutLinesRejectsManySmallLinesOverDecompressedCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl.zst")
+	writeZstdFixture(t, path, []string{strings.Repeat("a", 10), strings.Repeat("b", 10), strings.Repeat("c", 10)})
+
+	_, _, err := readRolloutLines(path, TranscodeCaps{MaxDecompressedBytes: 32, MaxLineBytes: 16})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds")

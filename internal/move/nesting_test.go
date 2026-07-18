@@ -115,5 +115,6 @@ func quietCodexWorkspace(home *codex.Home) *codex.Workspace {
 		func() ([]codex.ProcessInfo, error) { return nil, nil },
 		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) },
 		func(int) bool { return false },
+		codex.DefaultTranscodeCaps(),
 	)
 }

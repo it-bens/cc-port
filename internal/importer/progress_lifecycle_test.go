@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
@@ -43,6 +44,7 @@ func recordSuccessfulImport(t *testing.T) []progress.Event {
 		Source:     bytes.NewReader(body),
 		Size:       int64(len(body)),
 		TargetPath: projectPath,
+		Caps:       archive.DefaultCaps(),
 		Reporter:   recorder.Reporter(progress.LevelInfo),
 	})
 	require.NoError(t, err)

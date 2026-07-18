@@ -72,7 +72,7 @@ func (workspace *Workspace) projectKnown(oldPath string) (bool, error) {
 		return false, err
 	}
 	for _, path := range rolloutFiles {
-		count, eraA, err := planRolloutFile(path, oldPath, false)
+		count, eraA, err := planRolloutFile(path, oldPath, false, workspace.transcodeCaps)
 		if err != nil {
 			return false, fmt.Errorf("%s: %w", path, err)
 		}
@@ -192,7 +192,7 @@ func (workspace *Workspace) rolloutsSurface(req tool.MoveRequest) tool.Surface {
 				if err := ctx.Err(); err != nil {
 					return 0, err
 				}
-				count, eraA, err := planRolloutFile(path, req.OldPath, req.DeepRewrite)
+				count, eraA, err := planRolloutFile(path, req.OldPath, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
 					return 0, fmt.Errorf("%s: %w", path, err)
 				}
@@ -213,7 +213,7 @@ func (workspace *Workspace) rolloutsSurface(req tool.MoveRequest) tool.Surface {
 				if err := ctx.Err(); err != nil {
 					return 0, err
 				}
-				planCount, eraA, err := planRolloutFile(path, req.OldPath, req.DeepRewrite)
+				planCount, eraA, err := planRolloutFile(path, req.OldPath, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
 					return 0, fmt.Errorf("%s: %w", path, err)
 				}
@@ -223,7 +223,7 @@ func (workspace *Workspace) rolloutsSurface(req tool.MoveRequest) tool.Surface {
 				if err := undo.RegisterFile(path); err != nil {
 					return 0, fmt.Errorf("back up %s: %w", path, err)
 				}
-				changed, _, err := applyRolloutFile(ctx, path, req.OldPath, req.NewPath, req.DeepRewrite)
+				changed, _, err := applyRolloutFile(ctx, path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
 					return 0, fmt.Errorf("%s: %w", path, err)
 				}
@@ -480,7 +480,7 @@ func (workspace *Workspace) eraAWarning(oldPath string) (string, error) {
 	}
 	count := 0
 	for _, path := range files {
-		_, eraA, err := planRolloutFile(path, oldPath, false)
+		_, eraA, err := planRolloutFile(path, oldPath, false, workspace.transcodeCaps)
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", path, err)
 		}

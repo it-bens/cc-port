@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/file"
 	"github.com/it-bens/cc-port/internal/importer"
@@ -78,6 +79,7 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 				Source:       source.ReaderAt,
 				Size:         source.Size,
 				TargetPath:   targetPath,
+				Caps:         archive.DefaultCaps(),
 				FromManifest: fromManifestMeta,
 			}
 

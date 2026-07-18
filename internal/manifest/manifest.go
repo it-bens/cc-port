@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
 // Metadata is the root element of the manifest XML file. One Tool block
@@ -98,7 +100,7 @@ func WriteManifest(path string, metadata *Metadata) error {
 
 	content := append([]byte(xml.Header), data...)
 
-	if err := os.WriteFile(path, content, 0o644); err != nil { //nolint:gosec // G306: manifest files are user-readable
+	if err := rewrite.SafeWriteFile(path, content, 0o644); err != nil {
 		return fmt.Errorf("write manifest file: %w", err)
 	}
 
@@ -108,17 +110,19 @@ func WriteManifest(path string, metadata *Metadata) error {
 // ReadManifest reads path and unmarshals the XML content into a Metadata value.
 // Rejects files exceeding maxManifestBytes before allocating.
 func ReadManifest(path string) (*Metadata, error) {
-	info, err := os.Stat(path)
+	file, err := os.Open(path) //nolint:gosec // G304: caller-supplied manifest path
 	if err != nil {
-		return nil, fmt.Errorf("stat manifest file: %w", err)
+		return nil, fmt.Errorf("open manifest file: %w", err)
 	}
-	if info.Size() > int64(maxManifestBytes) {
-		return nil, fmt.Errorf("%w: %q exceeds the %d-byte limit", ErrManifestFileTooLarge, path, maxManifestBytes)
-	}
+	defer func() { _ = file.Close() }()
 
-	data, err := os.ReadFile(path) //nolint:gosec // G304: caller-supplied manifest path
+	limited := io.LimitReader(file, int64(maxManifestBytes)+1)
+	data, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest file: %w", err)
+	}
+	if int64(len(data)) > int64(maxManifestBytes) {
+		return nil, fmt.Errorf("%w: %q exceeds the %d-byte limit", ErrManifestFileTooLarge, path, maxManifestBytes)
 	}
 
 	var metadata Metadata

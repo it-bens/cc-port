@@ -112,7 +112,7 @@ func (workspace *Workspace) Export(ctx context.Context, project string, selected
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		lines, _, err := readRolloutLines(rollout)
+		lines, _, err := readRolloutLines(rollout, workspace.transcodeCaps)
 		if err != nil {
 			return result, fmt.Errorf("read rollout %s: %w", rollout, err)
 		}
@@ -170,7 +170,7 @@ func (workspace *Workspace) projectRollouts(ctx context.Context, project string)
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		lines, _, err := readRolloutLines(path)
+		lines, _, err := readRolloutLines(path, workspace.transcodeCaps)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read rollout %s: %w", path, err)
 		}
@@ -784,7 +784,7 @@ func (workspace *Workspace) ReferenceSurfaces(project string) ([]tool.CountSurfa
 	}
 	ids := make(map[string]struct{})
 	for _, path := range rollouts {
-		lines, _, err := readRolloutLines(path)
+		lines, _, err := readRolloutLines(path, workspace.transcodeCaps)
 		if err != nil {
 			return nil, err
 		}

@@ -21,7 +21,7 @@ func fixtureWorkspace(t *testing.T) (*Workspace, *Home) {
 	t.Helper()
 	home := SetupFixture(t)
 	home.AgentsDir = FixtureAgentsDir(t)
-	return NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now), home
+	return NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps()), home
 }
 
 func planAndApply(t *testing.T, workspace *Workspace, req tool.MoveRequest) (planCounts, applyCounts map[string]int) {
@@ -175,7 +175,7 @@ func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
 	gitDir := filepath.Join(root, gitDirName)
 	require.NoError(t, os.MkdirAll(gitDir, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n"), 0o600))
-	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now)
+	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps())
 	undo := tool.NewRestorer()
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
@@ -610,7 +610,7 @@ func TestPlanningLeavesDatabaseAndWALBytesUntouched(t *testing.T) {
 
 func TestAgentsMarketplaceSurfaceSkippedWhenAgentsDirAbsent(t *testing.T) {
 	home := SetupFixture(t)
-	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now)
+	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps())
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
 	surfaces, err := workspace.MoveSurfaces(req)

@@ -8,23 +8,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestReadRolloutLinesRejectsProductionScaleDecompressedStream exercises the
-// real production MaxDecompressedBytes cap (not a test-side override) with a
-// highly compressible payload, so the on-disk fixture stays tiny even
-// though the decoded size is production-scale — the same shape a genuine
-// zstd-bomb payload takes.
+// TestReadRolloutLinesRejectsProductionScaleLine exercises the real
+// production MaxLineBytes cap with one highly compressible line. The fixture
+// is also beyond the whole-stream cap, but Scanner rejects the oversized line
+// before readRolloutLines can report the aggregate decompression limit.
 //
 // Tagged `large`: exercised only on demand (see root AGENTS.md); the small-cap
 // CI variant in transcode_test.go drives the same branch cheaply.
-func TestReadRolloutLinesRejectsProductionScaleDecompressedStream(t *testing.T) {
+func TestReadRolloutLinesRejectsProductionScaleLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl.zst")
 	writeZstdFixture(t, path, []string{strings.Repeat("bomb", 200_000_000)})
 
-	_, _, err := readRolloutLines(path)
+	_, _, err := readRolloutLines(path, DefaultTranscodeCaps())
 
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "token too long")
 	_ = os.Remove(path)
 }

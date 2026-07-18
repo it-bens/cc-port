@@ -53,7 +53,7 @@ func buildEntriesWithBody(t *testing.T, name, body string) []archive.RawEntry {
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
-	reader, err := archive.OpenReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	reader, err := archive.OpenReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()), archive.DefaultCaps())
 	require.NoError(t, err)
 	entries, err := reader.RawEntries()
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestCheckMissingResolutions_RefusesUnresolvedDeclaredKeyPresentInBody(t *te
 	}
 	entries := buildEntriesWithBody(t, "note.txt", "references "+nonImplicitKey+" here")
 
-	err := checkMissingResolutions("claude", block, anchors, resolutions, entries)
+	err := checkMissingResolutions("claude", block, anchors, resolutions, entries, archive.DefaultCaps().MaxAggregateBytes)
 
 	require.Error(t, err)
 	var missingErr *MissingResolutionsError

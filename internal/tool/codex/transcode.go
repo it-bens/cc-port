@@ -32,23 +32,9 @@ type TranscodeCaps struct {
 	MaxLineBytes         int
 }
 
-var defaultTranscodeCaps = TranscodeCaps{MaxDecompressedBytes: 512 << 20, MaxLineBytes: 16 << 20}
-
-// activeTranscodeCaps is the cap set every read in this package consults.
-// Package state, not a parameter, mirroring internal/archive's Caps/SetCaps
-// pairing pattern for the same reason: the caps are a process-wide safety
-// backstop, and SetTranscodeCaps is the sanctioned override for tests that
-// need to exercise rejection without materializing production-scale
-// fixtures.
-var activeTranscodeCaps = defaultTranscodeCaps
-
-// SetTranscodeCaps overrides the active zstd decompression caps and
-// returns a restore function. Exported for tests exercising cap rejection
-// cheaply; production code never calls it.
-func SetTranscodeCaps(caps TranscodeCaps) (restore func()) {
-	previous := activeTranscodeCaps
-	activeTranscodeCaps = caps
-	return func() { activeTranscodeCaps = previous }
+// DefaultTranscodeCaps returns the production zstd decompression caps.
+func DefaultTranscodeCaps() TranscodeCaps {
+	return TranscodeCaps{MaxDecompressedBytes: 512 << 20, MaxLineBytes: 16 << 20}
 }
 
 // countingReader tallies the bytes actually produced by inner, so a caller
@@ -69,7 +55,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // sibling, and returns every line with its terminator stripped. Both
 // mandatory decompression bounds apply: a whole-stream io.LimitReader cap
 // and a per-line bufio.Scanner cap.
-func readRolloutLines(path string) (lines [][]byte, compressed bool, err error) {
+func readRolloutLines(path string, caps TranscodeCaps) (lines [][]byte, compressed bool, err error) {
 	file, err := os.Open(path) //nolint:gosec // G304: path from adapter-controlled rollout discovery
 	if err != nil {
 		return nil, false, fmt.Errorf("open %s: %w", path, err)
@@ -86,27 +72,27 @@ func readRolloutLines(path string) (lines [][]byte, compressed bool, err error) 
 		}
 		defer decoder.Close()
 		counter = &countingReader{inner: decoder}
-		reader = io.LimitReader(counter, activeTranscodeCaps.MaxDecompressedBytes+1)
+		reader = io.LimitReader(counter, caps.MaxDecompressedBytes+1)
 	}
 
 	// bufio.Scanner.Buffer's effective cap is the larger of max and
 	// cap(initialBuf); a fixed 64 KiB initial buffer would silently widen
 	// a smaller test-side MaxLineBytes override back up to 64 KiB.
 	initialBufSize := 64 << 10
-	if activeTranscodeCaps.MaxLineBytes < initialBufSize {
-		initialBufSize = activeTranscodeCaps.MaxLineBytes
+	if caps.MaxLineBytes < initialBufSize {
+		initialBufSize = caps.MaxLineBytes
 	}
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, initialBufSize), activeTranscodeCaps.MaxLineBytes)
+	scanner.Buffer(make([]byte, initialBufSize), caps.MaxLineBytes)
 	for scanner.Scan() {
 		lines = append(lines, append([]byte(nil), scanner.Bytes()...))
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
 		return nil, compressed, fmt.Errorf("scan %s: %w", path, scanErr)
 	}
-	if counter != nil && counter.read > activeTranscodeCaps.MaxDecompressedBytes {
+	if counter != nil && counter.read > caps.MaxDecompressedBytes {
 		return nil, compressed, fmt.Errorf(
-			"%s: decompressed size exceeds %d bytes", path, activeTranscodeCaps.MaxDecompressedBytes,
+			"%s: decompressed size exceeds %d bytes", path, caps.MaxDecompressedBytes,
 		)
 	}
 	return lines, compressed, nil
@@ -120,8 +106,8 @@ func readRolloutLines(path string) (lines [][]byte, compressed bool, err error) 
 // many bounded occurrences it changed in that line (not just whether the
 // line changed), so the total matches a Plan pass that counts occurrences
 // rather than lines.
-func TranscodeLines(path string, transform func(line []byte) (rewritten []byte, count int)) (int, error) {
-	lines, compressed, err := readRolloutLines(path)
+func TranscodeLines(path string, caps TranscodeCaps, transform func(line []byte) (rewritten []byte, count int)) (int, error) {
+	lines, compressed, err := readRolloutLines(path, caps)
 	if err != nil {
 		return 0, err
 	}

@@ -173,25 +173,38 @@ func streamEntry(entry Entry, writer *os.File, resolutions map[string]string) (i
 		if err != nil {
 			return bytesRead, fmt.Errorf("stream zip entry %q: %w", entry.file.Name, err)
 		}
-		if err := enforcePostDecodeCap(entry.file.Name, bytesRead); err != nil {
+		if err := enforcePostDecodeCap(entry.file.Name, bytesRead, entry.caps.MaxEntryBytes); err != nil {
 			return bytesRead, err
 		}
 		return bytesRead, nil
 	}
 
-	expanded := &countingWriter{inner: writer, name: entry.file.Name, limit: activeCaps.MaxEntryBytes}
-	if err := ResolvePlaceholdersStream(capped, expanded, resolutions); err != nil {
-		if aggregateErr := entry.addAggregate(expanded.bytesWritten); aggregateErr != nil {
+	counted := &countingReader{inner: capped}
+	expanded := &countingWriter{inner: writer, name: entry.file.Name, limit: entry.caps.MaxEntryBytes}
+	if err := ResolvePlaceholdersStream(counted, expanded, resolutions); err != nil {
+		if aggregateErr := entry.addAggregate(counted.read); aggregateErr != nil {
 			return expanded.bytesWritten, errors.Join(fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err), aggregateErr)
 		}
 		return expanded.bytesWritten, fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err)
 	}
-	// Aggregate accounting tracks staged output here, not decoded input: a
-	// placeholder expansion is what consumes destination disk and memory.
-	if err := entry.addAggregate(expanded.bytesWritten); err != nil {
+	if err := entry.addAggregate(counted.read); err != nil {
+		return expanded.bytesWritten, err
+	}
+	if err := enforcePostDecodeCap(entry.file.Name, counted.read, entry.caps.MaxEntryBytes); err != nil {
 		return expanded.bytesWritten, err
 	}
 	return expanded.bytesWritten, nil
+}
+
+type countingReader struct {
+	inner io.Reader
+	read  int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.inner.Read(p)
+	r.read += int64(n)
+	return n, err
 }
 
 // countingWriter bounds bytes emitted after placeholder expansion. The source

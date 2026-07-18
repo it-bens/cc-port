@@ -68,6 +68,7 @@ func TestRun_RoundTripStagesSessionsIntoFreshHome(t *testing.T) {
 		Source:     bytes.NewReader(body),
 		Size:       int64(len(body)),
 		TargetPath: projectPath,
+		Caps:       archive.DefaultCaps(),
 	})
 	require.NoError(t, err)
 
@@ -92,6 +93,7 @@ func TestRun_ReRunDoesNotDuplicateHistoryLines(t *testing.T) {
 			Source:     bytes.NewReader(body),
 			Size:       int64(len(body)),
 			TargetPath: projectPath,
+			Caps:       archive.DefaultCaps(),
 		})
 		require.NoError(t, err, "run %d", i)
 	}
@@ -163,7 +165,7 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 	result, err := importer.Run(t.Context(), registry, []tool.Target{
 		{Tool: claudeTool, Workspace: claude.NewWorkspace(claudeDestination)},
 		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
-	}, &importer.Options{Source: reader, Size: int64(reader.Len()), TargetPath: sharedProject})
+	}, &importer.Options{Source: reader, Size: int64(reader.Len()), TargetPath: sharedProject, Caps: archive.DefaultCaps()})
 	require.NoError(t, err)
 
 	require.FileExists(t, filepath.Join(
@@ -187,6 +189,7 @@ func quietCodexWorkspace(home *codex.Home) *codex.Workspace {
 		func() ([]codex.ProcessInfo, error) { return nil, nil },
 		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) },
 		func(int) bool { return false },
+		codex.DefaultTranscodeCaps(),
 	)
 }
 
@@ -202,7 +205,7 @@ func TestRun_RejectsIncomingHistoryLineAtScannerCapWithoutChangingTarget(t *test
 	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
-		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/history-cap",
+		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/history-cap", Caps: archive.DefaultCaps(),
 	})
 
 	require.Error(t, err)
@@ -224,7 +227,7 @@ func TestRun_ImportsIncomingHistoryLineBelowScannerCap(t *testing.T) {
 	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
-		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/history-cap",
+		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/history-cap", Caps: archive.DefaultCaps(),
 	})
 
 	require.NoError(t, err)
@@ -264,13 +267,12 @@ func TestRun_UnregisteredManifestToolFailsHard(t *testing.T) {
 		Source:     bytes.NewReader(body),
 		Size:       int64(len(body)),
 		TargetPath: "/Users/test/Projects/demo",
+		Caps:       archive.DefaultCaps(),
 	})
 	require.Error(t, err, "an archive naming an unregistered tool must fail hard, not silently skip")
 }
 
 func TestRun_StagingEnforcesAggregateCapWithoutPlaceholders(t *testing.T) {
-	restoreCaps := archive.SetCaps(archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072})
-	t.Cleanup(restoreCaps)
 	body := buildClaudeArchive(t, map[string]string{
 		"claude/sessions/one.jsonl":   strings.Repeat("a", 1536),
 		"claude/sessions/two.jsonl":   strings.Repeat("b", 1536),
@@ -281,16 +283,39 @@ func TestRun_StagingEnforcesAggregateCapWithoutPlaceholders(t *testing.T) {
 	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
-		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/capped",
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/capped",
+		Caps:       archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072},
 	})
 
 	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
 	assert.Regexp(t, `claude/sessions/(one|two|three)\.jsonl`, err.Error())
 }
 
+func TestRun_StagingAggregateCapCountsShrinkingPlaceholderInput(t *testing.T) {
+	body := buildClaudeArchiveWithPlaceholders(t, map[string]string{
+		"claude/sessions/one.jsonl":   strings.Repeat("{{X}}", 8),
+		"claude/sessions/two.jsonl":   strings.Repeat("{{X}}", 8),
+		"claude/sessions/three.jsonl": strings.Repeat("{{X}}", 8),
+	}, []manifest.Placeholder{{Key: "{{X}}", Resolve: "/"}})
+	home := blankHome(t)
+	claudeTool := claude.New()
+	toolSet := tool.NewSet(claudeTool)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/capped",
+		Caps:       archive.Caps{MaxEntryBytes: 64, MaxAggregateBytes: 100},
+	})
+
+	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
+	assert.Contains(t, err.Error(), "claude/sessions/two.jsonl")
+}
+
 func TestRun_ClassificationEnforcesAggregateCapForUnresolvedPlaceholder(t *testing.T) {
-	restoreCaps := archive.SetCaps(archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072})
-	t.Cleanup(restoreCaps)
 	body := buildClaudeArchiveWithPlaceholders(t, map[string]string{
 		"claude/sessions/one.jsonl": "{{ARCHIVE_PATH}}" + strings.Repeat("a", 1536),
 		"claude/sessions/two.jsonl": strings.Repeat("b", 1536),
@@ -301,7 +326,10 @@ func TestRun_ClassificationEnforcesAggregateCapForUnresolvedPlaceholder(t *testi
 	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
-		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/capped",
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/capped",
+		Caps:       archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072},
 	})
 
 	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
@@ -331,15 +359,16 @@ func TestRun_TodosStagingFailureRemovesAllTemporaryFiles(t *testing.T) {
 
 func assertStagingFailureRemovesAllTemporaryFiles(t *testing.T, entries map[string]string) {
 	t.Helper()
-	restoreCaps := archive.SetCaps(archive.Caps{MaxEntryBytes: 100, MaxAggregateBytes: 4096})
-	t.Cleanup(restoreCaps)
 	body := buildClaudeArchive(t, entries)
 	home := blankHome(t)
 	toolSet := tool.NewSet(claude.New())
 	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
-		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/cleanup",
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/cleanup",
+		Caps:       archive.Caps{MaxEntryBytes: 100, MaxAggregateBytes: 4096},
 	})
 
 	require.ErrorIs(t, err, archive.ErrEntryCapExceeded)

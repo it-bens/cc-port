@@ -81,7 +81,48 @@ func TestRun_RejectsEntryOverProductionCap(t *testing.T) {
 		Source:     archiveFile,
 		Size:       archiveInfo.Size(),
 		TargetPath: "/Users/test/Projects/oversized",
+		Caps:       archive.DefaultCaps(),
 	})
 	require.Error(t, err, "an entry over the production per-entry cap must be refused")
 	require.ErrorIs(t, err, archive.ErrEntryCapExceeded)
+}
+
+func TestRun_StagingAggregateCapCountsProductionScaleShrinkingPlaceholderInput(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "shrinking-placeholders.zip")
+	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err)
+	writer := zip.NewWriter(archiveFile)
+	const chunkSize = 1 << 20
+	chunk := bytes.Repeat([]byte("{{X}}"), chunkSize/len("{{X}}"))
+	for _, name := range []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine"} {
+		entry, createErr := writer.Create("claude/sessions/" + name + ".jsonl")
+		require.NoError(t, createErr)
+		for range 480 {
+			_, writeErr := entry.Write(chunk)
+			require.NoError(t, writeErr)
+		}
+	}
+	claudeTool := claude.New()
+	_, err = archive.WriteMetadata(writer, &manifest.Metadata{Tools: []manifest.Tool{{
+		Name: claudeTool.Name(), Categories: manifest.BuildToolCategoryEntries(categoryNames(claudeTool), nil),
+		Placeholders: []manifest.Placeholder{{Key: "{{X}}", Resolve: "/"}},
+	}}})
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	require.NoError(t, archiveFile.Close())
+
+	info, err := os.Stat(archivePath)
+	require.NoError(t, err)
+	archiveFile, err = os.Open(archivePath) //nolint:gosec // G304: test-controlled tempdir path
+	require.NoError(t, err)
+	defer func() { _ = archiveFile.Close() }()
+	home := blankHome(t)
+	toolSet := tool.NewSet(claudeTool)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+
+	_, err = importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source: archiveFile, Size: info.Size(), TargetPath: "/Users/test/Projects/capped", Caps: archive.DefaultCaps(),
+	})
+
+	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
 }

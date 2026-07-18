@@ -33,12 +33,12 @@ func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {
 	home := SetupFixture(t)
 	path := rolloutFixturePath(home, eraCPath)
 
-	shallow, eraA, err := planRolloutFile(path, FixtureProjectPath(), false)
+	shallow, eraA, err := planRolloutFile(path, FixtureProjectPath(), false, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	assert.False(t, eraA)
 	assert.Equal(t, 3, shallow, "session_meta.cwd, turn_context.cwd, and turn_context.workspace_roots[0], not the prose response_item")
 
-	deep, eraA, err := planRolloutFile(path, FixtureProjectPath(), true)
+	deep, eraA, err := planRolloutFile(path, FixtureProjectPath(), true, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	assert.False(t, eraA)
 	assert.Equal(t, 5, deep, "structured fields, structured free text, and the prose response_item under --deep")
@@ -48,7 +48,7 @@ func TestPlanRolloutFileEraBHasNoTurnContext(t *testing.T) {
 	home := SetupFixture(t)
 	path := rolloutFixturePath(home, eraBPath)
 
-	shallow, eraA, err := planRolloutFile(path, FixtureProjectPath(), false)
+	shallow, eraA, err := planRolloutFile(path, FixtureProjectPath(), false, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	assert.False(t, eraA)
 	assert.Equal(t, 1, shallow, "only session_meta.cwd; era-B predates turn_context")
@@ -59,7 +59,7 @@ func TestPlanRolloutFileEraAIsSkippedEvenUnderDeep(t *testing.T) {
 	path := rolloutFixturePath(home, eraAPath)
 
 	for _, deep := range []bool{false, true} {
-		count, eraA, err := planRolloutFile(path, FixtureProjectPath(), deep)
+		count, eraA, err := planRolloutFile(path, FixtureProjectPath(), deep, DefaultTranscodeCaps())
 		require.NoError(t, err)
 		assert.True(t, eraA, "no session_meta or turn_context line: era-A")
 		assert.Equal(t, 0, count)
@@ -71,13 +71,13 @@ func TestApplyRolloutFileRewritesStructuredFieldsAlways(t *testing.T) {
 	path := rolloutFixturePath(home, eraCPath)
 	newPath := "/Users/fixture/renamed-project"
 
-	changed, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), newPath, false)
+	changed, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), newPath, false, DefaultTranscodeCaps())
 
 	require.NoError(t, err)
 	assert.False(t, eraA)
 	assert.Equal(t, 3, changed)
 
-	lines, _, err := readRolloutLines(path)
+	lines, _, err := readRolloutLines(path, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	require.Len(t, lines, 3)
 	assert.Contains(t, string(lines[0]), newPath, "session_meta.cwd rewritten")
@@ -90,13 +90,13 @@ func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
 	path := rolloutFixturePath(home, eraCPath)
 	newPath := "/Users/fixture/renamed-project"
 
-	changed, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), newPath, true)
+	changed, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), newPath, true, DefaultTranscodeCaps())
 
 	require.NoError(t, err)
 	assert.False(t, eraA)
 	assert.Equal(t, 5, changed)
 
-	lines, _, err := readRolloutLines(path)
+	lines, _, err := readRolloutLines(path, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	for _, line := range lines {
 		assert.NotContains(t, string(line), FixtureProjectPath())
@@ -118,14 +118,14 @@ func TestRewriteRolloutLineScopesShallowModeToStructuredFields(t *testing.T) {
 func TestApplyRolloutFileLeavesEraAFileByteIdentical(t *testing.T) {
 	home := SetupFixture(t)
 	path := rolloutFixturePath(home, eraAPath)
-	before, _, err := readRolloutLines(path)
+	before, _, err := readRolloutLines(path, DefaultTranscodeCaps())
 	require.NoError(t, err)
 
-	_, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project", true)
+	_, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project", true, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	require.True(t, eraA)
 
-	after, _, err := readRolloutLines(path)
+	after, _, err := readRolloutLines(path, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
 }

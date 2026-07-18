@@ -197,8 +197,8 @@ func structuredRolloutFieldPaths(line []byte, rolloutType string) []string {
 // planRolloutFile reports how many occurrences a move would rewrite in
 // path, and whether path is era-A (no structured cwd, therefore skipped
 // entirely regardless of deep).
-func planRolloutFile(path, oldPath string, deep bool) (count int, eraA bool, err error) {
-	lines, _, err := readRolloutLines(path)
+func planRolloutFile(path, oldPath string, deep bool, caps TranscodeCaps) (count int, eraA bool, err error) {
+	lines, _, err := readRolloutLines(path, caps)
 	if err != nil {
 		return 0, false, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -213,18 +213,18 @@ func planRolloutFile(path, oldPath string, deep bool) (count int, eraA bool, err
 
 // applyRolloutFile rewrites path in place via TranscodeLines, unless path
 // is era-A, in which case it is left untouched and eraA reports that.
-func applyRolloutFile(ctx context.Context, path, oldPath, newPath string, deep bool) (count int, eraA bool, err error) {
+func applyRolloutFile(ctx context.Context, path, oldPath, newPath string, deep bool, caps TranscodeCaps) (count int, eraA bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return 0, false, err
 	}
-	lines, _, err := readRolloutLines(path)
+	lines, _, err := readRolloutLines(path, caps)
 	if err != nil {
 		return 0, false, fmt.Errorf("read %s: %w", path, err)
 	}
 	if !hasStructuredCwd(lines) {
 		return 0, true, nil
 	}
-	changedCount, err := TranscodeLines(path, func(line []byte) ([]byte, int) {
+	changedCount, err := TranscodeLines(path, caps, func(line []byte) ([]byte, int) {
 		return rewriteRolloutLine(line, oldPath, newPath, deep)
 	})
 	if err != nil {

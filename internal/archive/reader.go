@@ -20,6 +20,7 @@ type Entry struct {
 	Modified  time.Time
 	file      *zip.File
 	aggregate *AggregateCounter
+	caps      Caps
 }
 
 // RawEntry pairs an Entry with the tool name its archive path declared.
@@ -33,12 +34,13 @@ type RawEntry struct {
 // shared view of the same central directory.
 type Reader struct {
 	zipReader *zip.Reader
+	caps      Caps
 }
 
 // OpenReader opens src as a ZIP archive exposed as random-access bytes.
 // Callers materialize their pipeline (file, decrypted tempfile, in-memory
 // bytes) before calling; this package never touches paths.
-func OpenReader(src io.ReaderAt, size int64) (*Reader, error) {
+func OpenReader(src io.ReaderAt, size int64, caps Caps) (*Reader, error) {
 	if src == nil {
 		return nil, ErrNilSource
 	}
@@ -46,7 +48,7 @@ func OpenReader(src io.ReaderAt, size int64) (*Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open archive: %w", err)
 	}
-	return &Reader{zipReader: zipReader}, nil
+	return &Reader{zipReader: zipReader, caps: caps}, nil
 }
 
 // RawEntries returns every entry except metadata.xml, split into its
@@ -65,7 +67,7 @@ func (r *Reader) RawEntries() ([]RawEntry, error) {
 		}
 		entries = append(entries, RawEntry{
 			ToolName: toolName,
-			Entry:    Entry{Name: rest, Modified: file.Modified, file: file},
+			Entry:    Entry{Name: rest, Modified: file.Modified, file: file, caps: r.caps},
 		})
 	}
 	return entries, nil
@@ -83,25 +85,25 @@ func splitToolPrefix(name string) (toolName, rest string, ok bool) {
 }
 
 // openCapped opens entry's body and wraps it in an io.LimitReader sized one
-// byte past the active per-entry cap, after rejecting entries whose
+// byte past its per-entry cap, after rejecting entries whose
 // declared UncompressedSize64 already exceeds it. The post-decode counter
 // enforced by the caller (see WriteIntoRoot, StageSibling, ReadAll) catches
 // archives that misdeclare the size.
 func (entry Entry) openCapped() (io.ReadCloser, io.Reader, error) {
-	if entry.file.UncompressedSize64 > uint64(activeCaps.MaxEntryBytes) { //nolint:gosec // G115: MaxEntryBytes is positive by construction
-		return nil, nil, &EntryCapError{Name: entry.file.Name, Bytes: entry.file.UncompressedSize64, Limit: activeCaps.MaxEntryBytes}
+	if entry.file.UncompressedSize64 > uint64(entry.caps.MaxEntryBytes) { //nolint:gosec // G115: MaxEntryBytes is positive by construction
+		return nil, nil, &EntryCapError{Name: entry.file.Name, Bytes: entry.file.UncompressedSize64, Limit: entry.caps.MaxEntryBytes}
 	}
 	readCloser, err := entry.file.Open()
 	if err != nil {
 		return nil, nil, fmt.Errorf("open zip entry %q: %w", entry.file.Name, err)
 	}
-	capped := io.LimitReader(readCloser, activeCaps.MaxEntryBytes+1)
+	capped := io.LimitReader(readCloser, entry.caps.MaxEntryBytes+1)
 	return readCloser, capped, nil
 }
 
-func enforcePostDecodeCap(name string, bytesRead int64) error {
-	if bytesRead > activeCaps.MaxEntryBytes {
-		return &EntryCapError{Name: name, Bytes: uint64(bytesRead), Limit: activeCaps.MaxEntryBytes} //nolint:gosec // G115: bytesRead is non-negative
+func enforcePostDecodeCap(name string, bytesRead, limit int64) error {
+	if bytesRead > limit {
+		return &EntryCapError{Name: name, Bytes: uint64(bytesRead), Limit: limit} //nolint:gosec // G115: bytesRead is non-negative
 	}
 	return nil
 }
@@ -126,7 +128,7 @@ func (entry Entry) ReadAll() ([]byte, error) {
 	if err := entry.addAggregate(int64(len(data))); err != nil {
 		return nil, err
 	}
-	if err := enforcePostDecodeCap(entry.file.Name, int64(len(data))); err != nil {
+	if err := enforcePostDecodeCap(entry.file.Name, int64(len(data)), entry.caps.MaxEntryBytes); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -147,15 +149,22 @@ func (entry Entry) addAggregate(bytesRead int64) error {
 }
 
 // AggregateCounter tallies uncompressed bytes observed across a sequence of
-// entries and refuses once the running total passes the active aggregate
+// entries and refuses once the running total passes its aggregate
 // cap. Callers create one per archive read and feed it every entry's
 // observed byte count, including bytes read for classification passes.
 type AggregateCounter struct {
-	total int64
+	total             int64
+	maxAggregateBytes int64
+}
+
+// NewAggregateCounter returns a counter that refuses once the running
+// total of AddEntry calls exceeds maxAggregateBytes.
+func NewAggregateCounter(maxAggregateBytes int64) *AggregateCounter {
+	return &AggregateCounter{maxAggregateBytes: maxAggregateBytes}
 }
 
 // Add records n more observed bytes and returns ErrAggregateCapExceeded
-// once the running total exceeds the active aggregate cap.
+// once the running total exceeds its aggregate cap.
 func (c *AggregateCounter) Add(n int64) error {
 	return c.AddEntry("archive", n)
 }
@@ -164,8 +173,8 @@ func (c *AggregateCounter) Add(n int64) error {
 // the aggregate staging budget exceed its limit.
 func (c *AggregateCounter) AddEntry(name string, n int64) error {
 	c.total += n
-	if c.total > activeCaps.MaxAggregateBytes {
-		return &AggregateCapError{Name: name, Bytes: c.total, Limit: activeCaps.MaxAggregateBytes}
+	if c.total > c.maxAggregateBytes {
+		return &AggregateCapError{Name: name, Bytes: c.total, Limit: c.maxAggregateBytes}
 	}
 	return nil
 }

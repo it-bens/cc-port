@@ -14,6 +14,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
@@ -281,6 +282,7 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 		Source:       source.ReaderAt,
 		Size:         source.Size,
 		TargetPath:   opts.TargetPath,
+		Caps:         archive.DefaultCaps(),
 		FromManifest: opts.FromManifest,
 		Reporter:     importPhase,
 	})

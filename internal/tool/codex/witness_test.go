@@ -23,7 +23,7 @@ func newWitnessWorkspace(t *testing.T, listProcesses ProcessLister, now func() t
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	return newWorkspace(home, fakeGetenv(nil), listProcesses, now, pidAlive)
+	return newWorkspace(home, fakeGetenv(nil), listProcesses, now, pidAlive, DefaultTranscodeCaps())
 }
 
 func TestActiveWritersEmptyOnFreshHome(t *testing.T) {
@@ -92,7 +92,9 @@ func TestActiveWritersWrapsErrNoWitnessWhenSQLiteDirectoryIsUnreadable(t *testin
 	require.NoError(t, os.Chmod(sqliteDir, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(sqliteDir, 0o700) }) //nolint:gosec // G302: cleanup restores test directory access
 	home := &Home{Dir: dir, SQLiteDir: sqliteDir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	_, err := workspace.ActiveWriters()
 
@@ -108,7 +110,9 @@ func TestActiveWritersDetectsFreshRolloutFile(t *testing.T) {
 	fixedNow := fixedWitnessNow
 	require.NoError(t, os.Chtimes(rolloutPath, fixedNow, fixedNow))
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 
@@ -125,7 +129,9 @@ func TestActiveWritersIgnoresStaleRolloutFile(t *testing.T) {
 	require.NoError(t, os.Chtimes(rolloutPath, old, old))
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 
@@ -148,7 +154,9 @@ func TestActiveWritersDetectsLiveDaemonPID(t *testing.T) {
 	writeDaemonPIDFile(t, dir, 4242)
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(pid int) bool { return pid == 4242 })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(pid int) bool { return pid == 4242 }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 
@@ -162,7 +170,9 @@ func TestActiveWritersIgnoresDeadDaemonPID(t *testing.T) {
 	writeDaemonPIDFile(t, dir, 4242)
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 
@@ -176,7 +186,9 @@ func TestActiveWritersBlocksOnMalformedDaemonPIDFile(t *testing.T) {
 	require.NoError(t, os.MkdirAll(daemonDir, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(daemonDir, appServerPIDFileName), []byte("not-json"), 0o600))
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	_, err := workspace.ActiveWriters()
 
@@ -201,7 +213,9 @@ func TestActiveWritersDetectsHeldDaemonLock(t *testing.T) {
 	defer func() { _ = externalHolder.Unlock() }()
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 
@@ -218,7 +232,9 @@ func TestActiveWritersIgnoresFreshSuccessfulCompressionMarker(t *testing.T) {
 	require.NoError(t, os.Chtimes(markerPath, fixedWitnessNow, fixedWitnessNow))
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 
@@ -235,7 +251,9 @@ func TestActiveWritersDetectsFreshCompressionMarkerWithLivePID(t *testing.T) {
 	require.NoError(t, os.Chtimes(markerPath, fixedWitnessNow, fixedWitnessNow))
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(pid int) bool { return pid == 4242 })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(pid int) bool { return pid == 4242 }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 
@@ -251,7 +269,9 @@ func TestActiveWritersBlocksOnMalformedFreshCompressionMarker(t *testing.T) {
 	require.NoError(t, os.WriteFile(markerPath, []byte("not-a-marker"), 0o600))
 	require.NoError(t, os.Chtimes(markerPath, fixedWitnessNow, fixedWitnessNow))
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	_, err := workspace.ActiveWriters()
 
@@ -268,7 +288,9 @@ func TestActiveWritersIgnoresStaleCompressionMarker(t *testing.T) {
 	require.NoError(t, os.Chtimes(markerPath, stale, stale))
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(pid int) bool { return pid == 4242 })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(pid int) bool { return pid == 4242 }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 
@@ -290,7 +312,9 @@ func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
 	defer func() { _, _ = blocker.ExecContext(context.Background(), "ROLLBACK") }()
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
 
 	active, err := workspace.ActiveWriters()
 

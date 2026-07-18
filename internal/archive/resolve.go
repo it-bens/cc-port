@@ -96,11 +96,11 @@ func ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[str
 // of another under the upper-snake key grammar — so a boundary check would
 // incorrectly refuse to substitute when the byte after `}}` happens to be a
 // path component (e.g. `{{PROJECT_PATH}}.` in prose).
-func ApplyResolutions(content []byte, resolutions map[string]string) ([]byte, error) {
+func ApplyResolutions(content []byte, resolutions map[string]string, maxEntryBytes int64) ([]byte, error) {
 	for placeholder, value := range resolutions {
 		content = bytes.ReplaceAll(content, []byte(placeholder), []byte(value))
 	}
-	if err := enforcePostDecodeCap("resolved archive entry", int64(len(content))); err != nil {
+	if err := enforcePostDecodeCap("resolved archive entry", int64(len(content)), maxEntryBytes); err != nil {
 		return nil, err
 	}
 	return content, nil
@@ -114,7 +114,7 @@ func ResolveEntryBytes(entry Entry, resolutions map[string]string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := ApplyResolutions(content, resolutions)
+	resolved, err := ApplyResolutions(content, resolutions, entry.caps.MaxEntryBytes)
 	if err != nil {
 		return nil, err
 	}

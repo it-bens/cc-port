@@ -31,19 +31,20 @@ type Adapter struct {
 	listProcesses ProcessLister
 	now           func() time.Time
 	pidAlive      func(int) bool
+	transcodeCaps TranscodeCaps
 }
 
 // New returns the Codex tool adapter, wired to the real environment, the
 // real process table, and the wall clock.
 func New() *Adapter {
-	return NewAdapter(os.Getenv, listSystemProcesses, time.Now)
+	return NewAdapter(os.Getenv, listSystemProcesses, time.Now, DefaultTranscodeCaps())
 }
 
 // NewAdapter returns a Codex tool adapter with explicit seams. Production
 // callers use New; tests supply a fake getenv, process lister, or clock to
 // drive Detect, Open, and the witness without touching live machine state.
-func NewAdapter(getenv func(string) string, listProcesses ProcessLister, now func() time.Time) *Adapter {
-	return &Adapter{getenv: getenv, listProcesses: listProcesses, now: now, pidAlive: processAlive}
+func NewAdapter(getenv func(string) string, listProcesses ProcessLister, now func() time.Time, transcodeCaps TranscodeCaps) *Adapter {
+	return &Adapter{getenv: getenv, listProcesses: listProcesses, now: now, pidAlive: processAlive, transcodeCaps: transcodeCaps}
 }
 
 // Name implements tool.Tool.
@@ -101,7 +102,7 @@ func (adapter *Adapter) openAt(dir string) (tool.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newWorkspace(home, adapter.getenv, adapter.listProcesses, adapter.now, adapter.pidAlive), nil
+	return newWorkspace(home, adapter.getenv, adapter.listProcesses, adapter.now, adapter.pidAlive, adapter.transcodeCaps), nil
 }
 
 func dirExists(dir string) (bool, error) {
@@ -122,8 +123,8 @@ func dirExists(dir string) (bool, error) {
 // as the Adapter that resolved it. Exported for fixtures that already hold
 // a *Home and need a Workspace without going through Adapter.Open's
 // flag-parsing path.
-func NewWorkspace(home *Home, getenv func(string) string, listProcesses ProcessLister, now func() time.Time) *Workspace {
-	return newWorkspace(home, getenv, listProcesses, now, processAlive)
+func NewWorkspace(home *Home, getenv func(string) string, listProcesses ProcessLister, now func() time.Time, transcodeCaps TranscodeCaps) *Workspace {
+	return newWorkspace(home, getenv, listProcesses, now, processAlive, transcodeCaps)
 }
 
 // NewWorkspaceForTest returns a workspace with every external witness seam
@@ -135,12 +136,20 @@ func NewWorkspaceForTest(
 	listProcesses ProcessLister,
 	now func() time.Time,
 	pidAlive func(int) bool,
+	transcodeCaps TranscodeCaps,
 ) *Workspace {
-	return newWorkspace(home, getenv, listProcesses, now, pidAlive)
+	return newWorkspace(home, getenv, listProcesses, now, pidAlive, transcodeCaps)
 }
 
-func newWorkspace(home *Home, getenv func(string) string, listProcesses ProcessLister, now func() time.Time, pidAlive func(int) bool) *Workspace {
-	return &Workspace{home: home, getenv: getenv, listProcesses: listProcesses, now: now, pidAlive: pidAlive}
+func newWorkspace(
+	home *Home,
+	getenv func(string) string,
+	listProcesses ProcessLister,
+	now func() time.Time,
+	pidAlive func(int) bool,
+	transcodeCaps TranscodeCaps,
+) *Workspace {
+	return &Workspace{home: home, getenv: getenv, listProcesses: listProcesses, now: now, pidAlive: pidAlive, transcodeCaps: transcodeCaps}
 }
 
 // Workspace implements tool.Workspace for one resolved Codex home.
@@ -150,6 +159,7 @@ type Workspace struct {
 	listProcesses  ProcessLister
 	now            func() time.Time
 	pidAlive       func(int) bool
+	transcodeCaps  TranscodeCaps
 	applyWarnings  []string
 	warningMutex   sync.Mutex
 	historyAppends [][]byte

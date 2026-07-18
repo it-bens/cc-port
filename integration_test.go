@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/file"
@@ -195,6 +196,7 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
+		Caps:       archive.DefaultCaps(),
 	})
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
@@ -429,6 +431,7 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
+		Caps:       archive.DefaultCaps(),
 	})
 
 	imported, err := claude.LocateProject(destinationHome, destinationProjectPath)
@@ -523,6 +526,7 @@ func TestIntegration_ImportIsRerunnable(t *testing.T) {
 			Source:     source,
 			Size:       size,
 			TargetPath: fixtureProjectPath,
+			Caps:       archive.DefaultCaps(),
 		})
 	}
 
@@ -592,6 +596,7 @@ func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 		Source:     source.ReaderAt,
 		Size:       source.Size,
 		TargetPath: destinationProjectPath,
+		Caps:       archive.DefaultCaps(),
 	})
 
 	verifyImportedProject(t, destinationHome, destinationProjectPath)
@@ -707,6 +712,7 @@ func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
+		Caps:       archive.DefaultCaps(),
 	})
 
 	// Positive cases — verbatim entries carry source mtime through promotion.
@@ -814,6 +820,7 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 		Source:     source,
 		Size:       size,
 		TargetPath: destinationProjectPath,
+		Caps:       archive.DefaultCaps(),
 	})
 
 	destProjectDir := destinationHome.ProjectDir(destinationProjectPath)

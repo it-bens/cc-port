@@ -3,6 +3,7 @@ package archive
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
@@ -129,9 +130,10 @@ func (sink *Sink) WriteVerbatim(ctx context.Context, name string, src io.Reader,
 // preserved so the archive entry is byte-identical to what a whole-file
 // transform would produce. ctx is checked at each line boundary. A
 // lineTransform returning nil drops the line and its terminator entirely; a
-// nil lineTransform copies every line verbatim. maxLineBytes is the
-// reader-side scanner cap; line bodies must be strictly shorter than it so a
-// scanner can also buffer the delimiter that terminates an at-cap line.
+// nil lineTransform copies every line verbatim. maxLineBytes caps each line
+// including its terminator: a line whose body plus terminator reaches
+// maxLineBytes is rejected with bufio.ErrTooLong before the whole line is
+// buffered, so a body has one byte of headroom under '\n' and two under '\r\n'.
 func (sink *Sink) WriteJSONL(
 	ctx context.Context, name string, src io.Reader, maxLineBytes int64, lineTransform func([]byte) []byte, mtime time.Time,
 ) (WrittenEntry, error) {
@@ -142,46 +144,53 @@ func (sink *Sink) WriteJSONL(
 	if err != nil {
 		return WrittenEntry{}, err
 	}
-	reader := bufio.NewReaderSize(src, 64<<10)
+	initialBufSize := int64(64 << 10)
+	if maxLineBytes < initialBufSize {
+		initialBufSize = maxLineBytes
+	}
+	scanner := bufio.NewScanner(src)
+	scanner.Buffer(make([]byte, int(initialBufSize)), int(maxLineBytes))
+	scanner.Split(scanJSONLTokens)
 	var written int64
 	lineNumber := 0
-	for {
+	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return WrittenEntry{}, err
 		}
-		line, readErr := reader.ReadBytes('\n')
+		line := scanner.Bytes()
 		body, terminator := splitJSONLTerminator(line)
-		if int64(len(body)) >= maxLineBytes {
-			return WrittenEntry{}, fmt.Errorf(
-				"%s line %d must be shorter than %d bytes: %w", name, lineNumber+1, maxLineBytes, bufio.ErrTooLong,
-			)
+		lineNumber++
+		out := body
+		if lineTransform != nil {
+			out = lineTransform(body)
 		}
-		if len(line) > 0 {
-			lineNumber++
-			out := body
-			if lineTransform != nil {
-				out = lineTransform(body)
+		if out != nil {
+			if _, err := writer.Write(out); err != nil {
+				return WrittenEntry{}, fmt.Errorf("write zip entry %s: %w", name, err)
 			}
-			if out != nil {
-				if _, err := writer.Write(out); err != nil {
+			written += int64(len(out))
+			if len(terminator) > 0 {
+				if _, err := writer.Write(terminator); err != nil {
 					return WrittenEntry{}, fmt.Errorf("write zip entry %s: %w", name, err)
 				}
-				written += int64(len(out))
-				if len(terminator) > 0 {
-					if _, err := writer.Write(terminator); err != nil {
-						return WrittenEntry{}, fmt.Errorf("write zip entry %s: %w", name, err)
-					}
-					written += int64(len(terminator))
-				}
+				written += int64(len(terminator))
 			}
 		}
-		if errors.Is(readErr, io.EOF) {
-			return WrittenEntry{Name: name, Size: written}, nil
-		}
-		if readErr != nil {
-			return WrittenEntry{}, fmt.Errorf("read source for %s: %w", name, readErr)
-		}
 	}
+	if err := scanner.Err(); err != nil {
+		return WrittenEntry{}, fmt.Errorf("%s line %d must be shorter than %d bytes: %w", name, lineNumber+1, maxLineBytes, err)
+	}
+	return WrittenEntry{Name: name, Size: written}, nil
+}
+
+func scanJSONLTokens(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		return i + 1, data[:i+1], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 func splitJSONLTerminator(line []byte) (body, terminator []byte) {

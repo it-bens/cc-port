@@ -24,6 +24,7 @@ type Options struct {
 	Source     io.ReaderAt
 	Size       int64
 	TargetPath string
+	Caps       archive.Caps
 
 	// FromManifest optionally supplies placeholder Resolve overrides per
 	// tool, read from a --from-manifest file. nil means no override.
@@ -112,7 +113,7 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 		blocksByTool[block.Name] = block
 	}
 
-	reader, err := archive.OpenReader(options.Source, options.Size)
+	reader, err := archive.OpenReader(options.Source, options.Size, options.Caps)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +137,7 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	preflightPhase.End("")
 
 	extractPhase := options.Reporter.Phase("extract", int64(len(entries)), progress.UnitEntries)
-	stagedSet, err := stageEntries(ctx, present, entriesByTool, options.TargetPath, resolutionsByTool, extractPhase)
+	stagedSet, err := stageEntries(ctx, present, entriesByTool, options.TargetPath, resolutionsByTool, extractPhase, options.Caps)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +193,7 @@ func preflightTargets(
 		if err != nil {
 			return Result{}, nil, nil, err
 		}
-		if err := checkMissingResolutions(name, block, anchors, resolutions, entriesByTool[name]); err != nil {
+		if err := checkMissingResolutions(name, block, anchors, resolutions, entriesByTool[name], options.Caps.MaxAggregateBytes); err != nil {
 			return Result{}, nil, nil, err
 		}
 		resolutionsByTool[name] = resolutions
@@ -302,7 +303,7 @@ func mergeResolutions(
 // lacks a resolution, before any write has occurred. A declared key the
 // archive never embeds does not need a resolution.
 func checkMissingResolutions(
-	toolName string, block manifest.Tool, anchors, resolutions map[string]string, entries []archive.RawEntry,
+	toolName string, block manifest.Tool, anchors, resolutions map[string]string, entries []archive.RawEntry, maxAggregateBytes int64,
 ) error {
 	candidateKeys := make([]string, 0, len(block.Placeholders))
 	for _, placeholder := range block.Placeholders {
@@ -318,7 +319,7 @@ func checkMissingResolutions(
 		return nil
 	}
 
-	present, err := archive.ClassifyPresentKeys(entries, candidateKeys)
+	present, err := archive.ClassifyPresentKeys(entries, candidateKeys, maxAggregateBytes)
 	if err != nil {
 		return fmt.Errorf("classify declared placeholders for %s: %w", toolName, err)
 	}
@@ -358,9 +359,10 @@ func stageEntries(
 	targetPath string,
 	resolutionsByTool map[string]map[string]string,
 	extractPhase progress.PhaseHandle,
+	caps archive.Caps,
 ) (*archive.StagedSet, error) {
 	stagedSet := &archive.StagedSet{}
-	aggregate := &archive.AggregateCounter{}
+	aggregate := archive.NewAggregateCounter(caps.MaxAggregateBytes)
 	for _, target := range present {
 		name := target.Tool.Name()
 		for _, raw := range entriesByTool[name] {

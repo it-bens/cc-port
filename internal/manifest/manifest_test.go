@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -182,6 +183,26 @@ func TestReadManifest_RejectsOversizedFile(t *testing.T) {
 
 	_, err := manifest.ReadManifest(path)
 	require.ErrorIs(t, err, manifest.ErrManifestFileTooLarge)
+}
+
+func TestReadManifest_RejectsOversizedNamedPipe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+	require.NoError(t, syscall.Mkfifo(path, 0o600))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		file, err := os.OpenFile(path, os.O_WRONLY, 0) //nolint:gosec // G304: test-controlled FIFO path
+		if err != nil {
+			return
+		}
+		defer func() { _ = file.Close() }()
+		_, _ = file.Write(bytes.Repeat([]byte("x"), (4<<20)+1))
+	}()
+
+	_, err := manifest.ReadManifest(path)
+
+	require.ErrorIs(t, err, manifest.ErrManifestFileTooLarge)
+	<-done
 }
 
 func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
