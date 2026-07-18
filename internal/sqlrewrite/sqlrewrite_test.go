@@ -123,6 +123,49 @@ func TestRewriteTextColumnPreservesTextAndBlobStorage(t *testing.T) {
 	assert.Equal(t, "blob", blobType)
 }
 
+func TestRewriteTextColumnRefusesOversizedValues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized.sqlite")
+	database := openSQLite(t, path)
+	require.NoError(t, prepareWAL(database))
+	require.NoError(t, execute(database, "CREATE TABLE documents (id TEXT PRIMARY KEY, text_content TEXT)"))
+	withinCapOldPath := "/a/within-cap"
+	withinCapNewPath := "/a/rewritten"
+	overCapOldPath := "/a/over-cap"
+	overCapNewPath := "/a/never-written"
+	overCapValue := overCapOldPath + strings.Repeat("x", 16<<20+1-len(overCapOldPath))
+	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "within-cap", "prefix "+withinCapOldPath+"/notes"))
+	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "null", nil))
+	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "over-cap", overCapValue))
+	require.NoError(t, database.Close())
+
+	rewriter, err := sqlrewrite.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+
+	transaction, err := rewriter.Begin()
+	require.NoError(t, err)
+	changed, err := rewriter.RewriteTextColumn(transaction, "documents", "id", "text_content", withinCapOldPath, withinCapNewPath)
+	require.NoError(t, err)
+	require.NoError(t, transaction.Commit())
+	assert.Equal(t, 1, changed)
+
+	transaction, err = rewriter.Begin()
+	require.NoError(t, err)
+	_, err = rewriter.RewriteTextColumn(transaction, "documents", "id", "text_content", overCapOldPath, overCapNewPath)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "documents")      //nolint:testifylint // require.Error above establishes err.
+	assert.ErrorContains(t, err, "text_content")   //nolint:testifylint // require.Error above establishes err.
+	assert.ErrorContains(t, err, "id=over-cap")    //nolint:testifylint // require.Error above establishes err.
+	assert.ErrorContains(t, err, "16777217 bytes") //nolint:testifylint // require.Error above establishes err.
+	require.NoError(t, transaction.Rollback())
+
+	verification := openSQLite(t, path)
+	var withinCapValue string
+	query := "SELECT text_content FROM documents WHERE id = 'within-cap'"
+	require.NoError(t, verification.QueryRowContext(context.Background(), query).Scan(&withinCapValue))
+	assert.Equal(t, "prefix "+withinCapNewPath+"/notes", withinCapValue)
+}
+
 func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "update.sqlite")
 	database := openSQLite(t, path)
@@ -198,6 +241,45 @@ func TestPathPredicateAgreesWithByteRewriter(t *testing.T) {
 
 			expected, replacements := rewrite.ReplacePathInBytes([]byte(testCase.value), testCase.oldPath, "/a/renamed")
 			assert.Equal(t, testCase.want, replacements == 1)
+			assert.Equal(t, replacements, count)
+			assert.Equal(t, replacements, changed)
+
+			verification := openSQLite(t, path)
+			var actual string
+			require.NoError(t, verification.QueryRowContext(context.Background(), "SELECT project_path FROM entries WHERE id = 1").Scan(&actual))
+			assert.Equal(t, string(expected), actual)
+		})
+	}
+}
+
+func TestPathPredicateUsesBinaryCollation(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "case-variant does not match", value: "/a/MY_APP"},
+		{name: "exact bytes match", value: "/a/my_app/notes"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "nocase.sqlite")
+			database := openSQLite(t, path)
+			require.NoError(t, execute(database, "CREATE TABLE entries (id INTEGER PRIMARY KEY, project_path TEXT COLLATE NOCASE)"))
+			require.NoError(t, execute(database, "INSERT INTO entries (id, project_path) VALUES (1, ?)", testCase.value))
+			require.NoError(t, database.Close())
+
+			rewriter, err := sqlrewrite.Open(path)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+			count, err := rewriter.CountPathColumn("entries", "project_path", "/a/my_app")
+			require.NoError(t, err)
+			transaction, err := rewriter.Begin()
+			require.NoError(t, err)
+			changed, err := rewriter.RewritePathColumn(transaction, "entries", "project_path", "/a/my_app", "/a/renamed")
+			require.NoError(t, err)
+			require.NoError(t, transaction.Commit())
+
+			expected, replacements := rewrite.ReplacePathInBytes([]byte(testCase.value), "/a/my_app", "/a/renamed")
 			assert.Equal(t, replacements, count)
 			assert.Equal(t, replacements, changed)
 

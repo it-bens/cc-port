@@ -17,6 +17,12 @@ import (
 
 const minimumSQLiteVersion = "3.51.3"
 
+// maxTextValueBytes bounds a single TEXT/BLOB value RewriteTextColumn will
+// materialize. Real path-bearing Codex metadata is a few KiB; this 16 MiB
+// ceiling leaves generous headroom while refusing a hostile/corrupted value
+// that could exhaust memory during a move.
+const maxTextValueBytes = 16 << 20
+
 // DB is a SQLite database opened with cc-port's rewrite safety envelope.
 type DB struct {
 	database *sql.DB
@@ -133,7 +139,7 @@ func (database *DB) CountPathColumn(table, column, oldPath string) (int, error) 
 
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
 	query := fmt.Sprintf(
-		"SELECT COUNT(*) FROM %s WHERE %s = ? OR substr(%s, 1, length(?)+1) = ? || '/'",
+		"SELECT COUNT(*) FROM %s WHERE %s COLLATE BINARY = ? OR substr(%s, 1, length(?)+1) COLLATE BINARY = ? || '/'",
 		quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column),
 	)
 	var count int
@@ -158,7 +164,7 @@ func (database *DB) RewritePathColumn(transaction *Tx, table, column, oldPath, n
 
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
 	query := fmt.Sprintf(
-		"UPDATE %s SET %s = ? || substr(%s, length(?)+1) WHERE %s = ? OR substr(%s, 1, length(?)+1) = ? || '/'",
+		"UPDATE %s SET %s = ? || substr(%s, length(?)+1) WHERE %s COLLATE BINARY = ? OR substr(%s, 1, length(?)+1) COLLATE BINARY = ? || '/'",
 		quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column), quoteIdentifier(column), quoteIdentifier(column),
 	)
 	result, err := transaction.transaction.ExecContext(context.Background(), query, newPath, oldPath, oldPath, oldPath, oldPath)
@@ -183,6 +189,39 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 	}
 	if err := requirePrimaryKeyAndColumn(transaction.transaction, table, primaryKeyColumn, column); err != nil {
 		return 0, err
+	}
+
+	// #nosec G201 -- table and column names are quoted identifiers, never values.
+	guardQuery := fmt.Sprintf(
+		"SELECT %s, octet_length(%s) FROM %s WHERE instr(%s, ?) > 0 AND octet_length(%s) > ?",
+		quoteIdentifier(primaryKeyColumn), quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column),
+	)
+	guardRows, err := transaction.transaction.QueryContext(context.Background(), guardQuery, oldPath, maxTextValueBytes)
+	if err != nil {
+		return 0, fmt.Errorf("guard text values in %s.%s: %w", table, column, err)
+	}
+	if guardRows.Next() {
+		var primaryKey any
+		var byteCount int64
+		if err := guardRows.Scan(&primaryKey, &byteCount); err != nil {
+			_ = guardRows.Close()
+			return 0, fmt.Errorf("read text value guard from %s.%s: %w", table, column, err)
+		}
+		overCapErr := fmt.Errorf(
+			"text value in %s.%s at %s=%v is %d bytes, exceeding the %d byte cap",
+			table, column, primaryKeyColumn, primaryKey, byteCount, maxTextValueBytes,
+		)
+		if err := guardRows.Close(); err != nil {
+			return 0, fmt.Errorf("%w; close text value guard for %s.%s: %w", overCapErr, table, column, err)
+		}
+		return 0, overCapErr
+	}
+	if err := guardRows.Err(); err != nil {
+		_ = guardRows.Close()
+		return 0, fmt.Errorf("guard text values in %s.%s: %w", table, column, err)
+	}
+	if err := guardRows.Close(); err != nil {
+		return 0, fmt.Errorf("close text value guard for %s.%s: %w", table, column, err)
 	}
 
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
