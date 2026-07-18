@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -240,6 +239,29 @@ func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestClaudeMove_DryRunLeavesStrandedStagingForApply(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+	home := claudeWorkspaceHome(t, workspace)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	staging := home.ProjectDir(newPath) + rewrite.StagingSuffix
+	require.NoError(t, os.MkdirAll(staging, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(staging, "partial"), []byte("partial"), 0o600))
+
+	plan, err := move.DryRun(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.NoError(t, err)
+	assert.DirExists(t, staging)
+	assert.Contains(t, plan.ByTool[0].Warnings, "stranded staging directory will be reconciled on apply: "+staging)
+
+	result, err := move.Apply(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.NoError(t, err)
+	require.False(t, result.Failed())
+	assert.NoDirExists(t, staging)
+}
+
 func TestClaudeMoveApply_RemovesStagingDirectoryBeforePromoting(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
@@ -267,7 +289,7 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 	oldEncodedDir := home.ProjectDir(oldPath)
 	newEncodedDir := home.ProjectDir(newPath)
 	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
-	require.NoError(t, os.WriteFile(newEncodedDir+rewrite.MarkerSuffix, []byte(oldEncodedDir), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, rewrite.MarkerSuffix), []byte(oldEncodedDir), 0o600))
 
 	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
@@ -275,7 +297,34 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 	require.False(t, result.Failed())
 	assert.NoDirExists(t, oldEncodedDir)
 	assert.DirExists(t, newEncodedDir)
-	assert.NoFileExists(t, newEncodedDir+rewrite.MarkerSuffix)
+	assert.NoFileExists(t, filepath.Join(newEncodedDir, rewrite.MarkerSuffix))
+}
+
+func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	workspace := claude.NewWorkspace(home)
+	req := tool.MoveRequest{
+		OldPath:  testutil.FixtureProjectPath(),
+		NewPath:  testutil.FixtureProjectPath() + "-renamed",
+		RefsOnly: true,
+	}
+
+	surfaces, err := workspace.MoveSurfaces(req)
+
+	require.NoError(t, err)
+	for _, surface := range surfaces {
+		assert.NotEqual(t, "file-history", surface.Name)
+	}
+	for _, registry := range claude.Registries {
+		if registry.HomeBaseDir == nil && registry.RewritePath == nil {
+			continue
+		}
+		path := registry.HomeBaseDir
+		if path == nil {
+			path = registry.RewritePath
+		}
+		assert.False(t, rewrite.IsBoundaryDescendant(home.FileHistoryDir(), path(home)))
+	}
 }
 
 func TestClaudeMoveApply_RefusesForeignEncodedDestinationAndPreservesSource(t *testing.T) {
@@ -295,35 +344,6 @@ func TestClaudeMoveApply_RefusesForeignEncodedDestinationAndPreservesSource(t *t
 	_, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
 	require.Error(t, err, "an unmarked existing destination must be refused")
-	require.ErrorContains(t, err, "new project directory already exists")
-	data, readErr := os.ReadFile(sourceFile) //nolint:gosec // G304: test fixture path
-	require.NoError(t, readErr, "the refused collision must leave the source untouched")
-	assert.Equal(t, "source data", string(data))
-	assert.FileExists(t, filepath.Join(newEncodedDir, "unrelated.txt"))
-}
-
-func TestClaudeMoveApply_RefusesStaleMarkedForeignEncodedDestinationAndPreservesSource(t *testing.T) {
-	home := testutil.SetupFixture(t)
-	fixedNow := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	workspace := claude.NewWorkspaceForTest(home, os.Getenv, func(int) bool { return false }, func() time.Time { return fixedNow })
-	targets := []tool.Target{{Tool: claude.New(), Workspace: workspace}}
-	oldPath := testutil.FixtureProjectPath()
-	newPath := oldPath + "-renamed"
-	oldEncodedDir := home.ProjectDir(oldPath)
-	newEncodedDir := home.ProjectDir(newPath)
-	sourceFile := filepath.Join(oldEncodedDir, "source-only.txt")
-	markerPath := newEncodedDir + rewrite.MarkerSuffix
-
-	require.NoError(t, os.WriteFile(sourceFile, []byte("source data"), 0o600))
-	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, "unrelated.txt"), []byte("foreign data"), 0o600))
-	require.NoError(t, os.WriteFile(markerPath, []byte(oldEncodedDir), 0o600))
-	staleAt := fixedNow.Add(-rewrite.MarkerFreshnessWindow - time.Second)
-	require.NoError(t, os.Chtimes(markerPath, staleAt, staleAt))
-
-	_, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
-
-	require.Error(t, err, "a stale marker must not make a foreign destination resumable")
 	require.ErrorContains(t, err, "new project directory already exists")
 	data, readErr := os.ReadFile(sourceFile) //nolint:gosec // G304: test fixture path
 	require.NoError(t, readErr, "the refused collision must leave the source untouched")
@@ -361,6 +381,55 @@ func TestApply_CancellationRestoresCompletedSurfaces(t *testing.T) {
 	require.True(t, restored)
 	require.True(t, result.Failed())
 	require.ErrorIs(t, result.ByTool[0].Err, context.Canceled)
+}
+
+func TestApply_LaterSurfaceFailureRestoresFileAndSQLSurfaces(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "state.txt")
+	require.NoError(t, os.WriteFile(filePath, []byte("before"), 0o600))
+	sqlState := "before"
+	workspace := &applyTestWorkspace{surfaces: []tool.Surface{
+		{
+			Name: "file",
+			Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
+			Apply: func(_ context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
+				if err := undo.RegisterFile(filePath); err != nil {
+					return tool.SurfaceResult{}, err
+				}
+				if err := os.WriteFile(filePath, []byte("after"), 0o600); err != nil {
+					return tool.SurfaceResult{}, err
+				}
+				return tool.SurfaceResult{}, nil
+			},
+		},
+		{
+			Name: "sql",
+			Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
+			Apply: func(_ context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
+				undo.RegisterUndo(func() error {
+					sqlState = "before"
+					return nil
+				})
+				sqlState = "after"
+				return tool.SurfaceResult{}, nil
+			},
+		},
+		{
+			Name: "fail",
+			Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
+			Apply: func(context.Context, *tool.Restorer) (tool.SurfaceResult, error) {
+				return tool.SurfaceResult{}, assert.AnError
+			},
+		},
+	}}
+
+	result, err := move.Apply(t.Context(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
+
+	require.NoError(t, err)
+	require.True(t, result.Failed())
+	data, readErr := os.ReadFile(filePath) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, readErr)
+	assert.Equal(t, "before", string(data))
+	assert.Equal(t, "before", sqlState)
 }
 
 func TestApply_CarriesResidualWarnings(t *testing.T) {

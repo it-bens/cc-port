@@ -89,18 +89,23 @@ func selectTools(toolSet *tool.Set, names []string) ([]tool.Tool, error) {
 		return detected, nil
 	}
 
-	seen := make(map[string]bool, len(names))
-	var selected []tool.Tool
+	selectedNames := make(map[string]bool, len(names))
 	for _, name := range names {
-		if seen[name] {
+		if selectedNames[name] {
 			continue
 		}
 		matched, ok := toolSet.ByName(name)
 		if !ok {
 			return nil, fmt.Errorf("unknown --tool %q", name)
 		}
-		seen[name] = true
-		selected = append(selected, matched)
+		selectedNames[matched.Name()] = true
+	}
+
+	selected := make([]tool.Tool, 0, len(selectedNames))
+	for _, registered := range toolSet.All() {
+		if selectedNames[registered.Name()] {
+			selected = append(selected, registered)
+		}
 	}
 	return selected, nil
 }

@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -46,11 +45,11 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	if _, err := LocateProject(workspace.home, req.OldPath); err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
 	}
-	if err := checkEncodedDirCollision(workspace.home, req.OldPath, req.NewPath, workspace.now()); err != nil {
+	if err := checkEncodedDirCollision(workspace.home, req.OldPath, req.NewPath); err != nil {
 		return nil, err
 	}
 	if !req.RefsOnly {
-		if err := checkPhysicalDestination(req.OldPath, req.NewPath, workspace.now()); err != nil {
+		if err := checkPhysicalDestination(req.OldPath, req.NewPath); err != nil {
 			return nil, err
 		}
 	}
@@ -128,11 +127,8 @@ func appendUniqueMoveWarnings(warnings []string, warning string) []string {
 	return append(warnings, warning)
 }
 
-func checkPhysicalDestination(oldPath, newPath string, now time.Time) error {
-	if err := removeStagingDir(newPath); err != nil {
-		return err
-	}
-	state, err := classifyDestination(oldPath, newPath, now)
+func checkPhysicalDestination(oldPath, newPath string) error {
+	state, err := classifyDestination(oldPath, newPath)
 	if err != nil {
 		return fmt.Errorf("stat destination project directory %s: %w", newPath, err)
 	}
@@ -160,7 +156,7 @@ func (workspace *Workspace) moveWarningSnapshot() []string {
 	return append([]string(nil), workspace.moveWarnings...)
 }
 
-func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string, now time.Time) error {
+func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string) error {
 	oldEncodedDir := claudeHome.ProjectDir(oldPath)
 	newEncodedDir := claudeHome.ProjectDir(newPath)
 
@@ -170,10 +166,7 @@ func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string, now tim
 			ErrEncodedDirAmbiguous, oldPath, newPath, filepath.Base(newEncodedDir),
 		)
 	}
-	if err := removeStagingDir(newEncodedDir); err != nil {
-		return err
-	}
-	state, err := classifyDestination(oldEncodedDir, newEncodedDir, now)
+	state, err := classifyDestination(oldEncodedDir, newEncodedDir)
 	if err != nil {
 		return fmt.Errorf("stat new project directory %s: %w", newEncodedDir, err)
 	}
@@ -191,14 +184,14 @@ const (
 	destinationRefused
 )
 
-func classifyDestination(source, destination string, now time.Time) (destinationState, error) {
+func classifyDestination(source, destination string) (destinationState, error) {
 	if _, err := os.Stat(destination); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return destinationPromote, nil
 		}
 		return 0, fmt.Errorf("stat %s: %w", destination, err)
 	}
-	verified, err := rewrite.VerifyPromotedFrom(source, destination, now)
+	verified, err := rewrite.VerifyPromotedFrom(source, destination)
 	if err != nil {
 		return 0, err
 	}
@@ -726,7 +719,15 @@ func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest) tool.S
 	return tool.Surface{
 		Name: tool.SurfaceProjectDirectory,
 		Plan: func(_ context.Context) (tool.SurfaceResult, error) {
-			return tool.SurfaceResult{Count: 1}, nil
+			destinations := []string{workspace.home.ProjectDir(req.NewPath)}
+			if !req.RefsOnly {
+				destinations = append(destinations, req.NewPath)
+			}
+			warnings, err := strandedStagingWarnings(destinations)
+			if err != nil {
+				return tool.SurfaceResult{}, err
+			}
+			return tool.SurfaceResult{Count: 1, Warnings: warnings}, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			err := workspace.applyProjectDirectoryMove(ctx, req, undo)
@@ -735,16 +736,37 @@ func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest) tool.S
 	}
 }
 
+func strandedStagingWarnings(destinations []string) ([]string, error) {
+	var warnings []string
+	for _, destination := range destinations {
+		staging := destination + rewrite.StagingSuffix
+		if _, err := os.Stat(staging); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("stat staging directory %s: %w", staging, err)
+		}
+		warnings = append(warnings, "stranded staging directory will be reconciled on apply: "+staging)
+	}
+	return warnings, nil
+}
+
 func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req tool.MoveRequest, undo *tool.Restorer) error {
 	oldProjectDir := workspace.home.ProjectDir(req.OldPath)
 	newProjectDir := workspace.home.ProjectDir(req.NewPath)
 
-	if err := promoteOrResume(ctx, oldProjectDir, newProjectDir, workspace.now(), undo); err != nil {
+	if err := removeStagingDir(newProjectDir); err != nil {
+		return fmt.Errorf("reconcile project data staging: %w", err)
+	}
+	if err := promoteOrResume(ctx, oldProjectDir, newProjectDir, undo); err != nil {
 		return fmt.Errorf("copy project directory: %w", err)
 	}
 
 	if !req.RefsOnly {
-		if err := promoteOrResume(ctx, req.OldPath, req.NewPath, workspace.now(), undo); err != nil {
+		if err := removeStagingDir(req.NewPath); err != nil {
+			return fmt.Errorf("reconcile on-disk project staging: %w", err)
+		}
+		if err := promoteOrResume(ctx, req.OldPath, req.NewPath, undo); err != nil {
 			return fmt.Errorf("copy project on disk: %w", err)
 		}
 	}
@@ -773,8 +795,8 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 	return nil
 }
 
-func promoteOrResume(ctx context.Context, source, destination string, now time.Time, undo *tool.Restorer) error {
-	state, err := classifyDestination(source, destination, now)
+func promoteOrResume(ctx context.Context, source, destination string, undo *tool.Restorer) error {
+	state, err := classifyDestination(source, destination)
 	if err != nil {
 		return err
 	}

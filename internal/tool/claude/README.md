@@ -425,13 +425,14 @@ because it derives paths directly from `Home.ProjectDir` and never calls
   then removes the originals.
 - `checkEncodedDirCollision` runs before any surface: a move where old and
   new paths encode to the same directory (`ErrEncodedDirAmbiguous`) is
-  refused before any write, and a `.cc-port-staging.tmp` sibling is removed
-  before preflight. A target that has already converged — a valid, fresh
-  promotion marker naming this source, or the source already gone — resumes
-  without a second copy rather than refusing, only removing the leftover
-  source after reference rewrites; see
+  refused before any write. A plan reports an existing
+  `.cc-port-staging.tmp` sibling and the project-directory surface reconciles
+  it during locked Apply. A target that has already converged, with a valid
+  promotion marker naming this source or with the source already gone, resumes
+  without a second copy rather than refusing. It removes the leftover source
+  after reference rewrites; see
   [`internal/rewrite/README.md`](../../rewrite/README.md) §Directory
-  promotion for the marker mechanism and its freshness bound.
+  promotion for the marker mechanism.
 - If removing the physical source directory fails, Apply completes with an
   `ErrResidualSourceDir`-prefixed warning; if removing the old encoded project
   data directory fails, it completes with an `old encoded project data

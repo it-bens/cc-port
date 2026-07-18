@@ -26,12 +26,11 @@ Every path-rewriting command routes through this package so the boundary contrac
   - `SafeWriteFile(path string, data []byte, permissions os.FileMode) error`: write-then-rename helper for single-file atomic writes.
   - `PromoteDir(ctx context.Context, source, destination string, undo undoRegistrar, copyDir func(context.Context, string, string, func()) error) error`:
     stages `source` into a sibling `.cc-port-staging.tmp` directory beside
-    `destination`, renames it into place, then writes a promotion marker
-    recording `source`. The directory-promotion counterpart to
-    `SafeRenamePromoter`, used by `move`'s project-directory surface.
-  - `VerifyPromotedFrom(source, destination string, now time.Time) (bool, error)`:
-    reports whether `destination` carries a marker recording exactly
-    `source`, written within `MarkerFreshnessWindow`.
+    `destination`, writes a promotion marker recording `source` inside the
+    staging directory, then renames it into place. The directory-promotion
+    counterpart to `SafeRenamePromoter`, used by `move`'s project-directory surface.
+  - `VerifyPromotedFrom(source, destination string) (bool, error)`:
+    reports whether `destination` carries a marker recording exactly `source`.
   - `RemoveMarker(destination string) error`: removes `destination`'s
     promotion marker; a missing marker is not an error.
 
@@ -139,39 +138,32 @@ except the expected renames at rewritten `projects` sub-keys.
 ### Directory promotion
 
 `PromoteDir` copies `source` into a sibling `<destination>.cc-port-staging.tmp`
-directory, then renames the staging directory onto `destination`, so a
-mid-copy failure never leaves a partial directory at the real destination
-path. `move`'s project-directory surface is its only caller
+directory, writes `.cc-port-promoted-from` inside the staging directory, then
+renames it onto `destination`. The rename publishes a fully marked destination
+in one operation, and a mid-copy failure never leaves a partial directory at
+the real destination path. `move`'s project-directory surface is its only caller
 ([`internal/tool/claude/README.md`](../tool/claude/README.md) §Apply
 contract (move)); `import` still promotes through `SafeRenamePromoter`, not
 this primitive.
 
-A successful promotion writes a `<destination>.cc-port-promoted-from` marker
-recording `source`. The marker's content alone is a deterministic path
-string, so it cannot distinguish a genuine crash-recovery retry of the same
-move from a stale marker left behind by an unrelated, already-completed
-promotion that happens to reuse the identical source and destination path
-strings. `MarkerFreshnessWindow` (24 hours) closes that gap: `VerifyPromotedFrom`
-trusts a marker only when its mtime falls inside the window, so an operator
-returning to a long-stalled move sees a refusal instead of a silent,
-incorrect resume.
+The promoted marker records `source` at
+`<destination>/.cc-port-promoted-from`. `VerifyPromotedFrom` resumes only
+when that content exactly matches `source`, regardless of the marker's mtime.
 
 #### Handled
 
 - A destination that does not yet exist: staged copy, then an atomic
   `os.Rename` onto `destination`.
-- A destination carrying a marker that names exactly `source` and is no
-  older than `MarkerFreshnessWindow`: the caller treats the promotion as
-  already done and skips the copy.
+- A destination carrying a marker that names exactly `source`: the caller
+  treats the promotion as already done and skips the copy.
 - Rollback via the caller's `undo.RegisterUndo`: before the rename, removes
-  the staging directory; after the rename, removes both `destination` and
-  its marker.
+  the staging directory; after the rename, removes `destination` with its
+  marker.
 
 #### Refused
 
-- A marker that names a different source, or that predates
-  `MarkerFreshnessWindow`: `VerifyPromotedFrom` returns false rather than
-  treating it as valid.
+- A marker that names a different source: `VerifyPromotedFrom` returns false
+  rather than treating it as valid.
 
 #### Not covered
 
@@ -180,14 +172,13 @@ incorrect resume.
   promote vs. resume vs. refuse before invoking it
   ([`internal/tool/claude/README.md`](../tool/claude/README.md) §Apply
   contract (move)).
-- Clock skew across machines. `MarkerFreshnessWindow` compares the marker's
-  own mtime to a caller-supplied `now`; cc-port runs single-machine,
-  single-process, so cross-machine clock disagreement is out of scope.
 
 ## Tests
 
-Unit tests in `rewrite_test.go` cover `ReplacePathInBytes` (including
-dot-boundary lookahead), `SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
+Unit tests in `rewrite_test.go` cover `PromoteDir` and promotion markers
+(inside-destination placement, content verification, arbitrarily old markers,
+and rollback), `ReplacePathInBytes` (including dot-boundary lookahead),
+`SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
 `ContainsBoundedPath`, the `Count*` primitives (boundary cases, the
 JSON-escaped form, and parity with their `Replace*` counterparts), and
 `SafeWriteFile`.

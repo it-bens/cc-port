@@ -35,6 +35,23 @@ func TestRestorer_RestoreAggregatesErrors(t *testing.T) {
 		"writable path must still be restored despite sibling failure")
 }
 
+func TestRestorer_RestoreRunsUndosInReverseRegistrationOrder(t *testing.T) {
+	restorer := tool.NewRestorer()
+	var restored []string
+	restorer.RegisterUndo(func() error {
+		restored = append(restored, "first")
+		return nil
+	})
+	restorer.RegisterUndo(func() error {
+		restored = append(restored, "second")
+		return nil
+	})
+
+	require.NoError(t, restorer.Restore())
+
+	assert.Equal(t, []string{"second", "first"}, restored)
+}
+
 func TestRestorer_RollbackFromSiblingBackup(t *testing.T) {
 	tmp := t.TempDir()
 	target := filepath.Join(tmp, "history.jsonl")

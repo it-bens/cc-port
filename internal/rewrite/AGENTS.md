@@ -11,4 +11,5 @@
 - Entry: `rewrite.go:ReplacePathInBytes`.
 - TOML rewrite: `rewrite.go:TOMLPathRewrite`.
 - Promoter: `rewrite.go:SafeRenamePromoter`, `rewrite.go:NewSafeRenamePromoter`.
+- Directory promotion: `directory_promoter.go` (`PromoteDir`, `VerifyPromotedFrom`, `RemoveMarker`).
 - Tests: `rewrite_test.go`, `rewrite_fuzz_test.go`, `toml_test.go`.

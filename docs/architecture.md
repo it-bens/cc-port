@@ -311,9 +311,10 @@ state-db and memories-db surfaces are the concrete instance, each calling
 last surface. Every file surface in between is individually atomic: it
 snapshots the file's pre-image with `Restorer.RegisterFile` before
 overwriting it via a sibling-temp-and-rename (`rewrite.SafeWriteFile` or
-`archive`'s equivalent). Directory promotion copies into a sibling staging
-directory, registers its removal before the copy, and renames it into place
-only after the copy succeeds. The same register-before-rename ordering
+`archive`'s equivalent). Directory promotion registers staging removal, then
+copies into the sibling staging directory and writes its source marker there.
+The final rename publishes the marked destination atomically. The same
+register-before-rename ordering
 governs the git-baseline surface's `.git`-to-backup rename, including its
 stranded-backup reconciliation on the next apply (`internal/tool/codex/README.md`
 §Git baseline handling). The final surface in the list commits every open SQL
@@ -337,8 +338,9 @@ idempotent: a rewritten file contains no remaining occurrences of the old
 path, and a rewritten database row no longer matches the old path predicate.
 Re-running the same move therefore converges to the same end state regardless
 of where the previous attempt was killed. A leftover directory staging artifact
-is removed before retrying, while a promoted destination that still has its
-source resumes at source removal. Both properties (crash rollback,
+is reconciled during the locked apply, while a promoted destination whose
+marker names the source resumes at source removal. Marker verification checks
+its content, not its age. Both properties (crash rollback,
 re-run idempotence) are covered by adapter and move-package tests; this prose
 is the one place the contract itself is described.
 

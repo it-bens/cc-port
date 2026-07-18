@@ -35,3 +35,12 @@ func TestDefaultSweepWithOnlyClaudeStateSkipsCodex(t *testing.T) {
 	require.Len(t, targets, 1)
 	assert.Equal(t, "claude", targets[0].Tool.Name())
 }
+
+func TestSelectTools_ExplicitSelectionUsesRegistryOrder(t *testing.T) {
+	selected, err := selectTools(newToolSet(), []string{"codex", "claude"})
+
+	require.NoError(t, err)
+	require.Len(t, selected, 2)
+	assert.Equal(t, "claude", selected[0].Name())
+	assert.Equal(t, "codex", selected[1].Name())
+}
