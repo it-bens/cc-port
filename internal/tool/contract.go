@@ -55,13 +55,21 @@ type Workspace interface {
 	Auditor
 }
 
+// SurfaceResult is one move surface's execution result. Warnings reports
+// facts discovered while that surface runs; request-level residuals belong
+// to Mover.ResidualWarnings instead.
+type SurfaceResult struct {
+	Count    int
+	Warnings []string
+}
+
 // Surface is one named, independently plannable and applicable unit of a
-// move. Plan reports how many occurrences it would touch; Apply performs
-// the rewrite and registers whatever the Restorer needs to reverse it.
+// move. Plan reports what it would touch; Apply performs the rewrite and
+// registers whatever the Restorer needs to reverse it.
 type Surface struct {
 	Name  string
-	Plan  func(ctx context.Context) (count int, err error)
-	Apply func(ctx context.Context, undo *Restorer) (count int, err error)
+	Plan  func(ctx context.Context) (SurfaceResult, error)
+	Apply func(ctx context.Context, undo *Restorer) (SurfaceResult, error)
 }
 
 // SurfaceProjectDirectory is the well-known surface name for a move that
@@ -164,7 +172,7 @@ type ProjectInfo struct {
 
 // Auditor is the read-only, lock-free surface stats renders per tool.
 type Auditor interface {
-	ReferenceSurfaces(project string) ([]CountSurface, error)
-	DiskCategories(project string) ([]SizeCategory, error)
-	EnumerateProjects() ([]ProjectInfo, error)
+	ReferenceSurfaces(ctx context.Context, project string) ([]CountSurface, error)
+	DiskCategories(ctx context.Context, project string) ([]SizeCategory, error)
+	EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)
 }

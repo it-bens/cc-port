@@ -93,8 +93,8 @@ func (rewrite *databaseRewrite) rollback() error {
 func (pending *pendingMoveDatabases) commitSurface() tool.Surface {
 	return tool.Surface{
 		Name: "commit-databases",
-		Plan: func(context.Context) (int, error) { return 0, nil },
-		Apply: func(_ context.Context, _ *tool.Restorer) (int, error) {
+		Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
+		Apply: func(_ context.Context, _ *tool.Restorer) (tool.SurfaceResult, error) {
 			// Two SQLite transactions cannot commit atomically. Commit memories
 			// before state because state is the database identity source; a state
 			// failure leaves the project discoverable for a convergent rerun.
@@ -102,7 +102,7 @@ func (pending *pendingMoveDatabases) commitSurface() tool.Surface {
 			for _, rewrites := range []databaseRewrites{pending.memories, pending.state} {
 				for _, rewrite := range rewrites {
 					if err := rewrite.commit(); err != nil {
-						return 0, fmt.Errorf(
+						return tool.SurfaceResult{}, fmt.Errorf(
 							"partial database commit: %s committed; database commit failed: %s; state remains discoverable and re-running the move converges: %w",
 							strings.Join(committedPaths, ", "), rewrite.path, err,
 						)
@@ -128,7 +128,7 @@ func (pending *pendingMoveDatabases) commitSurface() tool.Surface {
 				}
 				_ = removeAll(pending.gitBackup)
 			}
-			return 0, nil
+			return tool.SurfaceResult{}, nil
 		},
 	}
 }

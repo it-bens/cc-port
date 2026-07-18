@@ -68,7 +68,7 @@ type sidecarGit struct {
 
 // Placeholders declares Codex's machine-local home and project anchors.
 func (workspace *Workspace) Placeholders(project string, _ map[string]bool) ([]manifest.Placeholder, error) {
-	known, err := workspace.knowsProject(project)
+	known, err := workspace.knowsProject(context.Background(), project)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (workspace *Workspace) Placeholders(project string, _ map[string]bool) ([]m
 // Export writes selected project state under the Codex archive namespace.
 func (workspace *Workspace) Export(ctx context.Context, project string, selected map[string]bool, sink *archive.Sink) (tool.ExportResult, error) {
 	result := tool.ExportResult{Categories: make(map[string][]tool.ArchiveEntry)}
-	known, err := workspace.knowsProject(project)
+	known, err := workspace.knowsProject(ctx, project)
 	if err != nil {
 		return result, err
 	}
@@ -795,24 +795,27 @@ func parseThreadSidecar(line []byte) (threadSidecar, error) {
 }
 
 // ReferenceSurfaces reports the native reference counts for one project.
-func (workspace *Workspace) ReferenceSurfaces(project string) ([]tool.CountSurface, error) {
-	known, err := workspace.knowsProject(project)
+func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project string) ([]tool.CountSurface, error) {
+	known, err := workspace.knowsProject(ctx, project)
 	if err != nil {
 		return nil, err
 	}
 	if !known {
 		return nil, tool.ErrProjectAbsent
 	}
-	rollouts, _, err := workspace.projectRollouts(context.Background(), project)
+	rollouts, _, err := workspace.projectRollouts(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	threads, err := workspace.countThreadRows(project)
+	threads, err := workspace.countThreadRows(ctx, project)
 	if err != nil {
 		return nil, err
 	}
 	ids := make(map[string]struct{})
 	for _, path := range rollouts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		lines, _, err := readRolloutLines(path, workspace.transcodeCaps)
 		if err != nil {
 			return nil, err
@@ -823,11 +826,11 @@ func (workspace *Workspace) ReferenceSurfaces(project string) ([]tool.CountSurfa
 		}
 		ids[identity.ThreadID] = struct{}{}
 	}
-	history, err := countHistoryForIDs(filepath.Join(workspace.home.Dir, codexHistoryFile), ids)
+	history, err := countHistoryForIDs(ctx, filepath.Join(workspace.home.Dir, codexHistoryFile), ids)
 	if err != nil {
 		return nil, err
 	}
-	index, err := countIndexForIDs(filepath.Join(workspace.home.Dir, sessionIndexFile), ids)
+	index, err := countIndexForIDs(ctx, filepath.Join(workspace.home.Dir, sessionIndexFile), ids)
 	if err != nil {
 		return nil, err
 	}
@@ -839,20 +842,23 @@ func (workspace *Workspace) ReferenceSurfaces(project string) ([]tool.CountSurfa
 	}, nil
 }
 
-func (workspace *Workspace) countThreadRows(project string) (int, error) {
+func (workspace *Workspace) countThreadRows(ctx context.Context, project string) (int, error) {
 	var total int
 	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
 	if err != nil {
 		return 0, err
 	}
 	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		database, err := openReadOnlyDatabase(path)
 		if err != nil {
 			return 0, err
 		}
 		var count int
 		err = database.QueryRowContext(
-			context.Background(), `SELECT COUNT(*) FROM threads WHERE cwd = ? OR substr(cwd, 1, length(?)+1) = ? || '/'`, project, project, project,
+			ctx, `SELECT COUNT(*) FROM threads WHERE cwd = ? OR substr(cwd, 1, length(?)+1) = ? || '/'`, project, project, project,
 		).Scan(&count)
 		_ = database.Close()
 		if err != nil {
@@ -862,13 +868,16 @@ func (workspace *Workspace) countThreadRows(project string) (int, error) {
 	}
 	return total, nil
 }
-func countHistoryForIDs(path string, ids map[string]struct{}) (int, error) {
+func countHistoryForIDs(ctx context.Context, path string, ids map[string]struct{}) (int, error) {
 	lines, err := scanLines(path)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	for _, line := range lines {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		var record historyRecord
 		if json.Unmarshal(line, &record) == nil {
 			if _, ok := ids[record.SessionID]; ok {
@@ -878,13 +887,16 @@ func countHistoryForIDs(path string, ids map[string]struct{}) (int, error) {
 	}
 	return count, nil
 }
-func countIndexForIDs(path string, ids map[string]struct{}) (int, error) {
+func countIndexForIDs(ctx context.Context, path string, ids map[string]struct{}) (int, error) {
 	lines, err := scanLines(path)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	for _, line := range lines {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		var record struct {
 			ID string `json:"id"`
 		}
@@ -898,20 +910,23 @@ func countIndexForIDs(path string, ids map[string]struct{}) (int, error) {
 }
 
 // DiskCategories reports all on-disk files that Codex attributes to a project.
-func (workspace *Workspace) DiskCategories(project string) ([]tool.SizeCategory, error) {
-	known, err := workspace.knowsProject(project)
+func (workspace *Workspace) DiskCategories(ctx context.Context, project string) ([]tool.SizeCategory, error) {
+	known, err := workspace.knowsProject(ctx, project)
 	if err != nil {
 		return nil, err
 	}
 	if !known {
 		return nil, tool.ErrProjectAbsent
 	}
-	rollouts, _, err := workspace.projectRollouts(context.Background(), project)
+	rollouts, _, err := workspace.projectRollouts(ctx, project)
 	if err != nil {
 		return nil, err
 	}
 	active, archived := tool.SizeCategory{Name: "sessions"}, tool.SizeCategory{Name: "archived-sessions"}
 	for _, path := range rollouts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		info, err := os.Stat(path)
 		if err != nil {
 			return nil, err
@@ -930,23 +945,31 @@ func (workspace *Workspace) DiskCategories(project string) ([]tool.SizeCategory,
 
 // EnumerateProjects unions database thread cwd values with every
 // config.toml/profile file's [projects] TOML keys.
-func (workspace *Workspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
+func (workspace *Workspace) EnumerateProjects(ctx context.Context) ([]tool.ProjectInfo, error) {
 	projects := make(map[string]struct{})
 	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
 	if err != nil {
 		return nil, err
 	}
 	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		database, err := openReadOnlyDatabase(path)
 		if err != nil {
 			return nil, err
 		}
-		rows, err := database.QueryContext(context.Background(), `SELECT DISTINCT cwd FROM threads`)
+		rows, err := database.QueryContext(ctx, `SELECT DISTINCT cwd FROM threads`)
 		if err != nil {
 			_ = database.Close()
 			return nil, fmt.Errorf("query project directories from database %s: %w", path, err)
 		}
 		for rows.Next() {
+			if err := ctx.Err(); err != nil {
+				_ = rows.Close()
+				_ = database.Close()
+				return nil, err
+			}
 			var cwd string
 			if err := rows.Scan(&cwd); err != nil {
 				_ = rows.Close()
@@ -968,6 +991,9 @@ func (workspace *Workspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
 		return nil, err
 	}
 	for _, path := range configFiles {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		keys, err := configTOMLProjectKeys(path)
 		if err != nil {
 			return nil, err
@@ -983,7 +1009,10 @@ func (workspace *Workspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
 	sort.Strings(names)
 	result := make([]tool.ProjectInfo, 0, len(names))
 	for _, project := range names {
-		disk, err := workspace.DiskCategories(project)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		disk, err := workspace.DiskCategories(ctx, project)
 		if err != nil {
 			return nil, err
 		}
@@ -1001,15 +1030,15 @@ func (workspace *Workspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
 // structured cwd, a thread row, or a config.toml/profile projects key. A
 // config-key-only project (a trust entry with no sessions yet) still
 // counts, matching the three-way association projectKnown uses for move.
-func (workspace *Workspace) knowsProject(project string) (bool, error) {
-	rollouts, _, err := workspace.projectRollouts(context.Background(), project)
+func (workspace *Workspace) knowsProject(ctx context.Context, project string) (bool, error) {
+	rollouts, _, err := workspace.projectRollouts(ctx, project)
 	if err != nil {
 		return false, err
 	}
 	if len(rollouts) > 0 {
 		return true, nil
 	}
-	count, err := workspace.countThreadRows(project)
+	count, err := workspace.countThreadRows(ctx, project)
 	if err != nil {
 		return false, err
 	}

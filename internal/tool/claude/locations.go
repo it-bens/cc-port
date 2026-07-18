@@ -23,20 +23,21 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 
 // ProjectLocations holds all data locations for a specific project.
 type ProjectLocations struct {
-	ProjectPath          string
-	ProjectDir           string
-	SessionTranscripts   []string
-	SessionSubdirs       []string
-	MemoryFiles          []string
-	FileHistoryDirs      []string
-	SessionFiles         []string
-	HistoryEntryCount    int
-	HasConfigBlock       bool
-	TodoFiles            []string
-	UsageDataSessionMeta []string
-	UsageDataFacets      []string
-	PluginsDataFiles     []string
-	TaskFiles            []string
+	ProjectPath           string
+	ProjectDir            string
+	SessionTranscripts    []string
+	SessionSubdirs        []string
+	MemoryFiles           []string
+	FileHistoryDirs       []string
+	SessionFiles          []string
+	MalformedSessionFiles []string
+	HistoryEntryCount     int
+	HasConfigBlock        bool
+	TodoFiles             []string
+	UsageDataSessionMeta  []string
+	UsageDataFacets       []string
+	PluginsDataFiles      []string
+	TaskFiles             []string
 }
 
 // LocateProject enumerates all data locations for the given project path under
@@ -458,6 +459,7 @@ func collectSessionFiles(locations *ProjectLocations, claudeHome *Home, projectP
 
 		var sessionFile SessionFile
 		if err := json.Unmarshal(data, &sessionFile); err != nil {
+			locations.MalformedSessionFiles = append(locations.MalformedSessionFiles, sessionFilePath)
 			continue
 		}
 

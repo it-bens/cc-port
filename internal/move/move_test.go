@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,13 +85,13 @@ func (*applyTestWorkspace) Stage(context.Context, string, archive.Entry, map[str
 func (*applyTestWorkspace) Finalize(context.Context, string, *archive.StagedSet) ([]string, error) {
 	return nil, errors.New("not exercised")
 }
-func (*applyTestWorkspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {
+func (*applyTestWorkspace) ReferenceSurfaces(context.Context, string) ([]tool.CountSurface, error) {
 	return nil, errors.New("not exercised")
 }
-func (*applyTestWorkspace) DiskCategories(string) ([]tool.SizeCategory, error) {
+func (*applyTestWorkspace) DiskCategories(context.Context, string) ([]tool.SizeCategory, error) {
 	return nil, errors.New("not exercised")
 }
-func (*applyTestWorkspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
+func (*applyTestWorkspace) EnumerateProjects(context.Context) ([]tool.ProjectInfo, error) {
 	return nil, errors.New("not exercised")
 }
 
@@ -119,6 +120,62 @@ func TestDryRun_ReportsSurfaceCountsPerTool(t *testing.T) {
 		total += surface.Count
 	}
 	assert.Positive(t, total, "the fixture project must have at least one rewritable reference")
+}
+
+func TestDryRun_ReportsMalformedHistoryLineWarning(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	records := []byte(`{"project":"` + oldPath + `"}` + "\nnot json\n" + `{"project":"` + oldPath + `"}` + "\n")
+	require.NoError(t, os.WriteFile(home.HistoryFile(), records, 0o600))
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+
+	plan, err := move.DryRun(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.NoError(t, err)
+	assert.Contains(t, plan.ByTool[0].Warnings, "history.jsonl: 1 malformed line(s) skipped (line 2)")
+}
+
+func TestApply_ReportsMalformedHistoryLineWarning(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	records := []byte(`{"project":"` + oldPath + `"}` + "\nnot json\n" + `{"project":"` + oldPath + `"}` + "\n")
+	require.NoError(t, os.WriteFile(home.HistoryFile(), records, 0o600))
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+
+	result, err := move.Apply(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.NoError(t, err)
+	assert.Contains(t, result.ByTool[0].Warnings, "history.jsonl: 1 malformed line(s) skipped (line 2)")
+}
+
+func TestSessionsSurface_ReportsMalformedSessionFileWithoutChangingItsBytes(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	malformedPath := filepath.Join(home.SessionsDir(), "malformed-session.json")
+	original := []byte(`{"cwd":`)
+	require.NoError(t, os.WriteFile(malformedPath, original, 0o600))
+	workspace := claude.NewWorkspace(home)
+	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	require.NoError(t, err)
+	var sessions tool.Surface
+	for _, surface := range surfaces {
+		if surface.Name == "sessions" {
+			sessions = surface
+			break
+		}
+	}
+	require.NotNil(t, sessions.Apply)
+
+	result, err := sessions.Apply(t.Context(), tool.NewRestorer())
+
+	require.NoError(t, err)
+	assert.Contains(t, result.Warnings, "sessions/malformed-session.json: malformed JSON preserved unchanged")
+	actual, readErr := os.ReadFile(malformedPath) //nolint:gosec // G304: path from t.TempDir fixture
+	require.NoError(t, readErr)
+	assert.Equal(t, original, actual)
 }
 
 func TestDryRun_AbsentProjectReportsZeroSurfaces(t *testing.T) {
@@ -160,7 +217,8 @@ func TestApply_MovesProjectAndUpdatesReferences(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(historyBytes), newPath)
 	require.NotEmpty(t, result.ByTool[0].Warnings)
-	assert.Contains(t, result.ByTool[0].Warnings[0], "file-history snapshot(s) preserved verbatim; bodies may still contain the old project path")
+	warnings := strings.Join(result.ByTool[0].Warnings, "\n")
+	assert.Contains(t, warnings, "file-history snapshot(s) preserved verbatim; bodies may still contain the old project path")
 }
 
 func TestClaudeMoveSurfaces_AllowsPhysicalDestinationWhenSourceAlreadyGone(t *testing.T) {
@@ -280,21 +338,21 @@ func TestApply_CancellationRestoresCompletedSurfaces(t *testing.T) {
 	workspace := &applyTestWorkspace{surfaces: []tool.Surface{
 		{
 			Name: "first",
-			Plan: func(context.Context) (int, error) { return 0, nil },
-			Apply: func(context.Context, *tool.Restorer) (int, error) {
-				return 0, nil
+			Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
+			Apply: func(context.Context, *tool.Restorer) (tool.SurfaceResult, error) {
+				return tool.SurfaceResult{}, nil
 			},
 		},
 		{
 			Name:  "second",
-			Plan:  func(context.Context) (int, error) { return 0, nil },
-			Apply: func(context.Context, *tool.Restorer) (int, error) { return 0, nil },
+			Plan:  func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
+			Apply: func(context.Context, *tool.Restorer) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
 		},
 	}}
-	workspace.surfaces[0].Apply = func(_ context.Context, undo *tool.Restorer) (int, error) {
+	workspace.surfaces[0].Apply = func(_ context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 		undo.RegisterUndo(func() error { restored = true; return nil })
 		cancel()
-		return 1, nil
+		return tool.SurfaceResult{Count: 1}, nil
 	}
 
 	result, err := move.Apply(ctx, applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})

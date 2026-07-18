@@ -1,6 +1,7 @@
 package stats_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +14,23 @@ import (
 )
 
 const fixtureProject = "/Users/test/Projects/myproject"
+
+type cancelAfterFirstCheckContext struct {
+	context.Context
+	checks int
+}
+
+func (ctx *cancelAfterFirstCheckContext) Done() <-chan struct{} {
+	return nil
+}
+
+func (ctx *cancelAfterFirstCheckContext) Err() error {
+	ctx.checks++
+	if ctx.checks == 1 {
+		return nil
+	}
+	return context.Canceled
+}
 
 func fixtureTargets(t *testing.T) []tool.Target {
 	t.Helper()
@@ -50,6 +68,16 @@ func TestComputeFootprint_OneEntryPerTarget(t *testing.T) {
 	require.Len(t, footprint.ByTool, 1)
 	assert.Equal(t, "claude", footprint.ByTool[0].Tool)
 	assert.False(t, footprint.ByTool[0].Absent)
+}
+
+func TestAuditorReferenceSurfaces_CancelsBeforeSecondHistoryLine(t *testing.T) {
+	targets := fixtureTargets(t)
+	ctx := &cancelAfterFirstCheckContext{Context: context.Background()}
+
+	_, err := targets[0].Workspace.ReferenceSurfaces(ctx, fixtureProject)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 2, ctx.checks, "the scan must stop before the second history line")
 }
 
 // TestComputeFootprint_ReferencesExcludePrefixSiblings is the boundary guard:

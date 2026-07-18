@@ -41,20 +41,30 @@ func TestNewSet_PanicsOnDuplicateName(t *testing.T) {
 	a := &fakeTool{name: "claude"}
 	b := &fakeTool{name: "claude"}
 
-	assert.Panics(t, func() { tool.NewSet(a, b) })
+	assert.PanicsWithValue(t, `tool.NewSet: duplicate tool name "claude"`, func() { tool.NewSet(a, b) })
 }
 
 func TestNewSet_PanicsOnDuplicateQualifiedCategoryWithinOneTool(t *testing.T) {
 	a := &fakeTool{name: "claude", categories: []tool.Category{{Name: "sessions"}, {Name: "sessions"}}}
 
-	assert.Panics(t, func() { tool.NewSet(a) })
+	assert.PanicsWithValue(t, "tool.NewSet: duplicate qualified category claude/sessions", func() { tool.NewSet(a) })
 }
 
 func TestNewSet_PanicsOnDuplicatePlaceholderKeyAcrossTools(t *testing.T) {
 	a := &fakeTool{name: "claude", anchorKeys: []string{"{{HOME}}"}}
 	b := &fakeTool{name: "codex", anchorKeys: []string{"{{HOME}}"}}
 
-	assert.Panics(t, func() { tool.NewSet(a, b) })
+	assert.PanicsWithValue(t, `tool.NewSet: placeholder key {{HOME}} claimed by both "claude" and "codex"`, func() { tool.NewSet(a, b) })
+}
+
+func TestNewSet_PanicsOnEmptyName(t *testing.T) {
+	assert.PanicsWithValue(t, "tool.NewSet: a tool registered with an empty Name()", func() {
+		tool.NewSet(&fakeTool{})
+	})
+}
+
+func TestNewSet_PanicsOnEmptyRegistry(t *testing.T) {
+	assert.PanicsWithValue(t, "tool.NewSet: no tools registered", func() { tool.NewSet() })
 }
 
 func TestSet_ByName(t *testing.T) {

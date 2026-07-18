@@ -40,8 +40,8 @@ func TestHistorySurfaceApply_IsIdempotent(t *testing.T) {
 	second, err := surface.Apply(context.Background(), tool.NewRestorer())
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, first)
-	assert.Zero(t, second)
+	assert.Equal(t, 1, first.Count)
+	assert.Zero(t, second.Count)
 }
 
 func TestRewriteTracked_HappyPath(t *testing.T) {

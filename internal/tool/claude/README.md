@@ -457,9 +457,10 @@ was written. Repairing broken lines is out of scope.
 
 #### Handled
 
-- `MoveSurfaces`' history surface's `Plan` reports the malformed line count
-  via `scanHistoryFile`; `Apply` rewrites well-formed lines through
-  `StreamHistoryJSONL` while a malformed line passes through unchanged.
+- `MoveSurfaces` reports malformed history line numbers as move warnings.
+  `Apply` rewrites well-formed lines through `StreamHistoryJSONL` while a
+  malformed line passes through unchanged. The sessions surface reports each
+  unparseable `sessions/*.json` file by name and retains its original bytes.
 
 #### Refused
 

@@ -34,7 +34,7 @@ func planAndApply(t *testing.T, workspace *Workspace, req tool.MoveRequest) (pla
 	for _, surface := range planSurfaces {
 		count, err := surface.Plan(ctx)
 		require.NoError(t, err, "plan %s", surface.Name)
-		planCounts[surface.Name] = count
+		planCounts[surface.Name] = count.Count
 	}
 
 	applySurfaces, err := workspace.MoveSurfaces(req)
@@ -44,7 +44,7 @@ func planAndApply(t *testing.T, workspace *Workspace, req tool.MoveRequest) (pla
 	for _, surface := range applySurfaces {
 		count, err := surface.Apply(ctx, undo)
 		require.NoError(t, err, "apply %s", surface.Name)
-		applyCounts[surface.Name] = count
+		applyCounts[surface.Name] = count.Count
 	}
 	undo.Cleanup()
 	return planCounts, applyCounts
@@ -115,7 +115,7 @@ func TestConfigSurfaceDiscoversProfileOverlay(t *testing.T) {
 	require.NotNil(t, configSurface)
 	count, err := configSurface.Plan(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, 2, count, "one [projects] key in config.toml plus one in work.config.toml")
+	assert.Equal(t, 2, count.Count, "one [projects] key in config.toml plus one in work.config.toml")
 }
 
 func TestConfigSurfacePreservesCommentsAndOtherProjectsKey(t *testing.T) {
@@ -181,7 +181,7 @@ func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
 
 	count, err := workspace.memoriesWorktreeSurface(req, &pendingMoveDatabases{}).Apply(context.Background(), undo)
 	require.NoError(t, err)
-	assert.Zero(t, count)
+	assert.Zero(t, count.Count)
 	assert.DirExists(t, gitDir)
 }
 
@@ -548,7 +548,7 @@ func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupWithoutWorktreeChanges(
 	count, err := workspace.memoriesWorktreeSurface(req, pending).Apply(context.Background(), tool.NewRestorer())
 
 	require.NoError(t, err)
-	assert.Zero(t, count)
+	assert.Zero(t, count.Count)
 	assert.NoDirExists(t, backup)
 	assert.DirExists(t, filepath.Join(root, gitDirName))
 }
@@ -621,7 +621,7 @@ func TestAgentsMarketplaceSurfaceSkippedWhenAgentsDirAbsent(t *testing.T) {
 		}
 		count, err := surface.Plan(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, 0, count)
+		assert.Equal(t, 0, count.Count)
 	}
 }
 

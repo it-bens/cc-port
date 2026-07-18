@@ -44,12 +44,12 @@ func surfaceCounts(t *testing.T, workspace *claude.Workspace, req tool.MoveReque
 		if apply {
 			count, applyErr := surface.Apply(context.Background(), undo)
 			require.NoError(t, applyErr)
-			counts[surface.Name] = count
+			counts[surface.Name] = count.Count
 			continue
 		}
 		count, planErr := surface.Plan(context.Background())
 		require.NoError(t, planErr)
-		counts[surface.Name] = count
+		counts[surface.Name] = count.Count
 	}
 	if !apply {
 		return counts

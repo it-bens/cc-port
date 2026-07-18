@@ -27,17 +27,20 @@ package's types support.
     `ImplicitAnchors(project string) (map[string]string, error)`,
     `Stage(ctx, project string, entry archive.Entry, resolutions map[string]string) ([]archive.Staged, error)`,
     `Finalize(ctx, project string, staged *archive.StagedSet) ([]string, error)`.
-  - `Auditor`: `ReferenceSurfaces(project string) ([]CountSurface, error)`,
-    `DiskCategories(project string) ([]SizeCategory, error)`,
-    `EnumerateProjects() ([]ProjectInfo, error)`.
+  - `Auditor`: `ReferenceSurfaces(ctx context.Context, project string) ([]CountSurface, error)`,
+    `DiskCategories(ctx context.Context, project string) ([]SizeCategory, error)`,
+    `EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)`.
 - **Contract value types**
   - `Category`: `Name`, `Description`, `DefaultSelected`.
   - `Qualified`: `Tool`, `Category` (one `<tool>/<category>` pair).
   - `MoveRequest`: `OldPath`, `NewPath`, `RefsOnly`, `DeepRewrite`.
   - `ActiveWriter`: `Pid`, `Cwd` (one piece of liveness evidence).
-  - `Surface`: `Name`, `Plan func(ctx) (count int, err error)`,
-    `Apply func(ctx, *Restorer) (count int, err error)`. One named,
+  - `Surface`: `Name`, `Plan func(ctx) (SurfaceResult, error)`,
+    `Apply func(ctx, *Restorer) (SurfaceResult, error)`. One named,
     independently plannable and applicable unit of a move.
+  - `SurfaceResult`: `Count`, `Warnings`. A surface returns warnings it
+    discovers while planning or applying. `ResidualWarnings` returns
+    request-level residuals that require no surface execution to discover.
   - `ArchiveEntry`, `ExportResult` (`Categories`, `Skipped`, `Warnings`),
     `CountSurface`, `SizeCategory`, `ProjectInfo` (`Label`, `Resolved`,
     `Disk`, `Files`, `Bytes`).
@@ -47,7 +50,7 @@ package's types support.
   - `Set`: the registered collection of tools, built once via `NewSet` and
     read thereafter through `All`, `ByName`, `Detected`.
   - `Target`: `Tool` paired with its already-opened `Workspace`.
-  - `NewSet(tools ...Tool) *Set`: validates unique names, unique qualified
+  - `NewSet(tools ...Tool) *Set`: rejects an empty registry, validates unique names, unique qualified
     categories, and unique implicit placeholder keys across every tool;
     panics on a violation.
   - `ParseQualified(raw string) (Qualified, error)`: parses a `"<tool>/<category>"`
@@ -86,7 +89,7 @@ each an accepted deviation from spec §1.
 
 **Refused.**
 
-- An empty tool name, duplicate tool names, duplicate `(tool, category)`
+- An empty registry, an empty tool name, duplicate tool names, duplicate `(tool, category)`
   pairs, or two tools claiming the same implicit placeholder key: `NewSet`
   panics rather than silently picking one. These are registry-construction
   bugs caught at process start, not operational errors a caller recovers
@@ -179,7 +182,7 @@ A third adapter is one new package (`internal/tool/<name>`) plus one line in
 Unit tests in `path_test.go`, `restorer_test.go`, `set_test.go`. Coverage:
 `ResolveProjectPath` tilde expansion and symlink resolution, `Restorer`'s
 in-memory vs. sibling-backup threshold and reverse-order restore including a
-mixed file-and-undo registration sequence, and three of `NewSet`'s four
-panic conditions (duplicate name, duplicate qualified category, duplicate
-implicit key; the empty-name panic is untested) alongside its
+mixed file-and-undo registration sequence, and `NewSet`'s empty-registry,
+empty-name, duplicate-name, duplicate-qualified-category, and duplicate-key
+panic conditions alongside its
 `ByName`/`Detected` accessors and the package-level `ParseQualified` parser.

@@ -93,22 +93,23 @@ func sqlDatabaseSurface(
 ) tool.Surface {
 	return tool.Surface{
 		Name: name,
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
-			return count(req.OldPath, req.NewPath)
+			changed, err := count(req.OldPath, req.NewPath)
+			return tool.SurfaceResult{Count: changed}, err
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			rewrites, changed, err := start(req.OldPath, req.NewPath, undo)
 			if err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			assign(rewrites)
-			return changed, nil
+			return tool.SurfaceResult{Count: changed}, nil
 		},
 	}
 }
@@ -140,41 +141,41 @@ func (workspace *Workspace) memoriesDBSurface(req tool.MoveRequest, pending *pen
 func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: "config",
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			files, err := discoverConfigTOMLFiles(workspace.home)
 			if err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			total := 0
 			for _, path := range files {
 				count, err := planConfigTOMLFile(path, req.OldPath, req.NewPath)
 				if err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				total += count
 			}
-			return total, nil
+			return tool.SurfaceResult{Count: total}, nil
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			files, err := discoverConfigTOMLFiles(workspace.home)
 			if err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			total := 0
 			for _, path := range files {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				count, err := applyConfigTOMLFile(path, req.OldPath, req.NewPath, undo)
 				if err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				total += count
 			}
-			return total, nil
+			return tool.SurfaceResult{Count: total}, nil
 		},
 	}
 }
@@ -182,54 +183,54 @@ func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
 func (workspace *Workspace) rolloutsSurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: categorySessions,
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			files, err := discoverRolloutFiles(workspace.home)
 			if err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			total := 0
 			for _, path := range files {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				count, eraA, err := planRolloutFile(path, req.OldPath, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
-					return 0, fmt.Errorf("%s: %w", path, err)
+					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
 				}
 				if eraA {
 					continue
 				}
 				total += count
 			}
-			return total, nil
+			return tool.SurfaceResult{Count: total}, nil
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			files, err := discoverRolloutFiles(workspace.home)
 			if err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			total := 0
 			for _, path := range files {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				planCount, eraA, err := planRolloutFile(path, req.OldPath, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
-					return 0, fmt.Errorf("%s: %w", path, err)
+					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
 				}
 				if eraA || planCount == 0 {
 					continue
 				}
 				if err := undo.RegisterFile(path); err != nil {
-					return 0, fmt.Errorf("back up %s: %w", path, err)
+					return tool.SurfaceResult{}, fmt.Errorf("back up %s: %w", path, err)
 				}
 				changed, _, err := applyRolloutFile(ctx, path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
-					return 0, fmt.Errorf("%s: %w", path, err)
+					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
 				}
 				total += changed
 			}
-			return total, nil
+			return tool.SurfaceResult{Count: total}, nil
 		},
 	}
 }
@@ -238,29 +239,30 @@ func (workspace *Workspace) memoriesWorktreeSurface(req tool.MoveRequest, pendin
 	root := filepath.Join(workspace.home.Dir, memoriesWorktreeSubdir)
 	return tool.Surface{
 		Name: "memories-worktree",
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
-			return planMemoriesWorktree(root, req.OldPath)
+			count, err := planMemoriesWorktree(root, req.OldPath)
+			return tool.SurfaceResult{Count: count}, err
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			if err := reconcileStrandedGitBackup(root); err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			count, err := applyMemoriesWorktree(ctx, root, req.OldPath, req.NewPath, undo)
 			if err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			if count == 0 {
-				return count, nil
+				return tool.SurfaceResult{Count: count}, nil
 			}
 			backup, err := moveGitBaselineToBackup(root, undo)
 			if err != nil {
-				return count, err
+				return tool.SurfaceResult{Count: count}, err
 			}
 			pending.gitBackup = backup
-			return count, nil
+			return tool.SurfaceResult{Count: count}, nil
 		},
 	}
 }
@@ -299,17 +301,19 @@ func moveGitBaselineToBackup(root string, undo *tool.Restorer) (string, error) {
 func (workspace *Workspace) agentsMarketplaceSurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: "agents-marketplace",
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
-			return planAgentsMarketplace(workspace.home.AgentsDir, req.OldPath)
+			count, err := planAgentsMarketplace(workspace.home.AgentsDir, req.OldPath)
+			return tool.SurfaceResult{Count: count}, err
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
-			return applyAgentsMarketplace(workspace.home.AgentsDir, req.OldPath, req.NewPath, undo)
+			count, err := applyAgentsMarketplace(workspace.home.AgentsDir, req.OldPath, req.NewPath, undo)
+			return tool.SurfaceResult{Count: count}, err
 		},
 	}
 }
@@ -456,9 +460,9 @@ func codexDevWarning(path, oldPath string) (string, error) {
 func codexDevRefusalSurface(warning string) tool.Surface {
 	return tool.Surface{
 		Name: "codex-dev-preflight",
-		Plan: func(context.Context) (int, error) { return 0, nil },
-		Apply: func(context.Context, *tool.Restorer) (int, error) {
-			return 0, errors.New(warning)
+		Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
+		Apply: func(context.Context, *tool.Restorer) (tool.SurfaceResult, error) {
+			return tool.SurfaceResult{}, errors.New(warning)
 		},
 	}
 }

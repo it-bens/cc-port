@@ -76,10 +76,10 @@ func (workspace *preflightWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surf
 	*workspace.events = append(*workspace.events, "surface:"+workspace.name)
 	surface := tool.Surface{
 		Name: "one",
-		Plan: func(context.Context) (int, error) { return 0, nil },
-		Apply: func(context.Context, *tool.Restorer) (int, error) {
+		Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
+		Apply: func(context.Context, *tool.Restorer) (tool.SurfaceResult, error) {
 			*workspace.events = append(*workspace.events, "apply:"+workspace.name)
-			return 1, nil
+			return tool.SurfaceResult{Count: 1}, nil
 		},
 	}
 	return []tool.Surface{surface}, nil
@@ -103,10 +103,12 @@ func (workspace *preflightWorkspace) Stage(context.Context, string, archive.Entr
 func (workspace *preflightWorkspace) Finalize(context.Context, string, *archive.StagedSet) ([]string, error) {
 	return nil, nil
 }
-func (workspace *preflightWorkspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {
+func (workspace *preflightWorkspace) ReferenceSurfaces(context.Context, string) ([]tool.CountSurface, error) {
 	return nil, nil
 }
-func (workspace *preflightWorkspace) DiskCategories(string) ([]tool.SizeCategory, error) {
+func (workspace *preflightWorkspace) DiskCategories(context.Context, string) ([]tool.SizeCategory, error) {
 	return nil, nil
 }
-func (workspace *preflightWorkspace) EnumerateProjects() ([]tool.ProjectInfo, error) { return nil, nil }
+func (workspace *preflightWorkspace) EnumerateProjects(context.Context) ([]tool.ProjectInfo, error) {
+	return nil, nil
+}

@@ -133,18 +133,19 @@ func planTarget(ctx context.Context, target tool.Target, req tool.MoveRequest) (
 		return ToolPlan{}, err
 	}
 	for _, surface := range surfaces {
-		count, err := surface.Plan(ctx)
+		surfaceResult, err := surface.Plan(ctx)
 		if err != nil {
 			return ToolPlan{}, fmt.Errorf("plan surface %s: %w", surface.Name, err)
 		}
-		toolPlan.Surfaces = append(toolPlan.Surfaces, SurfaceCount{Name: surface.Name, Count: count})
+		toolPlan.Surfaces = append(toolPlan.Surfaces, SurfaceCount{Name: surface.Name, Count: surfaceResult.Count})
+		toolPlan.Warnings = appendUniqueWarnings(toolPlan.Warnings, surfaceResult.Warnings)
 	}
 
 	warnings, err := target.Workspace.ResidualWarnings(req)
 	if err != nil {
 		return ToolPlan{}, fmt.Errorf("residual warnings: %w", err)
 	}
-	toolPlan.Warnings = warnings
+	toolPlan.Warnings = appendUniqueWarnings(toolPlan.Warnings, warnings)
 	return toolPlan, nil
 }
 
@@ -279,13 +280,14 @@ func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surfac
 			err = errors.Join(fmt.Errorf("apply canceled: %w", err), restoreErr)
 			break
 		}
-		count, applyErr := surface.Apply(ctx, undo)
+		surfaceResult, applyErr := surface.Apply(ctx, undo)
 		if applyErr != nil {
 			restoreErr := undo.Restore()
 			err = errors.Join(fmt.Errorf("apply surface %s: %w", surface.Name, applyErr), restoreErr)
 			break
 		}
-		toolResult.Surfaces = append(toolResult.Surfaces, SurfaceCount{Name: surface.Name, Count: count})
+		toolResult.Surfaces = append(toolResult.Surfaces, SurfaceCount{Name: surface.Name, Count: surfaceResult.Count})
+		toolResult.Warnings = appendUniqueWarnings(toolResult.Warnings, surfaceResult.Warnings)
 		phase.Advance(1)
 	}
 	if err == nil {

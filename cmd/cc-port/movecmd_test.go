@@ -37,7 +37,7 @@ func (*codexOnlyWorkspace) Root() string                                { return
 func (*codexOnlyWorkspace) LockPath() string                            { return "" }
 func (*codexOnlyWorkspace) ActiveWriters() ([]tool.ActiveWriter, error) { return nil, nil }
 func (*codexOnlyWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error) {
-	return []tool.Surface{{Name: "state", Plan: func(context.Context) (int, error) { return 0, nil }}}, nil
+	return []tool.Surface{{Name: "state", Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil }}}, nil
 }
 func (*codexOnlyWorkspace) ResidualWarnings(tool.MoveRequest) ([]string, error) { return nil, nil }
 func (*codexOnlyWorkspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
@@ -56,13 +56,13 @@ func (*codexOnlyWorkspace) Stage(context.Context, string, archive.Entry, map[str
 func (*codexOnlyWorkspace) Finalize(context.Context, string, *archive.StagedSet) ([]string, error) {
 	return nil, assert.AnError
 }
-func (*codexOnlyWorkspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {
+func (*codexOnlyWorkspace) ReferenceSurfaces(context.Context, string) ([]tool.CountSurface, error) {
 	return nil, assert.AnError
 }
-func (*codexOnlyWorkspace) DiskCategories(string) ([]tool.SizeCategory, error) {
+func (*codexOnlyWorkspace) DiskCategories(context.Context, string) ([]tool.SizeCategory, error) {
 	return nil, assert.AnError
 }
-func (*codexOnlyWorkspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
+func (*codexOnlyWorkspace) EnumerateProjects(context.Context) ([]tool.ProjectInfo, error) {
 	return nil, assert.AnError
 }
 

@@ -71,15 +71,15 @@ func (w *fakeWorkspace) Finalize(context.Context, string, *archive.StagedSet) ([
 	return nil, errors.New("not exercised")
 }
 
-func (w *fakeWorkspace) ReferenceSurfaces(string) ([]tool.CountSurface, error) {
+func (w *fakeWorkspace) ReferenceSurfaces(context.Context, string) ([]tool.CountSurface, error) {
 	return nil, errors.New("not exercised")
 }
 
-func (w *fakeWorkspace) DiskCategories(string) ([]tool.SizeCategory, error) {
+func (w *fakeWorkspace) DiskCategories(context.Context, string) ([]tool.SizeCategory, error) {
 	return nil, errors.New("not exercised")
 }
 
-func (w *fakeWorkspace) EnumerateProjects() ([]tool.ProjectInfo, error) {
+func (w *fakeWorkspace) EnumerateProjects(context.Context) ([]tool.ProjectInfo, error) {
 	return nil, errors.New("not exercised")
 }
 

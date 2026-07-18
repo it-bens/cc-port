@@ -27,6 +27,9 @@ type Set struct {
 // Panics on a violated invariant: these are registry-construction bugs in
 // cmd/cc-port/tools.go, not operational errors a caller can recover from.
 func NewSet(tools ...Tool) *Set {
+	if len(tools) == 0 {
+		panic("tool.NewSet: no tools registered")
+	}
 	seenNames := make(map[string]struct{}, len(tools))
 	seenQualified := make(map[Qualified]struct{})
 	seenPlaceholderKeys := make(map[string]string) // key -> owning tool name

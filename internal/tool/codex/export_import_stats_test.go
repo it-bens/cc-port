@@ -370,13 +370,13 @@ func TestCodexAuditsRejectUnknownProjectsAndDoNotAttributeSharedHistoryBytes(t *
 	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, codexHistoryFile), history, 0o600))
 	workspace := quietTestWorkspace(home)
 
-	_, err := workspace.ReferenceSurfaces("/Users/fixture/unknown-project")
+	_, err := workspace.ReferenceSurfaces(t.Context(), "/Users/fixture/unknown-project")
 	require.ErrorIs(t, err, tool.ErrProjectAbsent)
-	_, err = workspace.DiskCategories("/Users/fixture/unknown-project")
+	_, err = workspace.DiskCategories(t.Context(), "/Users/fixture/unknown-project")
 	require.ErrorIs(t, err, tool.ErrProjectAbsent)
-	first, err := workspace.DiskCategories(FixtureProjectPath())
+	first, err := workspace.DiskCategories(t.Context(), FixtureProjectPath())
 	require.NoError(t, err)
-	second, err := workspace.DiskCategories(secondProject)
+	second, err := workspace.DiskCategories(t.Context(), secondProject)
 	require.NoError(t, err)
 	assert.Zero(t, sizeCategoryNamed(first, categoryHistory).Bytes)
 	assert.Zero(t, sizeCategoryNamed(second, categoryHistory).Bytes)
@@ -402,7 +402,7 @@ func TestKnowsProjectHonorsConfigOnlyProjects(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			known, err := workspace.knowsProject(testCase.project)
+			known, err := workspace.knowsProject(t.Context(), testCase.project)
 			require.NoError(t, err)
 			assert.Equal(t, testCase.want, known)
 		})
@@ -419,7 +419,7 @@ func TestEnumerateProjectsIncludesConfigOnlyProjectWithZeroFootprint(t *testing.
 	workspace := quietTestWorkspace(home)
 	const configOnlyProject = "/Users/fixture/other-project"
 
-	projects, err := workspace.EnumerateProjects()
+	projects, err := workspace.EnumerateProjects(t.Context())
 	require.NoError(t, err)
 
 	var info tool.ProjectInfo
@@ -434,14 +434,14 @@ func TestEnumerateProjectsIncludesConfigOnlyProjectWithZeroFootprint(t *testing.
 	assert.Zero(t, info.Files)
 	assert.Zero(t, info.Bytes)
 
-	disk, err := workspace.DiskCategories(configOnlyProject)
+	disk, err := workspace.DiskCategories(t.Context(), configOnlyProject)
 	require.NoError(t, err)
 	for _, category := range disk {
 		assert.Zero(t, category.Files, "category %s", category.Name)
 		assert.Zero(t, category.Bytes, "category %s", category.Name)
 	}
 
-	references, err := workspace.ReferenceSurfaces(configOnlyProject)
+	references, err := workspace.ReferenceSurfaces(t.Context(), configOnlyProject)
 	require.NoError(t, err)
 	for _, surface := range references {
 		assert.Zero(t, surface.Count, "surface %s", surface.Name)
@@ -462,13 +462,13 @@ func TestConfigCommentOrValueDoesNotConferProjectKnowledge(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), []byte(config), 0o600))
 	workspace := quietTestWorkspace(home)
 
-	known, err := workspace.knowsProject(commentOnlyProject)
+	known, err := workspace.knowsProject(t.Context(), commentOnlyProject)
 	require.NoError(t, err)
 	assert.False(t, known, "a path in a comment or unrelated value must not confer project knowledge")
 
-	_, err = workspace.DiskCategories(commentOnlyProject)
+	_, err = workspace.DiskCategories(t.Context(), commentOnlyProject)
 	require.ErrorIs(t, err, tool.ErrProjectAbsent)
-	_, err = workspace.ReferenceSurfaces(commentOnlyProject)
+	_, err = workspace.ReferenceSurfaces(t.Context(), commentOnlyProject)
 	require.ErrorIs(t, err, tool.ErrProjectAbsent)
 }
 
@@ -484,7 +484,7 @@ func TestEnumerateProjectsIncludesProfileOnlyProject(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "work.config.toml"), []byte(profileConfig), 0o600))
 	workspace := quietTestWorkspace(home)
 
-	projects, err := workspace.EnumerateProjects()
+	projects, err := workspace.EnumerateProjects(t.Context())
 	require.NoError(t, err)
 
 	var info tool.ProjectInfo

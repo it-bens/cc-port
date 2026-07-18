@@ -47,7 +47,7 @@ func ComputeFootprint(ctx context.Context, targets []tool.Target, projectPath st
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		toolFootprint, err := computeToolFootprint(target, projectPath)
+		toolFootprint, err := computeToolFootprint(ctx, target, projectPath)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", target.Tool.Name(), err)
 		}
@@ -56,10 +56,10 @@ func ComputeFootprint(ctx context.Context, targets []tool.Target, projectPath st
 	return footprint, nil
 }
 
-func computeToolFootprint(target tool.Target, projectPath string) (ToolFootprint, error) {
+func computeToolFootprint(ctx context.Context, target tool.Target, projectPath string) (ToolFootprint, error) {
 	result := ToolFootprint{Tool: target.Tool.Name()}
 
-	references, err := target.Workspace.ReferenceSurfaces(projectPath)
+	references, err := target.Workspace.ReferenceSurfaces(ctx, projectPath)
 	if err != nil {
 		if errors.Is(err, tool.ErrProjectAbsent) {
 			result.Absent = true
@@ -72,7 +72,7 @@ func computeToolFootprint(target tool.Target, projectPath string) (ToolFootprint
 		result.ReferenceTotal += surface.Count
 	}
 
-	disk, err := target.Workspace.DiskCategories(projectPath)
+	disk, err := target.Workspace.DiskCategories(ctx, projectPath)
 	if err != nil {
 		if errors.Is(err, tool.ErrProjectAbsent) {
 			return ToolFootprint{Tool: target.Tool.Name(), Absent: true}, nil
@@ -106,7 +106,7 @@ func ComputeAllFootprints(ctx context.Context, targets []tool.Target) ([]Project
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		infos, err := target.Workspace.EnumerateProjects()
+		infos, err := target.Workspace.EnumerateProjects(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("%s: enumerate projects: %w", target.Tool.Name(), err)
 		}

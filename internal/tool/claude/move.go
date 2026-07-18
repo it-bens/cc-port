@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
@@ -265,14 +266,32 @@ func rewriteTracked(path, oldPath, newPath string, undo *tool.Restorer) (int, er
 func (workspace *Workspace) historySurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: categoryHistory,
-		Plan: func(ctx context.Context) (int, error) {
-			count, _, err := workspace.scanHistoryFile(ctx, req.OldPath)
-			return count, err
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
+			count, malformed, err := workspace.scanHistoryFile(ctx, req.OldPath)
+			if err != nil {
+				return tool.SurfaceResult{}, err
+			}
+			return tool.SurfaceResult{Count: count, Warnings: historyMalformedWarnings(malformed)}, nil
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
-			return workspace.applyHistoryRewrite(ctx, req, undo)
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
+			count, malformed, err := workspace.applyHistoryRewrite(ctx, req, undo)
+			if err != nil {
+				return tool.SurfaceResult{}, err
+			}
+			return tool.SurfaceResult{Count: count, Warnings: historyMalformedWarnings(malformed)}, nil
 		},
 	}
+}
+
+func historyMalformedWarnings(lines []int) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+	lineLabels := make([]string, 0, len(lines))
+	for _, line := range lines {
+		lineLabels = append(lineLabels, fmt.Sprintf("line %d", line))
+	}
+	return []string{fmt.Sprintf("history.jsonl: %d malformed line(s) skipped (%s)", len(lines), strings.Join(lineLabels, ", "))}
 }
 
 func (workspace *Workspace) scanHistoryFile(ctx context.Context, oldPath string) (count int, malformed []int, err error) {
@@ -314,94 +333,104 @@ func (workspace *Workspace) scanHistoryFile(ctx context.Context, oldPath string)
 	return count, malformed, nil
 }
 
-func (workspace *Workspace) applyHistoryRewrite(ctx context.Context, req tool.MoveRequest, undo *tool.Restorer) (int, error) {
+func (workspace *Workspace) applyHistoryRewrite(
+	ctx context.Context, req tool.MoveRequest, undo *tool.Restorer,
+) (count int, malformed []int, err error) {
 	historyFile := workspace.home.HistoryFile()
 	if _, err := os.Stat(historyFile); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return 0, nil
+			return 0, nil, nil
 		}
-		return 0, fmt.Errorf("stat %s: %w", historyFile, err)
+		return 0, nil, fmt.Errorf("stat %s: %w", historyFile, err)
 	}
 	if err := undo.RegisterFile(historyFile); err != nil {
-		return 0, fmt.Errorf("back up history.jsonl: %w", err)
+		return 0, nil, fmt.Errorf("back up history.jsonl: %w", err)
 	}
 	original, err := os.ReadFile(historyFile) //nolint:gosec // path constructed from trusted internal data
 	if err != nil {
-		return 0, fmt.Errorf("read history.jsonl: %w", err)
+		return 0, nil, fmt.Errorf("read history.jsonl: %w", err)
 	}
 	var rewritten bytes.Buffer
-	count, _, err := StreamHistoryJSONL(ctx, bytes.NewReader(original), &rewritten, req.OldPath, req.NewPath)
+	count, malformed, err = StreamHistoryJSONL(ctx, bytes.NewReader(original), &rewritten, req.OldPath, req.NewPath)
 	if err != nil {
-		return 0, fmt.Errorf("rewrite history.jsonl: %w", err)
+		return 0, nil, fmt.Errorf("rewrite history.jsonl: %w", err)
 	}
 	if err := rewrite.SafeWriteFile(historyFile, rewritten.Bytes(), 0o600); err != nil {
-		return 0, fmt.Errorf("write history.jsonl: %w", err)
+		return 0, nil, fmt.Errorf("write history.jsonl: %w", err)
 	}
-	return count, nil
+	return count, malformed, nil
 }
 
 func (workspace *Workspace) sessionsSurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: categorySessions,
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			locations, err := LocateProject(workspace.home, req.OldPath)
 			if err != nil {
-				return 0, fmt.Errorf("locate project: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
 			count := 0
 			for _, sessionFilePath := range locations.SessionFiles {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				data, err := os.ReadFile(sessionFilePath) //nolint:gosec // path constructed from trusted internal data
 				if err != nil {
-					return 0, fmt.Errorf("read session file %s: %w", sessionFilePath, err)
+					return tool.SurfaceResult{}, fmt.Errorf("read session file %s: %w", sessionFilePath, err)
 				}
 				_, changed, err := RewriteSessionFile(data, req.OldPath, req.NewPath)
 				if err != nil {
-					return 0, fmt.Errorf("analyze session file %s: %w", sessionFilePath, err)
+					return tool.SurfaceResult{}, fmt.Errorf("analyze session file %s: %w", sessionFilePath, err)
 				}
 				if changed {
 					count++
 				}
 			}
-			return count, nil
+			return tool.SurfaceResult{Count: count, Warnings: malformedSessionWarnings(locations.MalformedSessionFiles)}, nil
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			locations, err := LocateProject(workspace.home, req.OldPath)
 			if err != nil {
-				return 0, fmt.Errorf("locate project: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
 			count := 0
 			for _, sessionFilePath := range locations.SessionFiles {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				if err := undo.RegisterFile(sessionFilePath); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				original, err := os.ReadFile(sessionFilePath) //nolint:gosec // path constructed from trusted internal data
 				if err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				rewritten, changed, err := RewriteSessionFile(original, req.OldPath, req.NewPath)
 				if err != nil {
-					return 0, fmt.Errorf("rewrite session file %s: %w", sessionFilePath, err)
+					return tool.SurfaceResult{}, fmt.Errorf("rewrite session file %s: %w", sessionFilePath, err)
 				}
 				info, err := os.Stat(sessionFilePath)
 				if err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				if err := rewrite.SafeWriteFile(sessionFilePath, rewritten, info.Mode()); err != nil {
-					return 0, fmt.Errorf("write session file %s: %w", sessionFilePath, err)
+					return tool.SurfaceResult{}, fmt.Errorf("write session file %s: %w", sessionFilePath, err)
 				}
 				if changed {
 					count++
 				}
 			}
-			return count, nil
+			return tool.SurfaceResult{Count: count, Warnings: malformedSessionWarnings(locations.MalformedSessionFiles)}, nil
 		},
 	}
+}
+
+func malformedSessionWarnings(paths []string) []string {
+	warnings := make([]string, 0, len(paths))
+	for _, path := range paths {
+		warnings = append(warnings, fmt.Sprintf("sessions/%s: malformed JSON preserved unchanged", filepath.Base(path)))
+	}
+	return warnings
 }
 
 func (workspace *Workspace) userWideSurfaces(req tool.MoveRequest) []tool.Surface {
@@ -410,28 +439,29 @@ func (workspace *Workspace) userWideSurfaces(req tool.MoveRequest) []tool.Surfac
 		path := target.RewritePath(workspace.home)
 		surfaces = append(surfaces, tool.Surface{
 			Name: target.Name,
-			Plan: func(ctx context.Context) (int, error) {
+			Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				data, err := os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
 				if err != nil {
 					if errors.Is(err, fs.ErrNotExist) {
-						return 0, nil
+						return tool.SurfaceResult{}, nil
 					}
-					return 0, fmt.Errorf("read %s: %w", path, err)
+					return tool.SurfaceResult{}, fmt.Errorf("read %s: %w", path, err)
 				}
 				_, count := rewrite.ReplacePathInBytes(data, req.OldPath, req.NewPath)
-				return count, nil
+				return tool.SurfaceResult{Count: count}, nil
 			},
-			Apply: func(_ context.Context, undo *tool.Restorer) (int, error) {
+			Apply: func(_ context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 				if _, err := os.Stat(path); err != nil {
 					if errors.Is(err, fs.ErrNotExist) {
-						return 0, nil
+						return tool.SurfaceResult{}, nil
 					}
-					return 0, fmt.Errorf("stat %s: %w", path, err)
+					return tool.SurfaceResult{}, fmt.Errorf("stat %s: %w", path, err)
 				}
-				return rewriteTracked(path, req.OldPath, req.NewPath, undo)
+				count, err := rewriteTracked(path, req.OldPath, req.NewPath, undo)
+				return tool.SurfaceResult{Count: count}, err
 			},
 		})
 	}
@@ -443,55 +473,55 @@ func (workspace *Workspace) sessionKeyedSurfaces(req tool.MoveRequest) []tool.Su
 	for group := range SessionKeyedGroups() {
 		surfaces = append(surfaces, tool.Surface{
 			Name: group.Name,
-			Plan: func(ctx context.Context) (int, error) {
+			Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 				locations, err := LocateProject(workspace.home, req.OldPath)
 				if err != nil {
-					return 0, fmt.Errorf("locate project: %w", err)
+					return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 				}
 				count := 0
 				for _, path := range group.Files(locations) {
 					if err := ctx.Err(); err != nil {
-						return 0, err
+						return tool.SurfaceResult{}, err
 					}
 					if group.SidecarFilter != nil && group.SidecarFilter(filepath.Base(path)) {
 						continue
 					}
 					data, err := os.ReadFile(path) //nolint:gosec // path from trusted ProjectLocations
 					if err != nil {
-						return 0, fmt.Errorf("read %s file %s: %w", group.Name, path, err)
+						return tool.SurfaceResult{}, fmt.Errorf("read %s file %s: %w", group.Name, path, err)
 					}
 					_, n := rewrite.ReplacePathInBytes(data, req.OldPath, req.NewPath)
 					count += n
 				}
-				return count, nil
+				return tool.SurfaceResult{Count: count}, nil
 			},
-			Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+			Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 				locations, err := LocateProject(workspace.home, req.OldPath)
 				if err != nil {
-					return 0, fmt.Errorf("locate project: %w", err)
+					return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 				}
 				count := 0
 				for _, path := range group.Files(locations) {
 					if err := ctx.Err(); err != nil {
-						return 0, err
+						return tool.SurfaceResult{}, err
 					}
 					if group.SidecarFilter != nil && group.SidecarFilter(filepath.Base(path)) {
 						continue
 					}
 					info, err := os.Stat(path)
 					if err != nil {
-						return 0, err
+						return tool.SurfaceResult{}, err
 					}
 					n, err := rewriteTracked(path, req.OldPath, req.NewPath, undo)
 					if err != nil {
-						return 0, fmt.Errorf("rewrite %s %s: %w", group.Name, path, err)
+						return tool.SurfaceResult{}, fmt.Errorf("rewrite %s %s: %w", group.Name, path, err)
 					}
 					if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
-						return 0, fmt.Errorf("restore mtime %s: %w", path, err)
+						return tool.SurfaceResult{}, fmt.Errorf("restore mtime %s: %w", path, err)
 					}
 					count += n
 				}
-				return count, nil
+				return tool.SurfaceResult{Count: count}, nil
 			},
 		})
 	}
@@ -501,52 +531,52 @@ func (workspace *Workspace) sessionKeyedSurfaces(req tool.MoveRequest) []tool.Su
 func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: categoryConfig,
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			data, err := os.ReadFile(workspace.home.ConfigFile)
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
-					return 0, nil
+					return tool.SurfaceResult{}, nil
 				}
-				return 0, fmt.Errorf("read config file: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("read config file: %w", err)
 			}
 			_, rekeyed, err := RewriteUserConfig(data, req.OldPath, req.NewPath)
 			if err != nil {
-				return 0, fmt.Errorf("analyze config file: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("analyze config file: %w", err)
 			}
 			if rekeyed {
-				return 1, nil
+				return tool.SurfaceResult{Count: 1}, nil
 			}
-			return 0, nil
+			return tool.SurfaceResult{}, nil
 		},
-		Apply: func(_ context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(_ context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			configFile := workspace.home.ConfigFile
 			if _, err := os.Stat(configFile); err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
-					return 0, nil
+					return tool.SurfaceResult{}, nil
 				}
-				return 0, fmt.Errorf("stat %s: %w", configFile, err)
+				return tool.SurfaceResult{}, fmt.Errorf("stat %s: %w", configFile, err)
 			}
 			if err := undo.RegisterFile(configFile); err != nil {
-				return 0, fmt.Errorf("read config file for backup: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("read config file for backup: %w", err)
 			}
 			original, err := os.ReadFile(configFile) //nolint:gosec // path constructed from trusted internal data
 			if err != nil {
-				return 0, fmt.Errorf("read config file: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("read config file: %w", err)
 			}
 			rewritten, rekeyed, err := RewriteUserConfig(original, req.OldPath, req.NewPath)
 			if err != nil {
-				return 0, fmt.Errorf("rewrite config file: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("rewrite config file: %w", err)
 			}
 			if err := rewrite.SafeWriteFile(configFile, rewritten, 0o600); err != nil {
-				return 0, fmt.Errorf("write config file: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("write config file: %w", err)
 			}
 			if rekeyed {
-				return 1, nil
+				return tool.SurfaceResult{Count: 1}, nil
 			}
-			return 0, nil
+			return tool.SurfaceResult{}, nil
 		},
 	}
 }
@@ -554,58 +584,58 @@ func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
 func (workspace *Workspace) transcriptsSurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: "transcripts",
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			locations, err := LocateProject(workspace.home, req.OldPath)
 			if err != nil {
-				return 0, fmt.Errorf("locate project: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
 			transcriptPaths, err := TranscriptFiles(ctx, locations.ProjectDir)
 			if err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			oldEncodedDir := workspace.home.ProjectDir(req.OldPath)
 			newEncodedDir := workspace.home.ProjectDir(req.NewPath)
 			total := 0
 			for _, transcriptPath := range transcriptPaths {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				data, err := os.ReadFile(transcriptPath) //nolint:gosec // path constructed from trusted internal data
 				if err != nil {
-					return 0, fmt.Errorf("read transcript %s: %w", transcriptPath, err)
+					return tool.SurfaceResult{}, fmt.Errorf("read transcript %s: %w", transcriptPath, err)
 				}
 				_, count := rewrite.ReplacePathInBytes(data, req.OldPath, req.NewPath)
 				total += count
 				_, encodedCount := rewrite.ReplacePathInBytes(data, oldEncodedDir, newEncodedDir)
 				total += encodedCount
 			}
-			return total, nil
+			return tool.SurfaceResult{Count: total}, nil
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			// Project-directory runs last, so transcripts are rewritten in
 			// place under the old encoded directory before its later copy.
 			locations, err := LocateProject(workspace.home, req.OldPath)
 			if err != nil {
-				return 0, fmt.Errorf("locate project: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
 			transcriptPaths, err := TranscriptFiles(ctx, locations.ProjectDir)
 			if err != nil {
-				return 0, err
+				return tool.SurfaceResult{}, err
 			}
 			oldEncodedDir := workspace.home.ProjectDir(req.OldPath)
 			newEncodedDir := workspace.home.ProjectDir(req.NewPath)
 			total := 0
 			for _, transcriptPath := range transcriptPaths {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				n, err := rewriteTwicePreservingMtime(transcriptPath, req.OldPath, req.NewPath, oldEncodedDir, newEncodedDir, undo)
 				if err != nil {
-					return 0, fmt.Errorf("rewrite transcript %s: %w", transcriptPath, err)
+					return tool.SurfaceResult{}, fmt.Errorf("rewrite transcript %s: %w", transcriptPath, err)
 				}
 				total += n
 			}
-			return total, nil
+			return tool.SurfaceResult{Count: total}, nil
 		},
 	}
 }
@@ -613,48 +643,48 @@ func (workspace *Workspace) transcriptsSurface(req tool.MoveRequest) tool.Surfac
 func (workspace *Workspace) memorySurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: "memory",
-		Plan: func(ctx context.Context) (int, error) {
+		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			locations, err := LocateProject(workspace.home, req.OldPath)
 			if err != nil {
-				return 0, fmt.Errorf("locate project: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
 			oldEncodedDir := workspace.home.ProjectDir(req.OldPath)
 			newEncodedDir := workspace.home.ProjectDir(req.NewPath)
 			total := 0
 			for _, memoryFilePath := range locations.MemoryFiles {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				data, err := os.ReadFile(memoryFilePath) //nolint:gosec // path constructed from trusted internal data
 				if err != nil {
-					return 0, fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
+					return tool.SurfaceResult{}, fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
 				}
 				_, count := rewrite.ReplacePathInBytes(data, req.OldPath, req.NewPath)
 				total += count
 				_, encodedCount := rewrite.ReplacePathInBytes(data, oldEncodedDir, newEncodedDir)
 				total += encodedCount
 			}
-			return total, nil
+			return tool.SurfaceResult{Count: total}, nil
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			locations, err := LocateProject(workspace.home, req.OldPath)
 			if err != nil {
-				return 0, fmt.Errorf("locate project: %w", err)
+				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
 			oldEncodedDir := workspace.home.ProjectDir(req.OldPath)
 			newEncodedDir := workspace.home.ProjectDir(req.NewPath)
 			total := 0
 			for _, memoryFilePath := range locations.MemoryFiles {
 				if err := ctx.Err(); err != nil {
-					return 0, err
+					return tool.SurfaceResult{}, err
 				}
 				n, err := rewriteTwicePreservingMtime(memoryFilePath, req.OldPath, req.NewPath, oldEncodedDir, newEncodedDir, undo)
 				if err != nil {
-					return 0, fmt.Errorf("rewrite memory file %s: %w", memoryFilePath, err)
+					return tool.SurfaceResult{}, fmt.Errorf("rewrite memory file %s: %w", memoryFilePath, err)
 				}
 				total += n
 			}
-			return total, nil
+			return tool.SurfaceResult{Count: total}, nil
 		},
 	}
 }
@@ -695,11 +725,12 @@ func rewriteTwicePreservingMtime(
 func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: tool.SurfaceProjectDirectory,
-		Plan: func(_ context.Context) (int, error) {
-			return 1, nil
+		Plan: func(_ context.Context) (tool.SurfaceResult, error) {
+			return tool.SurfaceResult{Count: 1}, nil
 		},
-		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
-			return 1, workspace.applyProjectDirectoryMove(ctx, req, undo)
+		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
+			err := workspace.applyProjectDirectoryMove(ctx, req, undo)
+			return tool.SurfaceResult{Count: 1}, err
 		},
 	}
 }
