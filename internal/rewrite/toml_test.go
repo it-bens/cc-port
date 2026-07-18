@@ -65,6 +65,17 @@ func TestTOMLPathRewriteRejectsKeyChangesOutsideProjects(t *testing.T) {
 	assert.Equal(t, input, string(rewritten))
 }
 
+func TestTOMLPathRewriteRejectsKeyChangesInsideArrayOfTables(t *testing.T) {
+	input := "[projects.\"/Users/test/Projects/my_app\"]\ntrusted = true\n\n[[audit_log]]\n[audit_log.\"/Users/test/Projects/my_app\"]\nenabled = true\n"
+
+	rewritten, count, err := rewrite.TOMLPathRewrite([]byte(input), "/Users/test/Projects/my_app", "/Users/test/Projects/new_app")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key paths changed outside projects")
+	assert.Zero(t, count)
+	assert.Equal(t, input, string(rewritten))
+}
+
 func TestTOMLPathRewriteRejectsQuotedAndBackslashedPaths(t *testing.T) {
 	input := []byte("[projects.\"/Users/test/Projects/my_app\"]\ntrusted = true\n")
 	cases := []struct {

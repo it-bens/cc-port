@@ -98,7 +98,37 @@ func (entry Entry) openCapped() (io.ReadCloser, io.Reader, error) {
 		return nil, nil, fmt.Errorf("open zip entry %q: %w", entry.file.Name, err)
 	}
 	capped := io.LimitReader(readCloser, entry.caps.MaxEntryBytes+1)
-	return readCloser, capped, nil
+	if entry.aggregate == nil {
+		return readCloser, capped, nil
+	}
+	return readCloser, &aggregateCountingReader{inner: capped, counter: entry.aggregate, name: entry.file.Name}, nil
+}
+
+type aggregateCountingReader struct {
+	inner   io.Reader
+	counter *AggregateCounter
+	name    string
+}
+
+func (r *aggregateCountingReader) Read(p []byte) (int, error) {
+	remaining := r.counter.maxAggregateBytes - r.counter.total
+	if remaining < 0 {
+		return 0, &AggregateCapError{Name: r.name, Bytes: r.counter.total, Limit: r.counter.maxAggregateBytes}
+	}
+	if maxRead := remaining + 1; int64(len(p)) > maxRead {
+		p = p[:maxRead]
+	}
+	n, readErr := r.inner.Read(p)
+	if n == 0 {
+		return n, readErr
+	}
+	if aggregateErr := r.counter.AddEntry(r.name, int64(n)); aggregateErr != nil {
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return 0, errors.Join(readErr, aggregateErr)
+		}
+		return 0, aggregateErr
+	}
+	return n, readErr
 }
 
 func enforcePostDecodeCap(name string, bytesRead, limit int64) error {
@@ -120,13 +150,7 @@ func (entry Entry) ReadAll() ([]byte, error) {
 
 	data, err := io.ReadAll(capped)
 	if err != nil {
-		if aggregateErr := entry.addAggregate(int64(len(data))); aggregateErr != nil {
-			return nil, errors.Join(fmt.Errorf("read zip entry %q: %w", entry.file.Name, err), aggregateErr)
-		}
 		return nil, fmt.Errorf("read zip entry %q: %w", entry.file.Name, err)
-	}
-	if err := entry.addAggregate(int64(len(data))); err != nil {
-		return nil, err
 	}
 	if err := enforcePostDecodeCap(entry.file.Name, int64(len(data)), entry.caps.MaxEntryBytes); err != nil {
 		return nil, err
@@ -139,13 +163,6 @@ func (entry Entry) ReadAll() ([]byte, error) {
 func (entry Entry) WithAggregateCounter(counter *AggregateCounter) Entry {
 	entry.aggregate = counter
 	return entry
-}
-
-func (entry Entry) addAggregate(bytesRead int64) error {
-	if entry.aggregate == nil {
-		return nil
-	}
-	return entry.aggregate.AddEntry(entry.file.Name, bytesRead)
 }
 
 // AggregateCounter tallies uncompressed bytes observed across a sequence of

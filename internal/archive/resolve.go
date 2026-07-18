@@ -107,8 +107,7 @@ func ApplyResolutions(content []byte, resolutions map[string]string, maxEntryByt
 }
 
 // ResolveEntryBytes reads and resolves an entry retained in memory. ReadAll
-// accounts decoded input; this adds only positive expansion so aggregate
-// staging accounting matches the streaming path's destination-byte budget.
+// accounts the decompressed input before substitution.
 func ResolveEntryBytes(entry Entry, resolutions map[string]string) ([]byte, error) {
 	content, err := entry.ReadAll()
 	if err != nil {
@@ -117,11 +116,6 @@ func ResolveEntryBytes(entry Entry, resolutions map[string]string) ([]byte, erro
 	resolved, err := ApplyResolutions(content, resolutions, entry.caps.MaxEntryBytes)
 	if err != nil {
 		return nil, err
-	}
-	if delta := int64(len(resolved) - len(content)); delta > 0 {
-		if err := entry.addAggregate(delta); err != nil {
-			return nil, err
-		}
 	}
 	return resolved, nil
 }

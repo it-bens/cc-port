@@ -117,6 +117,8 @@ except the expected renames at rewritten `projects` sub-keys.
   key outside the `projects` table: `TestTOMLPathRewriteRejectsKeyChangesOutsideProjects`
   asserts a byte-level match that happens to land on a non-`projects` key
   name is refused rather than silently accepted.
+- The multiset walks every array-of-tables element under its parent key path,
+  so keys inside `[[...]]` blocks receive the same outside-`projects` guard.
 
 #### Refused
 

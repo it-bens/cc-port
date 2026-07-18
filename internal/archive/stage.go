@@ -1,11 +1,11 @@
 package archive
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
@@ -64,6 +64,10 @@ func StagingTempPath(finalPath string) (string, error) {
 // any relativePath that would resolve outside baseDir (zip-slip) before any
 // file write happens.
 func assertWithinRoot(baseDir, relativePath string) error {
+	cleaned := filepath.Clean(relativePath)
+	if filepath.IsAbs(relativePath) || cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%w: %q under %q", ErrZipSlip, relativePath, baseDir)
+	}
 	if err := os.MkdirAll(baseDir, dirPerm); err != nil {
 		return fmt.Errorf("%w: create %q: %w", ErrStagingFailed, baseDir, err)
 	}
@@ -73,13 +77,22 @@ func assertWithinRoot(baseDir, relativePath string) error {
 	}
 	defer func() { _ = root.Close() }()
 
-	relativePath = filepath.Clean(relativePath)
-	if dir := filepath.Dir(relativePath); dir != "." {
+	if dir := filepath.Dir(cleaned); dir != "." {
 		if err := root.MkdirAll(dir, dirPerm); err != nil {
-			return fmt.Errorf("%w: %q under %q: %w", ErrZipSlip, relativePath, baseDir, err)
+			return fmt.Errorf("%w: %q under %q: %w", ErrZipSlip, cleaned, baseDir, err)
 		}
 	}
 	return nil
+}
+
+func validArchiveEntryName(relativePath string) bool {
+	cleaned := filepath.ToSlash(filepath.Clean(relativePath))
+	for _, segment := range strings.Split(cleaned, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // applyMtime sets path's atime and mtime to mtime. A zero mtime is a
@@ -106,6 +119,9 @@ func applyMtime(path string, mtime time.Time) error {
 func StageSibling(
 	baseDir, relativePath string, entry Entry, resolutions map[string]string, perm os.FileMode, mtime time.Time,
 ) (Staged, int64, error) {
+	if !validArchiveEntryName(relativePath) {
+		return Staged{}, 0, fmt.Errorf("%w: invalid archive entry name %q", ErrZipSlip, relativePath)
+	}
 	if err := assertWithinRoot(baseDir, relativePath); err != nil {
 		return Staged{}, 0, err
 	}
@@ -164,12 +180,6 @@ func streamEntry(entry Entry, writer *os.File, resolutions map[string]string) (i
 
 	if resolutions == nil {
 		bytesRead, err := io.Copy(writer, capped)
-		if aggregateErr := entry.addAggregate(bytesRead); aggregateErr != nil {
-			if err != nil {
-				return bytesRead, errors.Join(fmt.Errorf("stream zip entry %q: %w", entry.file.Name, err), aggregateErr)
-			}
-			return bytesRead, aggregateErr
-		}
 		if err != nil {
 			return bytesRead, fmt.Errorf("stream zip entry %q: %w", entry.file.Name, err)
 		}
@@ -182,13 +192,7 @@ func streamEntry(entry Entry, writer *os.File, resolutions map[string]string) (i
 	counted := &countingReader{inner: capped}
 	expanded := &countingWriter{inner: writer, name: entry.file.Name, limit: entry.caps.MaxEntryBytes}
 	if err := ResolvePlaceholdersStream(counted, expanded, resolutions); err != nil {
-		if aggregateErr := entry.addAggregate(counted.read); aggregateErr != nil {
-			return expanded.bytesWritten, errors.Join(fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err), aggregateErr)
-		}
 		return expanded.bytesWritten, fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err)
-	}
-	if err := entry.addAggregate(counted.read); err != nil {
-		return expanded.bytesWritten, err
 	}
 	if err := enforcePostDecodeCap(entry.file.Name, counted.read, entry.caps.MaxEntryBytes); err != nil {
 		return expanded.bytesWritten, err

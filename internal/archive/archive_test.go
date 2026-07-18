@@ -132,9 +132,15 @@ func TestStageSibling_RejectsZipSlip(t *testing.T) {
 	entries, err := reader.RawEntries()
 	require.NoError(t, err)
 
-	baseDir := t.TempDir()
-	_, _, err = archive.StageSibling(baseDir, "../../escaped.txt", entries[0].Entry, nil, 0o600, entries[0].Entry.Modified)
-	require.Error(t, err)
+	for _, relativePath := range []string{"..", "x/..", ".", "../../escaped.txt"} {
+		t.Run(relativePath, func(t *testing.T) {
+			_, _, stageErr := archive.StageSibling(
+				t.TempDir(), relativePath, entries[0].Entry, nil, 0o600, entries[0].Entry.Modified,
+			)
+
+			require.ErrorIs(t, stageErr, archive.ErrZipSlip)
+		})
+	}
 }
 
 func TestStageSibling_StreamsBodyAndResolvesPlaceholders(t *testing.T) {
@@ -172,22 +178,31 @@ func TestStageSibling_RejectsExpandedEntryOverCap(t *testing.T) {
 }
 
 func TestStageSibling_AggregateCapCountsDecodedBytes(t *testing.T) {
-	body := buildZip(t, map[string]string{"claude/note.txt": strings.Repeat("{{X}}", 3)})
-	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{MaxEntryBytes: 16, MaxAggregateBytes: 9})
+	body := buildZip(t, map[string]string{
+		"claude/one.txt":   strings.Repeat("{{X}}", 3),
+		"claude/two.txt":   strings.Repeat("{{X}}", 3),
+		"claude/three.txt": strings.Repeat("{{X}}", 3),
+	})
+	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{MaxEntryBytes: 16, MaxAggregateBytes: 32})
 	require.NoError(t, err)
 	entries, err := reader.RawEntries()
 	require.NoError(t, err)
-	counter := archive.NewAggregateCounter(9)
+	counter := archive.NewAggregateCounter(32)
 
-	_, _, err = archive.StageSibling(
-		t.TempDir(), "note.txt", entries[0].Entry.WithAggregateCounter(counter),
-		map[string]string{"{{X}}": ""}, 0o600, entries[0].Entry.Modified,
-	)
+	for _, raw := range entries {
+		_, _, err = archive.StageSibling(
+			t.TempDir(), raw.Entry.Name, raw.Entry.WithAggregateCounter(counter),
+			map[string]string{"{{X}}": ""}, 0o600, raw.Entry.Modified,
+		)
+		if err != nil {
+			break
+		}
+	}
 
 	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
 }
 
-func TestResolveEntryBytes_AggregateCapCountsExpandedBytes(t *testing.T) {
+func TestResolveEntryBytes_AggregateCapCountsDecodedInput(t *testing.T) {
 	body := buildZip(t, map[string]string{"claude/history.jsonl": "{{X}}"})
 	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{MaxEntryBytes: 16, MaxAggregateBytes: 9})
 	require.NoError(t, err)
@@ -195,9 +210,26 @@ func TestResolveEntryBytes_AggregateCapCountsExpandedBytes(t *testing.T) {
 	require.NoError(t, err)
 	counter := archive.NewAggregateCounter(9)
 
-	_, err = archive.ResolveEntryBytes(entries[0].Entry.WithAggregateCounter(counter), map[string]string{"{{X}}": "/expanded/"})
+	resolved, err := archive.ResolveEntryBytes(entries[0].Entry.WithAggregateCounter(counter), map[string]string{"{{X}}": "/expanded/"})
 
-	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("/expanded/"), resolved)
+}
+
+func TestEntryReadAll_AggregateCapStopsBeforeWholeEntryDecodes(t *testing.T) {
+	input := strings.Repeat("x", 128<<10)
+	body := buildZip(t, map[string]string{"claude/note.txt": input})
+	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{MaxEntryBytes: 256 << 10, MaxAggregateBytes: 64})
+	require.NoError(t, err)
+	entries, err := reader.RawEntries()
+	require.NoError(t, err)
+
+	_, err = entries[0].Entry.WithAggregateCounter(archive.NewAggregateCounter(64)).ReadAll()
+
+	var capErr *archive.AggregateCapError
+	require.ErrorAs(t, err, &capErr)
+	assert.Greater(t, capErr.Bytes, int64(64))
+	assert.Less(t, capErr.Bytes, int64(len(input)))
 }
 
 func TestSink_WriteBytesAppliesPlaceholdersAndPrefix(t *testing.T) {

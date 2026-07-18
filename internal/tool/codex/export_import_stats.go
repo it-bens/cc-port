@@ -509,11 +509,6 @@ func validArchiveRolloutName(relative string, archived bool) bool {
 	} else if len(segments) != 4 {
 		return false
 	}
-	for _, segment := range segments {
-		if segment == "" || segment == "." || segment == ".." {
-			return false
-		}
-	}
 	if !archived {
 		for index, width := range []int{4, 2, 2} {
 			if len(segments[index]) != width {

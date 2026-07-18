@@ -11,7 +11,7 @@ neither.
 ## Public API
 
 - **Reading**
-  - `Reader`, `OpenReader(src io.ReaderAt, size int64) (*Reader, error)`:
+  - `Reader`, `OpenReader(src io.ReaderAt, size int64, caps Caps) (*Reader, error)`:
     opens `src` as a ZIP archive exposed as random-access bytes.
   - `(*Reader).RawEntries() ([]RawEntry, error)`: every entry except
     `metadata.xml`, split into its leading tool-name path segment and the
@@ -21,21 +21,19 @@ neither.
     `(Entry).ReadAll() ([]byte, error)`, `(Entry).WithAggregateCounter(*AggregateCounter) Entry`.
 - **Caps**
   - `Caps`: `MaxEntryBytes`, `MaxAggregateBytes`.
-  - `SetCaps(Caps) (restore func())`: overrides the active cap set; test-only,
-    production code never calls it.
   - `AggregateCounter`, `(*AggregateCounter).Add(n int64) error`,
     `(*AggregateCounter).AddEntry(name string, n int64) error`.
   - `ErrEntryCapExceeded`, `ErrAggregateCapExceeded`, `EntryCapError`,
     `AggregateCapError`.
 - **Classification**
-  - `ClassifyPresentKeys(entries []RawEntry, candidateKeys []string) (map[string]struct{}, error)`:
+  - `ClassifyPresentKeys(entries []RawEntry, candidateKeys []string, maxAggregateBytes int64) (map[string]struct{}, error)`:
     finds which candidate placeholder keys appear as a literal substring in
     at least one entry's body, without retaining any body after inspection.
 - **Placeholder resolution**
   - `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`:
     stream-level token substitution bounded by the longest declared key, not
     by source size.
-  - `ApplyResolutions(content []byte, resolutions map[string]string) ([]byte, error)`:
+  - `ApplyResolutions(content []byte, resolutions map[string]string, maxEntryBytes int64) ([]byte, error)`:
     in-memory substitution via `bytes.ReplaceAll`, refusing output over the
     active per-entry cap.
   - `ValidateResolutions(resolutions map[string]string) error`: every
@@ -47,6 +45,8 @@ neither.
   - `(*Sink).WriteBytes`, `(*Sink).WriteVerbatim`, `(*Sink).WriteJSONL`: the
     three archive-entry write shapes, each returning a `WrittenEntry`
     (`Name`, `Size`).
+  - `Sink` carries no cap field. `WriteJSONL` receives its line cap per call
+    from the owning tool.
   - `WriteMetadata(writer *zip.Writer, metadata *manifest.Metadata) (WrittenEntry, error)`:
     writes `metadata.xml` at the archive root, outside any tool's namespace.
 - **Staging (import side)**
@@ -71,14 +71,13 @@ neither.
 - The post-decode byte count is checked again after streaming, so an entry
   that misdeclares its size in the central directory cannot slip through the
   declared-size check.
-- Placeholder expansion is also capped at `Caps.MaxEntryBytes`. For streamed
-  staging, aggregate accounting uses expanded output bytes rather than source
-  bytes, so substitutions cannot inflate disk usage beyond either budget.
-- `AggregateCounter` tallies every entry an archive read observes, including
-  bytes read for a placeholder classification pass, and refuses once the
-  running total passes `Caps.MaxAggregateBytes` (4 GiB by default). Per-entry
-  caps alone do not stop a crafted archive with many entries at
-  just-under-the-limit size from exhausting memory and disk in aggregate.
+- Placeholder expansion is also capped at `Caps.MaxEntryBytes`. The aggregate
+  never includes expanded output bytes.
+- The capped reader feeds `AggregateCounter` incrementally with decompressed
+  input at the decompression point. `ReadAll`, streaming staging, and
+  classification use that same reader, so the cap can reject an entry before
+  its whole body decodes. The counter includes classification reads and refuses
+  once its total passes `Caps.MaxAggregateBytes` (4 GiB by default).
 
 **Refused.**
 
@@ -97,11 +96,11 @@ neither.
 
 **Handled.**
 
-- `StageSibling` and the internal `assertWithinRoot` open an `os.Root`
-  handle on the staging base directory before any write and resolve
-  `relativePath` through it, so a path containing `..` components or an
-  absolute-path prefix that would land outside the base is rejected before a
-  temp file is created.
+- `StageSibling` runs one shared entry-name guard for every tool before any
+  staged write. It rejects empty, dot, dot-dot, and traversal entry names.
+- `assertWithinRoot` validates the complete cleaned final relative path, not
+  only its parent. It rejects `.`, `..`, leading `../`, and absolute paths
+  before writing, then creates non-root parents through an `os.Root` handle.
 - The sibling temp path is computed from the symlink-resolved parent of the
   final destination (`StagingTempPath`), so temp and final always share a
   filesystem and `os.Rename` stays intra-filesystem.

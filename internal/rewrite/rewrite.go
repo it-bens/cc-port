@@ -159,14 +159,17 @@ func tomlKeyPaths(data []byte) (map[string]int, error) {
 }
 
 func collectTOMLKeyPaths(value any, prefix []string, paths map[string]int) {
-	document, ok := value.(map[string]any)
-	if !ok {
-		return
-	}
-	for key, child := range document {
-		path := append(append([]string(nil), prefix...), key)
-		paths[encodeTOMLKeyPath(path)]++
-		collectTOMLKeyPaths(child, path, paths)
+	switch document := value.(type) {
+	case map[string]any:
+		for key, child := range document {
+			path := append(append([]string(nil), prefix...), key)
+			paths[encodeTOMLKeyPath(path)]++
+			collectTOMLKeyPaths(child, path, paths)
+		}
+	case []any:
+		for _, child := range document {
+			collectTOMLKeyPaths(child, prefix, paths)
+		}
 	}
 }
 

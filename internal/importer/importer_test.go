@@ -295,9 +295,9 @@ func TestRun_StagingEnforcesAggregateCapWithoutPlaceholders(t *testing.T) {
 
 func TestRun_StagingAggregateCapCountsShrinkingPlaceholderInput(t *testing.T) {
 	body := buildClaudeArchiveWithPlaceholders(t, map[string]string{
-		"claude/sessions/one.jsonl":   strings.Repeat("{{X}}", 8),
-		"claude/sessions/two.jsonl":   strings.Repeat("{{X}}", 8),
-		"claude/sessions/three.jsonl": strings.Repeat("{{X}}", 8),
+		"claude/sessions/one.jsonl":   strings.Repeat("{{X}}", 12),
+		"claude/sessions/two.jsonl":   strings.Repeat("{{X}}", 12),
+		"claude/sessions/three.jsonl": strings.Repeat("{{X}}", 12),
 	}, []manifest.Placeholder{{Key: "{{X}}", Resolve: "/"}})
 	home := blankHome(t)
 	claudeTool := claude.New()
@@ -312,7 +312,29 @@ func TestRun_StagingAggregateCapCountsShrinkingPlaceholderInput(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
-	assert.Contains(t, err.Error(), "claude/sessions/two.jsonl")
+	assert.Contains(t, err.Error(), "claude/sessions/three.jsonl")
+	var capErr *archive.AggregateCapError
+	require.ErrorAs(t, err, &capErr)
+	assert.Equal(t, int64(101), capErr.Bytes)
+}
+
+func TestRun_StagingRejectsDotSegmentSessionPath(t *testing.T) {
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/sessions/..": "payload",
+	})
+	home := blankHome(t)
+	claudeTool := claude.New()
+	toolSet := tool.NewSet(claudeTool)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/dot-segment",
+		Caps:       archive.DefaultCaps(),
+	})
+
+	require.ErrorIs(t, err, archive.ErrZipSlip)
 }
 
 func TestRun_ClassificationEnforcesAggregateCapForUnresolvedPlaceholder(t *testing.T) {

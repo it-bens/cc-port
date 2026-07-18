@@ -87,6 +87,8 @@ func TestRun_RejectsEntryOverProductionCap(t *testing.T) {
 	require.ErrorIs(t, err, archive.ErrEntryCapExceeded)
 }
 
+// Resolution shrinks each body. The aggregate therefore tracks decompressed
+// placeholder input rather than staged output bytes.
 func TestRun_StagingAggregateCapCountsProductionScaleShrinkingPlaceholderInput(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "shrinking-placeholders.zip")
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
