@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -44,11 +45,11 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	if _, err := LocateProject(workspace.home, req.OldPath); err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
 	}
-	if err := checkEncodedDirCollision(workspace.home, req.OldPath, req.NewPath); err != nil {
+	if err := checkEncodedDirCollision(workspace.home, req.OldPath, req.NewPath, workspace.now()); err != nil {
 		return nil, err
 	}
 	if !req.RefsOnly {
-		if err := checkPhysicalDestination(req.NewPath); err != nil {
+		if err := checkPhysicalDestination(req.OldPath, req.NewPath, workspace.now()); err != nil {
 			return nil, err
 		}
 	}
@@ -126,11 +127,16 @@ func appendUniqueMoveWarnings(warnings []string, warning string) []string {
 	return append(warnings, warning)
 }
 
-func checkPhysicalDestination(newPath string) error {
-	if _, err := os.Stat(newPath); err == nil {
-		return fmt.Errorf("refusing to move: destination project directory already exists: %s", newPath)
-	} else if !errors.Is(err, fs.ErrNotExist) {
+func checkPhysicalDestination(oldPath, newPath string, now time.Time) error {
+	if err := removeStagingDir(newPath); err != nil {
+		return err
+	}
+	state, err := classifyDestination(oldPath, newPath, now)
+	if err != nil {
 		return fmt.Errorf("stat destination project directory %s: %w", newPath, err)
+	}
+	if state == destinationRefused {
+		return fmt.Errorf("refusing to move: destination project directory already exists: %s", newPath)
 	}
 	return nil
 }
@@ -153,7 +159,7 @@ func (workspace *Workspace) moveWarningSnapshot() []string {
 	return append([]string(nil), workspace.moveWarnings...)
 }
 
-func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string) error {
+func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string, now time.Time) error {
 	oldEncodedDir := claudeHome.ProjectDir(oldPath)
 	newEncodedDir := claudeHome.ProjectDir(newPath)
 
@@ -163,10 +169,58 @@ func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string) error {
 			ErrEncodedDirAmbiguous, oldPath, newPath, filepath.Base(newEncodedDir),
 		)
 	}
-	if _, err := os.Stat(newEncodedDir); err == nil {
-		return fmt.Errorf("%w: %s", ErrEncodedDirCollision, newEncodedDir)
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	if err := removeStagingDir(newEncodedDir); err != nil {
+		return err
+	}
+	state, err := classifyDestination(oldEncodedDir, newEncodedDir, now)
+	if err != nil {
 		return fmt.Errorf("stat new project directory %s: %w", newEncodedDir, err)
+	}
+	if state == destinationRefused {
+		return fmt.Errorf("%w: %s", ErrEncodedDirCollision, newEncodedDir)
+	}
+	return nil
+}
+
+type destinationState int
+
+const (
+	destinationPromote destinationState = iota
+	destinationResume
+	destinationRefused
+)
+
+func classifyDestination(source, destination string, now time.Time) (destinationState, error) {
+	if _, err := os.Stat(destination); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return destinationPromote, nil
+		}
+		return 0, fmt.Errorf("stat %s: %w", destination, err)
+	}
+	verified, err := rewrite.VerifyPromotedFrom(source, destination, now)
+	if err != nil {
+		return 0, err
+	}
+	if verified {
+		return destinationResume, nil
+	}
+	// No valid marker: only safe to treat as already-converged when source
+	// is also already gone (nothing left that could be lost). A
+	// still-present source alongside an unverified destination is exactly
+	// the foreign-collision signature and must refuse — this is the case
+	// that previously risked deleting a source that was never copied
+	// anywhere.
+	if _, err := os.Stat(source); err == nil {
+		return destinationRefused, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return 0, fmt.Errorf("stat %s: %w", source, err)
+	}
+	return destinationResume, nil
+}
+
+func removeStagingDir(destination string) error {
+	if err := os.RemoveAll(destination + rewrite.StagingSuffix); err != nil {
+		return fmt.Errorf("remove staging directory %s: %w", destination+rewrite.StagingSuffix, err)
 	}
 	return nil
 }
@@ -528,13 +582,8 @@ func (workspace *Workspace) transcriptsSurface(req tool.MoveRequest) tool.Surfac
 			return total, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
-			// Transcripts live under the project directory, which the
-			// project-directory surface has already copied to NewPath by
-			// the time surfaces run in MoveSurfaces order — but that
-			// surface runs LAST, so at this point transcripts are rewritten
-			// in place under the OLD encoded directory, and the
-			// project-directory surface's copy carries the rewritten bytes
-			// forward.
+			// Project-directory runs last, so transcripts are rewritten in
+			// place under the old encoded directory before its later copy.
 			locations, err := LocateProject(workspace.home, req.OldPath)
 			if err != nil {
 				return 0, fmt.Errorf("locate project: %w", err)
@@ -659,16 +708,14 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 	oldProjectDir := workspace.home.ProjectDir(req.OldPath)
 	newProjectDir := workspace.home.ProjectDir(req.NewPath)
 
-	if err := fsutil.CopyDir(ctx, oldProjectDir, newProjectDir, nil); err != nil {
+	if err := promoteOrResume(ctx, oldProjectDir, newProjectDir, workspace.now(), undo); err != nil {
 		return fmt.Errorf("copy project directory: %w", err)
 	}
-	undo.RegisterUndo(func() error { return os.RemoveAll(newProjectDir) })
 
 	if !req.RefsOnly {
-		if err := fsutil.CopyDir(ctx, req.OldPath, req.NewPath, nil); err != nil {
+		if err := promoteOrResume(ctx, req.OldPath, req.NewPath, workspace.now(), undo); err != nil {
 			return fmt.Errorf("copy project on disk: %w", err)
 		}
-		undo.RegisterUndo(func() error { return os.RemoveAll(req.NewPath) })
 	}
 
 	if _, err := os.Stat(newProjectDir); err != nil {
@@ -683,10 +730,32 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 	if !req.RefsOnly {
 		if err := removeAll(req.OldPath); err != nil {
 			workspace.addMoveWarning(fmt.Sprintf("%v: %s: %v", ErrResidualSourceDir, req.OldPath, err))
+		} else if err := rewrite.RemoveMarker(req.NewPath); err != nil {
+			workspace.addMoveWarning(fmt.Sprintf("could not remove promotion marker: %v", err))
 		}
 	}
 	if err := removeAll(oldProjectDir); err != nil {
 		workspace.addMoveWarning(fmt.Sprintf("old encoded project data directory still present: %s: %v", oldProjectDir, err))
+	} else if err := rewrite.RemoveMarker(newProjectDir); err != nil {
+		workspace.addMoveWarning(fmt.Sprintf("could not remove promotion marker: %v", err))
 	}
 	return nil
+}
+
+func promoteOrResume(ctx context.Context, source, destination string, now time.Time, undo *tool.Restorer) error {
+	state, err := classifyDestination(source, destination, now)
+	if err != nil {
+		return err
+	}
+	switch state {
+	case destinationResume:
+		return nil
+	case destinationRefused:
+		return fmt.Errorf(
+			"unexpected unverified destination %s (source %s): preflight should already have refused this move",
+			destination, source,
+		)
+	default:
+		return rewrite.PromoteDir(ctx, source, destination, undo, fsutil.CopyDir)
+	}
 }

@@ -98,9 +98,10 @@ encoding and symlink resolution to user-supplied paths. The encoded name must
 match what Claude Code wrote on disk. The original path cannot be recovered
 from the encoded form.
 
-`checkEncodedDirCollision` (`move.go`) enforces the "refused on collision"
-behaviour for `cc-port move`: it aborts before any write when old and new
-encode identically, or when the target encoded directory already exists
+`checkEncodedDirCollision` (`move.go`) enforces the encoded-name safety check
+for `cc-port move`: it aborts before any write when old and new encode
+identically, and refuses a target encoded directory that already exists,
+carries no valid promotion marker, and whose old source is still present
 (see §Apply contract (move)).
 
 `cc-port import` does not refuse on an existing encoded directory. Promotion
@@ -412,20 +413,28 @@ calls `LocateProject`.
   pass and restores the file's pre-rewrite mtime afterward.
 - `project-directory` copies the encoded storage directory (and, unless
   `RefsOnly`, the on-disk project directory) to the new path via
-  `fsutil.CopyDir`, verifies both copies landed, then removes the originals.
+  `rewrite.PromoteDir` with `fsutil.CopyDir`, verifies both copies landed,
+  then removes the originals.
 - `checkEncodedDirCollision` runs before any surface: a move where old and
-  new paths encode to the same directory (`ErrEncodedDirAmbiguous`), or where
-  the new encoded directory already exists (`ErrEncodedDirCollision`), is
-  refused before any write.
+  new paths encode to the same directory (`ErrEncodedDirAmbiguous`) is
+  refused before any write, and a `.cc-port-staging.tmp` sibling is removed
+  before preflight. A target that has already converged — a valid, fresh
+  promotion marker naming this source, or the source already gone — resumes
+  without a second copy rather than refusing, only removing the leftover
+  source after reference rewrites; see
+  [`internal/rewrite/README.md`](../../rewrite/README.md) §Directory
+  promotion for the marker mechanism and its freshness bound.
+- If removing the physical source directory fails, Apply completes with an
+  `ErrResidualSourceDir`-prefixed warning; if removing the old encoded project
+  data directory fails, it completes with an `old encoded project data
+  directory still present` warning.
 
 #### Refused
 
 - Moves where old and new paths encode to the same directory, or where the
-  new encoded directory already exists: refused before any write via
+  new encoded directory already exists without a valid promotion marker while
+  its old source is still present: refused before any write via
   `checkEncodedDirCollision`.
-- Encoded project data removed but the on-disk source directory cannot be
-  deleted: `ErrResidualSourceDir`, naming the manual `mv` command to finish
-  the move by hand.
 
 #### Not covered
 

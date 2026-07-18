@@ -1,6 +1,7 @@
 package rewrite_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,7 +12,99 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool"
 )
+
+func TestPromoteDir(t *testing.T) {
+	t.Run("copy failure removes partial staging through restore", func(t *testing.T) {
+		root := t.TempDir()
+		source := filepath.Join(root, "source")
+		destination := filepath.Join(root, "destination")
+		restorer := tool.NewRestorer()
+		require.NoError(t, os.Mkdir(source, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(source, "source.txt"), []byte("source"), 0o600))
+
+		err := rewrite.PromoteDir(context.Background(), source, destination, restorer,
+			func(_ context.Context, _, staging string, _ func()) error {
+				require.NoError(t, os.Mkdir(staging, 0o750))
+				require.NoError(t, os.WriteFile(filepath.Join(staging, "partial.txt"), []byte("partial"), 0o600))
+				return assert.AnError
+			})
+
+		require.ErrorIs(t, err, assert.AnError)
+		assert.NoDirExists(t, destination)
+		assert.FileExists(t, filepath.Join(source, "source.txt"))
+		require.NoError(t, restorer.Restore())
+		assert.NoDirExists(t, destination+rewrite.StagingSuffix)
+	})
+
+	t.Run("successful promotion rolls back destination", func(t *testing.T) {
+		root := t.TempDir()
+		source := filepath.Join(root, "source")
+		destination := filepath.Join(root, "destination")
+		restorer := tool.NewRestorer()
+		require.NoError(t, os.Mkdir(source, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(source, "source.txt"), []byte("source"), 0o600))
+
+		err := rewrite.PromoteDir(context.Background(), source, destination, restorer,
+			func(_ context.Context, from, to string, _ func()) error {
+				require.NoError(t, os.Mkdir(to, 0o750))
+				data, readErr := os.ReadFile(filepath.Join(from, "source.txt")) //nolint:gosec // G304: t.TempDir() path
+				require.NoError(t, readErr)
+				return os.WriteFile(filepath.Join(to, "source.txt"), data, 0o600) //nolint:gosec // G304: t.TempDir() path
+			})
+
+		require.NoError(t, err)
+		assert.FileExists(t, filepath.Join(destination, "source.txt"))
+		assert.NoDirExists(t, destination+rewrite.StagingSuffix)
+		verified, verifyErr := rewrite.VerifyPromotedFrom(source, destination, time.Now())
+		require.NoError(t, verifyErr)
+		assert.True(t, verified)
+		require.NoError(t, restorer.Restore())
+		assert.NoDirExists(t, destination)
+		assert.NoFileExists(t, destination+rewrite.MarkerSuffix)
+	})
+}
+
+func TestPromotionMarker(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "destination")
+	now := time.Now()
+
+	verified, err := rewrite.VerifyPromotedFrom("/source", destination, now)
+	require.NoError(t, err)
+	assert.False(t, verified, "an absent marker must not verify a promotion")
+	require.NoError(t, rewrite.RemoveMarker(destination), "removing an absent marker must be a no-op")
+
+	require.NoError(t, os.WriteFile(destination+rewrite.MarkerSuffix, []byte("/source"), 0o600))
+	verified, err = rewrite.VerifyPromotedFrom("/source", destination, now)
+	require.NoError(t, err)
+	assert.True(t, verified)
+
+	verified, err = rewrite.VerifyPromotedFrom("/different-source", destination, now)
+	require.NoError(t, err)
+	assert.False(t, verified, "a marker for a different source must not verify")
+
+	require.NoError(t, rewrite.RemoveMarker(destination))
+	assert.NoFileExists(t, destination+rewrite.MarkerSuffix)
+}
+
+func TestPromotionMarkerFreshness(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "destination")
+	markerPath := destination + rewrite.MarkerSuffix
+	source := "/source"
+	now := time.Now()
+	require.NoError(t, os.WriteFile(markerPath, []byte(source), 0o600))
+
+	require.NoError(t, os.Chtimes(markerPath, now, now.Add(-rewrite.MarkerFreshnessWindow+time.Second)))
+	verified, err := rewrite.VerifyPromotedFrom(source, destination, now)
+	require.NoError(t, err)
+	assert.True(t, verified, "a marker within the freshness window must verify")
+
+	require.NoError(t, os.Chtimes(markerPath, now, now.Add(-rewrite.MarkerFreshnessWindow-time.Second)))
+	verified, err = rewrite.VerifyPromotedFrom(source, destination, now)
+	require.NoError(t, err)
+	assert.False(t, verified, "a marker older than the freshness window must not verify")
+}
 
 func TestReplacePathInBytes(t *testing.T) {
 	t.Run("replaces full-component matches", func(t *testing.T) {

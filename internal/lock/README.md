@@ -21,8 +21,7 @@ witness blocks mutation while a live writer is present.
      still runs, and its error (if any) is dropped because the caller's
      operational error takes precedence.
   4. `fn` returns nil: a deferred unlock error surfaces wrapped as
-     `release cc-port lock: %w`; if unlock succeeds but removing the lock
-     file fails, the error surfaces as `remove cc-port lock file: %w`.
+     `release cc-port lock: %w`.
 - `tool.ActiveWriter`: witness result with `Pid int` and `Cwd string`. Each
   tool supplies its own witness through `Workspace.ActiveWriters`:
   `internal/tool/claude.FindActive` for Claude Code, and
@@ -101,6 +100,8 @@ Called by:
 - The kernel releases the flock when cc-port exits. A crash between `TryLock`
   and the deferred `Unlock` does not leave a stale block on the next
   invocation.
+- The lock file persists across release by design. Every later acquisition
+  flocks the same inode, eliminating the unlink-then-recreate race.
 
 #### Refused
 
@@ -115,28 +116,12 @@ Called by:
   encoding, session enumeration) is Unix-shaped.
 - Cross-host locking (NFS, AFS). `flock(2)` semantics on networked filesystems
   are implementation-defined. cc-port assumes a local filesystem.
-- Three-process race at cleanup time. cc-port removes the lock file after
-  `Unlock` (see §Quirks). If invocation A unlocks and unlinks while
-  invocation B is between `OpenFile(O_CREATE)` and `flock()` on the same
-  path, B's flock lands on A's now-unlinked inode. A third invocation C
-  arriving after the unlink does `OpenFile(O_CREATE)` and creates a fresh
-  inode; its flock lands on that fresh inode. B and C both hold exclusive
-  flocks on different inodes and no longer exclude each other. The window
-  is one `flock(2)` call wide and requires three concurrent cc-port
-  invocations, so interactive use cannot reach it; scripted parallel runs
-  against the same `~/.claude/` can.
 
 ## Quirks
 
-`Flock.Unlock` does not delete the lock file (`go doc
-github.com/gofrs/flock.Flock.Unlock` documents this behavior). cc-port calls
-`os.Remove(lockPath)` in the same defer right after `Unlock`, so
-`~/.claude/` does not accumulate a `.cc-port.lock` stub after a normal run.
-Removal is unconditional: unlink is orthogonal to flock state, and skipping
-it on an unlock error would just leak stubs.
-
-The cleanup exposes a narrow three-process race. See §Concurrency guard
-§Not covered.
+`TryLock` creates the lock file when absent and `Release` deliberately leaves
+it in place. Every later `Acquire` therefore flocks the same persistent inode;
+flock state, not file presence, governs contention.
 
 ## Tests
 

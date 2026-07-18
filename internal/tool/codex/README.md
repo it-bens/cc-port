@@ -282,15 +282,19 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
 
 **Handled.**
 
-- `moveGitBaselineToBackup` deletes `memories/.git` only when
+- `moveGitBaselineToBackup` renames `memories/.git` to a sibling rollback
+  backup only when
   `hasNoRemoteGitBaseline` confirms the shape probe (`memories/.git/config`
   exists and contains no `[remote` section), then rewrites the worktree.
   Codex's own baseline helper unconditionally re-initializes a missing or
-  unusable `.git`, so deleting a no-remote baseline is safe.
-- The deleted baseline is staged to a sibling backup during apply and
+  unusable `.git`, so removing a no-remote baseline after commit is safe.
+- The baseline is staged to a sibling backup during apply and
   removed only once the surrounding move's databases have committed
   (`pendingMoveDatabases.commitSurface`), so an in-process failure can still
   restore it via the registered `Restorer` undo.
+- Before every memories worktree apply, `reconcileStrandedGitBackup` removes a
+  leftover sibling backup from a prior crashed run, including when the current
+  worktree has no path occurrence to rewrite.
 
 **Refused.**
 
@@ -300,9 +304,8 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
 
 **Not covered.**
 
-- A rollback backup left behind by a crash between the git-directory move
-  and its cleanup. `gitBackupWarning` reports the leftover backup path if
-  one is ever found still present when `ResidualWarnings` runs.
+- A backup cleanup failure after a successful commit. The commit surface keeps
+  the move successful and `gitBackupWarning` reports that residual path.
 
 ## Quirks
 
@@ -323,7 +326,11 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
   exist there), so every other path hit under it surfaces only as a residual
   warning, never a rewrite. Exactly one adapter owns this shared path until a
   second consumer of `~/.agents` exists.
-- `memories/.git` is rewritten (worktree files) but only deleted behind the shape probe in `docs/architecture.md` §Git-repo-in-state policy (cross-cutting). `hasNoRemoteGitBaseline` is this adapter's implementation of that probe; see §Git baseline handling for the full contract.
+- `memories/.git` worktree files are rewritten, while its metadata directory is
+  renamed to a rollback backup only behind the shape probe in
+  `docs/architecture.md` §Git-repo-in-state policy (cross-cutting).
+  `hasNoRemoteGitBaseline` is this adapter's implementation of that probe; see
+  §Git baseline handling for the full contract.
 
 ## Tests
 

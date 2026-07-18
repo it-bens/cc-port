@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,7 @@ import (
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
@@ -161,15 +163,14 @@ func TestApply_MovesProjectAndUpdatesReferences(t *testing.T) {
 	assert.Contains(t, result.ByTool[0].Warnings[0], "file-history snapshot(s) preserved verbatim; bodies may still contain the old project path")
 }
 
-func TestClaudeMoveSurfaces_RefusePhysicalDestinationBeforeAnySurface(t *testing.T) {
+func TestClaudeMoveSurfaces_AllowsPhysicalDestinationWhenSourceAlreadyGone(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	oldPath := testutil.FixtureProjectPath()
 
 	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: t.TempDir()})
 
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "destination project directory already exists")
+	require.NoError(t, err)
 }
 
 func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
@@ -179,6 +180,96 @@ func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
 	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: testutil.FixtureProjectPath(), NewPath: t.TempDir(), RefsOnly: true})
 
 	require.NoError(t, err)
+}
+
+func TestClaudeMoveApply_RemovesStagingDirectoryBeforePromoting(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+	home := claudeWorkspaceHome(t, workspace)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	staging := home.ProjectDir(newPath) + ".cc-port-staging.tmp"
+	require.NoError(t, os.MkdirAll(staging, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(staging, "partial"), []byte("partial"), 0o600))
+
+	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.NoError(t, err)
+	require.False(t, result.Failed())
+	assert.NoDirExists(t, staging)
+	assert.DirExists(t, home.ProjectDir(newPath))
+}
+
+func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+	home := claudeWorkspaceHome(t, workspace)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	oldEncodedDir := home.ProjectDir(oldPath)
+	newEncodedDir := home.ProjectDir(newPath)
+	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(newEncodedDir+rewrite.MarkerSuffix, []byte(oldEncodedDir), 0o600))
+
+	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.NoError(t, err)
+	require.False(t, result.Failed())
+	assert.NoDirExists(t, oldEncodedDir)
+	assert.DirExists(t, newEncodedDir)
+	assert.NoFileExists(t, newEncodedDir+rewrite.MarkerSuffix)
+}
+
+func TestClaudeMoveApply_RefusesForeignEncodedDestinationAndPreservesSource(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+	home := claudeWorkspaceHome(t, workspace)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	oldEncodedDir := home.ProjectDir(oldPath)
+	newEncodedDir := home.ProjectDir(newPath)
+	sourceFile := filepath.Join(oldEncodedDir, "source-only.txt")
+
+	require.NoError(t, os.WriteFile(sourceFile, []byte("source data"), 0o600))
+	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, "unrelated.txt"), []byte("foreign data"), 0o600))
+
+	_, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.Error(t, err, "an unmarked existing destination must be refused")
+	require.ErrorContains(t, err, "new project directory already exists")
+	data, readErr := os.ReadFile(sourceFile) //nolint:gosec // G304: test fixture path
+	require.NoError(t, readErr, "the refused collision must leave the source untouched")
+	assert.Equal(t, "source data", string(data))
+	assert.FileExists(t, filepath.Join(newEncodedDir, "unrelated.txt"))
+}
+
+func TestClaudeMoveApply_RefusesStaleMarkedForeignEncodedDestinationAndPreservesSource(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+	home := claudeWorkspaceHome(t, workspace)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	oldEncodedDir := home.ProjectDir(oldPath)
+	newEncodedDir := home.ProjectDir(newPath)
+	sourceFile := filepath.Join(oldEncodedDir, "source-only.txt")
+	markerPath := newEncodedDir + rewrite.MarkerSuffix
+
+	require.NoError(t, os.WriteFile(sourceFile, []byte("source data"), 0o600))
+	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, "unrelated.txt"), []byte("foreign data"), 0o600))
+	require.NoError(t, os.WriteFile(markerPath, []byte(oldEncodedDir), 0o600))
+	staleAt := time.Now().Add(-rewrite.MarkerFreshnessWindow - time.Second)
+	require.NoError(t, os.Chtimes(markerPath, staleAt, staleAt))
+
+	_, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.Error(t, err, "a stale marker must not make a foreign destination resumable")
+	require.ErrorContains(t, err, "new project directory already exists")
+	data, readErr := os.ReadFile(sourceFile) //nolint:gosec // G304: test fixture path
+	require.NoError(t, readErr, "the refused collision must leave the source untouched")
+	assert.Equal(t, "source data", string(data))
+	assert.FileExists(t, filepath.Join(newEncodedDir, "unrelated.txt"))
 }
 
 func TestApply_CancellationRestoresCompletedSurfaces(t *testing.T) {

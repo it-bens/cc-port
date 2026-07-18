@@ -31,33 +31,33 @@ func TestWithLock_SucceedsWithNoSessions(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestWithLock_RemovesLockFileOnSuccess(t *testing.T) {
+func TestWithLock_PersistsLockFileOnSuccess(t *testing.T) {
 	lockPath := newTestLockPath(t)
 
 	err := WithLock(lockPath, noActive, func() error { return nil })
 	require.NoError(t, err)
 
-	assert.NoFileExists(t, lockPath)
+	assert.FileExists(t, lockPath)
 }
 
-func TestHeld_SecondReleaseIsNoOpAndRemovesLockFile(t *testing.T) {
+func TestHeld_SecondReleaseIsNoOpAndLockFilePersists(t *testing.T) {
 	lockPath := newTestLockPath(t)
 	held, err := Acquire(lockPath, noActive)
 	require.NoError(t, err)
 
 	require.NoError(t, held.Release())
 	require.NoError(t, held.Release())
-	assert.NoFileExists(t, lockPath)
+	assert.FileExists(t, lockPath)
 }
 
-func TestWithLock_RemovesLockFileOnFnError(t *testing.T) {
+func TestWithLock_PersistsLockFileOnFnError(t *testing.T) {
 	lockPath := newTestLockPath(t)
 
 	boom := errors.New("boom")
 	err := WithLock(lockPath, noActive, func() error { return boom })
 	require.ErrorIs(t, err, boom)
 
-	assert.NoFileExists(t, lockPath)
+	assert.FileExists(t, lockPath)
 }
 
 func TestWithLock_SucceedsWhenSessionPIDIsDead(t *testing.T) {
@@ -99,12 +99,25 @@ func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
 	assert.ErrorContains(t, err, "this tool's state")
 }
 
+func TestAcquire_SecondCallObservesFirstHold(t *testing.T) {
+	lockPath := newTestLockPath(t)
+	first, err := Acquire(lockPath, noActive)
+	require.NoError(t, err)
+	defer func() { _ = first.Release() }()
+
+	second, err := Acquire(lockPath, noActive)
+
+	assert.Nil(t, second)
+	require.ErrorIs(t, err, ErrConcurrentInvocation)
+}
+
 func TestWithLock_SucceedsAfterPreviousReleased(t *testing.T) {
-	// The first call removes the lock file on exit, so the second call
-	// must recreate it. Load-bearing: TryLock opens with O_CREATE.
+	// The first call leaves the lock file in place, so the second reuses its
+	// inode and competes on the same flock.
 	lockPath := newTestLockPath(t)
 
 	require.NoError(t, WithLock(lockPath, noActive, func() error { return nil }))
+	assert.FileExists(t, lockPath)
 	require.NoError(t, WithLock(lockPath, noActive, func() error { return nil }))
 }
 

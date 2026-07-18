@@ -245,6 +245,9 @@ func (workspace *Workspace) memoriesWorktreeSurface(req tool.MoveRequest, pendin
 			return planMemoriesWorktree(root, req.OldPath)
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (int, error) {
+			if err := reconcileStrandedGitBackup(root); err != nil {
+				return 0, err
+			}
 			count, err := applyMemoriesWorktree(ctx, root, req.OldPath, req.NewPath, undo)
 			if err != nil {
 				return 0, err
@@ -262,11 +265,9 @@ func (workspace *Workspace) memoriesWorktreeSurface(req tool.MoveRequest, pendin
 	}
 }
 
-// maybeRemoveGitBaseline deletes root/.git only when hasNoRemoteGitBaseline
-// confirms the §4.4 shape probe. Codex re-initializes a missing baseline
-// unconditionally (git-utils/src/baseline.rs:78-92), so this is safe;
-// anything else is left in place, matching rule 3 (leave .git, rewrite
-// the worktree, warn — see ResidualWarnings).
+// moveGitBaselineToBackup renames root/.git to a sibling backup only when
+// hasNoRemoteGitBaseline confirms the shape probe. commitSurface removes the
+// backup after every database transaction commits.
 func moveGitBaselineToBackup(root string, undo *tool.Restorer) (string, error) {
 	if _, err := os.Stat(filepath.Join(root, gitDirName)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -282,16 +283,16 @@ func moveGitBaselineToBackup(root string, undo *tool.Restorer) (string, error) {
 		return "", nil
 	}
 	gitPath := filepath.Join(root, gitDirName)
-	backup := gitPath + ".cc-port-rollback.tmp"
+	backup := gitPath + gitBackupSuffix
 	if _, err := os.Stat(backup); err == nil {
 		return "", fmt.Errorf("rollback backup %s already exists", backup)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("stat rollback backup %s: %w", backup, err)
 	}
+	undo.RegisterUndo(func() error { return os.Rename(backup, gitPath) })
 	if err := os.Rename(gitPath, backup); err != nil {
 		return "", fmt.Errorf("rename %s to rollback backup: %w", gitPath, err)
 	}
-	undo.RegisterUndo(func() error { return os.Rename(backup, gitPath) })
 	return backup, nil
 }
 
@@ -369,7 +370,7 @@ func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, er
 		warnings = append(warnings, codexDevWarning)
 	}
 
-	backupWarning, err := gitBackupWarning(filepath.Join(workspace.home.Dir, memoriesWorktreeSubdir, gitDirName+".cc-port-rollback.tmp"))
+	backupWarning, err := gitBackupWarning(filepath.Join(workspace.home.Dir, memoriesWorktreeSubdir, gitDirName+gitBackupSuffix))
 	if err != nil {
 		return warnings, err
 	}

@@ -20,9 +20,11 @@ import (
 const memoriesWorktreeSubdir = "memories"
 
 // gitDirName is the git-baseline metadata directory move must never
-// rewrite bytes inside, and may delete only behind the probe in
+// rewrite bytes inside, and may move to a rollback backup only behind the probe in
 // hasNoRemoteGitBaseline.
 const gitDirName = ".git"
+
+const gitBackupSuffix = ".cc-port-rollback.tmp"
 
 // Depended-on stage1_outputs columns (state/memory_migrations/0001_memories.sql):
 // raw_memory and rollout_summary hold natural-language prose that can
@@ -172,6 +174,17 @@ func applyMemoriesWorktree(ctx context.Context, root, oldPath, newPath string, u
 		total += count
 	}
 	return total, nil
+}
+
+// reconcileStrandedGitBackup removes a rollback backup left by a crash before
+// its post-commit cleanup. This run has not renamed its baseline yet, so the
+// backup is never needed for this run's rollback.
+func reconcileStrandedGitBackup(root string) error {
+	backup := filepath.Join(root, gitDirName) + gitBackupSuffix
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("reconcile stranded git backup %s: %w", backup, err)
+	}
+	return nil
 }
 
 // hasNoRemoteGitBaseline implements the §4.4 shape probe: memories/.git/config

@@ -520,6 +520,39 @@ func TestFinalDatabaseSurfaceLeavesBackupAsWarningWhenCleanupFails(t *testing.T)
 	assert.Contains(t, warning, backup)
 }
 
+func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupBeforeRewrite(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	root := filepath.Join(home.Dir, memoriesWorktreeSubdir)
+	backup := filepath.Join(root, gitDirName+gitBackupSuffix)
+	require.NoError(t, os.Mkdir(backup, 0o700))
+	pending := &pendingMoveDatabases{removeAll: os.RemoveAll}
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+
+	_, err := workspace.memoriesWorktreeSurface(req, pending).Apply(context.Background(), tool.NewRestorer())
+
+	require.NoError(t, err)
+	_, err = pending.commitSurface().Apply(context.Background(), tool.NewRestorer())
+	require.NoError(t, err)
+	assert.NoDirExists(t, backup)
+	assert.NoDirExists(t, filepath.Join(root, gitDirName))
+}
+
+func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupWithoutWorktreeChanges(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	root := filepath.Join(home.Dir, memoriesWorktreeSubdir)
+	backup := filepath.Join(root, gitDirName+gitBackupSuffix)
+	require.NoError(t, os.Mkdir(backup, 0o700))
+	pending := &pendingMoveDatabases{removeAll: os.RemoveAll}
+	req := tool.MoveRequest{OldPath: "/Users/fixture/never-referenced", NewPath: "/Users/fixture/renamed-project"}
+
+	count, err := workspace.memoriesWorktreeSurface(req, pending).Apply(context.Background(), tool.NewRestorer())
+
+	require.NoError(t, err)
+	assert.Zero(t, count)
+	assert.NoDirExists(t, backup)
+	assert.DirExists(t, filepath.Join(root, gitDirName))
+}
+
 func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	undo := tool.NewRestorer()

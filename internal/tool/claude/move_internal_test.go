@@ -148,3 +148,54 @@ func TestApplyProjectDirectoryMove_ReportsResidualRemovalWithoutRollback(t *test
 	require.NotEmpty(t, workspace.moveWarningSnapshot())
 	assert.Contains(t, workspace.moveWarningSnapshot()[0], "on-disk source directory still present")
 }
+
+// TestApplyProjectDirectoryMove_RerunAfterPhysicalResidualFailureConverges proves
+// the crash-then-resume contract end to end for the asymmetric case: a first
+// Apply whose physical removeAll(OldPath) fails, while the encoded
+// directory's own removal still succeeds, completes with a residual warning
+// rather than failing outright. That leaves the encoded pair in "old source
+// already gone, new destination already exists" — the exact shape a resumed
+// Apply must still converge on rather than mistake for a foreign collision.
+// A second Apply against the identical paths (with removeAll restored)
+// converges, removing the leftover physical directory and completing
+// warning-free.
+func TestApplyProjectDirectoryMove_RerunAfterPhysicalResidualFailureConverges(t *testing.T) {
+	root := t.TempDir()
+	oldPath := filepath.Join(root, "old-project")
+	newPath := filepath.Join(root, "new-project")
+	home := &Home{Dir: filepath.Join(root, "dotclaude")}
+	oldEncodedDir := home.ProjectDir(oldPath)
+	newEncodedDir := home.ProjectDir(newPath)
+	require.NoError(t, os.MkdirAll(oldPath, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(oldPath, "source.txt"), []byte("source"), 0o600))
+	require.NoError(t, os.MkdirAll(oldEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(oldEncodedDir, "state.json"), []byte("state"), 0o600))
+
+	originalRemoveAll := removeAll
+	t.Cleanup(func() { removeAll = originalRemoveAll })
+	removeAll = func(path string) error {
+		if path == oldPath {
+			return os.ErrPermission
+		}
+		return os.RemoveAll(path)
+	}
+	workspace := NewWorkspace(home)
+	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
+
+	firstErr := workspace.applyProjectDirectoryMove(t.Context(), req, tool.NewRestorer())
+
+	require.NoError(t, firstErr, "warn-and-complete must not fail the apply")
+	assert.NotEmpty(t, workspace.moveWarningSnapshot(), "a failed residual removal must surface as a warning")
+	assert.DirExists(t, oldPath, "old physical directory must remain after its removal fails")
+	assert.NoDirExists(t, oldEncodedDir, "old encoded directory's own removal must still succeed")
+	assert.DirExists(t, newPath)
+	assert.DirExists(t, newEncodedDir)
+
+	removeAll = originalRemoveAll
+	workspace.clearMoveWarnings()
+	secondErr := workspace.applyProjectDirectoryMove(t.Context(), req, tool.NewRestorer())
+
+	require.NoError(t, secondErr, "the resumed apply must complete cleanly")
+	assert.NoDirExists(t, oldPath, "re-run must finish removing the leftover physical directory")
+	assert.Empty(t, workspace.moveWarningSnapshot(), "a clean re-run must not carry forward a residual warning")
+}

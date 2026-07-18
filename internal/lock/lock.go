@@ -47,7 +47,6 @@ type LiveSessionsError struct {
 // protected work completes; later calls are no-ops.
 type Held struct {
 	fileLock *flock.Flock
-	path     string
 	released bool
 }
 
@@ -91,10 +90,10 @@ func Acquire(lockPath string, witness func() ([]tool.ActiveWriter, error)) (*Hel
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrConcurrentInvocation, lockDir)
 	}
-	return &Held{fileLock: fileLock, path: lockPath}, nil
+	return &Held{fileLock: fileLock}, nil
 }
 
-// Release unlocks the advisory lock and removes its lock file.
+// Release unlocks the advisory lock.
 func (held *Held) Release() error {
 	if held == nil || held.fileLock == nil {
 		return fmt.Errorf("release nil cc-port lock")
@@ -103,16 +102,8 @@ func (held *Held) Release() error {
 		return nil
 	}
 	held.released = true
-	unlockErr := unlockFn(held.fileLock)
-	removeErr := os.Remove(held.path)
-	if errors.Is(removeErr, os.ErrNotExist) {
-		removeErr = nil
-	}
-	if unlockErr != nil {
-		return errors.Join(fmt.Errorf("%w: %w", ErrUnlockFailure, unlockErr), removeErr)
-	}
-	if removeErr != nil {
-		return fmt.Errorf("remove cc-port lock file: %w", removeErr)
+	if err := unlockFn(held.fileLock); err != nil {
+		return fmt.Errorf("%w: %w", ErrUnlockFailure, err)
 	}
 	return nil
 }
