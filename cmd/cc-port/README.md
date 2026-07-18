@@ -40,9 +40,10 @@ Run `cc-port <subcommand> --help` for the full flag reference.
 
 ## Tool registry and target resolution
 
-`tools.go:newToolSet` is the composition root: the one place this binary
-lists its supported tools (`tool.NewSet(claude.New(), codex.New())`).
-`main.go:newRootCmd` builds the set once and calls
+`tools.go:newToolSet` is the composition root (see `docs/architecture.md`
+§Registry: a literal constructor call, not a plugin system for the
+constructor call itself and `NewSet`'s validation). `main.go:newRootCmd`
+builds the set once and calls
 `toolselect.go:registerToolFlags`, which registers the repeatable `--tool`
 flag plus one generated `--<name>-home` flag per registered tool on the
 root command's persistent flags. Every subcommand's `RunE` calls
@@ -59,14 +60,16 @@ its first arguments: `newXCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Comman
 for commands that don't reach the interactive picker (`newMoveCmd`,
 `newImportCmd`, `newPullCmd`, `newStatsCmd`), or
 `newXCmd(toolSet *tool.Set, flags *toolFlags, banner Banner) *cobra.Command`
-for the picker-reaching surfaces (`newExportCmd`, `newPushCmd`,
-`newExportManifestCmd`). `newRootCmd(banner Banner) *cobra.Command` builds
-`toolSet` and `flags` itself via `newToolSet` and `registerToolFlags`, then
-threads both (and the banner, where applicable) into each subcommand. Other
+for the picker-reaching surfaces (`newExportCmd`, `newPushCmd`).
+`newExportManifestCmd(toolSet *tool.Set, flags *toolFlags, banner ui.Banner) *cobra.Command`
+also reaches the picker through `resolveCategoriesAndPlaceholders`, but only
+needs the narrower `ui.Banner` that embeds, not the `RenderBeside`/`BesideString`
+pair the manifest subcommand never calls. `newRootCmd(banner Banner) *cobra.Command`
+builds `toolSet` and `flags` itself via `newToolSet` and `registerToolFlags`,
+then threads both (and the banner, where applicable) into each subcommand. Other
 flag-value locals live as closure variables inside each constructor body,
-never as package-level `var`. No `init()` block wires flags. Tests construct
-an isolated command per case and confirm flag state cannot leak between two
-instances of the same constructor.
+never as package-level `var`. No `init()` block wires flags (see §Constructor
+isolation).
 
 ## Category selection
 
@@ -128,6 +131,32 @@ Every cmd write goes through `cmd.OutOrStdout()` for normal output and
 `cmd.ErrOrStderr()` for warnings. The cobra streams let tests capture output
 with `cmd.SetOut` / `cmd.SetErr` per invocation. Bare `fmt.Printf`,
 `fmt.Println`, and direct `os.Stderr` writes are banned.
+
+## Contracts
+
+### Constructor isolation
+
+#### Handled
+
+- Two instances of the same `newXCmd` constructor never share flag state.
+  `TestCommandConstructorsAreIsolated` (`cmd_isolation_test.go`) sets a flag
+  on one instance of `newExportCmd`, `newImportCmd`, `newPushCmd`,
+  `newPullCmd`, or `newMoveCmd` and asserts the second instance still reads
+  the flag's zero value, which would fail if a package-level flag `var`
+  were reintroduced.
+
+#### Refused
+
+- A package-level flag `var` anywhere in this package. Flag-value locals are
+  closure variables scoped to one constructor call; no `init()` block wires
+  a flag either.
+
+#### Not covered
+
+- `newStatsCmd` and `newExportManifestCmd` are not in
+  `TestCommandConstructorsAreIsolated`'s case table, so the isolation
+  guarantee for those two constructors rests on the same closure-variable
+  pattern, not a dedicated regression test.
 
 ## Tests
 

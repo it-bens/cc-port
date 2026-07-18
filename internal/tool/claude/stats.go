@@ -15,13 +15,13 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
-// referenceSurfaceNames is the canonical order of reference surfaces: the
-// global history and config files, the project-local transcripts and
-// memory, the session-bound sessions/*.json, then the user-wide and
-// session-keyed registries. Derived from the registries rather than a
-// hard-coded list, so a new registry entry shows up automatically.
-// file-history is absent on purpose: snapshot bytes are opaque and never
-// scanned for references.
+// referenceSurfaceNames is the display order ReferenceSurfaces reports in: a
+// hard-coded base list (history, sessions, transcripts, memory, config,
+// then the finer-grained "history entries" and "session files" counts),
+// followed by every user-wide and session-keyed registry entry in
+// registration order. Only the trailing two sections are registry-derived;
+// a new registry entry shows up there automatically. file-history is absent
+// on purpose: snapshot bytes are opaque and never scanned for references.
 func referenceSurfaceNames() []string {
 	surfaces := []string{categoryHistory, categorySessions, "transcripts", categoryMemory, categoryConfig, "history entries", "session files"}
 	for target := range UserWideRewriteTargets() {

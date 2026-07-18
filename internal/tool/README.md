@@ -45,7 +45,7 @@ package's types support.
     `docs/architecture.md` §Sweep semantics).
 - **Registry**
   - `Set`: the registered collection of tools, built once via `NewSet` and
-    read thereafter through `All`, `ByName`, `Detected`, `ParseQualified`.
+    read thereafter through `All`, `ByName`, `Detected`.
   - `Target`: `Tool` paired with its already-opened `Workspace`.
   - `NewSet(tools ...Tool) *Set`: validates unique names, unique qualified
     categories, and unique implicit placeholder keys across every tool;
@@ -68,6 +68,10 @@ package's types support.
     user-supplied project path (expands a leading `~/`, makes it absolute,
     resolves it through existing symlinked ancestors).
 
+`ImplicitAnchorKeys`, `Exporter.Export`'s `*archive.Sink` parameter, the
+fallible `ImplicitAnchors`, and `Finalize`'s `[]string` warnings return are
+each an accepted deviation from spec §1.
+
 ## Contracts
 
 ### Contract surface
@@ -82,10 +86,11 @@ package's types support.
 
 **Refused.**
 
-- Duplicate tool names, duplicate `(tool, category)` pairs, or two tools
-  claiming the same implicit placeholder key: `NewSet` panics rather than
-  silently picking one. These are registry-construction bugs caught at
-  process start, not operational errors a caller recovers from.
+- An empty tool name, duplicate tool names, duplicate `(tool, category)`
+  pairs, or two tools claiming the same implicit placeholder key: `NewSet`
+  panics rather than silently picking one. These are registry-construction
+  bugs caught at process start, not operational errors a caller recovers
+  from.
 - A bare `--include` category name with no `<tool>/` prefix: `ParseQualified`
   refuses it, since multi-tool selection requires the tool segment.
 
@@ -174,6 +179,7 @@ A third adapter is one new package (`internal/tool/<name>`) plus one line in
 Unit tests in `path_test.go`, `restorer_test.go`, `set_test.go`. Coverage:
 `ResolveProjectPath` tilde expansion and symlink resolution, `Restorer`'s
 in-memory vs. sibling-backup threshold and reverse-order restore including a
-mixed file-and-undo registration sequence, and `NewSet`'s three panic
-conditions (duplicate name, duplicate qualified category, duplicate implicit
-key) alongside its `ByName`/`Detected`/`ParseQualified` accessors.
+mixed file-and-undo registration sequence, and three of `NewSet`'s four
+panic conditions (duplicate name, duplicate qualified category, duplicate
+implicit key; the empty-name panic is untested) alongside its
+`ByName`/`Detected` accessors and the package-level `ParseQualified` parser.

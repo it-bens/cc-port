@@ -33,10 +33,11 @@ type Home struct {
 // used as the Dir; ConfigFile is derived as Dir + ".json".
 //
 // Normalisation is required because downstream staging preflight
-// (internal/importer/importer.go:stagingTempPath) feeds
-// filepath.Dir(<derived path>) into fsutil.ResolveExistingAncestor,
-// which panics on relative input. Converting operational input here
-// keeps the panic path reserved for real programmer errors.
+// (internal/importer/importer.go:preflightStagingDirs, via
+// archive.StagingTempPath) feeds filepath.Dir(<derived path>) into
+// fsutil.ResolveExistingAncestor, which panics on relative input.
+// Converting operational input here keeps the panic path reserved for real
+// programmer errors.
 func NewHome(override string) (*Home, error) {
 	return newHome(override, os.Getenv)
 }

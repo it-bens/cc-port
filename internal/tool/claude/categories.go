@@ -20,8 +20,7 @@ const (
 // categories is the source of truth for Claude Code's export categories:
 // wire name, interactive-picker description, and default selection. Slice
 // order is the canonical display order used by every consumer (CLI help,
-// dry-run summaries, metadata.xml entries) and matches the historical
-// manifest.AllCategories order.
+// dry-run summaries, metadata.xml entries).
 var categories = []tool.Category{
 	{Name: categorySessions, Description: "Sessions (transcripts & subagent data)", DefaultSelected: true},
 	{Name: categoryMemory, Description: "Memory (project-scoped auto-memory)", DefaultSelected: true},

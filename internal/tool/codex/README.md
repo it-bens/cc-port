@@ -188,6 +188,47 @@ shapes themselves.
   structured association either; the adapter matches that limitation rather
   than inventing a heuristic Codex does not use.
 
+### History and session-index append-only
+
+**Handled.**
+
+- `Finalize` appends new lines to `history.jsonl` and `session_index.jsonl`
+  through the shared `appendLinesToFile` helper, which opens each file with
+  `O_APPEND` (`os.O_RDWR|os.O_CREATE|os.O_APPEND`) and never renames or
+  replaces it. `appendUniqueHistory` deduplicates by `(session_id,
+  timestamp)`, and `appendUniqueExact` deduplicates by exact line match. Both
+  scan the existing file first (`scanLines`), so re-importing the same
+  archive never appends a duplicate line.
+- For `history.jsonl`, never replacing the file is load-bearing: Codex's own
+  `message-history` crate takes a real advisory file lock on append
+  (`history_file.try_lock()`) and caches a `(log_id, offset)` pair keyed on
+  the file's inode (`log_identity`, `metadata.ino()` on Unix,
+  `message-history/src/lib.rs:425-429`) to serve the TUI's up-arrow history;
+  a rename-replace would change the inode and invalidate that cache
+  mid-session.
+- For `session_index.jsonl`, the inode-cache rationale does not apply:
+  Codex's own writer holds only a process-local mutex, not a file lock
+  (`SESSION_INDEX_LOCK`, `rollout/src/session_index.rs:20`), and its reader
+  re-opens the file and scans from the end on every lookup, with no
+  persisted offset to invalidate. Appending in place still matters here for
+  a different reason: with no shared lock, a temp-and-rename rewrite built
+  from a snapshot could silently drop a Codex append that landed between
+  the snapshot and the rename; `O_APPEND` cannot lose an already-committed
+  line that way.
+
+**Refused.**
+
+- A temp-and-rename rewrite of either file for deduplication or any other
+  bulk edit. `appendLinesToFile` is the only write path into either file and
+  has no truncate-and-rewrite mode.
+
+**Not covered.**
+
+- Taking Codex's own lock before appending. Neither file's import path
+  acquires a lock; `O_APPEND`'s atomic-write-at-EOF behavior, not explicit
+  coordination with Codex's writer, is what keeps a concurrent Codex append
+  intact.
+
 ### Sidecar update-only rationale
 
 **Handled.**
@@ -315,7 +356,12 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
   `sqlrewrite.RewriteTextColumn` (boundary-aware byte rewrite per row) rather
   than `RewritePathColumn`'s exact/prefix SQL predicate. `threads.cwd` is the
   one column that gets the exact/prefix predicate, because Codex stores it
-  as a verbatim canonicalized path with no free text around it.
+  as a verbatim canonicalized path with no free text around it, an accepted
+  deviation from spec §6.3.
+- Move commits the memories and state databases as two separate serial
+  transactions, not one joint transaction, because SQLite cannot commit two
+  databases atomically, an accepted deviation from spec §6.3 (see
+  `databaseapply.go:commitSurface`).
 - `stage1_outputs.rollout_slug` is deliberately never rewritten: it is an
   algorithmically derived filename slug (thread id, timestamp, hash), never
   the raw project path, so a path-boundary rewrite would never match it and

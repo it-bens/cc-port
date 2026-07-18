@@ -58,12 +58,13 @@ func newToolSet() *tool.Set {
 ```
 
 There is no `init()` and no discovery mechanism. `tool.NewSet` validates the
-registry once at construction (unique tool names, unique `(tool, category)`
-pairs, unique implicit placeholder keys across tools) and panics on a
-violation, because a collision there is a registry-construction bug in
-`tools.go`, not an operational error a caller can recover from. `tool.Set`
-then exposes `All`, `ByName`, `Detected`, and `ParseQualified` in
-registration order.
+registry once at construction (non-empty, unique tool names, unique
+`(tool, category)` pairs, unique implicit placeholder keys across tools) and
+panics on a violation, because a collision there is a registry-construction
+bug in `tools.go`, not an operational error a caller can recover from.
+`tool.Set` then exposes `All`, `ByName`, and `Detected` in registration
+order; `tool.ParseQualified` is a separate package function that parses a
+`"<tool>/<category>"` argument, with no `*Set` involved.
 
 ### Adapter boundaries
 
@@ -78,20 +79,17 @@ A new tool adds one adapter package and one line in `tools.go`; it changes no
 command package (see `internal/tool/README.md` §Extension rule for the full
 checklist a third adapter follows).
 
-`Tool` is the tool-level, connection-free half of the contract: `Name`,
-`DisplayName`, `Categories`, `Detect`, `Open`, `ImplicitAnchorKeys`. `Open`
+`Tool` is the tool-level, connection-free half of the contract. `Open`
 resolves the tool's state roots under its own rules (an explicit
 `--<name>-home` override must already exist for Codex; Claude's home may be
-lazily created) and returns a `Workspace` bound to them. `Workspace` composes
-the four command-facing capabilities so one `Open` result serves every
-command: `Mover` (`MoveSurfaces`, `ResidualWarnings`), `Exporter`
-(`Placeholders`, `Export`), `Importer` (`PreflightDirs`, `ImplicitAnchors`,
-`Stage`, `Finalize`), and `Auditor` (`ReferenceSurfaces`, `DiskCategories`,
-`EnumerateProjects`), plus `Root`, `LockPath`, and `ActiveWriters` for
-liveness evidence. A move's per-surface work is a `Surface`: a `Name`, a
-`Plan` that reports a count without writing, and an `Apply` that performs the
-rewrite and registers its rollback with a `Restorer` (see §Crash and
-idempotence contract).
+lazily created) and returns a `Workspace` bound to them, composing the four
+command-facing capabilities so one `Open` result serves every command (see
+[`internal/tool/README.md`](../internal/tool/README.md) §Public API for the
+full `Tool`/`Workspace`/`Mover`/`Exporter`/`Importer`/`Auditor` method
+lists). A move's per-surface work is a `Surface`: a `Name`, a `Plan` that
+reports a count without writing, and an `Apply` that performs the rewrite
+and registers its rollback with a `Restorer` (see §Crash and idempotence
+contract).
 
 ### Sweep semantics
 
@@ -126,7 +124,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 
 | Invariant                                               | Owner                                                                            |
 |---------------------------------------------------------|----------------------------------------------------------------------------------|
-| A compile-time registry maps `Tool` to its adapter; command packages never import an adapter | [`internal/tool/README.md`](../internal/tool/README.md) §Contract surface, §The tool contract |
+| A compile-time registry maps `Tool` to its adapter; command packages never import an adapter | §The tool contract, [`internal/tool/README.md`](../internal/tool/README.md) §Contract surface |
 | A multi-tool sweep skips `ErrToolAbsent`, empties on `ErrProjectAbsent`, refuses on `ErrNoWitness` | §Sweep semantics |
 | Interactive prompts require a TTY                       | [`internal/ui/README.md`](../internal/ui/README.md)                              |
 | Path substring rewrites respect component boundaries    | [`internal/rewrite/README.md`](../internal/rewrite/README.md)                    |
@@ -194,11 +192,14 @@ The canonical enumeration of Claude's storage surfaces is `claude.Registries`
 carries both the session-keyed file selector (`Files`) and the archive
 layout (`ZipPrefix`, `HomeBaseDir`) that used to live in the separate
 `internal/transport` package; `internal/transport` no longer exists. Every
-consumer (the adapter's move surfaces, export, import staging, and CLI
+consumer but import staging (the adapter's move surfaces, export, and CLI
 renderers) iterates `claude.SessionKeyedGroups()` or
-`claude.UserWideRewriteTargets()` instead of open-coding group names. Adding a
-new session-keyed group means adding one `Registries` row and pointing its
-`Category` at a name the adapter's `Categories()` declares.
+`claude.UserWideRewriteTargets()` instead of open-coding group names; import
+staging's `matchSessionKeyedPrefix` walks `Registries` directly by
+`ZipPrefix`, since it matches an archive entry name rather than selecting a
+category. Adding a new session-keyed group means adding one `Registries`
+row and pointing its `Category` at a name the adapter's `Categories()`
+declares.
 
 `~/.claude/teams/<team>/**` is intentionally NOT in this set. Team directories
 are user-wide workspaces with no inspectable per-project attribution.
@@ -212,10 +213,14 @@ file the user edited through Claude Code. The in-session rewind feature
 uses it by filename, not by content. Any project-path string that
 appears inside a snapshot body is coincidental (log line, comment,
 string literal) and not load-bearing, so cc-port never inspects or
-rewrites snapshot contents. File-history is a Claude Code concept; Codex has
-no equivalent, though the same never-inspect-opaque-bytes principle governs
-Codex's memories worktree files and rollout narrative bodies (see §The tool
-contract and §Git-repo-in-state policy).
+rewrites snapshot contents. File-history is a Claude Code concept; Codex has no equivalent, and the
+never-inspect-opaque-bytes principle does not extend to Codex's own state.
+Codex's memories worktree files are rewritten in place, not left opaque (see
+§Git-repo-in-state policy). Rollout bodies get similar treatment. Within a
+structured rollout, session identity fields are always rewritten, and
+non-structured lines are rewritten too under `--deep`. An era-A rollout (one
+with no session_meta or turn_context line) is skipped entirely, even under
+`--deep` (see `internal/tool/codex/README.md` §Era-A rollout handling).
 
 Per-command handling, all owned by the Claude adapter now that `internal/move`,
 `internal/export`, and `internal/importer` are generic:

@@ -7,12 +7,17 @@ witness blocks mutation while a live writer is present.
 
 ## Public API
 
+- `Acquire(lockPath string, witness func() ([]tool.ActiveWriter, error)) (*Held, error)`:
+  the lower-level entry point. Runs `witness` first, then acquires `lockPath`
+  via `gofrs/flock`, and returns the held lock for the caller to release
+  explicitly. Used directly where a caller must hold several tools' locks at
+  once (see §Concurrency guard).
+- `Held`: an acquired lock. `Release() error` frees it; later calls are
+  no-ops.
 - `WithLock(lockPath string, witness func() ([]tool.ActiveWriter, error), fn func() error) error`:
-  the sole lock-guarded entry point. Runs `witness` first, then acquires
-  `lockPath` via `gofrs/flock`, and calls `fn` with the lock held. `defer`
-  releases the lock on every exit path. It also runs after a panic in `fn`
-  that a caller recovers. Error
-  precedence:
+  the single-lock convenience wrapper around `Acquire` and a deferred
+  `Held.Release`. Calls `fn` with the lock held. It also runs the deferred
+  release after a panic in `fn` that a caller recovers. Error precedence:
   1. Witness finds a live writer: returns a
      descriptive error, does not take the lock, and does not invoke `fn`.
   2. Another cc-port invocation holds the lock: returns a contention error

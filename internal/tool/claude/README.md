@@ -60,8 +60,10 @@ Not a rewriting package. The module produces locations and types.
     `UserConfig` implement `json.Marshaler` and `json.Unmarshaler`,
     preserving unknown fields in an `Extra` map.
   - `MaxHistoryLine`: 16 MiB ceiling for a single `history.jsonl` line
-    read through `bufio.Scanner`. Shared by every scanner in the
-    codebase that reads `history.jsonl`.
+    read through `bufio.Scanner`. Scoped to this adapter: every scanner in
+    this package that reads Claude's `history.jsonl` shares it. Codex's own
+    `history.jsonl` is capped separately, by its own `maxCodexJSONLLine`
+    constant at the same 16 MiB value.
 - **Tool contract implementation** (`Adapter`, `Workspace` in `adapter.go`)
   - `(*Workspace).MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error)`,
     `(*Workspace).ResidualWarnings(tool.MoveRequest) ([]string, error)`
@@ -394,19 +396,25 @@ observable limit stays consistent across commands.
 `MoveSurfaces` returns one `tool.Surface` per rewrite unit, in a load-bearing
 order: history, user-wide files, session-keyed groups, config, transcripts
 (only under `--deep`), memory, sessions, then `project-directory` last of
-all. Every surface but `sessions` and `project-directory` re-verifies
-project identity via `LocateProject`'s session witness on each call; the
-`sessions` surface is the one that rewrites that witness's `cwd` field, so it
-must run after every other reference rewrite or a later identity check would
-see the witness already pointing at the new path. `project-directory` runs
-last because it derives paths directly from `Home.ProjectDir` and never
-calls `LocateProject`.
+all. Session-keyed groups, transcripts, memory, and sessions re-verify
+project identity via `LocateProject`'s session witness on each call.
+History, user-wide files (§User-wide registry), and config are home-wide
+rather than per-project, so there is no project identity to re-verify; each
+scans or rewrites its one file directly. The `sessions` surface is the one
+that rewrites the witness's `cwd` field, so it must run after every other
+per-project reference rewrite or a later identity check would see the
+witness already pointing at the new path. `project-directory` runs last
+because it derives paths directly from `Home.ProjectDir` and never calls
+`LocateProject`.
 
 #### Handled
 
-- Every plain-bytes surface (history, user-wide, session-keyed, config)
-  routes through `rewriteTracked`: `Restorer.RegisterFile`, then
-  `rewrite.ReplacePathInBytes`, then `rewrite.SafeWriteFile`.
+- Every plain-bytes surface with substitutable content (user-wide,
+  session-keyed) routes through `rewriteTracked`: `Restorer.RegisterFile`,
+  then `rewrite.ReplacePathInBytes`, then `rewrite.SafeWriteFile`. History
+  and config are format-aware instead: `historySurface` streams through
+  `StreamHistoryJSONL`, and `configSurface` rewrites through
+  `RewriteUserConfig`.
 - Transcripts and memory route through `rewriteTwicePreservingMtime`, which
   additionally rewrites the encoded storage-directory form
   (`Home.ProjectDir(oldPath)` to `Home.ProjectDir(newPath)`) in the same
@@ -725,9 +733,7 @@ projectPath and cwd byte sequences. Reached via the test-only
 `VerifyProjectIdentityForTest` shim in `export_test.go`.
 
 Move, export, import, and stats coverage: `move_internal_test.go`
-(`rewriteTracked` happy path and failure modes), `export_test.go` (full
-export coverage: all-categories, path anonymisation order-independence and
-boundary collisions, selective category export, history-inclusion rules),
+(`rewriteTracked` happy path and failure modes),
 `export_filehistory_test.go` (unreadable-snapshot and unreadable-dir
 failure, zip-write failure, context cancellation mid-walk),
 `export_line_cap_test.go` and `export_mtime_internal_test.go` (the
@@ -735,9 +741,16 @@ failure, zip-write failure, context cancellation mid-walk),
 `discover_internal_test.go` (`discoverPaths`/`autoDetectPlaceholders`/`discoverPlaceholders`,
 including a corpus of prose fragments discovery must not mistake for a real
 path: base64 blobs, GitHub URL and ref fragments, RuboCop cop names, tilde
-paths, pseudo-XML tags, bare filenames in prose), `import_merge_internal_test.go`
+paths, pseudo-XML tags, bare filenames in prose, and an assertion that the
+planted project anchor placeholder survives discovery), `import_merge_internal_test.go`
 (`finalizeHistory`'s newline-boundary handling and `mergeProjectConfigBytes`'s
 sibling-key preservation and invalid-JSON refusal),
 `session_keyed_groups_drift_test.go` (every `Registries` session-keyed
 entry's `Category` matches a name this adapter's `Categories()` declares),
 and `witness_test.go` (`FindActive` on a live vs. a dead session PID).
+
+The root `integration_test.go`'s `TestIntegration_ExportImportRoundTrip_AllCategories`
+drives a full export-import round trip across every category and, via
+`assertFileHistorySnapshotsByteIdentical`, byte-compares every file-history
+snapshot end to end, so a snapshot altered or dropped in transit fails the
+test.

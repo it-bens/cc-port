@@ -6,7 +6,7 @@
 - Add each session-keyed directory as one `Registries` row (README §Session-keyed registry).
 - Add each user-wide rewrite target as one `Registries` row and one `Home` method (README §User-wide registry).
 - Cap each new `history.jsonl` scanner with `MaxHistoryLine` (README §History line cap).
-- Never scrub or rewrite file-history snapshot bytes on any surface (export, import, move). (docs/architecture.md §File-history policy (cross-cutting))
+- Never scrub or rewrite file-history snapshot bytes on any surface (export, import, move). (README §File-history handling (move), §File-history handling (export), §File-history handling (import))
 
 ## Navigation
 

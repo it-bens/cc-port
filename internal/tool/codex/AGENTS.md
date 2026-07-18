@@ -7,7 +7,7 @@
 - Never `INSERT` into the state database; it is a foreign, self-healing cache Codex's own reconciler owns. (README §Sidecar update-only rationale)
 - Walk both rollout roots (`sessions/`, `archived_sessions/`) in every rollout surface; never assume one. (README §Both-roots coverage)
 - Preserve rollout filenames exactly; `TranscodeLines` rewrites content in place at the same path, never renames. (README §Era-A rollout handling)
-- Append to `history.jsonl` and `session_index.jsonl` with `O_APPEND`, never rename-replace; the desktop TUI caches by inode. (README §Sidecar update-only rationale)
+- Append to `history.jsonl` and `session_index.jsonl` with `O_APPEND`, never rename-replace; a replace would invalidate `history.jsonl`'s inode-keyed TUI cache and could drop a concurrent Codex append to either file. (README §History and session-index append-only)
 - Never export or import `config.toml`; trust is a per-machine decision. (README §Config never ported)
 
 ## Navigation

@@ -53,12 +53,14 @@ not satisfy it.
   keys a tool's archive block does not declare. `Tool`, `Keys`, and
   `Surface` carry the context; tests assert via `errors.As`.
 
-`manifest.UnregisteredToolError` (a manifest `<tool>` block naming an
-unregistered tool entirely) and `manifest.UnknownCategoriesError` /
-`manifest.MissingCategoriesError` / `manifest.DuplicateCategoriesError`
-(per-tool category validation failures) are surfaced by `internal/manifest`
-and reached here via `%w` wrapping; see
-[`internal/manifest/README.md`](../manifest/README.md) §Errors.
+`manifest.UnknownCategoriesError` / `manifest.MissingCategoriesError` /
+`manifest.DuplicateCategoriesError` (per-tool category validation failures)
+are returned by `manifest.ApplyToolCategories` and reached here via `%w`
+wrapping. `manifest.UnregisteredToolError` (a manifest `<tool>` block naming
+an unregistered tool entirely) is a type `internal/manifest` only defines.
+`ApplyToolCategories` never returns it, and this package's own registry
+validation (`verifyManifestTools`) constructs and wraps it directly. See
+[`internal/manifest/README.md`](../manifest/README.md) §Errors for all four.
 
 ## Contracts
 

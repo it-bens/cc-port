@@ -96,7 +96,7 @@ cc-port export manifest /Users/me/project --output /tmp/project.xml
 
 `cc-port import <archive.zip> <target-path> [--tool <name>]`
 
-Apply an archive to `<target-path>`, across every tool the archive has data for. Non-implicit placeholders are resolved via `--from-manifest`. Each tool supplies its own implicit keys (Claude: `{{PROJECT_PATH}}`, `{{HOME}}`, `{{PROJECT_DIR}}`; Codex: `{{CODEX_HOME}}`); user-supplied resolutions for an implicit key are refused.
+Apply an archive to `<target-path>`, across every tool the archive has data for. Non-implicit placeholders are resolved via `--from-manifest`. Each tool supplies its own implicit keys (Claude: `{{PROJECT_PATH}}`, `{{HOME}}`, `{{PROJECT_DIR}}`; Codex: `{{CODEX_HOME}}`, `{{CODEX_PROJECT_PATH}}`); user-supplied resolutions for an implicit key are refused.
 
 Optional passphrase decryption via `--passphrase-env` or `--passphrase-file` (mutually exclusive). Plaintext stays the default. The read side detects encryption from the archive's magic bytes.
 

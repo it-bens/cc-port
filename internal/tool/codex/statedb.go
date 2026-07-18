@@ -10,9 +10,8 @@ import (
 
 // Depended-on threads columns (state/migrations/0001_threads.sql,
 // 0039_threads_recency_at.sql, 0040_threads_history_mode.sql): cwd,
-// rollout_path, archived_at, title. Only cwd is rewritten by move; the
-// others are read-only context for the future threads sidecar (§6.5,
-// next bundle).
+// rollout_path, archived_at, title. Only cwd is rewritten by move; archived_at
+// and title are read-only context the threads sidecar exports alongside them.
 const (
 	threadsTable             = "threads"
 	threadsCwdColumn         = "cwd"

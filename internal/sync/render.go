@@ -134,8 +134,9 @@ func yesNo(b bool) string {
 }
 
 // selectionSummary renders a tool -> category selection as
-// "<tool>: all" or "<tool>: cat1, cat2", one clause per tool in
-// alphabetical tool-name order (stable regardless of map iteration).
+// "<tool>: cat1, cat2", one clause per tool in alphabetical tool-name order
+// (stable regardless of map iteration), listing every enabled category by
+// name even when every category is enabled.
 func selectionSummary(selected map[string]map[string]bool) string {
 	if len(selected) == 0 {
 		return "none"

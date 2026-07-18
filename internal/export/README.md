@@ -13,8 +13,10 @@ assembles the shared manifest.
 ## Public API
 
 - `Run(ctx context.Context, targets []tool.Target, options *Options) (Result, error)`:
-  runs the export. For each target, discovers or reuses its placeholders,
-  calls `target.Workspace.Export` against a shared `archive.Sink`, and
+  runs the export. For each target, reads its already-resolved placeholders
+  from `Options.Placeholders` (discovery itself runs earlier, in the caller,
+  through the adapter's `Workspace.Placeholders`), calls
+  `target.Workspace.Export` against a shared `archive.Sink`, and
   accumulates the result into one manifest. A target whose `Export` reports
   `tool.ErrProjectAbsent` contributes an empty category block (every
   category excluded, no placeholders) rather than failing the whole run.
@@ -75,7 +77,10 @@ would be worse than a hard failure the caller sees immediately.
 #### Not covered
 
 Retrying a failed target. `Run` fails the whole export on the first
-unexpected target error; there is no partial-success archive.
+unexpected target error, but the deferred `archiveWriter.Close()` still runs
+on that path, so `Options.Output` ends up holding a partial, `metadata.xml`-less
+zip made of whatever entries streamed before the failure. A non-nil error
+from `Run` means "discard this output," not "nothing was written."
 
 ## Tests
 
