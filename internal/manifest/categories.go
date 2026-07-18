@@ -67,6 +67,13 @@ func BuildToolCategoryEntries(declaredNames []string, selected map[string]bool) 
 	return entries
 }
 
+// AbsentToolBlock returns the category selection and placeholders that a tool
+// which does not know the project contributes to an export or manifest: an
+// empty selection (every category excluded) and no placeholders.
+func AbsentToolBlock() (selected map[string]bool, placeholders []Placeholder) {
+	return map[string]bool{}, nil
+}
+
 // ApplyToolCategories validates one tool's manifest category entries against
 // declaredNames (that tool's registered category names, in registration
 // order) and returns the selection as name -> included. Every declaredNames

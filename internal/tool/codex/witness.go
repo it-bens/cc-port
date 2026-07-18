@@ -140,8 +140,8 @@ func (workspace *Workspace) freshnessWitness() ([]tool.ActiveWriter, error) {
 	return nil, nil
 }
 
-// anyFileModifiedSince reports whether any regular file under root has an
-// mtime after cutoff. A missing root is not evidence and not an error: a
+// anyFileModifiedSince reports whether any rollout .jsonl file under root has
+// an mtime after cutoff. A missing root is not evidence and not an error: a
 // fresh Codex home may not have written a sessions/ or archived_sessions/
 // directory yet.
 func anyFileModifiedSince(root string, cutoff time.Time) (bool, error) {
@@ -153,7 +153,7 @@ func anyFileModifiedSince(root string, cutoff time.Time) (bool, error) {
 			}
 			return err
 		}
-		if found || entry.IsDir() {
+		if found || entry.IsDir() || !strings.HasPrefix(entry.Name(), "rollout-") || !strings.HasSuffix(entry.Name(), ".jsonl") {
 			return nil
 		}
 		info, infoErr := entry.Info()

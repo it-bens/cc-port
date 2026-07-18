@@ -92,8 +92,7 @@ func Run(ctx context.Context, targets []tool.Target, options *Options) (result R
 			// (every category excluded, no placeholders) rather than
 			// failing the whole run.
 			exportResult = tool.ExportResult{Categories: map[string][]tool.ArchiveEntry{}}
-			selected = nil
-			placeholders = nil
+			selected, placeholders = manifest.AbsentToolBlock()
 		}
 		result.ByTool[target.Tool.Name()] = exportResult
 		metadata.Tools = append(metadata.Tools, manifest.Tool{

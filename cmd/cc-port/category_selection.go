@@ -40,7 +40,7 @@ func resolveCategoriesAndPlaceholders(
 	for _, target := range targets {
 		discovered, discoverErr := target.Workspace.Placeholders(projectPath, selection[target.Tool.Name()])
 		if errors.Is(discoverErr, tool.ErrProjectAbsent) {
-			placeholders[target.Tool.Name()] = nil
+			selection[target.Tool.Name()], placeholders[target.Tool.Name()] = manifest.AbsentToolBlock()
 			continue
 		}
 		if discoverErr != nil {

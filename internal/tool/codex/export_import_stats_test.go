@@ -101,6 +101,58 @@ func TestExportHistoryOnlyIncludesAssociatedHistoryLines(t *testing.T) {
 	t.Fatal("history entry was not exported")
 }
 
+func TestExportReportsMalformedSharedJSONLLines(t *testing.T) {
+	tests := []struct {
+		name        string
+		file        string
+		archiveName string
+		category    string
+		inScope     []byte
+		outOfScope  []byte
+	}{
+		{
+			name:        "session index",
+			file:        sessionIndexFile,
+			archiveName: "codex/session-index/" + sessionIndexFile,
+			category:    categorySessions,
+			inScope:     []byte(`{"id":"` + fixtureThreadOne + `","thread_name":"first"}`),
+			outOfScope:  []byte(`{"id":"unrelated-thread","thread_name":"other"}`),
+		},
+		{
+			name:        "history",
+			file:        codexHistoryFile,
+			archiveName: "codex/history/" + codexHistoryFile,
+			category:    categoryHistory,
+			inScope:     []byte(`{"session_id":"` + fixtureThreadOne + `","ts":100,"text":"first"}`),
+			outOfScope:  []byte(`{"session_id":"unrelated-thread","ts":300,"text":"other"}`),
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			home := SetupFixture(t)
+			contents := append([]byte(nil), testCase.inScope...)
+			contents = append(contents, '\n')
+			contents = append(contents, []byte("malformed JSON\n")...)
+			contents = append(contents, testCase.outOfScope...)
+			contents = append(contents, '\n')
+			require.NoError(t, os.WriteFile(filepath.Join(home.Dir, testCase.file), contents, 0o600))
+
+			workspace := quietTestWorkspace(home)
+			var archiveBytes bytes.Buffer
+			writer := zip.NewWriter(&archiveBytes)
+			sink := archive.NewSink(writer, toolName, nil)
+			result, err := workspace.Export(t.Context(), FixtureProjectPath(), map[string]bool{testCase.category: true}, sink)
+			require.NoError(t, err)
+			require.NoError(t, writer.Close())
+
+			assert.Contains(t, result.Warnings, "1 malformed line(s) in "+testCase.file+" were omitted during export")
+			assert.Len(t, result.Warnings, 2, "the valid out-of-scope line is an expected drop, not a warning")
+			assert.Equal(t, append(append([]byte(nil), testCase.inScope...), '\n'), readArchiveEntry(t, archiveBytes.Bytes(), testCase.archiveName))
+		})
+	}
+}
+
 func TestStageRejectsUnknownCodexRelativeEntryWithoutStaging(t *testing.T) {
 	home := SetupFixture(t)
 	var archiveBytes bytes.Buffer
@@ -196,6 +248,33 @@ func TestCodexImportRerunDoesNotDuplicateHistoryOrSessionIndex(t *testing.T) {
 
 	assertFileBytes(t, filepath.Join(destinationHome.Dir, codexHistoryFile), history)
 	assertFileBytes(t, filepath.Join(destinationHome.Dir, sessionIndexFile), index)
+}
+
+func TestAppendLinesToFileSeparatesTornPriorRecord(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial string
+		create  bool
+		want    string
+	}{
+		{name: "torn prior append", initial: "partial record", create: true, want: "partial record\nnew record\n"},
+		{name: "trailing newline", initial: "existing record\n", create: true, want: "existing record\nnew record\n"},
+		{name: "empty file", create: true, want: "new record\n"},
+		{name: "absent file", want: "new record\n"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "line-store.jsonl")
+			if testCase.create {
+				require.NoError(t, os.WriteFile(path, []byte(testCase.initial), 0o600))
+			}
+
+			require.NoError(t, appendLinesToFile(path, [][]byte{[]byte("new record")}))
+
+			assert.Equal(t, testCase.want, string(readFileBytes(t, path)))
+		})
+	}
 }
 
 func TestCodexSidecarRerunAppliesThreadCreatedAfterFirstImport(t *testing.T) {

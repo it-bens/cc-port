@@ -281,11 +281,13 @@ func (workspace *Workspace) exportSessionIndex(
 	if err != nil {
 		return fmt.Errorf("stat session index: %w", err)
 	}
+	malformed := 0
 	written, err := sink.WriteJSONL(ctx, "session-index/"+sessionIndexFile, file, maxCodexJSONLLine, func(line []byte) []byte {
 		var record struct {
 			ID string `json:"id"`
 		}
 		if json.Unmarshal(line, &record) != nil {
+			malformed++
 			return nil
 		}
 		if _, ok := threadIDs[record.ID]; !ok {
@@ -295,6 +297,11 @@ func (workspace *Workspace) exportSessionIndex(
 	}, info.ModTime())
 	if err != nil {
 		return fmt.Errorf("write session index: %w", err)
+	}
+	if malformed > 0 {
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"%d malformed line(s) in %s were omitted during export", malformed, sessionIndexFile,
+		))
 	}
 	recordCodexEntry(result, categorySessions, written)
 	return nil
@@ -392,9 +399,11 @@ func (workspace *Workspace) exportHistory(ctx context.Context, sink *archive.Sin
 		return fmt.Errorf("open history: %w", err)
 	}
 	defer func() { _ = file.Close() }()
+	malformed := 0
 	written, err := sink.WriteJSONL(ctx, "history/"+codexHistoryFile, file, maxCodexJSONLLine, func(line []byte) []byte {
 		var record historyRecord
 		if json.Unmarshal(line, &record) != nil {
+			malformed++
 			return nil
 		}
 		if _, ok := threadIDs[record.SessionID]; !ok {
@@ -404,6 +413,11 @@ func (workspace *Workspace) exportHistory(ctx context.Context, sink *archive.Sin
 	}, time.Time{})
 	if err != nil {
 		return fmt.Errorf("write history: %w", err)
+	}
+	if malformed > 0 {
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"%d malformed line(s) in %s were omitted during export", malformed, codexHistoryFile,
+		))
 	}
 	recordCodexEntry(result, categoryHistory, written)
 	return nil
@@ -658,11 +672,26 @@ func appendLinesToFile(path string, lines [][]byte) (err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, importFilePerm) //nolint:gosec // G304: resolved Codex home path
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, importFilePerm) //nolint:gosec // G304: resolved Codex home path
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() > 0 {
+		var lastByte [1]byte
+		if _, err := file.ReadAt(lastByte[:], info.Size()-1); err != nil {
+			return err
+		}
+		if lastByte[0] != '\n' {
+			if _, err := file.Write([]byte{'\n'}); err != nil {
+				return err
+			}
+		}
+	}
 	for _, line := range lines {
 		if _, err := file.Write(append(append([]byte(nil), line...), '\n')); err != nil {
 			return err

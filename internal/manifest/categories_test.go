@@ -33,6 +33,18 @@ func TestBuildToolCategoryEntries_IncludedReflectsSelection(t *testing.T) {
 	}
 }
 
+func TestAbsentToolBlockReturnsFreshEmptySelectionAndNoPlaceholders(t *testing.T) {
+	firstSelection, firstPlaceholders := manifest.AbsentToolBlock()
+	assert.Empty(t, firstSelection)
+	assert.Nil(t, firstPlaceholders)
+	firstSelection["sessions"] = true
+
+	secondSelection, secondPlaceholders := manifest.AbsentToolBlock()
+
+	assert.Empty(t, secondSelection)
+	assert.Nil(t, secondPlaceholders)
+}
+
 func TestApplyToolCategories_RoundTripsSelection(t *testing.T) {
 	original := map[string]bool{"sessions": true, "memory": false, "history": true}
 	entries := manifest.BuildToolCategoryEntries(testDeclaredNames, original)

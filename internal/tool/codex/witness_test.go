@@ -120,6 +120,24 @@ func TestActiveWritersDetectsFreshRolloutFile(t *testing.T) {
 	assert.NotEmpty(t, active, "a rollout modified just now must count as fresh")
 }
 
+func TestActiveWritersIgnoresFreshNonRolloutFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "dotcodex")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, sessionsSubdir), 0o750))
+	nonRolloutPath := filepath.Join(dir, sessionsSubdir, ".DS_Store")
+	require.NoError(t, os.WriteFile(nonRolloutPath, []byte("fixture"), 0o600))
+	require.NoError(t, os.Chtimes(nonRolloutPath, fixedWitnessNow, fixedWitnessNow))
+
+	home := &Home{Dir: dir, SQLiteDir: dir}
+	workspace := newWorkspace(
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+	)
+
+	active, err := workspace.ActiveWriters()
+
+	require.NoError(t, err)
+	assert.Empty(t, active, "a fresh non-rollout file must not count as freshness evidence")
+}
+
 func TestActiveWritersIgnoresStaleRolloutFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, sessionsSubdir), 0o750))
