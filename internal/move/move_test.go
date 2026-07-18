@@ -245,9 +245,10 @@ func TestClaudeMoveApply_RefusesForeignEncodedDestinationAndPreservesSource(t *t
 }
 
 func TestClaudeMoveApply_RefusesStaleMarkedForeignEncodedDestinationAndPreservesSource(t *testing.T) {
-	targets := fixtureTargets(t)
-	workspace := targets[0].Workspace
-	home := claudeWorkspaceHome(t, workspace)
+	home := testutil.SetupFixture(t)
+	fixedNow := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	workspace := claude.NewWorkspaceForTest(home, os.Getenv, func(int) bool { return false }, func() time.Time { return fixedNow })
+	targets := []tool.Target{{Tool: claude.New(), Workspace: workspace}}
 	oldPath := testutil.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	oldEncodedDir := home.ProjectDir(oldPath)
@@ -259,7 +260,7 @@ func TestClaudeMoveApply_RefusesStaleMarkedForeignEncodedDestinationAndPreserves
 	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, "unrelated.txt"), []byte("foreign data"), 0o600))
 	require.NoError(t, os.WriteFile(markerPath, []byte(oldEncodedDir), 0o600))
-	staleAt := time.Now().Add(-rewrite.MarkerFreshnessWindow - time.Second)
+	staleAt := fixedNow.Add(-rewrite.MarkerFreshnessWindow - time.Second)
 	require.NoError(t, os.Chtimes(markerPath, staleAt, staleAt))
 
 	_, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})

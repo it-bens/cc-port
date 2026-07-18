@@ -56,10 +56,6 @@ func injectArchiveWithDeclaredPlaceholderAtURL(t *testing.T, url, name, key, ori
 	writeAtURL(t, url, name, body)
 }
 
-func defaultResolutionsForCmd(_ *testing.T) map[string]string {
-	return map[string]string{"{{HOME}}": "/Users/me"}
-}
-
 func buildCmdArchiveBytes(t *testing.T, pusher, pass string, placeholders map[string][]manifest.Placeholder) []byte {
 	t.Helper()
 	home := testutil.SetupFixture(t)
@@ -125,35 +121,3 @@ func (s *cmdBytesSink) Name() string { return "bytes sink" }
 type cmdBytesSinkCloser struct{}
 
 func (b *cmdBytesSinkCloser) Close() error { return nil }
-
-// TestSyncCmdHelpersSmoke wires every helper at least once so the unused
-// linter does not flag landed-but-not-yet-called helpers and so a typo in
-// a helper signature surfaces here rather than downstream.
-func TestSyncCmdHelpersSmoke(t *testing.T) {
-	tempHome, projectPath := setupCmdFixture(t)
-	if tempHome == "" || projectPath == "" {
-		t.Fatal("setupCmdFixture returned empty values")
-	}
-	if got := defaultResolutionsForCmd(t)["{{HOME}}"]; got == "" {
-		t.Fatal("defaultResolutionsForCmd missing {{HOME}}")
-	}
-	selection := allCategoriesCmdSelection()
-	if !selection["claude"]["sessions"] || !selection["claude"]["tasks"] {
-		t.Fatal("allCategoriesCmdSelection did not enable every category")
-	}
-
-	dir := t.TempDir()
-	url := "file://" + dir
-	injectArchiveWithPusherAtURL(t, url, "smoke-plain", "host-user")
-	injectArchiveWithDeclaredPlaceholderAtURL(t, url, "smoke-declared", "{{HOME}}", "/Users/test", "host-user")
-
-	for _, name := range []string{"smoke-plain", "smoke-declared"} {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatalf("Stat %s: %v", name, err)
-		}
-		if info.Size() == 0 {
-			t.Fatalf("archive %s has zero size", name)
-		}
-	}
-}

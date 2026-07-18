@@ -225,6 +225,9 @@ func assertOnlyAnchorPlaceholders(
 	noiseFragment string,
 ) {
 	t.Helper()
+	require.NotEmpty(t, suggestions, "the planted project anchor must survive discovery")
+	assert.Contains(t, suggestions, placeholderSuggestion{Key: "{{PROJECT_PATH}}", Original: "/Users/tap-user/Software/homebrew-tap"},
+		"the planted project anchor must survive discovery")
 	for _, suggestion := range suggestions {
 		assert.Contains(t, []string{"{{PROJECT_PATH}}", "{{HOME}}"}, suggestion.Key,
 			"unexpected placeholder key %q with original %q", suggestion.Key, suggestion.Original)

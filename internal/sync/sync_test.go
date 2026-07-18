@@ -39,20 +39,14 @@ func TestSelfPusher_OnConfiguredMachineReturnsHostUser(t *testing.T) {
 }
 
 func TestSelfPusher_EmptyUsernameReturnsError(t *testing.T) {
-	// Force the empty-username branch by clearing $USER. On most CI
-	// runners the user lookup succeeds via /etc/passwd; this test
-	// exercises only the env-clearing path and accepts a pass when
-	// the platform-level fallback fills the username.
-	t.Setenv("USER", "")
-	got, err := selfPusher(os.Hostname, os.Getenv, user.Current)
-	if err != nil {
-		// Empty-username branch fired; correct.
-		return
-	}
-	if got == "" {
-		t.Fatal("selfPusher returned empty string with no error")
-	}
-	// Platform supplied a username via os/user.Current(); also correct.
+	_, err := selfPusher(
+		func() (string, error) { return "test-host", nil },
+		func(string) string { return "" },
+		func() (*user.User, error) { return &user.User{}, nil },
+	)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "username is empty")
 }
 
 func TestSelfPusher_UsesIdentitySeams(t *testing.T) {
@@ -283,21 +277,5 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	encodedDir := claude.EncodePath(targetPath)
 	if _, err := os.Stat(filepath.Join(homeB.Dir, "projects", encodedDir)); err != nil {
 		t.Fatalf("encoded project dir missing after pull: %v", err)
-	}
-}
-
-func TestSentinels_AreNonNil(t *testing.T) {
-	for _, e := range []error{
-		ErrCrossMachineConflict,
-		ErrRemoteNotFound,
-		ErrPassphraseRequired,
-		ErrUnresolvedPlaceholder,
-	} {
-		if e == nil {
-			t.Fatal("nil sentinel error")
-		}
-	}
-	if !errors.Is(ErrRemoteNotFound, ErrRemoteNotFound) {
-		t.Fatal("errors.Is identity broken")
 	}
 }

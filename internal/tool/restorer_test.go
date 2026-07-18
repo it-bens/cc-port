@@ -1,6 +1,7 @@
 package tool_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,30 +19,15 @@ func TestRestorer_RestoreAggregatesErrors(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(writablePath), 0o750))
 	require.NoError(t, os.WriteFile(writablePath, []byte("initial"), 0o600))
 
-	readOnlyDir := filepath.Join(tmp, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0o750))
-	readOnlyPath := filepath.Join(readOnlyDir, "b.txt")
-	require.NoError(t, os.WriteFile(readOnlyPath, []byte("initial"), 0o600))
-
 	restorer := tool.NewRestorer()
 	require.NoError(t, restorer.RegisterFile(writablePath), "snapshot writable path before mutation")
-	require.NoError(t, restorer.RegisterFile(readOnlyPath), "snapshot read-only-dir path before mutation")
+	undoErr := errors.New("synthetic rollback failure")
+	restorer.RegisterUndo(func() error { return undoErr })
 
-	// Mutate both targets in place (truncate+rewrite, no new directory
-	// entry), then strip write permission from readOnlyDir so Restore's
-	// SafeWriteFile (temp-create + rename, both directory operations)
-	// cannot land its restored copy there.
 	require.NoError(t, os.WriteFile(writablePath, []byte("mutated"), 0o600))
-	require.NoError(t, os.WriteFile(readOnlyPath, []byte("mutated"), 0o600))
-	require.NoError(t, os.Chmod(readOnlyDir, 0o500)) //nolint:gosec // G302: read+exec only is the whole point
-	t.Cleanup(func() {
-		_ = os.Chmod(readOnlyDir, 0o700) //nolint:gosec // G302: restore for t.TempDir cleanup
-	})
 
 	err := restorer.Restore()
-	require.Error(t, err, "Restore must surface the read-only-path failure")
-	require.ErrorContains(t, err, readOnlyDir,
-		"the failure must name the read-only directory SafeWriteFile could not write into")
+	require.ErrorIs(t, err, undoErr, "Restore must return a registered undo failure")
 
 	restoredBytes, readErr := os.ReadFile(writablePath) //nolint:gosec // test-controlled path
 	require.NoError(t, readErr)

@@ -17,7 +17,7 @@ import (
 
 func TestWriteJSONLFile_ExportsLegalLongHistoryLine(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "history.jsonl")
-	require.NoError(t, os.WriteFile(sourcePath, []byte(strings.Repeat("x", 1<<20)+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(sourcePath, []byte(strings.Repeat("x", MaxHistoryLine-1)+"\n"), 0o600))
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	sink := archive.NewSink(writer, "claude", nil)

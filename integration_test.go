@@ -437,6 +437,9 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 	imported, err := claude.LocateProject(destinationHome, destinationProjectPath)
 	require.NoError(t, err, "LocateProject should succeed on imported project")
 	assertAllCategoriesImported(t, imported)
+	sourceLocations, err := claude.LocateProject(sourceHome, fixtureProjectPath)
+	require.NoError(t, err)
+	assertFileHistorySnapshotsByteIdentical(t, sourceLocations.FileHistoryDirs, imported.FileHistoryDirs)
 
 	// Spot-check path rewriting in a session-keyed file that carries the project path.
 	require.NotEmpty(t, imported.UsageDataSessionMeta)
@@ -492,6 +495,46 @@ func assertAllCategoriesImported(t *testing.T, imported *claude.ProjectLocations
 	assert.NotEmpty(t, imported.UsageDataFacets, "usage-data/facets must be imported")
 	assert.NotEmpty(t, imported.PluginsDataFiles, "plugins-data must be imported")
 	assert.NotEmpty(t, imported.TaskFiles, "tasks must be imported")
+}
+
+// assertFileHistorySnapshotsByteIdentical compares the opaque file-history
+// snapshot tree after an export → import round-trip. Snapshot bytes are never
+// decoded or path-rewritten: a changed byte is a regression.
+func assertFileHistorySnapshotsByteIdentical(t *testing.T, sourceRoots, destinationRoots []string) {
+	t.Helper()
+	require.NotEmpty(t, sourceRoots, "fixture must include project file-history directories")
+	require.Len(t, destinationRoots, len(sourceRoots), "import must preserve the project snapshot directory set")
+	destinationsByName := make(map[string]string, len(destinationRoots))
+	for _, destinationRoot := range destinationRoots {
+		destinationsByName[filepath.Base(destinationRoot)] = destinationRoot
+	}
+
+	for _, sourceRoot := range sourceRoots {
+		destinationRoot, ok := destinationsByName[filepath.Base(sourceRoot)]
+		require.True(t, ok, "import must preserve snapshot directory %s", filepath.Base(sourceRoot))
+		var sourceFiles []string
+		require.NoError(t, filepath.WalkDir(sourceRoot, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if !entry.IsDir() {
+				sourceFiles = append(sourceFiles, path)
+			}
+			return nil
+		}))
+		require.NotEmpty(t, sourceFiles, "fixture snapshot directory %s must contain snapshots", sourceRoot)
+
+		for _, sourcePath := range sourceFiles {
+			relativePath, err := filepath.Rel(sourceRoot, sourcePath)
+			require.NoError(t, err)
+			destinationPath := filepath.Join(destinationRoot, relativePath)
+			sourceBytes, err := os.ReadFile(sourcePath) //nolint:gosec // sourceRoot is a staged test fixture
+			require.NoError(t, err)
+			destinationBytes, err := os.ReadFile(destinationPath) //nolint:gosec // destinationRoots are a test scratch home
+			require.NoError(t, err, "import must preserve snapshot %s", relativePath)
+			assert.Equal(t, sourceBytes, destinationBytes, "file-history snapshot %s must be byte-identical", relativePath)
+		}
+	}
 }
 
 // TestIntegration_ImportIsRerunnable verifies that importing back to a

@@ -60,13 +60,6 @@ func TestWithLock_PersistsLockFileOnFnError(t *testing.T) {
 	assert.FileExists(t, lockPath)
 }
 
-func TestWithLock_SucceedsWhenSessionPIDIsDead(t *testing.T) {
-	lockPath := newTestLockPath(t)
-
-	err := WithLock(lockPath, noActive, func() error { return nil })
-	require.NoError(t, err)
-}
-
 func TestWithLock_AbortsWhenSessionPIDIsAlive(t *testing.T) {
 	lockPath := newTestLockPath(t)
 

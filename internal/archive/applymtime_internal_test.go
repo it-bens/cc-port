@@ -40,7 +40,7 @@ func TestApplyMtime_ZeroIsNoOp(t *testing.T) {
 }
 
 func TestApplyMtime_NonExistentPathReturnsWrappedError(t *testing.T) {
-	err := applyMtime("/nonexistent/path/that/does/not/exist", time.Now())
+	err := applyMtime(filepath.Join(t.TempDir(), "absent"), time.Now())
 	require.Error(t, err, "applyMtime on missing path")
 	require.Contains(t, err.Error(), "set mtime on",
 		"error should be wrapped with 'set mtime on' prefix")

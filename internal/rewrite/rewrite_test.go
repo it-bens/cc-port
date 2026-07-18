@@ -288,7 +288,8 @@ func TestSafeWriteFile(t *testing.T) {
 	})
 
 	t.Run("returns error when directory does not exist", func(t *testing.T) {
-		err := rewrite.SafeWriteFile("/nonexistent/directory/file.json", []byte("data"), 0o600)
+		absentPath := filepath.Join(t.TempDir(), "absent", "file.json")
+		err := rewrite.SafeWriteFile(absentPath, []byte("data"), 0o600)
 		assert.Error(t, err)
 	})
 }

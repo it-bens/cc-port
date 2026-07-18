@@ -78,7 +78,7 @@ func TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes(t *testing.T) {
 	claudeDir := filepath.Join(t.TempDir(), "dotclaude")
 	orphanDir := filepath.Join(claudeDir, "projects", "-tmp-orphan")
 	require.NoError(t, os.MkdirAll(orphanDir, 0o750))
-	transcript := filepath.Join(orphanDir, "aaaaaaaa-0000-0000-0000-000000000001.jsonl")
+	transcript := filepath.Join(orphanDir, "7f39c2a1-1e4b-4d38-9a6c-528e8d1b4f73.jsonl")
 	require.NoError(t, os.WriteFile(transcript, bytes.Repeat([]byte("x"), 2048), 0o600))
 
 	stdout, err := driveStats(t, claudeDir)
@@ -90,6 +90,40 @@ func TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes(t *testing.T) {
 		"a 2048-byte footprint must render via humanizeBytes' KiB branch")
 }
 
+// TestStatsCmd_HumanizesDiskFootprintAcrossMagnitudes drives all-projects
+// mode against a witness-less project whose sole transcript file is sized to
+// land in each humanizeBytes branch in turn, closing the sub-KiB, MiB, and
+// GiB branches TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes (KiB)
+// doesn't reach. Disk footprint is sized from the file's logical byte count
+// (os.Stat), so a sparse file — grown with os.Truncate rather than written —
+// drives the GiB case without materializing a gigabyte of real content.
+func TestStatsCmd_HumanizesDiskFootprintAcrossMagnitudes(t *testing.T) {
+	cases := []struct {
+		name string
+		size int64
+		want string
+	}{
+		{"sub-KiB value renders as bytes", 512, "512 B"},
+		{"MiB value renders with one decimal", 5 * 1024 * 1024, "5.0 MiB"},
+		{"GiB value renders with one decimal", 1_610_612_736, "1.5 GiB"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			claudeDir := filepath.Join(t.TempDir(), "dotclaude")
+			orphanDir := filepath.Join(claudeDir, "projects", "-tmp-orphan")
+			require.NoError(t, os.MkdirAll(orphanDir, 0o750))
+			transcript := filepath.Join(orphanDir, "7f39c2a1-1e4b-4d38-9a6c-528e8d1b4f73.jsonl")
+			require.NoError(t, os.WriteFile(transcript, nil, 0o600))
+			require.NoError(t, os.Truncate(transcript, testCase.size))
+
+			stdout, err := driveStats(t, claudeDir)
+			require.NoError(t, err)
+
+			assert.Contains(t, stdout, testCase.want)
+		})
+	}
+}
+
 func TestStatsCmd_TooManyArgsIsUsageError(t *testing.T) {
 	home := testutil.SetupFixture(t)
 
@@ -98,23 +132,4 @@ func TestStatsCmd_TooManyArgsIsUsageError(t *testing.T) {
 
 	var usageErr *usageError
 	assert.ErrorAs(t, err, &usageErr, "a second positional argument must be a usage error (exit 2)")
-}
-
-func TestHumanizeBytes(t *testing.T) {
-	cases := []struct {
-		name  string
-		bytes int64
-		want  string
-	}{
-		{"below one KiB renders as bytes", 512, "512 B"},
-		{"exact KiB boundary", 1 << 10, "1.0 KiB"},
-		{"fractional KiB", 1536, "1.5 KiB"},
-		{"MiB branch", 5 << 20, "5.0 MiB"},
-		{"GiB branch", 3 << 30, "3.0 GiB"},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			assert.Equal(t, testCase.want, humanizeBytes(testCase.bytes))
-		})
-	}
 }

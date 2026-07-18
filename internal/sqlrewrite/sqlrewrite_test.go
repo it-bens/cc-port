@@ -38,13 +38,19 @@ func TestOpenRefusesBusyWriterImmediately(t *testing.T) {
 	require.NoError(t, executeContext(writerConnection, "BEGIN IMMEDIATE"))
 	t.Cleanup(func() { _, _ = writerConnection.ExecContext(context.Background(), "ROLLBACK") })
 
+	// The busy-wait a regression would introduce happens inside SQLite's C
+	// busy loop, not on a Go clock this test can inject, and DB is a
+	// black-box type in this external test package with no way to read back
+	// a connection's busy_timeout. A bounded wall-clock measurement is the
+	// only mechanism available to prove Open refused immediately rather than
+	// waiting out a nonzero busy_timeout.
 	started := time.Now()
 	_, err = sqlrewrite.Open(path)
 	elapsed := time.Since(started)
 
 	require.Error(t, err)
-	assert.Less(t, elapsed, time.Second)
 	assert.True(t, strings.Contains(strings.ToLower(err.Error()), "busy") || strings.Contains(strings.ToLower(err.Error()), "locked"))
+	assert.Less(t, elapsed, time.Second, "busy_timeout=0 must make Open on a busy database fail immediately, not wait")
 }
 
 func TestOpenFoldsWALBeforeMainDatabaseIsObserved(t *testing.T) {

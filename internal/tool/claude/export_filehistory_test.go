@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	crand "crypto/rand"
 	"errors"
 	"os"
 	"path/filepath"
@@ -160,13 +159,11 @@ func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
 
 	// zip.Writer wraps output in a 4 KiB bufio.Writer, so a small fixture
 	// collapses every entry's flush into the eventual Close. Overwriting
-	// the lex-first file-history snapshot with 64 KiB of crypto/rand bytes
+	// the lex-first file-history snapshot with deterministic incompressible bytes
 	// makes the body incompressible, so deflate emits near-1:1 output and
 	// forces multiple bufio spills mid entry.Write, well before the small
 	// local-file-header bytes that precede it.
-	bigBody := make([]byte, 64<<10)
-	_, err := crand.Read(bigBody)
-	require.NoError(t, err)
+	bigBody := deterministicFixtureBytes(64 << 10)
 	require.NoError(t, os.WriteFile(bigSnapshotPath, bigBody, 0o600))
 
 	realFile, err := os.Create(filepath.Join(t.TempDir(), "out.zip"))
@@ -193,9 +190,7 @@ func TestExport_FileHistoryHonorsContextCancelMidWalk(t *testing.T) {
 	// Same incompressible-body technique as the write-fault test above,
 	// so the "file-history/" marker reaches the closer mid-walk rather
 	// than all at once at Close time.
-	bigBody := make([]byte, 64<<10)
-	_, err := crand.Read(bigBody)
-	require.NoError(t, err)
+	bigBody := deterministicFixtureBytes(64 << 10)
 	require.NoError(t, os.WriteFile(bigSnapshotPath, bigBody, 0o600))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -218,4 +213,16 @@ func TestExport_FileHistoryHonorsContextCancelMidWalk(t *testing.T) {
 
 	require.Error(t, err, "Export must surface the ctx cancel triggered after the first file-history write")
 	require.ErrorIs(t, err, context.Canceled, "context.Canceled must be in the error chain")
+}
+
+func deterministicFixtureBytes(size int) []byte {
+	data := make([]byte, size)
+	state := uint64(0x9e3779b97f4a7c15)
+	for index := range data {
+		state ^= state << 7
+		state ^= state >> 9
+		state ^= state << 8
+		data[index] = byte(state & 0xff)
+	}
+	return data
 }

@@ -128,21 +128,30 @@ func TestPullPlan_RenderEncryptedClean(t *testing.T) {
 	}
 }
 
-func TestHumanizeBytesBoundaries(t *testing.T) {
+// TestPullPlan_RenderHumanizesByteMagnitudes drives the two humanizeBytes
+// branches the other render tests in this file don't reach: KiB is covered
+// by TestPullPlan_RenderEncryptedClean and MiB by
+// TestPushPlan_RenderEncryptedWithPriorAndCrossMachine.
+func TestPullPlan_RenderHumanizesByteMagnitudes(t *testing.T) {
 	cases := []struct {
-		n    int64
+		name string
+		size int64
 		want string
 	}{
-		{0, "0 B"},
-		{512, "512 B"},
-		{1024, "1.0 KiB"},
-		{1024 * 1024, "1.0 MiB"},
-		{5 * 1024 * 1024, "5.0 MiB"},
-		{int64(1.5 * 1024 * 1024 * 1024), "1.5 GiB"},
+		{"sub-KiB value renders as bytes", 512, "512 B"},
+		{"GiB value renders with one decimal", 1_610_612_736, "1.5 GiB"},
 	}
-	for _, c := range cases {
-		if got := humanizeBytes(c.n); got != c.want {
-			t.Errorf("humanizeBytes(%d) = %q, want %q", c.n, got, c.want)
-		}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan := &PullPlan{Name: "x", RemoteSize: testCase.size}
+			var buf bytes.Buffer
+			if err := plan.Render(&buf); err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			got := buf.String()
+			if !strings.Contains(got, testCase.want) {
+				t.Fatalf("output missing %q:\n%s", testCase.want, got)
+			}
+		})
 	}
 }

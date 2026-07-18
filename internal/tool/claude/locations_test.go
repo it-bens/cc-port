@@ -64,7 +64,8 @@ func TestLocateProject(t *testing.T) {
 func TestLocateProject_NotFound(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	projectLocations, err := claude.LocateProject(claudeHome, "/nonexistent/project/path")
+	absentProjectPath := filepath.Join(t.TempDir(), "absent-project")
+	projectLocations, err := claude.LocateProject(claudeHome, absentProjectPath)
 	require.Error(t, err)
 	assert.Nil(t, projectLocations)
 }
