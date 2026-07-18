@@ -94,17 +94,6 @@ func TestParseMoveOptions_PropagatesFlagValues(t *testing.T) {
 	assert.True(t, opts.DeepRewrite)
 }
 
-func TestParseMoveOptions_RejectsIdenticalPaths(t *testing.T) {
-	cmd := newMoveCmdForTest(t)
-
-	_, err := parseMoveOptions(cmd, []string{
-		"/Users/test/Projects/same", "/Users/test/Projects/same",
-	})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "old and new paths are identical")
-}
-
 func newMoveCmdForTest(t *testing.T) *cobra.Command {
 	t.Helper()
 	cmd := &cobra.Command{}

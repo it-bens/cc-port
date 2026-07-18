@@ -47,6 +47,28 @@ func TestReplacePathInBytes(t *testing.T) {
 	})
 }
 
+func TestIsBoundaryDescendant(t *testing.T) {
+	tests := []struct {
+		name      string
+		parent    string
+		candidate string
+		want      bool
+	}{
+		{name: "equal", parent: "/a/proj", candidate: "/a/proj", want: true},
+		{name: "nested", parent: "/a/proj", candidate: "/a/proj/sub", want: true},
+		{name: "continuation byte", parent: "/a/proj", candidate: "/a/proj-backup", want: false},
+		{name: "extension dot", parent: "/a/proj", candidate: "/a/proj.bak", want: false},
+		{name: "no prefix", parent: "/a/proj", candidate: "/a/other", want: false},
+		{name: "empty parent", parent: "", candidate: "/a/proj", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, rewrite.IsBoundaryDescendant(test.parent, test.candidate))
+		})
+	}
+}
+
 func TestReplacePathInBytesWithJSONEscape_RewritesBothForms(t *testing.T) {
 	input := []byte(`{"a":"/Users/me/foo","b":"\/Users\/me\/foo\/bar"}`)
 	got, count := rewrite.ReplacePathInBytesWithJSONEscape(input, "/Users/me/foo", "/Users/me/bar")

@@ -253,6 +253,30 @@ func ContainsBoundedPath(data []byte, path string) bool {
 	return count > 0
 }
 
+// IsBoundaryDescendant reports whether candidate equals parent, or is nested
+// under it at a real path-component boundary — the same boundary rule
+// ReplacePathInBytes enforces on the byte immediately following a match.
+// "/a/proj" is a boundary descendant of itself and of "/a/proj/sub", but not
+// of "/a/proj-backup" or "/a/proj.bak" (continuation byte / genuine
+// extension dot, same as a ReplacePathInBytes non-match).
+func IsBoundaryDescendant(parent, candidate string) bool {
+	if parent == "" {
+		return false
+	}
+	if candidate == parent {
+		return true
+	}
+	if !strings.HasPrefix(candidate, parent) {
+		return false
+	}
+	remainder := candidate[len(parent):]
+	next := remainder[0]
+	if next == '.' {
+		return !isExtensionDotAt([]byte(remainder), 0)
+	}
+	return !isPathContinuationByte(next)
+}
+
 // CountPathInBytes returns how many times path occurs in data as a bounded
 // reference, using the same right-boundary rule as ReplacePathInBytes. It scans
 // without materializing a rewritten copy, so stats can count occurrences across

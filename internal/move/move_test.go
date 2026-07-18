@@ -172,17 +172,6 @@ func TestClaudeMoveSurfaces_RefusePhysicalDestinationBeforeAnySurface(t *testing
 	assert.ErrorContains(t, err, "destination project directory already exists")
 }
 
-func TestClaudeMoveSurfaces_RefusePhysicalDestinationNestedUnderSource(t *testing.T) {
-	targets := fixtureTargets(t)
-	workspace := targets[0].Workspace
-	oldPath := testutil.FixtureProjectPath()
-
-	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: oldPath + "/nested"})
-
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "into itself")
-}
-
 func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace

@@ -9,6 +9,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/progress"
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
@@ -59,9 +60,31 @@ type Plan struct {
 // references and does not relocate the project directory on disk.
 const NoPhysicalMoveWarning = "no selected tool moves the project directory on disk"
 
+// ErrNestedMove is returned when a move's destination equals its source, or
+// is a path-boundary descendant of it. Either case would have a later
+// surface's rewrite race its own output (an adapter mid-rewriting OldPath
+// references while NewPath — still nested inside OldPath — is itself part of
+// the tree being rewritten), corrupting state. Checked once, for every tool
+// and every mode (--apply, dry-run, --refs-only), before any adapter surface
+// runs.
+var ErrNestedMove = errors.New("refusing to move: new path equals or is nested inside old path")
+
+func validateNotNested(oldPath, newPath string) error {
+	if oldPath == newPath {
+		return fmt.Errorf("%w: %q", ErrNestedMove, newPath)
+	}
+	if rewrite.IsBoundaryDescendant(oldPath, newPath) {
+		return fmt.Errorf("%w: %q is nested inside %q", ErrNestedMove, newPath, oldPath)
+	}
+	return nil
+}
+
 // DryRun computes the move plan without writing any files; lock-free
 // contrast to Apply.
 func DryRun(ctx context.Context, targets []tool.Target, options Options) (*Plan, error) {
+	if err := validateNotNested(options.OldPath, options.NewPath); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("canceled: %w", err)
 	}
@@ -159,6 +182,9 @@ func (result *ApplyResult) Failed() bool {
 // fails, so the returned ApplyResult carries a per-tool success/failure
 // record and Failed reports whether the caller should exit non-zero.
 func Apply(ctx context.Context, targets []tool.Target, options Options) (result *ApplyResult, returnErr error) {
+	if err := validateNotNested(options.OldPath, options.NewPath); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("canceled: %w", err)
 	}

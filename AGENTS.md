@@ -14,6 +14,7 @@ Go CLI that ports Claude Code and OpenAI Codex project state. See `README.md` fo
 - After editing archive or zstd cap-guard code, run `go test -tags large ./internal/importer/... ./internal/tool/codex/...` locally. (internal/importer/README.md §Tests, internal/tool/codex/README.md §Tests)
 - Set an explicit `bufio.Scanner.Buffer` cap on any new line-scanned read over untrusted input. (internal/scan/README.md §Rules files preserved)
 - Cap any `bufio.Scanner` reader of `history.jsonl` with `claude.MaxHistoryLine`. (internal/tool/claude/README.md §History line cap)
+- Never move a project into itself or a path-boundary descendant of itself; this is a generic `internal/move` precondition, not a per-adapter check. (internal/move/README.md §Refused)
 
 ## Navigation
 

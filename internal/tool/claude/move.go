@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -49,7 +48,7 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 		return nil, err
 	}
 	if !req.RefsOnly {
-		if err := checkPhysicalDestination(req.OldPath, req.NewPath); err != nil {
+		if err := checkPhysicalDestination(req.NewPath); err != nil {
 			return nil, err
 		}
 	}
@@ -127,24 +126,13 @@ func appendUniqueMoveWarnings(warnings []string, warning string) []string {
 	return append(warnings, warning)
 }
 
-func checkPhysicalDestination(oldPath, newPath string) error {
-	if isPathWithin(oldPath, newPath) {
-		return fmt.Errorf("refusing to move project directory into itself: %s", newPath)
-	}
+func checkPhysicalDestination(newPath string) error {
 	if _, err := os.Stat(newPath); err == nil {
 		return fmt.Errorf("refusing to move: destination project directory already exists: %s", newPath)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("stat destination project directory %s: %w", newPath, err)
 	}
 	return nil
-}
-
-func isPathWithin(parent, candidate string) bool {
-	relative, err := filepath.Rel(parent, candidate)
-	if err != nil {
-		return false
-	}
-	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
 }
 
 func (workspace *Workspace) clearMoveWarnings() {

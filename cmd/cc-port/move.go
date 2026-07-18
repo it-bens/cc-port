@@ -80,9 +80,6 @@ func parseMoveOptions(cmd *cobra.Command, args []string) (move.Options, error) {
 	if err != nil {
 		return move.Options{}, fmt.Errorf("resolve new path: %w", err)
 	}
-	if oldPath == newPath {
-		return move.Options{}, fmt.Errorf("old and new paths are identical after resolution")
-	}
 	refsOnly, _ := cmd.Flags().GetBool("refs-only")
 	deepRewrite, _ := cmd.Flags().GetBool("deep")
 	return move.Options{
