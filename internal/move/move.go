@@ -79,10 +79,34 @@ func validateNotNested(oldPath, newPath string) error {
 	return nil
 }
 
+// ErrStagingCollision is returned when a move's source path is identical to
+// the destination's staging sibling (NewPath + rewrite.StagingSuffix). A
+// stranded-staging reconciliation would then delete OldPath itself — the
+// real source, not foreign debris — and the subsequent copy would recreate
+// it empty, reporting success over a silently destroyed project.
+var ErrStagingCollision = errors.New("refusing to move: old path is new path's staging directory")
+
+func validateNoStagingCollision(oldPath, newPath string) error {
+	if oldPath == newPath+rewrite.StagingSuffix {
+		return fmt.Errorf("%w: %q", ErrStagingCollision, oldPath)
+	}
+	return nil
+}
+
+// validatePreconditions runs every generic move precondition that must
+// refuse before any target is touched, for every tool and every mode.
+// DryRun and Apply both run it first, in that order.
+func validatePreconditions(oldPath, newPath string) error {
+	if err := validateNotNested(oldPath, newPath); err != nil {
+		return err
+	}
+	return validateNoStagingCollision(oldPath, newPath)
+}
+
 // DryRun computes the move plan without writing any files; lock-free
 // contrast to Apply.
 func DryRun(ctx context.Context, targets []tool.Target, options Options) (*Plan, error) {
-	if err := validateNotNested(options.OldPath, options.NewPath); err != nil {
+	if err := validatePreconditions(options.OldPath, options.NewPath); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -183,7 +207,7 @@ func (result *ApplyResult) Failed() bool {
 // fails, so the returned ApplyResult carries a per-tool success/failure
 // record and Failed reports whether the caller should exit non-zero.
 func Apply(ctx context.Context, targets []tool.Target, options Options) (result *ApplyResult, returnErr error) {
-	if err := validateNotNested(options.OldPath, options.NewPath); err != nil {
+	if err := validatePreconditions(options.OldPath, options.NewPath); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {

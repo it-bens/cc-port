@@ -3,6 +3,7 @@ package move_test
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/move"
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
@@ -88,6 +90,26 @@ func TestNestedMovePrecondition(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestMove_RefusesStagingCollision covers the pathological geometry where a
+// move's source path is identical to the destination's staging sibling
+// (OldPath == NewPath+StagingSuffix). Reconciling that staging path before
+// promotion would delete OldPath itself — the real source, not foreign
+// debris — so this precondition must refuse before any target is touched;
+// no tool.Target is needed since the check runs before target enumeration.
+func TestMove_RefusesStagingCollision(t *testing.T) {
+	newPath := filepath.Join(t.TempDir(), "project")
+	oldPath := newPath + rewrite.StagingSuffix
+	require.NoError(t, os.MkdirAll(oldPath, 0o750))
+
+	_, dryRunErr := move.DryRun(t.Context(), nil, move.Options{OldPath: oldPath, NewPath: newPath})
+	require.ErrorIs(t, dryRunErr, move.ErrStagingCollision)
+	assert.DirExists(t, oldPath, "a refused dry run must not touch the source directory")
+
+	_, applyErr := move.Apply(t.Context(), nil, move.Options{OldPath: oldPath, NewPath: newPath})
+	require.ErrorIs(t, applyErr, move.ErrStagingCollision)
+	assert.DirExists(t, oldPath, "a refused apply must not delete the source directory")
 }
 
 func TestApply_RejectedNestedMoveLeavesClaudeStateUnchangedAcrossRetries(t *testing.T) {

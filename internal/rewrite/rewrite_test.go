@@ -26,7 +26,10 @@ func TestPromoteDir(t *testing.T) {
 
 		err := rewrite.PromoteDir(context.Background(), source, destination, restorer,
 			func(_ context.Context, _, staging string, _ func()) error {
-				require.NoError(t, os.Mkdir(staging, 0o750))
+				// PromoteDir creates staging and writes the marker before calling
+				// copyDir, so a crash mid-copy still strands a staging directory
+				// an ownership check can positively attribute to this promotion.
+				assert.FileExists(t, filepath.Join(staging, rewrite.MarkerFilename))
 				require.NoError(t, os.WriteFile(filepath.Join(staging, "partial.txt"), []byte("partial"), 0o600))
 				return assert.AnError
 			})
@@ -48,7 +51,6 @@ func TestPromoteDir(t *testing.T) {
 
 		err := rewrite.PromoteDir(context.Background(), source, destination, restorer,
 			func(_ context.Context, from, to string, _ func()) error {
-				require.NoError(t, os.Mkdir(to, 0o750))
 				data, readErr := os.ReadFile(filepath.Join(from, "source.txt")) //nolint:gosec // G304: t.TempDir() path
 				require.NoError(t, readErr)
 				return os.WriteFile(filepath.Join(to, "source.txt"), data, 0o600) //nolint:gosec // G304: t.TempDir() path

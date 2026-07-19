@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
@@ -227,4 +228,88 @@ func TestApplyProjectDirectoryMove_RerunAfterPhysicalResidualFailureConverges(t 
 	require.NoError(t, secondErr, "the resumed apply must complete cleanly")
 	assert.NoDirExists(t, oldPath, "re-run must finish removing the leftover physical directory")
 	assert.Empty(t, workspace.moveWarningSnapshot(), "a clean re-run must not carry forward a residual warning")
+}
+
+// TestRemoveStagingDir_ReconcilesEmptyStaging proves removeStagingDir
+// deletes an empty staging directory even without a marker: PromoteDir
+// creates the staging directory before it writes the marker, so a crash in
+// that narrow window strands an empty directory that holds no data and is
+// always safe to reconcile.
+func TestRemoveStagingDir_ReconcilesEmptyStaging(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "new-project")
+	staging := destination + rewrite.StagingSuffix
+	require.NoError(t, os.MkdirAll(staging, 0o750))
+
+	err := removeStagingDir(destination, filepath.Join(root, "old-project"))
+
+	require.NoError(t, err)
+	assert.NoDirExists(t, staging)
+}
+
+// TestRemoveStagingDir_RefusesLocatableProject proves removeStagingDir
+// refuses rather than deletes whenever the staging path's marker cannot be
+// verified against the passed source: a real, marker-less directory sitting
+// at the staging path, and a staging directory whose marker was written for
+// a different promotion, are both indistinguishable from foreign data
+// without a marker recording exactly this source, so both must refuse.
+func TestRemoveStagingDir_RefusesLocatableProject(t *testing.T) {
+	tests := []struct {
+		name        string
+		writeMarker bool
+		markerValue string
+	}{
+		{name: "no marker at all"},
+		{name: "marker records a different source", writeMarker: true, markerValue: "/some/other/project"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			destination := filepath.Join(root, "new-project")
+			source := filepath.Join(root, "old-project")
+			staging := destination + rewrite.StagingSuffix
+			require.NoError(t, os.MkdirAll(staging, 0o750))
+			require.NoError(t, os.WriteFile(filepath.Join(staging, "session.json"), []byte(`{"cwd":"/some/real/project"}`), 0o600))
+			if test.writeMarker {
+				require.NoError(t, os.WriteFile(filepath.Join(staging, rewrite.MarkerFilename), []byte(test.markerValue), 0o600))
+			}
+
+			err := removeStagingDir(destination, source)
+
+			require.Error(t, err)
+			assert.DirExists(t, staging, "a refused staging directory must remain on disk")
+			assert.FileExists(t, filepath.Join(staging, "session.json"))
+		})
+	}
+}
+
+// TestRemoveStagingDir_ReconcilesOwnStrandedStaging proves removeStagingDir
+// deletes a staging directory whose marker content matches the passed
+// source: a stranded copy from this exact promotion is safe to discard so a
+// retry restarts from a clean copy — the crash-safe convergence path.
+func TestRemoveStagingDir_ReconcilesOwnStrandedStaging(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "new-project")
+	source := filepath.Join(root, "old-project")
+	staging := destination + rewrite.StagingSuffix
+	require.NoError(t, os.MkdirAll(staging, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(staging, "partial"), []byte("partial"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(staging, rewrite.MarkerFilename), []byte(source), 0o600))
+
+	err := removeStagingDir(destination, source)
+
+	require.NoError(t, err)
+	assert.NoDirExists(t, staging)
+}
+
+// TestRemoveStagingDir_AbsentStagingIsNoOp proves removeStagingDir returns
+// nil, not an error, when nothing is stranded at the staging path.
+func TestRemoveStagingDir_AbsentStagingIsNoOp(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "new-project")
+
+	err := removeStagingDir(destination, filepath.Join(root, "old-project"))
+
+	require.NoError(t, err)
 }

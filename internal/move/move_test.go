@@ -248,6 +248,11 @@ func TestClaudeMove_DryRunLeavesStrandedStagingForApply(t *testing.T) {
 	staging := home.ProjectDir(newPath) + rewrite.StagingSuffix
 	require.NoError(t, os.MkdirAll(staging, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(staging, "partial"), []byte("partial"), 0o600))
+	// The marker simulates a crash between PromoteDir's marker write and its
+	// final rename — the only window where a stranded staging directory is
+	// provably cc-port's own artifact; removeStagingDir now refuses to
+	// delete a staging directory that lacks it.
+	require.NoError(t, os.WriteFile(filepath.Join(staging, rewrite.MarkerFilename), []byte(home.ProjectDir(oldPath)), 0o600))
 
 	plan, err := move.DryRun(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
@@ -271,6 +276,10 @@ func TestClaudeMoveApply_RemovesStagingDirectoryBeforePromoting(t *testing.T) {
 	staging := home.ProjectDir(newPath) + ".cc-port-staging.tmp"
 	require.NoError(t, os.MkdirAll(staging, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(staging, "partial"), []byte("partial"), 0o600))
+	// See TestClaudeMove_DryRunLeavesStrandedStagingForApply: the marker
+	// simulates the only crash window where a stranded staging directory is
+	// provably cc-port's own.
+	require.NoError(t, os.WriteFile(filepath.Join(staging, rewrite.MarkerFilename), []byte(home.ProjectDir(oldPath)), 0o600))
 
 	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 

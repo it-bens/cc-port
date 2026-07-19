@@ -97,11 +97,19 @@ func PromoteDir(
 		}
 		return os.RemoveAll(staging)
 	})
-	if err := copyDir(ctx, source, staging, nil); err != nil {
-		return fmt.Errorf("stage copy to %s: %w", staging, err)
+	// The marker is written before the copy, not after: a crash mid-copy must
+	// still strand a staging directory that carries it, so a later ownership
+	// check (marker content == source) can tell a genuine cc-port stranded
+	// copy — safe to delete and retry — from a foreign directory that merely
+	// collides with the staging suffix.
+	if err := os.MkdirAll(staging, 0o755); err != nil { //nolint:gosec // G301: matches fsutil.CopyDir's own destination-root permission
+		return fmt.Errorf("create staging directory %s: %w", staging, err)
 	}
 	if err := os.WriteFile(filepath.Join(staging, MarkerFilename), []byte(source), 0o600); err != nil {
 		return fmt.Errorf("write promotion marker for %s: %w", destination, err)
+	}
+	if err := copyDir(ctx, source, staging, nil); err != nil {
+		return fmt.Errorf("stage copy to %s: %w", staging, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("promote %s to %s: %w", staging, destination, err)

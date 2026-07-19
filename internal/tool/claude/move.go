@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -29,6 +30,14 @@ var ErrEncodedDirCollision = errors.New("refusing to move: new project directory
 // ErrResidualSourceDir is returned when the encoded project data is already
 // removed but the on-disk source directory cannot be deleted.
 var ErrResidualSourceDir = errors.New("on-disk source directory still present")
+
+// ErrEncodedDirStagingCollision is returned when the old project's encoded
+// directory is identical to the new project's staging sibling (newEncodedDir
+// + rewrite.StagingSuffix). Reconciling that staging path before promotion
+// would delete the old project's real encoded data, not foreign debris —
+// refused before any surface runs, mirroring internal/move's physical-path
+// guard for the same pathological geometry.
+var ErrEncodedDirStagingCollision = errors.New("refusing to move: old encoded project directory is new encoded directory's staging sibling")
 
 var removeAll = os.RemoveAll
 
@@ -166,6 +175,9 @@ func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string) error {
 			ErrEncodedDirAmbiguous, oldPath, newPath, filepath.Base(newEncodedDir),
 		)
 	}
+	if oldEncodedDir == newEncodedDir+rewrite.StagingSuffix {
+		return fmt.Errorf("%w: %s would be deleted as %s's staging sibling", ErrEncodedDirStagingCollision, oldEncodedDir, newEncodedDir)
+	}
 	state, err := classifyDestination(oldEncodedDir, newEncodedDir)
 	if err != nil {
 		return fmt.Errorf("stat new project directory %s: %w", newEncodedDir, err)
@@ -212,11 +224,100 @@ func classifyDestination(source, destination string) (destinationState, error) {
 	return destinationResume, nil
 }
 
-func removeStagingDir(destination string) error {
-	if err := os.RemoveAll(destination + rewrite.StagingSuffix); err != nil {
-		return fmt.Errorf("remove staging directory %s: %w", destination+rewrite.StagingSuffix, err)
+// removeStagingDir reconciles a stranded staging directory before its
+// promote runs, using two independent ownership proofs and refusing when
+// neither holds:
+//
+//   - Empty: rewrite.PromoteDir creates the staging directory before it
+//     writes the marker, so a crash in that narrow window strands an empty,
+//     unmarked directory. An empty directory holds no data, so it is always
+//     safe to reconcile regardless of marker state.
+//   - Marker match: for anything non-empty, rewrite.VerifyPromotedFrom(source,
+//     staging) is the only ownership proof. PromoteDir writes the marker
+//     before copying, so both a completed staging and a crash-stranded
+//     partial copy for THIS move carry a marker whose content equals source,
+//     and both are reconciled (deleted, so the promote restarts from a clean
+//     copy — the crash-safe convergence path).
+//
+// A non-empty directory that fails the marker match — a foreign directory,
+// or a currently-locatable real project that happens to sit at the staging
+// path — is refused rather than deleted: deleting foreign data at this path
+// is exactly the silent-loss failure this guard exists to prevent. The
+// marker match is deliberately the only ownership test; a separate
+// project-locatability check is not added on top of it, since that would
+// give the encoded-dir and physical-dir call sites inconsistent refusal
+// semantics for the same underlying geometry. staging equaling source is
+// checked explicitly for a precise message, even though it would also fail
+// the marker check (the caller's move-source/staging-suffix collision
+// precondition should already have refused this before any surface ran;
+// checked again here as a second, independent line of defense).
+//
+// Accepted residual: if the copied source itself contains a top-level
+// regular file literally named rewrite.MarkerFilename, fsutil.CopyDir's
+// truncating write overwrites the pre-written marker with that file's
+// content, so the staging then fails VerifyPromotedFrom and is refused —
+// never wrongly deleted, the fail-safe direction. Hardening the marker
+// write against a same-named source entry is out of scope here.
+//
+// The removal is deliberately not made undoable through the Restorer:
+// backing up an arbitrarily large directory to make this reversible is
+// worse than simply never deleting non-owned data.
+func removeStagingDir(destination, source string) error {
+	staging := destination + rewrite.StagingSuffix
+	info, err := os.Stat(staging)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat staging directory %s: %w", staging, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("refusing to remove staging path %s: not a directory", staging)
+	}
+	if staging == source {
+		return fmt.Errorf("refusing to remove move source as staging: %s", staging)
+	}
+	empty, err := isEmptyDir(staging)
+	if err != nil {
+		return fmt.Errorf("inspect staging directory %s: %w", staging, err)
+	}
+	if !empty {
+		promoted, err := rewrite.VerifyPromotedFrom(source, staging)
+		if err != nil {
+			return fmt.Errorf("verify staging ownership %s: %w", staging, err)
+		}
+		if !promoted {
+			return fmt.Errorf("refusing to remove staging directory %s: not provably cc-port's staging for %s (no matching promotion marker)", staging, source)
+		}
+	}
+	if err := os.RemoveAll(staging); err != nil {
+		return fmt.Errorf("remove staging directory %s: %w", staging, err)
 	}
 	return nil
+}
+
+// isEmptyDir reports whether dir contains no entries. It reads at most one
+// directory entry rather than the full listing, so probing a potentially
+// huge foreign directory stays cheap.
+func isEmptyDir(dir string) (empty bool, err error) {
+	handle, openErr := os.Open(dir) //nolint:gosec // G304: dir is a caller-supplied, already-validated staging path
+	if openErr != nil {
+		return false, fmt.Errorf("open %s: %w", dir, openErr)
+	}
+	defer func() {
+		if closeErr := handle.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close %s: %w", dir, closeErr))
+		}
+	}()
+
+	names, readErr := handle.Readdirnames(1)
+	if readErr != nil {
+		if errors.Is(readErr, io.EOF) {
+			return true, nil
+		}
+		return false, fmt.Errorf("read %s: %w", dir, readErr)
+	}
+	return len(names) == 0, nil
 }
 
 // snapshotPaths returns every snapshot file path under locations.FileHistoryDirs.
@@ -755,7 +856,7 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 	oldProjectDir := workspace.home.ProjectDir(req.OldPath)
 	newProjectDir := workspace.home.ProjectDir(req.NewPath)
 
-	if err := removeStagingDir(newProjectDir); err != nil {
+	if err := removeStagingDir(newProjectDir, oldProjectDir); err != nil {
 		return fmt.Errorf("reconcile project data staging: %w", err)
 	}
 	if err := promoteOrResume(ctx, oldProjectDir, newProjectDir, undo); err != nil {
@@ -763,7 +864,7 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 	}
 
 	if !req.RefsOnly {
-		if err := removeStagingDir(req.NewPath); err != nil {
+		if err := removeStagingDir(req.NewPath, req.OldPath); err != nil {
 			return fmt.Errorf("reconcile on-disk project staging: %w", err)
 		}
 		if err := promoteOrResume(ctx, req.OldPath, req.NewPath, undo); err != nil {

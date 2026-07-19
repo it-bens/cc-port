@@ -147,11 +147,14 @@ any other way fails the check.
 
 ### Directory promotion
 
-`PromoteDir` copies `source` into a sibling `<destination>.cc-port-staging.tmp`
-directory, writes `.cc-port-promoted-from` inside the staging directory, then
-renames it onto `destination`. The rename publishes a fully marked destination
-in one operation, and a mid-copy failure never leaves a partial directory at
-the real destination path. `move`'s project-directory surface is its only caller
+`PromoteDir` creates a sibling `<destination>.cc-port-staging.tmp` directory,
+writes `.cc-port-promoted-from` inside it, copies `source` into it, then
+renames the staging directory onto `destination`. Writing the marker before
+the copy means a crash mid-copy still strands a staging directory
+attributable to this promotion, whether or not the copy itself finished. The
+rename still publishes a fully marked destination in one operation, and a
+mid-copy failure never leaves a partial directory at the real destination
+path. `move`'s project-directory surface is its only caller
 ([`internal/tool/claude/README.md`](../tool/claude/README.md) §Apply
 contract (move)); `import` still promotes through `SafeRenamePromoter`, not
 this primitive.
