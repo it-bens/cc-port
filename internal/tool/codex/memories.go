@@ -44,9 +44,9 @@ const (
 // countMemoriesDB reports how many text-column occurrences a move would
 // rewrite across every discovered memories_*.sqlite database. It uses
 // read-only SELECT counts: raw_memory and rollout_summary are free-text prose,
-// so countTextRows performs the same boundary-aware path scan as Apply's
-// RewriteTextColumn logic rather than the exact/prefix predicate used for
-// path-shaped columns.
+// so sqlrewrite.CountTextColumnRO performs the same boundary-aware path scan
+// as Apply's RewriteTextColumn logic rather than the exact/prefix predicate
+// used for path-shaped columns.
 func countMemoriesDB(sqliteDir, oldPath, newPath string) (int, error) {
 	databases, err := discoverDatabases(sqliteDir, memoriesDBGlob)
 	if err != nil {
@@ -76,7 +76,7 @@ func countMemoriesDBFile(path, oldPath, _ string) (int, error) {
 func countMemoriesDBReadOnly(database *sql.DB, oldPath string) (int, error) {
 	total := 0
 	for _, column := range []string{stage1RawMemoryColumn, stage1RolloutSummaryColumn} {
-		count, err := countTextRows(database, stage1OutputsTable, column, oldPath)
+		count, err := sqlrewrite.CountTextColumnRO(database, stage1OutputsTable, column, oldPath)
 		if err != nil {
 			return 0, fmt.Errorf("count stage1_outputs.%s: %w", column, err)
 		}

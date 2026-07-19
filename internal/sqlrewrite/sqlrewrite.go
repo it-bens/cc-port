@@ -4,7 +4,9 @@ package sqlrewrite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,11 +19,34 @@ import (
 
 const minimumSQLiteVersion = "3.51.3"
 
-// maxTextValueBytes bounds a single TEXT/BLOB value RewriteTextColumn will
-// materialize. Real path-bearing Codex metadata is a few KiB; this 16 MiB
-// ceiling leaves generous headroom while refusing a hostile/corrupted value
-// that could exhaust memory during a move.
+// maxTextValueBytes bounds a single TEXT/BLOB value RewriteTextColumn and
+// CountTextColumnRO will materialize. Real path-bearing Codex metadata is a
+// few KiB; this 16 MiB ceiling leaves generous headroom while refusing a
+// hostile/corrupted value that could exhaust memory during a move or its
+// preceding read-only dry run.
 const maxTextValueBytes = 16 << 20
+
+// ErrTextValueTooLarge is returned by RewriteTextColumn and CountTextColumnRO
+// when a candidate TEXT/BLOB value exceeds maxTextValueBytes; both refuse
+// before materializing the value in Go memory.
+var ErrTextValueTooLarge = errors.New("SQLite text value exceeds byte cap")
+
+// FileDSN encodes path as a `file:` URL DSN carrying params as its query
+// string, so a path containing '?' or other DSN-significant bytes opens the
+// intended file rather than being truncated at the first such byte. Query
+// keys are sorted so the DSN is deterministic across calls with the same
+// params.
+func FileDSN(path string, params map[string]string) string {
+	fileURL := &url.URL{Scheme: "file", Path: path}
+	if len(params) > 0 {
+		query := url.Values{}
+		for key, value := range params {
+			query.Set(key, value)
+		}
+		fileURL.RawQuery = query.Encode()
+	}
+	return fileURL.String()
+}
 
 // DB is a SQLite database opened with cc-port's rewrite safety envelope.
 type DB struct {
@@ -36,7 +61,7 @@ type Tx struct {
 // Open opens path with a zero busy timeout and folds its WAL into the main
 // database before any caller can observe its contents.
 func Open(path string) (*DB, error) {
-	database, err := sql.Open("sqlite", path)
+	database, err := sql.Open("sqlite", FileDSN(path, nil))
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database %q: %w", path, err)
 	}
@@ -178,6 +203,67 @@ func (database *DB) RewritePathColumn(transaction *Tx, table, column, oldPath, n
 	return int(count), nil
 }
 
+// CountTextColumnRO counts rows whose TEXT/BLOB column contains a bounded
+// reference to oldPath, refusing any candidate value larger than the shared
+// per-value cap before materializing it.
+func CountTextColumnRO(database *sql.DB, table, column, oldPath string) (int, error) {
+	if err := validatePathArguments(oldPath, oldPath); err != nil {
+		return 0, err
+	}
+	if database == nil {
+		return 0, fmt.Errorf("count SQLite text column: database is nil")
+	}
+	if err := requireColumns(database, table, column); err != nil {
+		return 0, err
+	}
+
+	// #nosec G201 -- table and column names are quoted identifiers, never values.
+	guardQuery := fmt.Sprintf(
+		"SELECT octet_length(%s) FROM %s WHERE instr(%s, ?) > 0 AND octet_length(%s) > ? LIMIT 1",
+		quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column),
+	)
+	var byteCount int64
+	switch err := database.QueryRowContext(context.Background(), guardQuery, oldPath, maxTextValueBytes).Scan(&byteCount); {
+	case err == nil:
+		return 0, fmt.Errorf(
+			"%w: %s.%s is %d bytes, exceeding the %d byte cap",
+			ErrTextValueTooLarge, table, column, byteCount, maxTextValueBytes,
+		)
+	case !errors.Is(err, sql.ErrNoRows):
+		return 0, fmt.Errorf("guard text values in %s.%s: %w", table, column, err)
+	}
+
+	// #nosec G201 -- table and column names are quoted identifiers, never values.
+	selectQuery := fmt.Sprintf(
+		"SELECT %s FROM %s WHERE instr(%s, ?) > 0",
+		quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column),
+	)
+	rows, err := database.QueryContext(context.Background(), selectQuery, oldPath)
+	if err != nil {
+		return 0, fmt.Errorf("count text values in %s.%s: %w", table, column, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	count := 0
+	for rows.Next() {
+		var value any
+		if err := rows.Scan(&value); err != nil {
+			return 0, fmt.Errorf("read text value from %s.%s: %w", table, column, err)
+		}
+		matches, err := countPathInSQLiteValue(value, oldPath)
+		if err != nil {
+			return 0, fmt.Errorf("count text value from %s.%s: %w", table, column, err)
+		}
+		if matches > 0 {
+			count++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("count text values in %s.%s: %w", table, column, err)
+	}
+	return count, nil
+}
+
 // RewriteTextColumn rewrites bounded path references in TEXT or BLOB values
 // and writes each changed row back by its declared primary key.
 func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error) {
@@ -208,8 +294,8 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 			return 0, fmt.Errorf("read text value guard from %s.%s: %w", table, column, err)
 		}
 		overCapErr := fmt.Errorf(
-			"text value in %s.%s at %s=%v is %d bytes, exceeding the %d byte cap",
-			table, column, primaryKeyColumn, primaryKey, byteCount, maxTextValueBytes,
+			"%w: %s.%s at %s=%v is %d bytes, exceeding the %d byte cap",
+			ErrTextValueTooLarge, table, column, primaryKeyColumn, primaryKey, byteCount, maxTextValueBytes,
 		)
 		if err := guardRows.Close(); err != nil {
 			return 0, fmt.Errorf("%w; close text value guard for %s.%s: %w", overCapErr, table, column, err)
@@ -485,5 +571,16 @@ func rewriteSQLiteValue(value any, oldPath, newPath string) (rewrittenValue any,
 		return rewritten, count, nil
 	default:
 		return nil, 0, fmt.Errorf("expected TEXT or BLOB value, got %T", value)
+	}
+}
+
+func countPathInSQLiteValue(value any, oldPath string) (int, error) {
+	switch typed := value.(type) {
+	case string:
+		return rewrite.CountPathInBytes([]byte(typed), oldPath), nil
+	case []byte:
+		return rewrite.CountPathInBytes(typed, oldPath), nil
+	default:
+		return 0, fmt.Errorf("expected TEXT or BLOB value, got %T", value)
 	}
 }

@@ -24,7 +24,7 @@ const (
 // database has a thread whose cwd is oldPath (exact or /-boundary prefix).
 // Identity and planning use read-only SELECTs: threads.cwd uses the
 // exact/prefix predicate, while agent_jobs free-text columns use
-// countTextRows for boundary-aware path counting.
+// sqlrewrite.CountTextColumnRO for boundary-aware path counting.
 func stateDBKnowsProject(sqliteDir, oldPath string) (bool, error) {
 	databases, err := discoverDatabases(sqliteDir, stateDBGlob)
 	if err != nil {
@@ -60,8 +60,8 @@ func stateDBFileKnowsProject(path, oldPath string) (bool, error) {
 // every discovered state_*.sqlite database: threads.cwd plus any
 // agent_jobs path column that references the project path. It uses read-only
 // SELECT counts: threads.cwd uses an exact-or-prefix predicate, while the
-// free-text agent_jobs columns are streamed through countTextRows so their
-// boundary-aware path matches agree with Apply's rewrite logic.
+// free-text agent_jobs columns are streamed through sqlrewrite.CountTextColumnRO
+// so their boundary-aware path matches agree with Apply's rewrite logic.
 func countStateDB(sqliteDir, oldPath, newPath string) (int, error) {
 	databases, err := discoverDatabases(sqliteDir, stateDBGlob)
 	if err != nil {
@@ -94,7 +94,7 @@ func countStateDBReadOnly(database *sql.DB, oldPath string) (int, error) {
 		return 0, fmt.Errorf("count threads.cwd: %w", err)
 	}
 	for _, column := range []string{agentJobsInputCSVColumn, agentJobsOutputCSVColumn} {
-		count, err := countTextRows(database, agentJobsTable, column, oldPath)
+		count, err := sqlrewrite.CountTextColumnRO(database, agentJobsTable, column, oldPath)
 		if err != nil {
 			return 0, fmt.Errorf("count agent_jobs.%s: %w", column, err)
 		}

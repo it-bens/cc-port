@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
@@ -445,7 +446,7 @@ func codexDevWarning(path, oldPath string) (string, error) {
 		if err := requireTableColumn(database, column.table, column.column); err != nil {
 			return fmt.Sprintf("codex-dev.db schema drift (%v); refusing to move", err), nil
 		}
-		matches, queryErr := countTextRows(database, column.table, column.column, oldPath)
+		matches, queryErr := sqlrewrite.CountTextColumnRO(database, column.table, column.column, oldPath)
 		if queryErr != nil {
 			return "", fmt.Errorf("inspect %s.%s in %s: %w", column.table, column.column, path, queryErr)
 		}

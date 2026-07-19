@@ -540,8 +540,12 @@ func TestCountStateDBReadOnlyFailsForMissingAgentJobsColumn(t *testing.T) {
 	_, err = countStateDBReadOnly(database, FixtureProjectPath())
 
 	require.Error(t, err)
-	require.ErrorContains(t, err, "required column agent_jobs.output_csv_path is missing")
-	require.ErrorContains(t, err, "observed columns: id, input_csv_path")
+	// sqlrewrite.CountTextColumnRO now performs this schema check (previously
+	// the codex-local countTextRows/requireTableColumn did), so the failure
+	// carries sqlrewrite's schema-error shape: table name, missing column,
+	// and the observed schema with types and primary-key markers.
+	require.ErrorContains(t, err, `unexpected schema for table "agent_jobs": missing column "output_csv_path"`)
+	require.ErrorContains(t, err, "observed id INTEGER primary-key-1, input_csv_path TEXT")
 }
 
 func TestFinalDatabaseSurfaceLeavesBackupAsWarningWhenCleanupFails(t *testing.T) {

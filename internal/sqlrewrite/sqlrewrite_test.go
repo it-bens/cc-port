@@ -75,6 +75,28 @@ func TestOpenFoldsWALBeforeMainDatabaseIsObserved(t *testing.T) {
 	assert.Equal(t, 1, entryCount(t, afterPath))
 }
 
+func TestFileDSNEncodesQuestionMarkPath(t *testing.T) {
+	weirdDir := filepath.Join(t.TempDir(), "dir?name")
+	require.NoError(t, os.MkdirAll(weirdDir, 0o750))
+	path := filepath.Join(weirdDir, "test.sqlite")
+
+	writer, err := sql.Open("sqlite", FileDSN(path, nil))
+	require.NoError(t, err)
+	require.NoError(t, execute(writer, "CREATE TABLE entries (value TEXT)"))
+	require.NoError(t, execute(writer, "INSERT INTO entries (value) VALUES ('encoded')"))
+	require.NoError(t, writer.Close())
+
+	_, statErr := os.Stat(path)
+	require.NoError(t, statErr, "FileDSN must address the literal path, not a prefix truncated at '?'")
+
+	reader, err := sql.Open("sqlite", FileDSN(path, nil))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	var value string
+	require.NoError(t, reader.QueryRowContext(context.Background(), "SELECT value FROM entries").Scan(&value))
+	assert.Equal(t, "encoded", value)
+}
+
 func TestRewriteTextColumnPreservesTextAndBlobStorage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "text.sqlite")
 	database := openSQLite(t, path)
@@ -157,6 +179,8 @@ func TestRewriteTextColumnRefusesOversizedValues(t *testing.T) {
 	require.NoError(t, err)
 	_, err = rewriter.RewriteTextColumn(transaction, "documents", "id", "text_content", overCapOldPath, overCapNewPath)
 	require.Error(t, err)
+	// RewriteTextColumn and CountTextColumnRO must refuse through the same sentinel.
+	assert.ErrorIs(t, err, ErrTextValueTooLarge)   //nolint:testifylint // require.Error above establishes err.
 	assert.ErrorContains(t, err, "documents")      //nolint:testifylint // require.Error above establishes err.
 	assert.ErrorContains(t, err, "text_content")   //nolint:testifylint // require.Error above establishes err.
 	assert.ErrorContains(t, err, "id=over-cap")    //nolint:testifylint // require.Error above establishes err.
@@ -168,6 +192,22 @@ func TestRewriteTextColumnRefusesOversizedValues(t *testing.T) {
 	query := "SELECT text_content FROM documents WHERE id = 'within-cap'"
 	require.NoError(t, verification.QueryRowContext(context.Background(), query).Scan(&withinCapValue))
 	assert.Equal(t, "prefix "+withinCapNewPath+"/notes", withinCapValue)
+}
+
+func TestCountTextColumnRORefusesOversizedValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oversized-count.sqlite")
+	database := openSQLite(t, path)
+	require.NoError(t, execute(database, "CREATE TABLE documents (id TEXT PRIMARY KEY, text_content TEXT)"))
+	oldPath := "/a/over-cap"
+	overCapValue := oldPath + strings.Repeat("x", 16<<20+1-len(oldPath))
+	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "over-cap", overCapValue))
+	require.NoError(t, database.Close())
+
+	countDatabase := openSQLite(t, path)
+	_, err := CountTextColumnRO(countDatabase, "documents", "text_content", oldPath)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTextValueTooLarge, "CountTextColumnRO must refuse an oversized candidate with the same sentinel RewriteTextColumn uses")
 }
 
 func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {

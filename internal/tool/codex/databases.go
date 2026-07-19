@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,12 +12,11 @@ import (
 
 	"modernc.org/sqlite"
 
-	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/sqlrewrite"
 )
 
 func openReadOnlyDatabase(path string) (*sql.DB, error) {
-	databaseURL := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
-	database, err := sql.Open("sqlite", databaseURL)
+	database, err := sql.Open("sqlite", sqlrewrite.FileDSN(path, map[string]string{"mode": "ro"}))
 	if err != nil {
 		return nil, fmt.Errorf("open read-only SQLite database %s: %w", path, err)
 	}
@@ -91,7 +89,7 @@ func probeDatabaseBusy(path string) (busy bool, err error) {
 	// BEGIN IMMEDIATE needs a write connection to probe Codex's writer lock.
 	// sqlrewrite.Open checkpoints on open, which would mutate the database.
 	// The probe never writes rows: it always rolls the lock transaction back.
-	database, err := sql.Open("sqlite", path)
+	database, err := sql.Open("sqlite", sqlrewrite.FileDSN(path, nil))
 	if err != nil {
 		return false, fmt.Errorf("open %s: %w", path, err)
 	}
@@ -121,42 +119,6 @@ func isSQLiteBusy(err error) bool {
 
 func isSQLiteBusyCode(code int) bool {
 	return code&0xff == sqliteBusyCode
-}
-
-func countTextRows(database *sql.DB, table, column, oldPath string) (int, error) {
-	if err := requireTableColumn(database, table, column); err != nil {
-		return 0, err
-	}
-	// #nosec G201 -- table and column names are adapter constants, not user input.
-	query := fmt.Sprintf(`SELECT %q FROM %q WHERE instr(%q, ?) > 0`, column, table, column)
-	rows, err := database.QueryContext(context.Background(), query, oldPath)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = rows.Close() }()
-	count := 0
-	for rows.Next() {
-		var value any
-		if err := rows.Scan(&value); err != nil {
-			return 0, err
-		}
-		switch typed := value.(type) {
-		case string:
-			if rewrite.CountPathInBytes([]byte(typed), oldPath) > 0 {
-				count++
-			}
-		case []byte:
-			if rewrite.CountPathInBytes(typed, oldPath) > 0 {
-				count++
-			}
-		default:
-			return 0, fmt.Errorf("expected TEXT or BLOB value, got %T", value)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	return count, nil
 }
 
 func requireTableColumn(database *sql.DB, table, column string) error {

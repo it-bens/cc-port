@@ -9,9 +9,13 @@ opens and guards.
 
 ## Public API
 
-- `DB`, `Open(path string) (*DB, error)`: opens `path` with a zero busy
-  timeout and folds its WAL into the main database before any caller can
-  observe its contents.
+- `DB`, `Open(path string) (*DB, error)`: opens `path` (through `FileDSN`)
+  with a zero busy timeout and folds its WAL into the main database before
+  any caller can observe its contents.
+- `FileDSN(path string, params map[string]string) string`: encodes `path` as
+  a `file:` URL DSN carrying `params` as its query string, so a `?` or other
+  DSN-significant byte in `path` still addresses the intended file. Query
+  keys are sorted, so the same `params` always produce the same DSN.
 - `(*DB).Close() error`
 - `(*DB).Begin() (*Tx, error)`, `Tx`, `(*Tx).Commit() error`, `(*Tx).Rollback() error`.
 - `(*DB).CheckpointTruncate() error`: folds the WAL into the main database
@@ -21,9 +25,16 @@ opens and guards.
   caller's read-only connection.
 - `(*DB).RewritePathColumn(tx *Tx, table, column, oldPath, newPath string) (int, error)`:
   rewrites exact and slash-boundary-prefixed path values.
+- `CountTextColumnRO(db *sql.DB, table, column, oldPath string) (int, error)`:
+  counts TEXT or BLOB rows containing a bounded reference to `oldPath` on the
+  caller's read-only connection, sharing `RewriteTextColumn`'s per-value byte
+  cap and refusal.
 - `(*DB).RewriteTextColumn(tx *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error)`:
   streams matching TEXT or BLOB rows, applies `rewrite.ReplacePathInBytes` in
   Go, and writes each changed row back by its declared primary key.
+- `ErrTextValueTooLarge`: the sentinel `RewriteTextColumn` and
+  `CountTextColumnRO` both wrap when a candidate value exceeds the shared
+  byte cap; callers assert against it with `errors.Is`.
 - `(*DB).UpdateColumnsByKey(tx *Tx, table, primaryKeyColumn string, primaryKey any, values map[string]any) (int, error)`:
   updates columns on an existing row identified by its single-column primary
   key; never inserts.
@@ -52,6 +63,36 @@ opens and guards.
 - Verifying the *content* of the WAL-reset fix. The floor is a version-number
   gate; it trusts that `modernc.org/sqlite` correctly implements whatever
   SQLite `3.51.3` fixed, the same way Codex's own pin does.
+
+### DSN construction
+
+**Handled.**
+
+- `FileDSN` builds a `file:` URL through `net/url`, so a `?` inside `path`
+  is percent-encoded as part of the URL's path component rather than left as
+  a literal byte the DSN parser could mistake for the query separator.
+  `Open` calls `FileDSN(path, nil)`; `internal/tool/codex`'s
+  `openReadOnlyDatabase` calls `FileDSN(path, map[string]string{"mode": "ro"})`;
+  its `probeDatabaseBusy` calls `FileDSN(path, nil)` and passes the result to
+  `sql.Open` directly, since it needs a write connection this package's
+  `Open` would checkpoint. `TestFileDSNEncodesQuestionMarkPath` round-trips a
+  table through a path whose directory segment contains `?`.
+- Query keys are sorted (`url.Values.Encode`), so two `FileDSN` calls with
+  the same `params` produce byte-identical DSNs.
+
+**Refused.**
+
+- Handing a raw, non-`file:`-prefixed path straight to `sql.Open`. The
+  `modernc.org/sqlite` driver truncates such a DSN at the first `?` and
+  reinterprets everything after it as query parameters, so a path
+  containing `?` silently opens a different file than the one named. Every
+  connection this package or `internal/tool/codex` opens goes through
+  `FileDSN` instead.
+
+**Not covered.**
+
+- A path byte the underlying filesystem itself rejects. `FileDSN` assumes
+  the OS accepts whatever `path` names; it only protects the DSN parser.
 
 ### Busy handling
 
@@ -129,18 +170,17 @@ opens and guards.
 
 **Not covered.**
 
-- Predicates outside this package. `internal/tool/codex`'s read-only
-  `countTextRows` helper (used for free-text columns like `agent_jobs`'s CSV
-  paths) uses `instr()`, not `LIKE`, for the same reason; it is a separate
-  helper because it does not need this package's transaction or schema
-  machinery.
+- Nothing outside this package. `CountTextColumnRO` and `RewriteTextColumn`
+  both use `instr()`, not `LIKE`, for free-text columns like `agent_jobs`'s
+  CSV paths, and both live here so the count and the rewrite share one
+  predicate and one schema check.
 
 ### Byte-exact predicates and schema validation
 
 **Handled.**
 
-- `CountPathColumnRO`, `RewritePathColumn`, `RewriteTextColumn`, and the
-  generic keyed update (`UpdateColumnsByKey`)
+- `CountPathColumnRO`, `RewritePathColumn`, `CountTextColumnRO`,
+  `RewriteTextColumn`, and the generic keyed update (`UpdateColumnsByKey`)
   call `PRAGMA table_info` first and refuse with the observed schema in the
   error message when a declared column or primary key is missing, so a
   schema surprise fails loudly naming what was actually found rather than
@@ -150,24 +190,25 @@ opens and guards.
 - `RewriteTextColumn` and `UpdateColumnsByKey` additionally require the
   declared primary key column to actually be the table's primary key and
   refuse a composite primary key, since both operations key their per-row
-  update on a single column.
-- `RewriteTextColumn` reads a column's runtime value as `any` and type
-  switches on `string` vs. `[]byte`, so the same code path handles a TEXT
-  column and a BLOB column without the caller declaring which one it is.
-  `TestRewriteTextColumnPreservesTextAndBlobStorage` asserts a BLOB column's
-  binary bytes (including `0x00`) survive the rewrite unchanged outside the
-  rewritten path substring.
+  update on a single column. `CountTextColumnRO` has no per-row update to
+  key, so it validates the column alone and does not take a primary key
+  parameter.
+- `RewriteTextColumn` and `CountTextColumnRO` each read a column's runtime
+  value as `any` and type switch on `string` vs. `[]byte`, so the same
+  column reads correctly whether it is declared TEXT or BLOB, without the
+  caller stating which. `TestRewriteTextColumnPreservesTextAndBlobStorage`
+  asserts a BLOB column's binary bytes (including `0x00`) survive the
+  rewrite unchanged outside the rewritten path substring.
 
 **Refused.**
 
-- `RewriteTextColumn` against a column of any type other than `string` or
-  `[]byte` (TEXT/BLOB): a hard error naming the observed Go type. This check
-  is `RewriteTextColumn`-only, since it is the one operation that reads a
-  row's value back into Go before writing it; `UpdateColumnsByKey` writes
-  caller-supplied values straight through as SQL parameters and does not
-  type-check them.
-- Any of the three path-rewrite operations, or `UpdateColumnsByKey`, against
-  a table or column the schema query does not find, or (for
+- `RewriteTextColumn` or `CountTextColumnRO` against a column of any type
+  other than `string` or `[]byte` (TEXT/BLOB): a hard error naming the
+  observed Go type. This check applies only to the two operations that read
+  a row's value back into Go; `UpdateColumnsByKey` writes caller-supplied
+  values straight through as SQL parameters and does not type-check them.
+- Any of the four read-or-rewrite operations above, or `UpdateColumnsByKey`,
+  against a table or column the schema query does not find, or (for
   `RewriteTextColumn`/`UpdateColumnsByKey`) a primary key column that either
   does not exist or is not actually the table's primary key.
 
@@ -178,6 +219,31 @@ opens and guards.
 - Validating the Go type of a value passed to `UpdateColumnsByKey`. The
   caller is responsible for passing a value the underlying column accepts;
   a wrong type surfaces as whatever error `database/sql` itself returns.
+
+### Bounded value materialization
+
+**Handled.**
+
+- `RewriteTextColumn` and `CountTextColumnRO` share one `maxTextValueBytes`
+  cap (16 MiB) and one `octet_length(...) > ?` guard shape, so a candidate
+  value too large to materialize safely is refused identically whether the
+  caller is planning a move (read-only) or applying one (transactional).
+  Both wrap `ErrTextValueTooLarge`, so a caller checks the refusal with
+  `errors.Is` regardless of which function produced it.
+  `TestRewriteTextColumnRefusesOversizedValues` and
+  `TestCountTextColumnRORefusesOversizedValue` each insert a value one byte
+  over the cap and assert the refusal through that sentinel.
+
+**Refused.**
+
+- Reading an oversized value's full bytes before checking its size. Both
+  functions run the `octet_length` guard as its own query first, so the
+  oversized row's TEXT/BLOB payload is never pulled into Go memory.
+
+**Not covered.**
+
+- A cap tighter than 16 MiB for a specific table or column. The cap is
+  package-wide; no call site can lower it.
 
 ### Update-only mutation
 
@@ -208,8 +274,10 @@ opens and guards.
 
 Unit tests in `sqlrewrite_test.go`: the version-floor drift test, the
 busy-refusal timing test, the checkpoint-on-open test against a fixture
-database with a synthetic `-wal`, `RewriteTextColumn` fixtures covering a
-TEXT and a BLOB column, `UpdateColumnsByKey`'s update-without-insert
-behavior, the path-predicate boundary-parity table shared with
-`rewrite.ReplacePathInBytes`, and the schema-validation refusal naming the
-observed columns.
+database with a synthetic `-wal`, `FileDSN` round-tripping a table through a
+path whose directory segment contains `?`, `RewriteTextColumn` fixtures
+covering a TEXT and a BLOB column, the shared `ErrTextValueTooLarge` refusal
+asserted from both `RewriteTextColumn` and `CountTextColumnRO`,
+`UpdateColumnsByKey`'s update-without-insert behavior, the path-predicate
+boundary-parity table shared with `rewrite.ReplacePathInBytes`, and the
+schema-validation refusal naming the observed columns.
