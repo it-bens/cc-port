@@ -8,6 +8,7 @@ cc-port/
 ├── internal/
 │   ├── archive/            ZIP layout shared by every tool: <tool>/ prefixes, entry caps,
 │   │                       os.Root containment, placeholder substitution
+│   ├── credentials/        Layered remote-credential resolution: env, file, echo-suppressed TTY prompt
 │   ├── encrypt/            Age encrypt and decrypt stages for the pipeline runner
 │   ├── export/             Generic export orchestration: one archive across every target
 │   ├── file/               Pipeline source/sink stages for local filesystem I/O

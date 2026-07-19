@@ -1,5 +1,9 @@
 # cmd/cc-port agent notes
 
+## Before editing
+
+- Give each command constructor its own flag storage; never reintroduce a package-level flag var shared across command constructors. (README §Constructor isolation)
+
 ## Pointer map
 
 - Composition root and persistent flags: `main.go:newRootCmd`, `tools.go:newToolSet`, `toolselect.go:registerToolFlags` (README §Tool registry and target resolution)

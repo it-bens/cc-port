@@ -6,8 +6,10 @@ Models Claude Code's on-disk data layout. Encodes project paths into the
 `~/.claude/projects/<encoded>/` directory name and enumerates the files
 that belong to one project.
 
-Not a rewriting package. The module produces locations and types.
-`internal/move`, `internal/export`, and `internal/importer` drive the mutations.
+It also implements the tool contract's move, export, import, and stats
+surfaces. The path-rewriting and staging logic for Claude lives here. The
+generic `internal/move`, `internal/export`, and `internal/importer` packages
+drive it through the contract without knowing Claude's on-disk shape.
 
 ## Public API
 
@@ -368,12 +370,12 @@ observable limit stays consistent across commands.
 
 - `bufio.Scanner` readers call `scanner.Buffer(make([]byte, 64<<10),
   MaxHistoryLine)`: `countHistoryEntries` here, `move.scanHistoryFile`, and
-  `stats.countHistoryReferences`. The buffer starts at 64 KiB and grows only
-  up to the cap.
+  `stats.countHistoryReferences`. The export path `writeJSONLFile` reaches the
+  same cap through `archive.Sink.WriteJSONL`, which scans each line with
+  `MaxHistoryLine`. The buffer starts at 64 KiB and grows only up to the cap.
 - `bufio.Reader` readers wrap `bufio.NewReaderSize(src, 64<<10)`, read each
   line with `ReadBytes('\n')`, and reject any line longer than
-  `MaxHistoryLine`: `StreamHistoryJSONL` (move's rewrite path) and
-  `export.writeJSONLToZip` (the export path).
+  `MaxHistoryLine`: `StreamHistoryJSONL` (move's rewrite path).
 - Both mechanisms report an oversized line as `bufio.ErrTooLong`, wrapped
   with `%w` so a caller reaches it through `errors.Is`.
 
