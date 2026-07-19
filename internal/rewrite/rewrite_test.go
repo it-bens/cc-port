@@ -598,6 +598,30 @@ func TestCountPathInBytesWithJSONEscape(t *testing.T) {
 	})
 }
 
+func TestRewrite_IsArtifactPath(t *testing.T) {
+	tests := []struct {
+		name string
+		base string
+		want bool
+	}{
+		{name: "staging suffix", base: "myproject.cc-port-staging.tmp", want: true},
+		{name: "rollback suffix", base: "MEMORY.md.cc-port-rollback.tmp", want: true},
+		{name: "import staging suffix", base: "config.toml.cc-port-import.tmp", want: true},
+		{name: "safe-write temp prefix", base: ".tmp-123456789", want: true},
+		{name: "bare suffix with no real name", base: ".cc-port-rollback.tmp", want: true},
+		{name: "lookalike suffix with trailing byte is rejected", base: "foo.cc-port-rollback.tmpx", want: false},
+		{name: "ordinary memory file", base: "MEMORY.md", want: false},
+		{name: "ordinary directory", base: "myproject", want: false},
+		{name: "empty base", base: "", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, rewrite.IsArtifactPath(test.base))
+		})
+	}
+}
+
 // TestCountPathAgreesWithReplace pins the count primitives to the replacers
 // they mirror: each must report exactly the replacement count its Replace
 // counterpart produces when rewriting the path onto itself. A drift in either

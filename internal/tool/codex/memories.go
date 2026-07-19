@@ -24,7 +24,10 @@ const memoriesWorktreeSubdir = "memories"
 // hasNoRemoteGitBaseline.
 const gitDirName = ".git"
 
-const gitBackupSuffix = ".cc-port-rollback.tmp"
+// gitBackupSuffix reuses rewrite.RollbackSuffix: both the Restorer's file
+// sibling and this git baseline backup are cc-port rollback artifacts,
+// single-sourced under one constant.
+const gitBackupSuffix = rewrite.RollbackSuffix
 
 // Depended-on stage1_outputs columns (state/memory_migrations/0001_memories.sql):
 // raw_memory and rollout_summary hold natural-language prose that can

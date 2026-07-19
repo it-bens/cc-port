@@ -16,8 +16,10 @@ import (
 const siblingBackupThreshold = 1 << 20 // 1 MiB
 
 // siblingSuffix names the sibling rollback file RegisterFile writes next to
-// any tracked target above siblingBackupThreshold.
-const siblingSuffix = ".cc-port-rollback.tmp"
+// any tracked target above siblingBackupThreshold. It reuses
+// rewrite.RollbackSuffix, cc-port's single source of truth for its own
+// rollback-artifact naming.
+const siblingSuffix = rewrite.RollbackSuffix
 
 // Restorer collects rollback state for one Surface Apply pass. File
 // surfaces call RegisterFile before overwriting a path in place; a future

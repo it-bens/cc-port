@@ -485,13 +485,18 @@ func (p *SafeRenamePromoter) rollbackEntry(entry *renameEntry) error {
 	return nil
 }
 
+// SafeWriteTempPrefix is the prefix SafeWriteFile passes to os.CreateTemp.
+// os.CreateTemp appends its own random suffix, so IsArtifactPath matches
+// this as a name prefix rather than a fixed whole-name suffix.
+const SafeWriteTempPrefix = ".tmp-"
+
 // SafeWriteFile writes data to a temporary file in the same directory as path,
 // then renames it to path. This provides an atomic write on most file systems.
 // The temporary file is removed on error.
 func SafeWriteFile(path string, data []byte, permissions os.FileMode) error {
 	directory := filepath.Dir(path)
 
-	temporaryFile, err := os.CreateTemp(directory, ".tmp-")
+	temporaryFile, err := os.CreateTemp(directory, SafeWriteTempPrefix)
 	if err != nil {
 		return fmt.Errorf("create temporary file: %w", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
+	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
 // dirPerm is the mode used for directories archive staging creates. 0o755
@@ -17,9 +18,10 @@ const dirPerm = os.FileMode(0o755)
 
 // stagingSuffix is appended to every final destination to form its temp
 // path. Import writes to temp paths first, then atomically promotes them.
-// The suffix is distinctive enough to survive casual filesystem inspection
-// if a crash ever leaves one behind.
-const stagingSuffix = ".cc-port-import.tmp"
+// It reuses rewrite.ImportStagingSuffix, cc-port's single source of truth
+// for its own artifact naming; the suffix is distinctive enough to survive
+// casual filesystem inspection if a crash ever leaves one behind.
+const stagingSuffix = rewrite.ImportStagingSuffix
 
 // Staged is one artifact a tool's Stage produced: a temp path that a
 // rewrite.SafeRenamePromoter will later rename onto Final.

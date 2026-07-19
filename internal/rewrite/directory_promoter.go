@@ -7,11 +7,41 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // StagingSuffix names the sibling staging directory PromoteDir copies into
 // before the final rename.
 const StagingSuffix = ".cc-port-staging.tmp"
+
+// RollbackSuffix names cc-port's own rollback-artifact suffix: the sibling
+// backup file tool.Restorer writes next to a large tracked file before
+// overwriting it in place, and the sibling backup directory Codex's move
+// surface writes before touching the memories worktree's git baseline.
+const RollbackSuffix = ".cc-port-rollback.tmp"
+
+// ImportStagingSuffix names the sibling temp path archive staging writes to
+// before atomically promoting an imported entry onto its final destination.
+const ImportStagingSuffix = ".cc-port-import.tmp"
+
+// artifactSuffixes are the whole-base-name suffixes IsArtifactPath matches.
+// SafeWriteTempPrefix is matched separately, as a prefix rather than a suffix.
+var artifactSuffixes = []string{StagingSuffix, RollbackSuffix, ImportStagingSuffix}
+
+// IsArtifactPath reports whether base — a single path component, not a full
+// path — names one of cc-port's own transient files or directories.
+// Discovery walks must exclude these; they are never tool data.
+func IsArtifactPath(base string) bool {
+	if strings.HasPrefix(base, SafeWriteTempPrefix) {
+		return true
+	}
+	for _, suffix := range artifactSuffixes {
+		if strings.HasSuffix(base, suffix) {
+			return true
+		}
+	}
+	return false
+}
 
 // MarkerFilename names the promotion marker file written inside a staging
 // directory before its rename publishes the destination. Its content records
