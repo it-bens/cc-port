@@ -73,7 +73,7 @@ func TestRunWithProgress_JSONModeEmitsEventObjectsThroughSink(t *testing.T) {
 	require.NoError(t, err)
 
 	rendered := readSink(t, sinkPath)
-	assert.Contains(t, rendered, `{"v":1,`)
+	assert.Contains(t, rendered, `{"event":`)
 	assert.Contains(t, rendered, `"event":"phase_start"`)
 	assert.Contains(t, rendered, `"event":"phase_end"`)
 }

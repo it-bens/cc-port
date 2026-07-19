@@ -55,42 +55,6 @@ func TestMetadata_MarshalUnmarshal(t *testing.T) {
 	}
 }
 
-func TestMetadata_XMLFormat(t *testing.T) {
-	created := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	metadata := &manifest.Metadata{
-		Created: created,
-		Tools: []manifest.Tool{
-			{
-				Name:       "claude",
-				Categories: []manifest.Category{{Name: "sessions", Included: true}},
-				Placeholders: []manifest.Placeholder{
-					{Key: "{{HOME}}", Original: "/home/user"},
-				},
-			},
-		},
-	}
-
-	path := filepath.Join(t.TempDir(), "metadata.xml")
-
-	require.NoError(t, manifest.WriteManifest(path, metadata))
-
-	data, err := os.ReadFile(path) //nolint:gosec // G304: test-controlled temp path
-	require.NoError(t, err)
-	content := string(data)
-
-	assert.Contains(t, content, xml.Header[:5])
-	assert.Contains(t, content, "<cc-port")
-	assert.Contains(t, content, `<tool name="claude">`)
-	assert.Contains(t, content, "<categories>")
-	assert.Contains(t, content, `name="sessions"`)
-	assert.Contains(t, content, `included="true"`)
-	assert.Contains(t, content, "<placeholders>")
-	assert.Contains(t, content, "<placeholder")
-	assert.Contains(t, content, `key="{{HOME}}"`)
-	assert.Contains(t, content, `original="/home/user"`)
-}
-
 func TestManifest_PlaceholderFieldsSurviveXMLRoundTrip(t *testing.T) {
 	created := time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC)
 

@@ -7,12 +7,8 @@ import (
 	"sync"
 )
 
-// jsonSchemaVersion is the "v" field stamped on every emitted object. Bump it
-// only on a breaking schema change.
-const jsonSchemaVersion = 1
-
-// JSONRenderer emits one schema-stable JSON object per event, newline
-// delimited. It is selected by --json regardless of TTY.
+// JSONRenderer emits one JSON object per event, newline delimited. It is
+// selected by --json regardless of TTY.
 type JSONRenderer struct {
 	mutex    sync.Mutex
 	encoder  *json.Encoder
@@ -21,9 +17,8 @@ type JSONRenderer struct {
 }
 
 // jsonEvent is the wire shape. Fields are omitempty so each event carries only
-// its relevant keys; "v" and "event" are always present.
+// its relevant keys; "event" is always present.
 type jsonEvent struct {
-	Version  int      `json:"v"`
 	Event    string   `json:"event"`
 	Path     []string `json:"path,omitempty"`
 	Total    int64    `json:"total,omitempty"`
@@ -43,12 +38,12 @@ func NewJSONRenderer(writer io.Writer) *JSONRenderer {
 	return &JSONRenderer{encoder: json.NewEncoder(writer)}
 }
 
-// Consume emits one schema-stable JSON object for the event.
+// Consume emits one JSON object for the event.
 func (renderer *JSONRenderer) Consume(event Event) {
 	renderer.mutex.Lock()
 	defer renderer.mutex.Unlock()
 
-	record := jsonEvent{Version: jsonSchemaVersion}
+	record := jsonEvent{}
 	switch typed := event.(type) {
 	case PhaseStart:
 		renderer.phase.start(typed)

@@ -108,9 +108,6 @@ its `Export`/`Placeholders` composition in `internal/export`) and
 - Manifest tool blocks that declare a name outside that tool's registered
   categories. Unknown names hard-fail; there is no warn-and-continue path.
 - Duplicate category names within one tool's block.
-- Rewriting the XML wire schema for `Metadata` / `Tool` / `Category` /
-  `Placeholder`. Field names and XML tags must stay byte-identical on the
-  wire. Archives in the wild would otherwise fail to parse.
 
 #### Not covered
 
@@ -156,8 +153,8 @@ Unit tests in `categories_test.go` and `manifest_test.go`:
   one tool's block.
 - `UnregisteredToolError`'s message.
 - `WriteManifest`/`ReadManifest`/`ReadManifestFromZip` round-trip including
-  XML format stability, the multi-tool `<tool>` block shape, the sync-field
-  round trip and their omission when unset, and `(*Metadata).ToolBlock`.
+  the `<tool>` block shape, the sync-field round trip and their omission
+  when unset, and `(*Metadata).ToolBlock`.
 - Oversize-rejection tests for both `ReadManifest` and `ReadManifestFromZip`
   asserting the 4 MiB cap.
 - `ReadManifestFromZip`'s nil-source refusal.
