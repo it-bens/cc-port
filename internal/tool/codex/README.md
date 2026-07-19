@@ -278,6 +278,14 @@ shapes themselves.
   the live machine's own trust decisions to match the renamed project; that
   is a distinct concern from export/import, which would carry trust across
   machines.
+- A move also relocates any project-local `hooks.state` trust key whose hook
+  source lived under the moved project: `TOMLPathRewrite` rewrites the key's
+  path prefix so the entry stays addressable under the new path. Codex hashes
+  hook trust over the hook's command identity, not its source path, so the
+  relocated entry's `trusted_hash` still matches and the move relocates trust
+  the user already granted rather than porting or re-establishing it. This is
+  a same-machine relocation, distinct from the never-ported cross-machine
+  decision below.
 
 **Refused.**
 

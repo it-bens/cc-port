@@ -141,6 +141,27 @@ func TestConfigSurfacePreservesCommentsAndOtherProjectsKey(t *testing.T) {
 	assert.Contains(t, content, "/Users/fixture/other-project", "unrelated project's key untouched")
 }
 
+func TestApplyConfigTOMLFileRewritesProjectLocalHookStateKey(t *testing.T) {
+	oldPath := FixtureProjectPath()
+	newPath := "/Users/fixture/renamed-project"
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := "[projects.\"" + oldPath + "\"]\ntrust_level = \"trusted\"\n\n" +
+		"[hooks.state.\"" + oldPath + "/.codex/hooks.toml:pre_tool_use:0:0\"]\n" +
+		"enabled = true\ntrusted_hash = \"sha256:abc\"\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	count, err := applyConfigTOMLFile(path, oldPath, newPath, tool.NewRestorer())
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "the projects key and the project-local hooks.state key both rewrite")
+	rewritten, err := os.ReadFile(path) //nolint:gosec // G304: path under t.TempDir()
+	require.NoError(t, err)
+	assert.Contains(t, string(rewritten),
+		"[hooks.state.\""+newPath+"/.codex/hooks.toml:pre_tool_use:0:0\"]",
+		"the project-local hook trust key is relocated with the project")
+	assert.NotContains(t, string(rewritten), oldPath, "no reference to the old project path survives")
+}
+
 func TestMemoriesWorktreeGitBaselineDeletedWhenNoRemote(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	gitDir := filepath.Join(home.Dir, memoriesWorktreeSubdir, gitDirName)

@@ -99,26 +99,31 @@ rewriting sentence-ending prose references.
 
 ### TOML boundary rules
 
-Codex stores project paths inside TOML table keys (`[projects."<path>"]`)
-and preserves comments and formatting when it edits its own config. Go has
-no `toml_edit`-equivalent library, and re-emitting a parsed document would
-destroy that formatting, so `TOMLPathRewrite` performs the same
-boundary-aware byte replacement as `ReplacePathInBytes` and then validates
-the result rather than re-serializing it: input parses as TOML, output
-parses as TOML, and the multiset of full dotted key paths is unchanged
-except the expected renames at rewritten `projects` sub-keys.
+Codex stores project paths inside TOML table keys: the canonical
+`[projects."<path>"]` trust table, and any project-local
+`[hooks.state."<path>:<event>:<group>:<handler>"]` entry whose hook source
+sits under the project. Codex preserves comments and formatting when it edits
+its own config. Go has no `toml_edit`-equivalent library, and re-emitting a
+parsed document would destroy that formatting, so `TOMLPathRewrite` performs
+the same boundary-aware byte replacement as `ReplacePathInBytes` and then
+validates the result rather than re-serializing it: input parses as TOML,
+output parses as TOML, and the multiset of full dotted key paths matches the
+one produced by applying the project-path substitution to every key segment.
+A key carrying the old project path is expected to change; a key that changes
+any other way fails the check.
 
 #### Handled
 
 - A project table key (`[projects."/old/path"]`) and a project path value
   elsewhere in the document (for example under `[hooks]`) both rewrite in
   one call, with every comment and blank line preserved verbatim.
-- The key-path-multiset check catches a rewrite that accidentally changed a
-  key outside the `projects` table: `TestTOMLPathRewriteRejectsKeyChangesOutsideProjects`
-  asserts a byte-level match that happens to land on a non-`projects` key
-  name is refused rather than silently accepted.
+- A project-local `hooks.state` key whose hook-source prefix is the old
+  project path: rewritten exactly as its bytes are, so the entry stays
+  addressable under the moved project. Any table keyed by the project path is
+  covered this way, with no enumerated table list; a user-level hook key
+  outside the project keeps its path.
 - The multiset walks every array-of-tables element under its parent key path,
-  so keys inside `[[...]]` blocks receive the same outside-`projects` guard.
+  so a path key inside a `[[...]]` block rewrites and validates the same way.
 
 #### Refused
 
@@ -126,9 +131,12 @@ except the expected renames at rewritten `projects` sub-keys.
   refuses before attempting any rewrite, since a TOML basic-string key
   containing either character would require escaping this primitive does
   not implement.
-- A rewrite whose output key-path multiset differs from the expected one
-  (any key change outside the `projects` table): refused with no partial
-  write, the original bytes returned unchanged.
+- A rewrite whose output key-path multiset differs from the expected one: a
+  key changed by anything other than the project-path substitution. Refused
+  with no partial write, the original bytes returned unchanged.
+- A rewrite whose output no longer parses as TOML, such as a collision that
+  fuses two project keys into a duplicate table: refused by the output
+  re-parse, again with the original bytes returned unchanged.
 
 #### Not covered
 
@@ -186,9 +194,10 @@ JSON-escaped form, and parity with their `Replace*` counterparts), and
 `SafeWriteFile`.
 
 Unit tests in `toml_test.go` cover `TOMLPathRewrite`: table-key and
-value-position renames, comment and formatting preservation, the
-key-path-multiset refusal on a rewrite that touches a key outside
-`projects`, and the quote/backslash input refusal.
+value-position renames, comment and formatting preservation, project-local
+`hooks.state` key rewrites (with a user-level hook key left untouched and a
+nested array-of-tables key), the refusal on a colliding key rewrite, and the
+quote/backslash input refusal.
 
 Fuzz target in `rewrite_fuzz_test.go`. `FuzzReplacePathInBytes` asserts
 empty-`oldPath` no-op, identity-rewrite byte equality, and the length

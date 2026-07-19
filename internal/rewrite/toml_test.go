@@ -54,26 +54,73 @@ func TestTOMLPathRewritePreservesCommentsAndFormatting(t *testing.T) {
 	assert.Equal(t, want, string(rewritten))
 }
 
-func TestTOMLPathRewriteRejectsKeyChangesOutsideProjects(t *testing.T) {
-	input := "[projects.\"/Users/test/Projects/my_app\"]\ntrusted = true\n\n[other.\"/Users/test/Projects/my_app\"]\nenabled = true\n"
+func TestTOMLPathRewriteRewritesProjectLocalHookStateKey(t *testing.T) {
+	oldPath := "/Users/test/Projects/my_app"
+	newPath := "/Users/test/Projects/new_app"
+	input := "[projects.\"" + oldPath + "\"]\ntrust_level = \"trusted\"\n\n" +
+		"[hooks.state.\"" + oldPath + "/.codex/hooks.toml:pre_tool_use:0:0\"]\n" +
+		"enabled = true\ntrusted_hash = \"abc123\"\n"
+	want := "[projects.\"" + newPath + "\"]\ntrust_level = \"trusted\"\n\n" +
+		"[hooks.state.\"" + newPath + "/.codex/hooks.toml:pre_tool_use:0:0\"]\n" +
+		"enabled = true\ntrusted_hash = \"abc123\"\n"
 
-	rewritten, count, err := rewrite.TOMLPathRewrite([]byte(input), "/Users/test/Projects/my_app", "/Users/test/Projects/new_app")
+	rewritten, count, err := rewrite.TOMLPathRewrite([]byte(input), oldPath, newPath)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key paths changed outside projects")
-	assert.Zero(t, count)
-	assert.Equal(t, input, string(rewritten))
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "the projects key and the project-local hooks.state key both rewrite")
+	assert.Equal(t, want, string(rewritten))
 }
 
-func TestTOMLPathRewriteRejectsKeyChangesInsideArrayOfTables(t *testing.T) {
-	input := "[projects.\"/Users/test/Projects/my_app\"]\ntrusted = true\n\n[[audit_log]]\n[audit_log.\"/Users/test/Projects/my_app\"]\nenabled = true\n"
+func TestTOMLPathRewriteLeavesUserLevelHookStateKeyUntouched(t *testing.T) {
+	oldPath := "/Users/test/Projects/my_app"
+	newPath := "/Users/test/Projects/new_app"
+	userHookKey := "/Users/test/.codex/hooks/global.toml:pre_tool_use:0:0"
+	input := "[projects.\"" + oldPath + "\"]\ntrust_level = \"trusted\"\n\n" +
+		"[hooks.state.\"" + oldPath + "/.codex/hooks.toml:pre_tool_use:0:0\"]\nenabled = true\n\n" +
+		"[hooks.state.\"" + userHookKey + "\"]\nenabled = true\n"
+	want := "[projects.\"" + newPath + "\"]\ntrust_level = \"trusted\"\n\n" +
+		"[hooks.state.\"" + newPath + "/.codex/hooks.toml:pre_tool_use:0:0\"]\nenabled = true\n\n" +
+		"[hooks.state.\"" + userHookKey + "\"]\nenabled = true\n"
 
-	rewritten, count, err := rewrite.TOMLPathRewrite([]byte(input), "/Users/test/Projects/my_app", "/Users/test/Projects/new_app")
+	rewritten, count, err := rewrite.TOMLPathRewrite([]byte(input), oldPath, newPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "the user-level hook key lies outside the moved project and stays put")
+	assert.Equal(t, want, string(rewritten))
+}
+
+func TestTOMLPathRewriteRewritesPathKeyInsideArrayOfTables(t *testing.T) {
+	oldPath := "/Users/test/Projects/my_app"
+	newPath := "/Users/test/Projects/new_app"
+	input := "[projects.\"" + oldPath + "\"]\ntrusted = true\n\n" +
+		"[[audit_log]]\n[audit_log.\"" + oldPath + "\"]\nenabled = true\n"
+	want := "[projects.\"" + newPath + "\"]\ntrusted = true\n\n" +
+		"[[audit_log]]\n[audit_log.\"" + newPath + "\"]\nenabled = true\n"
+
+	rewritten, count, err := rewrite.TOMLPathRewrite([]byte(input), oldPath, newPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "the recursion reaches the path key nested in the array-of-tables element")
+	assert.Equal(t, want, string(rewritten))
+}
+
+func TestTOMLPathRewriteRefusesCollidingProjectKeyRewrite(t *testing.T) {
+	oldPath := "/Users/test/Projects/my_app"
+	newPath := "/Users/test/Projects/new_app"
+	// The destination key already exists, so rewriting old→new fuses two project
+	// entries into one. The rewritten bytes then hold a duplicate table, so the
+	// output re-parse refuses before any write; the collision never reaches the
+	// key-multiset comparison.
+	input := "[projects.\"" + oldPath + "\"]\ntrust_level = \"trusted\"\n\n" +
+		"[projects.\"" + newPath + "\"]\ntrust_level = \"trusted\"\n"
+
+	rewritten, count, err := rewrite.TOMLPathRewrite([]byte(input), oldPath, newPath)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key paths changed outside projects")
+	assert.Contains(t, err.Error(), "validate TOML path rewrite output",
+		"a collision fails the output re-parse, not the key-multiset comparison")
 	assert.Zero(t, count)
-	assert.Equal(t, input, string(rewritten))
+	assert.Equal(t, input, string(rewritten), "a refused rewrite returns the input unchanged")
 }
 
 func TestTOMLPathRewriteRejectsQuotedAndBackslashedPaths(t *testing.T) {

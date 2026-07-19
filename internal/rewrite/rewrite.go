@@ -123,8 +123,9 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) (rewritten []byte,
 }
 
 // TOMLPathRewrite rewrites bounded path references in raw TOML while preserving
-// the original formatting and comments. It rejects paths that TOML basic-string
-// keys would require escaping and verifies that only projects subkeys changed.
+// the original formatting and comments. It refuses paths containing a quote or
+// backslash and verifies that every key it changed differs only by the expected
+// project-path substitution, failing hard on any other key change.
 func TOMLPathRewrite(data []byte, oldPath, newPath string) (rewritten []byte, count int, err error) {
 	if strings.ContainsAny(oldPath, `"\\`) || strings.ContainsAny(newPath, `"\\`) {
 		return data, 0, fmt.Errorf("TOML path rewrite refuses paths containing a quote or backslash")
@@ -142,7 +143,7 @@ func TOMLPathRewrite(data []byte, oldPath, newPath string) (rewritten []byte, co
 	}
 
 	if !equalKeyPathMultisets(expectedTOMLKeyPaths(inputPaths, oldPath, newPath), outputPaths) {
-		return data, 0, fmt.Errorf("validate TOML path rewrite: key paths changed outside projects")
+		return data, 0, fmt.Errorf("validate TOML path rewrite: a key changed by something other than the project-path substitution")
 	}
 	return rewritten, count, nil
 }
@@ -173,14 +174,17 @@ func collectTOMLKeyPaths(value any, prefix []string, paths map[string]int) {
 	}
 }
 
+// expectedTOMLKeyPaths applies the project-path substitution to every key
+// segment, not only projects sub-keys, so any path-keyed table (hooks.state
+// and future ones) is covered without an enumerated table list.
 func expectedTOMLKeyPaths(paths map[string]int, oldPath, newPath string) map[string]int {
 	expected := make(map[string]int, len(paths))
 	for encoded, count := range paths {
 		path := decodeTOMLKeyPath(encoded)
-		if len(path) > 1 && path[0] == "projects" {
-			rewritten, replacements := ReplacePathInBytes([]byte(path[1]), oldPath, newPath)
+		for index, segment := range path {
+			rewritten, replacements := ReplacePathInBytes([]byte(segment), oldPath, newPath)
 			if replacements > 0 {
-				path[1] = string(rewritten)
+				path[index] = string(rewritten)
 			}
 		}
 		expected[encodeTOMLKeyPath(path)] += count
