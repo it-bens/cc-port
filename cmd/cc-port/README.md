@@ -4,10 +4,12 @@ Wiring layer for the cc-port CLI.
 
 ## Purpose
 
-This package owns flag parsing, stdout formatting, and exit-code mapping.
-Business logic lives in `internal/*`; the tool registry itself lives here
-too, since only `cmd/cc-port` is allowed to import an adapter package (see
-`docs/architecture.md` §The tool contract).
+This package owns flag parsing, stdout formatting, and exit-code mapping. It
+also installs the SIGINT handler once at the composition root (`main`), so
+every command inherits a cancellable context, including the read-only `stats`
+command that skips the progress wrapper. Business logic lives in `internal/*`;
+the tool registry itself lives here too, since only `cmd/cc-port` is allowed
+to import an adapter package (see `docs/architecture.md` §The tool contract).
 
 ## Commands
 

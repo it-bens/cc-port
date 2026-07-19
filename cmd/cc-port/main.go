@@ -3,9 +3,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/spf13/cobra"
 )
@@ -100,13 +102,25 @@ func newVersionCmd(banner Banner) *cobra.Command {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run wires and executes the root command under a SIGINT-cancellable context,
+// returning the process exit code. main defers to it so the deferred
+// signal-handler teardown runs before the process exits, which a direct
+// os.Exit in main would skip.
+func run() int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	rootCmd := newRootCmd(bannerImpl)
-	if err := rootCmd.Execute(); err != nil {
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var usage *usageError
 		if errors.As(err, &usage) {
-			os.Exit(2)
+			return 2
 		}
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -122,6 +123,27 @@ func TestStatsCmd_HumanizesDiskFootprintAcrossMagnitudes(t *testing.T) {
 			assert.Contains(t, stdout, testCase.want)
 		})
 	}
+}
+
+// TestStatsCmd_CancelledRootContextAbortsScan drives stats through the same
+// ExecuteContext entry main() uses, with the root context already cancelled.
+// It pins that the read-only stats command inherits the composition root's
+// interrupt: cancellation reaches the scan and surfaces as context.Canceled,
+// which would fail if stats stopped threading cmd.Context() into ComputeFootprint.
+func TestStatsCmd_CancelledRootContextAbortsScan(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var outBuffer, errBuffer bytes.Buffer
+	rootCmd := newRootCmd(noopBanner{})
+	rootCmd.SetOut(&outBuffer)
+	rootCmd.SetErr(&errBuffer)
+	rootCmd.SetArgs([]string{"stats", "--claude-home", home.Dir, testutil.FixtureProjectPath()})
+
+	err := rootCmd.ExecuteContext(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestStatsCmd_TooManyArgsIsUsageError(t *testing.T) {
