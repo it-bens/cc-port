@@ -113,7 +113,7 @@ and the sweep's job is to port what each tool actually knows.
 
 Adapters obtain environment lookups, process observation, and the clock
 through constructor fields that default to real sources rather than free
-in-line calls. Codex's `NewAdapter(getenv, listProcesses, now)` makes home
+in-line calls. Codex's `NewAdapter(getenv, listProcesses, now, transcodeCaps)` makes home
 resolution (`$CODEX_SQLITE_HOME`), its witness's process-table scan, and its
 freshness window testable without global mutation. Claude's
 `NewAdapter(getenv, processLiveness, now)` routes default-home resolution and

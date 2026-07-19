@@ -88,6 +88,9 @@ func (workspace *Workspace) allDatabasePaths() ([]string, error) {
 // SQLITE_BUSY result means a live writer holds the database; any other
 // failure is a read failure, not evidence, and is returned as an error.
 func probeDatabaseBusy(path string) (busy bool, err error) {
+	// BEGIN IMMEDIATE needs a write connection to probe Codex's writer lock.
+	// sqlrewrite.Open checkpoints on open, which would mutate the database.
+	// The probe never writes rows: it always rolls the lock transaction back.
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
 		return false, fmt.Errorf("open %s: %w", path, err)
@@ -113,7 +116,11 @@ func probeDatabaseBusy(path string) (busy bool, err error) {
 
 func isSQLiteBusy(err error) bool {
 	var sqliteErr *sqlite.Error
-	return errors.As(err, &sqliteErr) && sqliteErr.Code() == sqliteBusyCode
+	return errors.As(err, &sqliteErr) && isSQLiteBusyCode(sqliteErr.Code())
+}
+
+func isSQLiteBusyCode(code int) bool {
+	return code&0xff == sqliteBusyCode
 }
 
 func countTextRows(database *sql.DB, table, column, oldPath string) (int, error) {

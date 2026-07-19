@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 
@@ -50,12 +49,9 @@ func stateDBFileKnowsProject(path, oldPath string) (bool, error) {
 	}
 	defer func() { _ = database.Close() }()
 
-	var count int
-	err = database.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM threads WHERE cwd = ? OR substr(cwd, 1, length(?)+1) = ? || '/'`, oldPath, oldPath, oldPath,
-	).Scan(&count)
+	count, err := sqlrewrite.CountPathColumnRO(database, threadsTable, threadsCwdColumn, oldPath)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("count threads.cwd: %w", err)
 	}
 	return count > 0, nil
 }
@@ -93,10 +89,8 @@ func countStateDBFile(path, oldPath, _ string) (int, error) {
 }
 
 func countStateDBReadOnly(database *sql.DB, oldPath string) (int, error) {
-	var total int
-	if err := database.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM threads WHERE cwd = ? OR substr(cwd, 1, length(?)+1) = ? || '/'`, oldPath, oldPath, oldPath,
-	).Scan(&total); err != nil {
+	total, err := sqlrewrite.CountPathColumnRO(database, threadsTable, threadsCwdColumn, oldPath)
+	if err != nil {
 		return 0, fmt.Errorf("count threads.cwd: %w", err)
 	}
 	for _, column := range []string{agentJobsInputCSVColumn, agentJobsOutputCSVColumn} {

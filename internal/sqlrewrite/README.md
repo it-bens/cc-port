@@ -16,8 +16,9 @@ opens and guards.
 - `(*DB).Begin() (*Tx, error)`, `Tx`, `(*Tx).Commit() error`, `(*Tx).Rollback() error`.
 - `(*DB).CheckpointTruncate() error`: folds the WAL into the main database
   and truncates it. Called once more after a rewrite transaction commits.
-- `(*DB).CountPathColumn(table, column, oldPath string) (int, error)`: counts
-  values equal to `oldPath` or nested below it at a `/` boundary.
+- `CountPathColumnRO(db *sql.DB, table, column, oldPath string) (int, error)`:
+  counts values equal to `oldPath` or nested below it at a `/` boundary on the
+  caller's read-only connection.
 - `(*DB).RewritePathColumn(tx *Tx, table, column, oldPath, newPath string) (int, error)`:
   rewrites exact and slash-boundary-prefixed path values.
 - `(*DB).RewriteTextColumn(tx *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error)`:
@@ -107,8 +108,9 @@ opens and guards.
 
 **Handled.**
 
-- Every path predicate in this package uses `col = :old OR substr(col, 1,
-  length(:old)+1) = :old || '/'` rather than `LIKE`. `_` and `%` are SQL
+- The path-column predicate is defined once and drives both
+  `CountPathColumnRO` and `RewritePathColumn`: `col COLLATE BINARY = :old OR
+  substr(col, 1, length(:old)+1) COLLATE BINARY = :old || '/'`. `_` and `%` are SQL
   `LIKE` wildcards and ASCII `LIKE` comparison is case-insensitive by
   default, so `LIKE old || '/%'` would match a sibling project whose name
   merely resembles the target: `/a/my_app` would match `/a/myXapp`, and
@@ -137,8 +139,8 @@ opens and guards.
 
 **Handled.**
 
-- Every path-rewrite operation (`CountPathColumn`, `RewritePathColumn`,
-  `RewriteTextColumn`) and the generic keyed update (`UpdateColumnsByKey`)
+- `CountPathColumnRO`, `RewritePathColumn`, `RewriteTextColumn`, and the
+  generic keyed update (`UpdateColumnsByKey`)
   call `PRAGMA table_info` first and refuse with the observed schema in the
   error message when a declared column or primary key is missing, so a
   schema surprise fails loudly naming what was actually found rather than

@@ -11,7 +11,7 @@
 ## Navigation
 
 - Entry: `sqlrewrite.go:Open`.
-- Path predicates: `sqlrewrite.go:CountPathColumn`, `sqlrewrite.go:RewritePathColumn`.
+- Path predicates: `sqlrewrite.go:CountPathColumnRO`, `sqlrewrite.go:RewritePathColumn`.
 - Text/blob rewrite: `sqlrewrite.go:RewriteTextColumn`.
 - Update-only mutation: `sqlrewrite.go:UpdateColumnsByKey`.
 - Tests: `sqlrewrite_test.go`.

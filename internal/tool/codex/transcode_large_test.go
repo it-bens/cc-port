@@ -18,7 +18,7 @@ import (
 // before readRolloutLines can report the aggregate decompression limit.
 //
 // Tagged `large`: exercised only on demand (see root AGENTS.md); the small-cap
-// CI variant in transcode_test.go drives the same branch cheaply.
+// test in transcode_test.go asserts the same per-line-over-aggregate precedence.
 func TestReadRolloutLinesRejectsProductionScaleLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl.zst")
 	writeZstdFixture(t, path, []string{strings.Repeat("bomb", 200_000_000)})

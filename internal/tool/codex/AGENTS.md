@@ -3,7 +3,7 @@
 ## Before editing
 
 - Glob every database discovery (`state_*.sqlite`, `memories_*.sqlite`, ...); never pin a generation-suffixed filename. (README §Glob, don't pin)
-- Mutate any SQLite database only through `internal/sqlrewrite`; never open a write connection directly. (README §Sidecar update-only rationale, `internal/sqlrewrite/README.md`)
+- Mutate SQLite databases only through `internal/sqlrewrite`; a read-only `BEGIN IMMEDIATE` lock probe may open a write connection and must roll back without row mutation. (README §Witness evidence order)
 - Never `INSERT` into the state database; it is a foreign, self-healing cache Codex's own reconciler owns. (README §Sidecar update-only rationale)
 - Walk both rollout roots (`sessions/`, `archived_sessions/`) in every rollout surface; never assume one. (README §Both-roots coverage)
 - Preserve rollout filenames exactly; `TranscodeLines` rewrites content in place at the same path, never renames. (README §Era-A rollout handling)

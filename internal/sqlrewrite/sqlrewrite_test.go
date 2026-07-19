@@ -1,4 +1,4 @@
-package sqlrewrite_test
+package sqlrewrite
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/rewrite"
-	"github.com/it-bens/cc-port/internal/sqlrewrite"
 )
 
 func TestBundledSQLiteVersionMeetsRequiredFloor(t *testing.T) {
@@ -39,13 +38,12 @@ func TestOpenRefusesBusyWriterImmediately(t *testing.T) {
 	t.Cleanup(func() { _, _ = writerConnection.ExecContext(context.Background(), "ROLLBACK") })
 
 	// The busy-wait a regression would introduce happens inside SQLite's C
-	// busy loop, not on a Go clock this test can inject, and DB is a
-	// black-box type in this external test package with no way to read back
-	// a connection's busy_timeout. A bounded wall-clock measurement is the
-	// only mechanism available to prove Open refused immediately rather than
-	// waiting out a nonzero busy_timeout.
+	// busy loop, not on a Go clock this test can inject, and a connection's
+	// busy_timeout cannot be read back through database/sql. A bounded
+	// wall-clock measurement is the only mechanism available to prove Open
+	// refused immediately rather than waiting out a nonzero busy_timeout.
 	started := time.Now()
-	_, err = sqlrewrite.Open(path)
+	_, err = Open(path)
 	elapsed := time.Since(started)
 
 	require.Error(t, err)
@@ -69,7 +67,7 @@ func TestOpenFoldsWALBeforeMainDatabaseIsObserved(t *testing.T) {
 	beforePath := copyMainDatabase(t, path, filepath.Join(temporaryDirectory, "before.sqlite"))
 	assert.Equal(t, 0, entryCount(t, beforePath))
 
-	rewriter, err := sqlrewrite.Open(path)
+	rewriter, err := Open(path)
 	require.NoError(t, err)
 	require.NoError(t, rewriter.Close())
 
@@ -100,7 +98,7 @@ func TestRewriteTextColumnPreservesTextAndBlobStorage(t *testing.T) {
 	))
 	require.NoError(t, insertDatabase.Close())
 
-	rewriter, err := sqlrewrite.Open(path)
+	rewriter, err := Open(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
 	transaction, err := rewriter.Begin()
@@ -144,7 +142,7 @@ func TestRewriteTextColumnRefusesOversizedValues(t *testing.T) {
 	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "over-cap", overCapValue))
 	require.NoError(t, database.Close())
 
-	rewriter, err := sqlrewrite.Open(path)
+	rewriter, err := Open(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
 
@@ -180,7 +178,7 @@ func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
 	require.NoError(t, execute(database, "INSERT INTO threads (id, title, archived_at) VALUES (?, ?, ?)", "present", "old", nil))
 	require.NoError(t, database.Close())
 
-	rewriter, err := sqlrewrite.Open(path)
+	rewriter, err := Open(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
 	transaction, err := rewriter.Begin()
@@ -234,11 +232,12 @@ func TestPathPredicateAgreesWithByteRewriter(t *testing.T) {
 			require.NoError(t, execute(database, "INSERT INTO entries (id, project_path) VALUES (1, ?)", testCase.value))
 			require.NoError(t, database.Close())
 
-			rewriter, err := sqlrewrite.Open(path)
+			countDatabase := openSQLite(t, path)
+			count, err := CountPathColumnRO(countDatabase, "entries", "project_path", testCase.oldPath)
+			require.NoError(t, err)
+			rewriter, err := Open(path)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-			count, err := rewriter.CountPathColumn("entries", "project_path", testCase.oldPath)
-			require.NoError(t, err)
 			transaction, err := rewriter.Begin()
 			require.NoError(t, err)
 			changed, err := rewriter.RewritePathColumn(transaction, "entries", "project_path", testCase.oldPath, "/a/renamed")
@@ -274,11 +273,12 @@ func TestPathPredicateUsesBinaryCollation(t *testing.T) {
 			require.NoError(t, execute(database, "INSERT INTO entries (id, project_path) VALUES (1, ?)", testCase.value))
 			require.NoError(t, database.Close())
 
-			rewriter, err := sqlrewrite.Open(path)
+			countDatabase := openSQLite(t, path)
+			count, err := CountPathColumnRO(countDatabase, "entries", "project_path", "/a/my_app")
+			require.NoError(t, err)
+			rewriter, err := Open(path)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-			count, err := rewriter.CountPathColumn("entries", "project_path", "/a/my_app")
-			require.NoError(t, err)
 			transaction, err := rewriter.Begin()
 			require.NoError(t, err)
 			changed, err := rewriter.RewritePathColumn(transaction, "entries", "project_path", "/a/my_app", "/a/renamed")
@@ -303,13 +303,31 @@ func TestRewriteOperationsRejectUnexpectedSchema(t *testing.T) {
 	require.NoError(t, execute(database, "CREATE TABLE entries (identifier INTEGER PRIMARY KEY, actual_path TEXT)"))
 	require.NoError(t, database.Close())
 
-	rewriter, err := sqlrewrite.Open(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	_, err = rewriter.CountPathColumn("entries", "missing_path", "/a/old")
+	countDatabase := openSQLite(t, path)
+	_, err := CountPathColumnRO(countDatabase, "entries", "missing_path", "/a/old")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "actual_path TEXT")
+}
+
+func TestVersionMeetsFloor(t *testing.T) {
+	cases := []struct {
+		name    string
+		bundled string
+		floor   string
+		want    bool
+	}{
+		{name: "below patch", bundled: "3.51.2", floor: "3.51.3", want: false},
+		{name: "at floor", bundled: "3.51.3", floor: "3.51.3", want: true},
+		{name: "above minor", bundled: "3.52.0", floor: "3.51.3", want: true},
+		{name: "above major", bundled: "4.0.0", floor: "3.99.99", want: true},
+		{name: "below major", bundled: "2.99.99", floor: "3.0.0", want: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, versionMeetsFloor(testCase.bundled, testCase.floor))
+		})
+	}
 }
 
 func openSQLite(t *testing.T, path string) *sql.DB {

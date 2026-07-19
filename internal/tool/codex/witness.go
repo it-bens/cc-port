@@ -102,17 +102,13 @@ func (workspace *Workspace) processTableWitness() ([]tool.ActiveWriter, error) {
 // freshnessWindow.
 func (workspace *Workspace) freshnessWitness() ([]tool.ActiveWriter, error) {
 	cutoff := workspace.now().Add(-freshnessWindow)
-	fresh := false
-
-	for _, root := range []string{
-		filepath.Join(workspace.home.Dir, sessionsSubdir),
-		filepath.Join(workspace.home.Dir, archivedSessionsSubdir),
-	} {
-		found, err := anyFileModifiedSince(root, cutoff)
-		if err != nil {
-			return nil, err
-		}
-		fresh = fresh || found
+	rollouts, err := discoverRolloutFiles(workspace.home)
+	if err != nil {
+		return nil, err
+	}
+	fresh, err := anyRolloutModifiedSince(rollouts, cutoff)
+	if err != nil {
+		return nil, err
 	}
 
 	databases, err := workspace.allDatabasePaths()
@@ -140,38 +136,23 @@ func (workspace *Workspace) freshnessWitness() ([]tool.ActiveWriter, error) {
 	return nil, nil
 }
 
-// anyFileModifiedSince reports whether any rollout .jsonl file under root has
-// an mtime after cutoff. A missing root is not evidence and not an error: a
-// fresh Codex home may not have written a sessions/ or archived_sessions/
-// directory yet.
-func anyFileModifiedSince(root string, cutoff time.Time) (bool, error) {
-	found := false
-	walkErr := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+func anyRolloutModifiedSince(paths []string, cutoff time.Time) (bool, error) {
+	for _, path := range paths {
+		info, err := os.Stat(path)
 		if err != nil {
+			// A rollout discovered a moment ago can vanish before this stat
+			// when Codex archives it (rollout-*.jsonl renamed to .jsonl.zst);
+			// a gone file is not readable freshness evidence, so skip it.
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil
+				continue
 			}
-			return err
-		}
-		if found || entry.IsDir() || !strings.HasPrefix(entry.Name(), "rollout-") || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			return nil
-		}
-		info, infoErr := entry.Info()
-		if infoErr != nil {
-			return infoErr
+			return false, fmt.Errorf("stat %s: %w", path, err)
 		}
 		if info.ModTime().After(cutoff) {
-			found = true
+			return true, nil
 		}
-		return nil
-	})
-	if walkErr != nil {
-		if errors.Is(walkErr, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("walk %s: %w", root, walkErr)
 	}
-	return found, nil
+	return false, nil
 }
 
 // daemonWitness is evidence source 3: a live PID in

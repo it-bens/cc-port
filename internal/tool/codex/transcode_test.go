@@ -89,6 +89,16 @@ func TestTranscodeLinesRejectsOversizedDecompressedStream(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds")
 }
 
+func TestReadRolloutLinesPrefersLineCapWhenCompressedLineAlsoExceedsAggregateCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl.zst")
+	writeZstdFixture(t, path, []string{strings.Repeat("a", 64)})
+
+	_, _, err := readRolloutLines(path, TranscodeCaps{MaxDecompressedBytes: 32, MaxLineBytes: 16})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "token too long")
+}
+
 func TestReadRolloutLinesRejectsManySmallLinesOverDecompressedCap(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl.zst")
 	writeZstdFixture(t, path, []string{strings.Repeat("a", 10), strings.Repeat("b", 10), strings.Repeat("c", 10)})

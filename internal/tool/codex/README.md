@@ -13,22 +13,20 @@ tool-specific facts in this package; `internal/move`, `internal/export`,
 ## Public API
 
 - `Adapter`, `New() *Adapter`: wired to the real environment, process table,
-  and wall clock. `NewAdapter(getenv, listProcesses, now) *Adapter`: same
-  shape with every seam explicit, for tests.
+  and wall clock. `NewAdapter(getenv, listProcesses, now, transcodeCaps) *Adapter`:
+  same shape with every seam explicit, for tests.
 - `Home`: `Dir`, `SQLiteDir`, `AgentsDir`.
-- `Workspace`, `NewWorkspace(home *Home, getenv, listProcesses, now) *Workspace`,
-  `NewWorkspaceForTest(home, getenv, listProcesses, now, pidAlive) *Workspace`:
+- `Workspace`, `NewWorkspace(home, getenv, listProcesses, now, transcodeCaps) *Workspace`,
+  `NewWorkspaceForTest(home, getenv, listProcesses, now, pidAlive, transcodeCaps) *Workspace`:
   the test variant additionally overrides the process-liveness check so
   adapter tests never touch the live process table.
 - `ProcessLister func() ([]ProcessInfo, error)`, `ProcessInfo{PID, Name}`: the
   process-enumeration seam; production default is `listSystemProcesses`
   (shells out to `ps -Ao pid=,comm=`), darwin/linux only.
-- `TranscodeCaps{MaxDecompressedBytes, MaxLineBytes}`,
-  `SetTranscodeCaps(TranscodeCaps) (restore func())`: the zstd decompression
-  cap set; test-only override, mirroring `archive.Caps`/`archive.SetCaps`.
-- `TranscodeLines(path string, transform func(line []byte) (rewritten []byte, count int)) (int, error)`:
-  rewrites a rollout file (plain `.jsonl` or its `.jsonl.zst` sibling) line by
-  line, decompressing/recompressing transparently, promoted through
+- `TranscodeCaps{MaxDecompressedBytes, MaxLineBytes}`: zstd decompression caps.
+- `TranscodeLines(path, caps, transform)`: rewrites a rollout file (plain
+  `.jsonl` or its `.jsonl.zst` sibling) line by line, decompressing/recompressing
+  transparently, promoted through
   `rewrite.SafeWriteFile`.
 - `SetupFixture(t *testing.T) *Home`, `FixtureProjectPath() string`,
   `FixtureAgentsDir(t *testing.T) string`: the adapter-local test fixture
@@ -355,7 +353,9 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
   prose, not path-shaped columns, so they route through
   `sqlrewrite.RewriteTextColumn` (boundary-aware byte rewrite per row) rather
   than `RewritePathColumn`'s exact/prefix SQL predicate. `threads.cwd` is the
-  one column that gets the exact/prefix predicate, because Codex stores it
+  one column that gets the exact/prefix predicate and its read-only count uses
+  `sqlrewrite.CountPathColumnRO`, so both consume `internal/sqlrewrite`'s
+  single predicate definition. Codex stores it
   as a verbatim canonicalized path with no free text around it, an accepted
   deviation from spec §6.3.
 - Move commits the memories and state databases as two separate serial
@@ -392,8 +392,8 @@ path-reference hit and a schema-drift case, the sidecar's apply-and-remainder
 counting, and `config.toml` byte-identity across an import.
 
 `transcode_large_test.go` (`-tags large`) exercises the zstd decompression
-caps at production scale; the default suite drives the same branches through
-a small test-side cap override, per the pairing pattern in
+caps at production scale; the default suite asserts the per-line cap wins
+when one compressed line also exceeds the aggregate cap, per the pairing pattern in
 `internal/archive/README.md`.
 
 Fixtures come from `testdata/dotcodex/` staged via `SetupFixture`, following

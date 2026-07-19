@@ -124,26 +124,24 @@ func (database *DB) CheckpointTruncate() error {
 	return nil
 }
 
-// CountPathColumn counts values equal to oldPath or nested below it at a slash
-// boundary.
-func (database *DB) CountPathColumn(table, column, oldPath string) (int, error) {
+// CountPathColumnRO counts values equal to oldPath or nested below it at a
+// slash boundary using the caller's read-only connection.
+func CountPathColumnRO(database *sql.DB, table, column, oldPath string) (int, error) {
 	if err := validatePathArguments(oldPath, oldPath); err != nil {
 		return 0, err
 	}
-	if database == nil || database.database == nil {
+	if database == nil {
 		return 0, fmt.Errorf("count SQLite path column: database is nil")
 	}
-	if err := requireColumns(database.database, table, column); err != nil {
+	if err := requireColumns(database, table, column); err != nil {
 		return 0, err
 	}
 
+	predicate, arguments := pathColumnPredicate(column, oldPath)
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
-	query := fmt.Sprintf(
-		"SELECT COUNT(*) FROM %s WHERE %s COLLATE BINARY = ? OR substr(%s, 1, length(?)+1) COLLATE BINARY = ? || '/'",
-		quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column),
-	)
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s", quoteIdentifier(table), predicate)
 	var count int
-	if err := database.database.QueryRowContext(context.Background(), query, oldPath, oldPath, oldPath).Scan(&count); err != nil {
+	if err := database.QueryRowContext(context.Background(), query, arguments...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count path values in %s.%s: %w", table, column, err)
 	}
 	return count, nil
@@ -162,12 +160,14 @@ func (database *DB) RewritePathColumn(transaction *Tx, table, column, oldPath, n
 		return 0, err
 	}
 
+	predicate, predicateArguments := pathColumnPredicate(column, oldPath)
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
 	query := fmt.Sprintf(
-		"UPDATE %s SET %s = ? || substr(%s, length(?)+1) WHERE %s COLLATE BINARY = ? OR substr(%s, 1, length(?)+1) COLLATE BINARY = ? || '/'",
-		quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column), quoteIdentifier(column), quoteIdentifier(column),
+		"UPDATE %s SET %s = ? || substr(%s, length(?)+1) WHERE %s",
+		quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column), predicate,
 	)
-	result, err := transaction.transaction.ExecContext(context.Background(), query, newPath, oldPath, oldPath, oldPath, oldPath)
+	arguments := append([]any{newPath, oldPath}, predicateArguments...)
+	result, err := transaction.transaction.ExecContext(context.Background(), query, arguments...)
 	if err != nil {
 		return 0, fmt.Errorf("rewrite path values in %s.%s: %w", table, column, err)
 	}
@@ -321,23 +321,30 @@ func checkpointTruncate(database *sql.DB) error {
 }
 
 func validateSQLiteVersion(version string) error {
-	actual, err := parseSQLiteVersion(version)
-	if err != nil {
+	if _, err := parseSQLiteVersion(version); err != nil {
 		return fmt.Errorf("parse bundled SQLite version %q: %w", version, err)
 	}
-	minimum, err := parseSQLiteVersion(minimumSQLiteVersion)
-	if err != nil {
+	if _, err := parseSQLiteVersion(minimumSQLiteVersion); err != nil {
 		return fmt.Errorf("parse minimum SQLite version %q: %w", minimumSQLiteVersion, err)
 	}
-	for index := range actual {
-		if actual[index] > minimum[index] {
-			return nil
-		}
-		if actual[index] < minimum[index] {
-			return fmt.Errorf("bundled SQLite version %s is below required %s", version, minimumSQLiteVersion)
-		}
+	if !versionMeetsFloor(version, minimumSQLiteVersion) {
+		return fmt.Errorf("bundled SQLite version %s is below required %s", version, minimumSQLiteVersion)
 	}
 	return nil
+}
+
+func versionMeetsFloor(bundled, floor string) bool {
+	actual, actualErr := parseSQLiteVersion(bundled)
+	minimum, minimumErr := parseSQLiteVersion(floor)
+	if actualErr != nil || minimumErr != nil {
+		return false
+	}
+	for index := range actual {
+		if actual[index] != minimum[index] {
+			return actual[index] > minimum[index]
+		}
+	}
+	return true
 }
 
 func parseSQLiteVersion(version string) ([3]int, error) {
@@ -364,6 +371,15 @@ func validatePathArguments(oldPath, newPath string) error {
 		return fmt.Errorf("SQLite path rewrite new path is empty")
 	}
 	return nil
+}
+
+func pathColumnPredicate(column, oldPath string) (predicate string, arguments []any) {
+	quotedColumn := quoteIdentifier(column)
+	predicate = fmt.Sprintf(
+		"%s COLLATE BINARY = ? OR substr(%s, 1, length(?)+1) COLLATE BINARY = ? || '/'",
+		quotedColumn, quotedColumn,
+	)
+	return predicate, []any{oldPath, oldPath, oldPath}
 }
 
 type schemaQuerier interface {

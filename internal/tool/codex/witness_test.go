@@ -102,22 +102,27 @@ func TestActiveWritersWrapsErrNoWitnessWhenSQLiteDirectoryIsUnreadable(t *testin
 }
 
 func TestActiveWritersDetectsFreshRolloutFile(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "dotcodex")
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, sessionsSubdir), 0o750))
-	rolloutPath := filepath.Join(dir, sessionsSubdir, "rollout-fixture.jsonl")
-	require.NoError(t, os.WriteFile(rolloutPath, []byte("{}\n"), 0o600))
+	for _, root := range []string{sessionsSubdir, archivedSessionsSubdir} {
+		for _, suffix := range []string{".jsonl", ".jsonl.zst"} {
+			t.Run(root+suffix, func(t *testing.T) {
+				dir := filepath.Join(t.TempDir(), "dotcodex")
+				require.NoError(t, os.MkdirAll(filepath.Join(dir, root), 0o750))
+				rolloutPath := filepath.Join(dir, root, "rollout-fixture"+suffix)
+				require.NoError(t, os.WriteFile(rolloutPath, []byte("{}\n"), 0o600))
+				require.NoError(t, os.Chtimes(rolloutPath, fixedWitnessNow, fixedWitnessNow))
 
-	fixedNow := fixedWitnessNow
-	require.NoError(t, os.Chtimes(rolloutPath, fixedNow, fixedNow))
-	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(
-		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
-	)
+				home := &Home{Dir: dir, SQLiteDir: dir}
+				workspace := newWorkspace(
+					home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+				)
 
-	active, err := workspace.ActiveWriters()
+				active, err := workspace.ActiveWriters()
 
-	require.NoError(t, err)
-	assert.NotEmpty(t, active, "a rollout modified just now must count as fresh")
+				require.NoError(t, err)
+				assert.NotEmpty(t, active, "a rollout modified just now must count as fresh")
+			})
+		}
+	}
 }
 
 func TestActiveWritersIgnoresFreshNonRolloutFile(t *testing.T) {
