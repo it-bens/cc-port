@@ -98,8 +98,11 @@ func rewriteStage1TextColumns(database *sqlrewrite.DB, transaction *sqlrewrite.T
 }
 
 // worktreeFiles returns every regular file under root except anything
-// under a .git directory; the git object store is never touched at the
-// byte level (docs/architecture.md §Git-repo-in-state policy).
+// under a .git directory (the git object store is never touched at the
+// byte level, docs/architecture.md §Git-repo-in-state policy) or named as
+// one of cc-port's own transient artifacts (e.g. a stranded gitBackupSuffix
+// directory or a large-file rollback sibling) — those are never worktree
+// data, regardless of when they were stranded.
 func worktreeFiles(root string) ([]string, error) {
 	var files []string
 	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -110,9 +113,12 @@ func worktreeFiles(root string) ([]string, error) {
 			return err
 		}
 		if entry.IsDir() {
-			if entry.Name() == gitDirName {
+			if entry.Name() == gitDirName || rewrite.IsArtifactPath(entry.Name()) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if rewrite.IsArtifactPath(entry.Name()) {
 			return nil
 		}
 		files = append(files, path)

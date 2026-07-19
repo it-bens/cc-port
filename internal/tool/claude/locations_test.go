@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
@@ -128,6 +129,21 @@ func TestLocateProject_CollectsTodos(t *testing.T) {
 		containsBaseName(projectLocations.TodoFiles,
 			"a1b2c3d4-0000-0000-0000-000000000001-agent-a1b2c3d4-0000-0000-0000-000000000001.json"),
 		"the matching todo file must be located")
+}
+
+func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	memoryDir := filepath.Join(claudeHome.ProjectDir(testProjectPath), "memory")
+	artifactName := "MEMORY.md" + rewrite.RollbackSuffix
+	require.NoError(t, os.WriteFile(filepath.Join(memoryDir, artifactName), []byte("stale rollback content"), 0o600))
+
+	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+
+	require.NoError(t, err)
+	assert.False(t, containsBaseName(projectLocations.MemoryFiles, artifactName),
+		"memory discovery must ignore cc-port's own rollback artifacts")
+	assert.True(t, containsBaseName(projectLocations.MemoryFiles, "MEMORY.md"),
+		"the real memory file must still be located")
 }
 
 func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
@@ -157,9 +158,10 @@ func collectMemoryFiles(locations *ProjectLocations, projectDir string) error {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			locations.MemoryFiles = append(locations.MemoryFiles, filepath.Join(memoryDir, entry.Name()))
+		if entry.IsDir() || rewrite.IsArtifactPath(entry.Name()) {
+			continue
 		}
+		locations.MemoryFiles = append(locations.MemoryFiles, filepath.Join(memoryDir, entry.Name()))
 	}
 	return nil
 }

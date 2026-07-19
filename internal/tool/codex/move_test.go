@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/move"
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
@@ -160,6 +161,22 @@ func TestApplyConfigTOMLFileRewritesProjectLocalHookStateKey(t *testing.T) {
 		"[hooks.state.\""+newPath+"/.codex/hooks.toml:pre_tool_use:0:0\"]",
 		"the project-local hook trust key is relocated with the project")
 	assert.NotContains(t, string(rewritten), oldPath, "no reference to the old project path survives")
+}
+
+func TestWorktreeFiles_ExcludesArtifacts(t *testing.T) {
+	root := t.TempDir()
+	realFile := filepath.Join(root, "raw_memories.md")
+	require.NoError(t, os.WriteFile(realFile, []byte("real"), 0o600))
+	staleSibling := filepath.Join(root, "raw_memories.md"+rewrite.RollbackSuffix)
+	require.NoError(t, os.WriteFile(staleSibling, []byte("stale"), 0o600))
+	strandedGitBackup := filepath.Join(root, gitDirName+gitBackupSuffix)
+	require.NoError(t, os.MkdirAll(strandedGitBackup, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(strandedGitBackup, "config"), []byte("[core]"), 0o600))
+
+	files, err := worktreeFiles(root)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{realFile}, files, "worktree discovery must ignore cc-port's own artifacts, file- or directory-shaped")
 }
 
 func TestMemoriesWorktreeGitBaselineDeletedWhenNoRemote(t *testing.T) {
