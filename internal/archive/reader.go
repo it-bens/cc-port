@@ -180,12 +180,6 @@ func NewAggregateCounter(maxAggregateBytes int64) *AggregateCounter {
 	return &AggregateCounter{maxAggregateBytes: maxAggregateBytes}
 }
 
-// Add records n more observed bytes and returns ErrAggregateCapExceeded
-// once the running total exceeds its aggregate cap.
-func (c *AggregateCounter) Add(n int64) error {
-	return c.AddEntry("archive", n)
-}
-
 // AddEntry records n observed bytes for name and reports the entry that made
 // the aggregate staging budget exceed its limit.
 func (c *AggregateCounter) AddEntry(name string, n int64) error {

@@ -155,7 +155,8 @@ func countStructuredRolloutFields(line []byte, rolloutType, oldPath string) int 
 	return total
 }
 
-func rewriteStructuredRolloutFields(line []byte, rolloutType, oldPath, newPath string) (rewritten []byte, count int) {
+//nolint:gocritic // Named results would be shadowed by the per-field rewrite values.
+func rewriteStructuredRolloutFields(line []byte, rolloutType, oldPath, newPath string) ([]byte, int) {
 	updated := line
 	total := 0
 	for _, path := range structuredRolloutFieldPaths(line, rolloutType) {

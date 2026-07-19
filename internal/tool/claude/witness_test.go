@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +15,7 @@ import (
 func TestFindActiveReportsLiveSession(t *testing.T) {
 	home := newWitnessHome(t)
 	writeWitnessSession(t, home, "live", 42)
-	workspace := NewWorkspaceForTest(home, func(string) string { return "" }, func(pid int) bool { return pid == 42 }, time.Now)
+	workspace := NewWorkspaceForTest(home, func(string) string { return "" }, func(pid int) bool { return pid == 42 })
 
 	active, err := workspace.ActiveWriters()
 
@@ -29,7 +28,7 @@ func TestFindActiveReportsLiveSession(t *testing.T) {
 func TestFindActiveOmitsDeadSession(t *testing.T) {
 	home := newWitnessHome(t)
 	writeWitnessSession(t, home, "stale", 42)
-	workspace := NewWorkspaceForTest(home, func(string) string { return "" }, func(int) bool { return false }, time.Now)
+	workspace := NewWorkspaceForTest(home, func(string) string { return "" }, func(int) bool { return false })
 
 	active, err := workspace.ActiveWriters()
 
@@ -41,7 +40,7 @@ func TestFindActiveRefusesUnparseableSession(t *testing.T) {
 	home := newWitnessHome(t)
 	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "torn.json"), []byte(`{"cwd":`), 0o600))
-	workspace := NewWorkspaceForTest(home, func(string) string { return "" }, func(int) bool { return false }, time.Now)
+	workspace := NewWorkspaceForTest(home, func(string) string { return "" }, func(int) bool { return false })
 
 	active, err := workspace.ActiveWriters()
 

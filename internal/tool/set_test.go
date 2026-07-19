@@ -99,12 +99,13 @@ func TestParseQualified_ValidInput(t *testing.T) {
 func TestParseQualified_RejectsBareCategoryName(t *testing.T) {
 	_, err := tool.ParseQualified("sessions")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "sessions")
+	assert.ErrorIs(t, err, tool.ErrBareCategory)
 }
 
 func TestParseQualified_RejectsEmptySegments(t *testing.T) {
 	for _, raw := range []string{"/sessions", "claude/", "/"} {
 		_, err := tool.ParseQualified(raw)
-		assert.Errorf(t, err, "expected error for %q", raw)
+		require.Errorf(t, err, "expected error for %q", raw)
+		assert.ErrorIs(t, err, tool.ErrBareCategory)
 	}
 }

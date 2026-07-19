@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,7 +89,7 @@ func TestWithLock_SucceedsWhenSessionPIDIsDead(t *testing.T) {
 	workspace := NewWorkspaceForTest(home, os.Getenv, func(pid int) bool {
 		assert.Equal(t, 4242, pid)
 		return false
-	}, time.Now)
+	})
 
 	err := lock.WithLock(workspace.LockPath(), workspace.ActiveWriters, func() error { return nil })
 

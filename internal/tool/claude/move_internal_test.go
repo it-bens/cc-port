@@ -44,6 +44,35 @@ func TestHistorySurfaceApply_IsIdempotent(t *testing.T) {
 	assert.Zero(t, second.Count)
 }
 
+func TestSnapshotPaths_EnumeratesProjectSnapshots(t *testing.T) {
+	fileHistoryDir := filepath.Join(t.TempDir(), "file-history")
+	firstSnapshot := filepath.Join(fileHistoryDir, "primary-session", "first@v1")
+	secondSnapshot := filepath.Join(fileHistoryDir, "primary-session", "second@v2")
+	thirdSnapshot := filepath.Join(fileHistoryDir, "secondary-session", "third@v1")
+	for _, path := range []string{firstSnapshot, secondSnapshot, thirdSnapshot} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, nil, 0o600))
+	}
+	locations := &ProjectLocations{FileHistoryDirs: []string{
+		filepath.Join(fileHistoryDir, "primary-session"),
+		filepath.Join(fileHistoryDir, "secondary-session"),
+	}}
+
+	paths, err := snapshotPaths(t.Context(), locations)
+
+	require.NoError(t, err)
+	assert.Len(t, paths, 3)
+	assert.Contains(t, paths, firstSnapshot)
+	assert.Contains(t, paths, thirdSnapshot)
+}
+
+func TestSnapshotPaths_EmptyFileHistoryDirs(t *testing.T) {
+	paths, err := snapshotPaths(t.Context(), &ProjectLocations{})
+
+	require.NoError(t, err)
+	assert.Empty(t, paths)
+}
+
 func TestRewriteTracked_HappyPath(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.json")

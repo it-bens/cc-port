@@ -13,16 +13,16 @@ import (
 // before the final rename.
 const StagingSuffix = ".cc-port-staging.tmp"
 
-// MarkerSuffix names the promotion marker file written inside a staging
+// MarkerFilename names the promotion marker file written inside a staging
 // directory before its rename publishes the destination. Its content records
 // the exact source path, distinguishing a completed promotion from a foreign
 // destination that merely happens to exist.
-const MarkerSuffix = ".cc-port-promoted-from"
+const MarkerFilename = ".cc-port-promoted-from"
 
 // VerifyPromotedFrom reports whether destination carries a marker recording
 // exactly source as the path it was promoted from.
 func VerifyPromotedFrom(source, destination string) (bool, error) {
-	markerPath := filepath.Join(destination, MarkerSuffix)
+	markerPath := filepath.Join(destination, MarkerFilename)
 	if _, err := os.Stat(markerPath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return false, nil
@@ -40,7 +40,7 @@ func VerifyPromotedFrom(source, destination string) (bool, error) {
 // completes (source successfully removed) and the resume signal is no
 // longer needed. A missing marker is not an error.
 func RemoveMarker(destination string) error {
-	if err := os.Remove(filepath.Join(destination, MarkerSuffix)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := os.Remove(filepath.Join(destination, MarkerFilename)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove promotion marker for %s: %w", destination, err)
 	}
 	return nil
@@ -70,7 +70,7 @@ func PromoteDir(
 	if err := copyDir(ctx, source, staging, nil); err != nil {
 		return fmt.Errorf("stage copy to %s: %w", staging, err)
 	}
-	if err := os.WriteFile(filepath.Join(staging, MarkerSuffix), []byte(source), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(staging, MarkerFilename), []byte(source), 0o600); err != nil {
 		return fmt.Errorf("write promotion marker for %s: %w", destination, err)
 	}
 	if err := ctx.Err(); err != nil {

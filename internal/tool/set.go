@@ -1,9 +1,13 @@
 package tool
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrBareCategory identifies an --include value without a complete tool/category pair.
+var ErrBareCategory = errors.New("bare category name")
 
 // Target pairs one registered Tool with a Workspace already opened for it
 // (via Tool.Open), so command packages can carry both through one call
@@ -103,7 +107,7 @@ func ParseQualified(raw string) (Qualified, error) {
 	index := strings.IndexByte(raw, '/')
 	if index <= 0 || index == len(raw)-1 {
 		return Qualified{}, fmt.Errorf(
-			"invalid --include value %q: expected \"<tool>/<category>\" (bare category names are not accepted)", raw,
+			"%w: invalid --include value %q: expected \"<tool>/<category>\"", ErrBareCategory, raw,
 		)
 	}
 	return Qualified{Tool: raw[:index], Category: raw[index+1:]}, nil

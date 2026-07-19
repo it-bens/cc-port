@@ -116,6 +116,8 @@ func TestRunMoveDryRun_PrintsPerToolSurfacesAndApplyHint(t *testing.T) {
 	require.NoError(t, err)
 	output := stdout.String()
 	assert.Contains(t, output, "[claude]")
+	assert.Contains(t, output, "References (25 changes)")
+	assert.Contains(t, output, "history                  4")
 	assert.Contains(t, output, "Run with --apply to execute.")
 }
 

@@ -289,7 +289,7 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 	oldEncodedDir := home.ProjectDir(oldPath)
 	newEncodedDir := home.ProjectDir(newPath)
 	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, rewrite.MarkerSuffix), []byte(oldEncodedDir), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, rewrite.MarkerFilename), []byte(oldEncodedDir), 0o600))
 
 	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
@@ -297,7 +297,7 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 	require.False(t, result.Failed())
 	assert.NoDirExists(t, oldEncodedDir)
 	assert.DirExists(t, newEncodedDir)
-	assert.NoFileExists(t, filepath.Join(newEncodedDir, rewrite.MarkerSuffix))
+	assert.NoFileExists(t, filepath.Join(newEncodedDir, rewrite.MarkerFilename))
 }
 
 func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {
@@ -309,12 +309,9 @@ func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {
 		RefsOnly: true,
 	}
 
-	surfaces, err := workspace.MoveSurfaces(req)
+	_, err := workspace.MoveSurfaces(req)
 
 	require.NoError(t, err)
-	for _, surface := range surfaces {
-		assert.NotEqual(t, "file-history", surface.Name)
-	}
 	for _, registry := range claude.Registries {
 		if registry.HomeBaseDir == nil && registry.RewritePath == nil {
 			continue

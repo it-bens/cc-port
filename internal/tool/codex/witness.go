@@ -183,11 +183,9 @@ func (workspace *Workspace) daemonWitness() ([]tool.ActiveWriter, error) {
 }
 
 // pidRecord mirrors app-server-daemon/src/backend/pid.rs's PidRecord: the
-// pid file holds a JSON object, not a bare integer. processStartTime is
-// read only for documentation; this witness accepts a live pid as
-// evidence without cross-checking process start time against it, a
-// deliberate scope simplification against Codex's own PID-reuse guard —
-// see the report accompanying this bundle.
+// pid file holds a JSON object, not a bare integer. This witness accepts a
+// live PID without checking process start time, so PID reuse can produce a
+// false positive.
 type pidRecord struct {
 	PID int `json:"pid"`
 }

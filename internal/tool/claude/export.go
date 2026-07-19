@@ -336,9 +336,7 @@ func extractProjectConfig(configPath, projectPath string) ([]byte, error) {
 	return projectBlock, nil
 }
 
-// historyLineBelongsToProject reports whether one history.jsonl line
-// belongs to projectPath. See the historical internal/export package doc
-// for the three-rule classification this implements.
+// historyLineBelongsToProject reports whether one history.jsonl line belongs to projectPath.
 func historyLineBelongsToProject(line []byte, projectPath string) bool {
 	var historyEntry HistoryEntry
 	if err := json.Unmarshal(line, &historyEntry); err != nil {

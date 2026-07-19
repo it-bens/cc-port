@@ -54,9 +54,8 @@ Not a rewriting package. The module produces locations and types.
     `internal/importer` intentionally do not iterate it (these files are
     machine-local and do not belong in a cross-machine archive).
 - **Schemas**
-  - `HistoryEntry`, `SessionFile`, `UserConfig`, `SettingsMarketplace`,
-    `SettingsMarketplaceSource`: Go types for the JSON/JSONL files
-    cc-port reads and writes. `HistoryEntry`, `SessionFile`, and
+  - `HistoryEntry`, `SessionFile`, `UserConfig`: Go types for the JSON/JSONL
+    files cc-port reads and writes. `HistoryEntry`, `SessionFile`, and
     `UserConfig` implement `json.Marshaler` and `json.Unmarshaler`,
     preserving unknown fields in an `Extra` map.
   - `MaxHistoryLine`: 16 MiB ceiling for a single `history.jsonl` line
@@ -314,10 +313,10 @@ path-derivation method on `home.go`.
 
 ### Schema types
 
-Go types `HistoryEntry`, `SessionFile`, `UserConfig`, `SettingsMarketplace`,
-and `SettingsMarketplaceSource` model the JSON/JSONL files cc-port reads and
-writes. Each type with an `Extra` field uses a custom `UnmarshalJSON` and
-`MarshalJSON` pair to preserve unknown fields across a rewrite cycle.
+Go types `HistoryEntry`, `SessionFile`, and `UserConfig` model the JSON/JSONL
+files cc-port reads and writes. Each type with an `Extra` field uses a custom
+`UnmarshalJSON` and `MarshalJSON` pair to preserve unknown fields across a
+rewrite cycle.
 
 #### Handled
 

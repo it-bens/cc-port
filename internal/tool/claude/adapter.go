@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -25,16 +24,15 @@ var (
 type Adapter struct {
 	getenv          func(string) string
 	processLiveness func(int) bool
-	now             func() time.Time
 }
 
 // New returns the Claude Code tool adapter.
-func New() *Adapter { return NewAdapter(os.Getenv, processAlive, time.Now) }
+func New() *Adapter { return NewAdapter(os.Getenv, processAlive) }
 
-// NewAdapter returns a Claude Code adapter with explicit environment,
-// process-liveness, and clock seams.
-func NewAdapter(getenv func(string) string, processLiveness func(int) bool, now func() time.Time) *Adapter {
-	return &Adapter{getenv: getenv, processLiveness: processLiveness, now: now}
+// NewAdapter returns a Claude Code adapter with explicit environment and
+// process-liveness seams.
+func NewAdapter(getenv func(string) string, processLiveness func(int) bool) *Adapter {
+	return &Adapter{getenv: getenv, processLiveness: processLiveness}
 }
 
 // Name implements tool.Tool.
@@ -75,7 +73,7 @@ func (adapter *Adapter) Open(override string) (tool.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newWorkspace(home, adapter.getenv, adapter.processLiveness, adapter.now), nil
+	return newWorkspace(home, adapter.getenv, adapter.processLiveness), nil
 }
 
 // NewWorkspace returns a Workspace bound to home. Exported for tests and
@@ -83,16 +81,16 @@ func (adapter *Adapter) Open(override string) (tool.Workspace, error) {
 // and need a Workspace without going through Adapter.Open's flag-parsing
 // path.
 func NewWorkspace(home *Home) *Workspace {
-	return newWorkspace(home, os.Getenv, processAlive, time.Now)
+	return newWorkspace(home, os.Getenv, processAlive)
 }
 
 // NewWorkspaceForTest returns a workspace with caller-supplied external seams.
-func NewWorkspaceForTest(home *Home, getenv func(string) string, processLiveness func(int) bool, now func() time.Time) *Workspace {
-	return newWorkspace(home, getenv, processLiveness, now)
+func NewWorkspaceForTest(home *Home, getenv func(string) string, processLiveness func(int) bool) *Workspace {
+	return newWorkspace(home, getenv, processLiveness)
 }
 
-func newWorkspace(home *Home, getenv func(string) string, processLiveness func(int) bool, now func() time.Time) *Workspace {
-	return &Workspace{home: home, getenv: getenv, processLiveness: processLiveness, now: now}
+func newWorkspace(home *Home, getenv func(string) string, processLiveness func(int) bool) *Workspace {
+	return &Workspace{home: home, getenv: getenv, processLiveness: processLiveness}
 }
 
 // Workspace implements tool.Workspace for one resolved Claude home. A
@@ -103,7 +101,6 @@ type Workspace struct {
 	home            *Home
 	getenv          func(string) string
 	processLiveness func(int) bool
-	now             func() time.Time
 
 	// historyAppends and configBlock accumulate cross-entry merge state for
 	// one import run: Stage appends to them as it sees history.jsonl and

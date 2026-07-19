@@ -88,16 +88,10 @@ var (
 	_ tool.Workspace = (*fakeWorkspace)(nil)
 )
 
-// TestDryRun_MultiTargetIndependence verifies that internal/move needs no
-// special-casing to handle a target the current run does not fully know
-// about, alongside one it does: each target's Plan/Apply outcome is
-// entirely a function of the []tool.Target slice the command layer
-// hands in. This is also the mechanism a swept-out (tool.ErrToolAbsent)
-// tool relies on: since that tool is simply never added to the []tool.Target
-// slice in the first place (a decision made where Workspaces are opened,
-// out of this bundle's fence — see the report accompanying this bundle),
-// nothing here needs to change to support it; the same "operate purely on
-// the given slice" property that this test proves already covers it.
+// TestDryRun_MultiTargetIndependence verifies that each target's Plan/Apply
+// outcome depends only on the []tool.Target slice passed by the command
+// layer. A swept-out tool is never added to that slice, so no special case is
+// needed here.
 func TestDryRun_MultiTargetIndependence(t *testing.T) {
 	home := testutil.SetupFixture(t)
 	targets := []tool.Target{

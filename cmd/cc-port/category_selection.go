@@ -92,7 +92,7 @@ func categoriesAndPlaceholdersFromManifest(
 		name := target.Tool.Name()
 		block, ok := metadata.ToolBlock(name)
 		if !ok {
-			selection[name] = map[string]bool{}
+			selection[name], placeholders[name] = manifest.AbsentToolBlock()
 			continue
 		}
 		selected, applyErr := manifest.ApplyToolCategories(name, categoryNames(target.Tool), block.Categories)

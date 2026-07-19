@@ -29,17 +29,6 @@ type UserConfig struct {
 	Extra    map[string]json.RawMessage `json:"-"`
 }
 
-// SettingsMarketplaceSource holds the source configuration for a marketplace entry.
-type SettingsMarketplaceSource struct {
-	Source string `json:"source"`
-	Path   string `json:"path"`
-}
-
-// SettingsMarketplace holds the marketplace configuration from settings.
-type SettingsMarketplace struct {
-	Source SettingsMarketplaceSource `json:"source"`
-}
-
 // UnmarshalJSON implements json.Unmarshaler for HistoryEntry,
 // preserving unknown fields in Extra.
 func (historyEntry *HistoryEntry) UnmarshalJSON(data []byte) error {
