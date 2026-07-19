@@ -114,7 +114,10 @@ func PlanPush(_ context.Context, opts PushOptions, prior *PriorRead) (*PushPlan,
 	}
 
 	pusher, err := selfPusher(opts.Hostname, opts.Getenv, opts.CurrentUser)
-	if err != nil && !opts.Force {
+	// The injected identity seams must produce a pusher even with --force. An
+	// empty SelfPusher would write an empty SyncPushedBy, which another machine
+	// reads as no prior pusher and so skips its cross-machine conflict check.
+	if err != nil {
 		return nil, fmt.Errorf("sync.PlanPush: derive self identity: %w", err)
 	}
 	plan := &PushPlan{
@@ -309,8 +312,7 @@ func selfPusher(hostname func() (string, error), getenv func(string) string, cur
 	}
 	if host == "" {
 		return "", errors.New(
-			"sync: hostname is empty; cross-machine identity cannot be determined " +
-				"(set $HOSTNAME or use --force to override)",
+			"sync: hostname is empty; cross-machine identity cannot be determined",
 		)
 	}
 	name := getenv("USER")
@@ -323,8 +325,7 @@ func selfPusher(hostname func() (string, error), getenv func(string) string, cur
 	}
 	if name == "" {
 		return "", errors.New(
-			"sync: current username is empty; cross-machine identity cannot be determined " +
-				"(set $USER or use --force to override)",
+			"sync: current username is empty; cross-machine identity cannot be determined",
 		)
 	}
 	return host + "-" + name, nil

@@ -52,6 +52,9 @@ not satisfy it.
 - `UndeclaredResolutionKeysError`: reports `--from-manifest` resolutions for
   keys a tool's archive block does not declare. `Tool`, `Keys`, and
   `Surface` carry the context; tests assert via `errors.As`.
+- `ImplicitKeyOverrideError`: reports `--from-manifest` resolutions for keys
+  the target derives as implicit anchors. `Tool`, `Keys`, and `Surface` carry
+  the context; tests assert via `errors.As`.
 
 `manifest.UnknownCategoriesError` / `manifest.MissingCategoriesError` /
 `manifest.DuplicateCategoriesError` (per-tool category validation failures)
@@ -98,7 +101,8 @@ reversed from the saved pre-promote bytes of each replaced destination.
   supplies that tool's own machine-local anchor keys (for example Claude's
   `{{PROJECT_PATH}}`/`{{HOME}}`/`{{PROJECT_DIR}}`, Codex's `{{CODEX_HOME}}`),
   pre-resolved to their values for this import. Caller-supplied resolutions
-  for an implicit key are refused by `mergeResolutions`.
+  for an implicit key are refused by `mergeResolutions` with
+  `ImplicitKeyOverrideError`.
 - A registered tool absent from the manifest: recorded in `Result.SkippedTools`,
   not treated as a hard failure.
 
@@ -155,6 +159,8 @@ implicit anchors (strongest: cc-port computes these itself on the
 destination machine, and a stale or malicious sender value must never
 override them). A `--from-manifest` key the tool's archive block does not
 declare is refused (`UndeclaredResolutionKeysError`), never silently ignored.
+A `--from-manifest` resolution for an implicit anchor is refused
+(`ImplicitKeyOverrideError`).
 
 #### Handled
 
@@ -172,7 +178,9 @@ declare is refused (`UndeclaredResolutionKeysError`), never silently ignored.
 
 - Missing resolutions for declared keys (see §Import contract).
 - A `--from-manifest` resolution for a key a tool's archive block does not
-  declare.
+  declare (`UndeclaredResolutionKeysError`).
+- A `--from-manifest` resolution for an implicit anchor
+  (`ImplicitKeyOverrideError`).
 
 #### Not covered
 

@@ -50,6 +50,9 @@ Used by `cmd/cc-port` push and pull.
 - The cross-machine refusal triggers when
   `plan.PriorPushedBy != "" && != plan.SelfPusher`. cmd layer enforces; sync
   sets the field.
+- `--force` overrides only the cmd layer's cross-machine-conflict refusal and
+  the encrypted-prior passphrase requirement in `openPriorRead`. It never
+  suppresses a failed `PlanPush` self-identity derivation.
 - Conflict-detection metadata (`SyncPushedBy`, `SyncPushedAt`, encrypted
   flag, size) lives inside `metadata.xml` inside the archive. Bucket-level
   custom metadata is not used; the archive is the single source of truth.
@@ -72,6 +75,8 @@ Used by `cmd/cc-port` push and pull.
 - When the prior remote is encrypted and the passphrase is missing, cmd's
   `openPriorRead` returns `ErrPassphraseRequired` (or returns nil if
   `--force` is set). `PlanPush` itself sees only the dispatched outcome.
+- `PlanPush` refuses a failed self-identity derivation even when `--force` is
+  set, so `ExecutePush` cannot write an empty `SyncPushedBy` value.
 - When the archive is missing on the remote, cmd's `openArchiveSource`
   returns `ErrRemoteNotFound`. `PlanPull` is not called.
 - `openArchiveSource` translates encrypted-no-passphrase to

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -145,6 +146,40 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 		t.Fatalf("CrossMachine = false, want true (different SelfPusher: %q vs %q)",
 			plan.PriorPushedBy, plan.SelfPusher)
 	}
+}
+
+func TestPlanPush_RejectsIdentityFailureRegardlessOfForce(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run("force="+strconv.FormatBool(force), func(t *testing.T) {
+			_, err := PlanPush(context.Background(), PushOptions{
+				Name:        "k",
+				Hostname:    func() (string, error) { return "", nil },
+				Getenv:      testGetenv,
+				CurrentUser: testCurrentUser,
+				Force:       force,
+			}, nil)
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "derive self identity")
+		})
+	}
+}
+
+func TestPlanPush_ForceAllowsCrossMachinePrior(t *testing.T) {
+	r := newFileRemote(t)
+	injectArchiveWithPusher(t, r, "k", "different-host-different-user", time.Now().UTC().Add(-time.Hour))
+	prior := openPriorForTest(t, r, "k", "")
+
+	plan, err := PlanPush(context.Background(), PushOptions{
+		Name:        "k",
+		Hostname:    testHostname,
+		Getenv:      testGetenv,
+		CurrentUser: testCurrentUser,
+		Force:       true,
+	}, prior)
+
+	require.NoError(t, err)
+	assert.True(t, plan.CrossMachine)
 }
 
 func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {

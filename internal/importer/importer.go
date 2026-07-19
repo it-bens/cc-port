@@ -260,12 +260,13 @@ func mergeResolutions(
 	}
 	if fromManifest != nil {
 		if overrideBlock, ok := fromManifest.ToolBlock(block.Name); ok {
-			var unknown []string
+			var implicitKeys, unknown []string
 			for _, placeholder := range overrideBlock.Placeholders {
 				if placeholder.Resolve == "" {
 					continue
 				}
 				if _, implicit := anchors[placeholder.Key]; implicit {
+					implicitKeys = append(implicitKeys, placeholder.Key)
 					continue
 				}
 				if _, ok := declared[placeholder.Key]; !ok {
@@ -273,6 +274,10 @@ func mergeResolutions(
 					continue
 				}
 				resolutions[placeholder.Key] = placeholder.Resolve
+			}
+			if len(implicitKeys) > 0 {
+				sort.Strings(implicitKeys)
+				return nil, &ImplicitKeyOverrideError{Tool: block.Name, Keys: implicitKeys, Surface: "--from-manifest"}
 			}
 			if len(unknown) > 0 {
 				sort.Strings(unknown)

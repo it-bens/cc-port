@@ -10,17 +10,33 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
-func TestMergeResolutions_IgnoresImplicitManifestResolution(t *testing.T) {
+func TestMergeResolutions_RejectsImplicitManifestResolution(t *testing.T) {
 	block := manifest.Tool{Name: "claude", Placeholders: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}"}}}
 	fromManifest := &manifest.Metadata{Tools: []manifest.Tool{{
 		Name:         "claude",
 		Placeholders: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolve: "/sender/path"}},
 	}}}
 
-	resolutions, err := mergeResolutions(block, fromManifest, map[string]string{"{{PROJECT_PATH}}": "/target/path"})
+	_, err := mergeResolutions(block, fromManifest, map[string]string{"{{PROJECT_PATH}}": "/target/path"})
+
+	var implicit *ImplicitKeyOverrideError
+	require.ErrorAs(t, err, &implicit)
+	assert.Equal(t, "claude", implicit.Tool)
+	assert.Equal(t, []string{"{{PROJECT_PATH}}"}, implicit.Keys)
+	assert.Equal(t, "--from-manifest", implicit.Surface)
+}
+
+func TestMergeResolutions_MergesDeclaredManifestResolution(t *testing.T) {
+	block := manifest.Tool{Name: "claude", Placeholders: []manifest.Placeholder{{Key: "{{DECLARED}}"}}}
+	fromManifest := &manifest.Metadata{Tools: []manifest.Tool{{
+		Name:         "claude",
+		Placeholders: []manifest.Placeholder{{Key: "{{DECLARED}}", Resolve: "/target/path"}},
+	}}}
+
+	resolutions, err := mergeResolutions(block, fromManifest, nil)
 
 	require.NoError(t, err)
-	assert.Equal(t, "/target/path", resolutions["{{PROJECT_PATH}}"])
+	assert.Equal(t, "/target/path", resolutions["{{DECLARED}}"])
 }
 
 func TestMergeResolutions_RejectsRelativeResolutionValue(t *testing.T) {

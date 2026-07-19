@@ -52,3 +52,15 @@ type UndeclaredResolutionKeysError struct {
 func (e *UndeclaredResolutionKeysError) Error() string {
 	return fmt.Sprintf("%s declares unknown resolution key(s) for archive tool %q: %s", e.Surface, e.Tool, strings.Join(e.Keys, ", "))
 }
+
+// ImplicitKeyOverrideError reports --from-manifest resolutions that target
+// keys the import target derives as implicit anchors.
+type ImplicitKeyOverrideError struct {
+	Tool    string
+	Keys    []string
+	Surface string
+}
+
+func (e *ImplicitKeyOverrideError) Error() string {
+	return fmt.Sprintf("%s overrides implicit resolution key(s) for archive tool %q: %s", e.Surface, e.Tool, strings.Join(e.Keys, ", "))
+}
