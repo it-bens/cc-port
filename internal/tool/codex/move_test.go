@@ -105,6 +105,15 @@ func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
 	assert.Equal(t, newPath, storedCWD, "the stored cwd must be rewritten to the literal new path, not left as the symlink alias")
 }
 
+// TestMoveSurfacesIdempotentSecondApplyFindsNothing guards the "SIGKILL and
+// re-run converges" invariant (finding A4): once a move has fully
+// completed, oldPath is gone from every source projectKnown checks, but
+// newPath is now known instead, so a full re-run must RESUME (every
+// surface finds nothing left to rewrite) rather than hard-refuse with
+// tool.ErrProjectAbsent. Before the A4 fix this asserted the opposite —
+// that a second run reported the project absent — which was the exact bug
+// this fix closes: a re-run keyed on OldPath had nothing left to resume
+// from and reported the (already fully moved) project as gone.
 func TestMoveSurfacesIdempotentSecondApplyFindsNothing(t *testing.T) {
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{
@@ -116,10 +125,71 @@ func TestMoveSurfacesIdempotentSecondApplyFindsNothing(t *testing.T) {
 	_, applyCounts := planAndApply(t, workspace, req)
 	require.Positive(t, applyCounts["state-db"], "sanity: the first apply must have found the project")
 
-	_, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(req)
+	require.NoError(t, err,
+		"a full re-run after the project fully converged to newPath must resume, not hard-refuse: newPath is now the live identity")
 
-	assert.ErrorIs(t, err, tool.ErrProjectAbsent,
-		"re-running the same move must converge: the old path is gone, so the tool no longer knows the project")
+	undo := tool.NewRestorer()
+	for _, surface := range surfaces {
+		count, err := surface.Apply(context.Background(), undo)
+		require.NoError(t, err, "apply %s", surface.Name)
+		assert.Zero(t, count.Count, "%s: a converged re-run must find nothing left to rewrite", surface.Name)
+	}
+	undo.Cleanup()
+}
+
+// TestMoveIdentity_RefusesForeignThirdPath guards the foreign-collision
+// non-negotiable on the Codex side: the resume path must accept newPath
+// ONLY when projectKnown reports it directly, never because some OTHER,
+// unrelated project happens to be known. FixtureProjectPath() is a real,
+// known project in this fixture, but it is neither req.OldPath nor
+// req.NewPath below, so it must not be mistaken for a resumable identity.
+func TestMoveIdentity_RefusesForeignThirdPath(t *testing.T) {
+	workspace, _ := fixtureWorkspace(t)
+	req := tool.MoveRequest{OldPath: "/Users/fixture/never-seen", NewPath: "/Users/fixture/also-never-seen"}
+
+	state, err := workspace.moveIdentity(req)
+
+	require.NoError(t, err)
+	assert.Equal(t, identityAbsent, state,
+		"a third, unrelated known project must never be mistaken for a resumable identity")
+}
+
+// TestMove_ResumesConfigOnlyCodexProject guards finding A4: trust persists
+// to config.toml's [projects] table before any thread or rollout exists
+// (confirmed against the vendored Codex source), so a project can be known
+// ONLY through that trust key. A SIGKILL after configSurface rewrote the
+// key to newPath but before commitSurface finished leaves such a project
+// with no record of oldPath left anywhere; MoveSurfaces must resume rather
+// than report it absent, which would silently strand any residual
+// old-path references in the memories worktree or agents marketplace.
+func TestMove_ResumesConfigOnlyCodexProject(t *testing.T) {
+	homeDir := filepath.Join(t.TempDir(), "dotcodex")
+	require.NoError(t, os.MkdirAll(homeDir, 0o750))
+	oldPath := "/Users/fixture/trust-only-project"
+	newPath := "/Users/fixture/trust-only-project-renamed"
+	configContent := "[projects.\"" + newPath + "\"]\ntrust_level = \"trusted\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(homeDir, "config.toml"), []byte(configContent), 0o600))
+	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps())
+	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
+
+	state, err := workspace.moveIdentity(req)
+	require.NoError(t, err)
+	require.Equal(t, identityResume, state, "sanity: a trust-only project already at newPath must resolve as a resume")
+
+	surfaces, err := workspace.MoveSurfaces(req)
+	require.NoError(t, err, "a trust-only project already resolved to newPath must resume, not report ErrProjectAbsent")
+
+	undo := tool.NewRestorer()
+	for _, surface := range surfaces {
+		_, err := surface.Apply(context.Background(), undo)
+		require.NoError(t, err, "apply %s", surface.Name)
+	}
+	undo.Cleanup()
+
+	keys, err := configTOMLProjectKeys(filepath.Join(homeDir, "config.toml"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{newPath}, keys, "the trust key must remain at newPath, neither lost nor duplicated")
 }
 
 // TestMove_SucceedsThenFreshnessWitnessQuiet guards the success-path
@@ -305,6 +375,39 @@ func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, count.Count)
 	assert.DirExists(t, gitDir)
+}
+
+// TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline guards finding
+// A6: a convergent re-run whose rewrite already happened in an earlier,
+// interrupted apply has THIS run's own rewrite count at zero (the
+// worktree file already holds newPath, not oldPath), which the old
+// count==0 gate misread as "nothing changed, leave the baseline alone."
+// The fixed gate checks the worktree's PERSISTENT post-rewrite state, so
+// it still invalidates a baseline that predates newPath's appearance even
+// when this particular run touched no bytes.
+func TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline(t *testing.T) {
+	homeDir := filepath.Join(t.TempDir(), "dotcodex")
+	root := filepath.Join(homeDir, memoriesWorktreeSubdir)
+	gitDir := filepath.Join(root, gitDirName)
+	require.NoError(t, os.MkdirAll(gitDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n\trepositoryformatversion = 0\n"), 0o600))
+	newPath := "/Users/fixture/renamed-project"
+	// A local-only (no remote) baseline, and a worktree file already
+	// rewritten by an earlier, interrupted apply: it holds newPath, not
+	// oldPath, so this run's own applyMemoriesWorktree count is zero.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "raw_memories.md"), []byte("Notes about "+newPath+".\n"), 0o600))
+	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps())
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: newPath}
+	undo := tool.NewRestorer()
+
+	count, err := workspace.memoriesWorktreeSurface(req, &pendingMoveDatabases{}).Apply(context.Background(), undo)
+
+	require.NoError(t, err)
+	assert.Zero(t, count.Count, "sanity: this run's own rewrite touches nothing since the worktree already holds newPath")
+	_, statErr := os.Stat(gitDir)
+	assert.True(t, os.IsNotExist(statErr),
+		"a convergent re-run must still invalidate a stale baseline, not only a run that itself rewrote bytes")
+	assert.DirExists(t, gitDir+gitBackupSuffix, "the baseline must be moved to a rollback backup, not deleted outright")
 }
 
 func TestMemoriesWorktreeGitBaselineLeftInPlaceWithRemote(t *testing.T) {

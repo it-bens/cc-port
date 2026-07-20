@@ -161,6 +161,31 @@ func planMemoriesWorktree(root, oldPath string) (int, error) {
 	return total, nil
 }
 
+// worktreeReferences reports whether any memories/ worktree file, outside
+// .git and cc-port's own artifacts, carries a bounded occurrence of path.
+// memoriesWorktreeSurface.Apply calls this on the POST-rewrite worktree
+// (finding A6) to decide whether the .git baseline still needs
+// invalidating: unlike this run's own applyMemoriesWorktree count, this
+// reflects the worktree's persistent state and stays true across a
+// convergent re-run whose rewrite already happened in an earlier,
+// interrupted apply.
+func worktreeReferences(root, path string) (bool, error) {
+	files, err := worktreeFiles(root)
+	if err != nil {
+		return false, err
+	}
+	for _, file := range files {
+		data, err := os.ReadFile(file) //nolint:gosec // G304: path from adapter-controlled worktree walk
+		if err != nil {
+			return false, fmt.Errorf("read %s: %w", file, err)
+		}
+		if rewrite.CountPathInBytes(data, path) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // applyMemoriesWorktree rewrites every memories/ worktree file in place.
 func applyMemoriesWorktree(ctx context.Context, root, oldPath, newPath string, undo *tool.Restorer) (int, error) {
 	files, err := worktreeFiles(root)

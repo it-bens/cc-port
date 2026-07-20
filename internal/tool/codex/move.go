@@ -16,7 +16,7 @@ import (
 
 // MoveSurfaces implements tool.Mover.
 func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, error) {
-	known, err := workspace.projectKnown(req.OldPath, req.NewPath)
+	state, err := workspace.moveIdentity(req)
 	if err != nil {
 		return nil, fmt.Errorf("determine project identity: %w", err)
 	}
@@ -24,7 +24,7 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	if err != nil {
 		return nil, fmt.Errorf("inspect codex-dev database: %w", err)
 	}
-	if !known && refusalWarning == "" {
+	if state == identityAbsent && refusalWarning == "" {
 		return nil, workspace.projectAbsenceError()
 	}
 
@@ -34,7 +34,7 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	if refusalWarning != "" {
 		surfaces = append(surfaces, codexDevRefusalSurface(refusalWarning))
 	}
-	if !known {
+	if state == identityAbsent {
 		return surfaces, nil
 	}
 	return append(surfaces,
@@ -48,6 +48,52 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	), nil
 }
 
+// identityState classifies which of a move request's two paths Codex's
+// records currently agree the project is known under.
+type identityState int
+
+const (
+	// identityFresh: oldPath is still the project's live identity, the
+	// ordinary pre-move case.
+	identityFresh identityState = iota
+	// identityResume: oldPath is no longer known anywhere, but newPath
+	// already is — a previous apply reached configSurface (or further)
+	// before it was interrupted. MoveSurfaces re-runs every surface
+	// idempotently rather than reporting the project absent.
+	identityResume
+	// identityAbsent: neither path is known anywhere Codex records
+	// project identity.
+	identityAbsent
+)
+
+// moveIdentity resolves req's identityState by checking oldPath first and
+// falling back to newPath only when oldPath is unknown everywhere
+// projectKnown looks (finding A4): a move can be SIGKILLed after
+// configSurface has already rewritten config.toml's trust key to newPath
+// but before commitSurface finishes, and a project known to Codex ONLY
+// through that trust key (persisted before any thread or rollout exists)
+// then has no other record of oldPath left to resume from. newPath is
+// accepted only when projectKnown finds it directly — never a third,
+// unrelated path — so a genuine foreign collision still resolves to
+// identityAbsent.
+func (workspace *Workspace) moveIdentity(req tool.MoveRequest) (identityState, error) {
+	knownOld, err := workspace.projectKnown(req.OldPath, req.NewPath)
+	if err != nil {
+		return identityAbsent, err
+	}
+	if knownOld {
+		return identityFresh, nil
+	}
+	knownNew, err := workspace.projectKnown(req.NewPath, req.OldPath)
+	if err != nil {
+		return identityAbsent, err
+	}
+	if knownNew {
+		return identityResume, nil
+	}
+	return identityAbsent, nil
+}
+
 // projectKnown reports whether Codex has any record of oldPath: a thread
 // row, a config.toml/profile projects key, or a rollout's structured cwd.
 // No identity witness is needed (spec §6.1): Codex stores cwd verbatim,
@@ -55,6 +101,8 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 // newPath is only needed to run planRolloutFile's rewrite-pipeline count
 // identically to how MoveSurfaces' own rolloutsSurface will count and
 // apply; this call only inspects whether that count is positive.
+// moveIdentity also calls this with the two arguments swapped to probe
+// whether newPath itself is already known, for the resume fallback above.
 func (workspace *Workspace) projectKnown(oldPath, newPath string) (bool, error) {
 	stateKnown, err := stateDBKnowsProject(workspace.home.SQLiteDir, oldPath)
 	if err != nil {
@@ -259,7 +307,16 @@ func (workspace *Workspace) memoriesWorktreeSurface(req tool.MoveRequest, pendin
 			if err != nil {
 				return tool.SurfaceResult{}, err
 			}
-			if count == 0 {
+			// Gate baseline invalidation on the PERSISTENT post-rewrite worktree
+			// state, not this run's transient rewrite count (finding A6): on a
+			// convergent re-run the worktree already holds newPath from an
+			// earlier, interrupted apply, so this run's own count is zero even
+			// though the baseline is still stale relative to newPath.
+			reflectsNewPath, err := worktreeReferences(root, req.NewPath)
+			if err != nil {
+				return tool.SurfaceResult{Count: count}, err
+			}
+			if !reflectsNewPath {
 				return tool.SurfaceResult{Count: count}, nil
 			}
 			backup, err := moveGitBaselineToBackup(root, undo)
