@@ -70,6 +70,41 @@ func TestMoveSurfacesDryRunApplyCountParity(t *testing.T) {
 	assert.Positive(t, planCounts["agents-marketplace"])
 }
 
+// TestMove_RewritesSymlinkAliasedThreadCwd guards finding H1 (spec §5.1): a
+// thread row recorded through a symlink-aliased cwd (Codex stores
+// config.cwd() verbatim, uncanonicalized) must still be matched and rewritten
+// by move, and the dry-run count must equal the number of rows apply
+// actually rewrites, since countStateDB and rewriteThreadsAndAgentJobs now
+// both derive their row set from the same canonical-match computation.
+func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	tempRoot := t.TempDir()
+	realProject := filepath.Join(tempRoot, "real", "project")
+	require.NoError(t, os.MkdirAll(realProject, 0o750))
+	require.NoError(t, os.Symlink(filepath.Join(tempRoot, "real"), filepath.Join(tempRoot, "link")))
+	aliasedCWD := filepath.Join(tempRoot, "link", "project")
+	newPath := filepath.Join(tempRoot, "real", "renamed-project")
+
+	const aliasedThreadID = "00000000-0000-4000-8000-0000000000aa"
+	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, stateDBFileName), aliasedThreadID, aliasedCWD, threadRowMetadata{})
+
+	req := tool.MoveRequest{OldPath: realProject, NewPath: newPath}
+	planCounts, applyCounts := planAndApply(t, workspace, req)
+
+	require.Positive(t, planCounts["state-db"], "sanity: the symlink-aliased thread must be counted")
+	assert.Equal(t, planCounts["state-db"], applyCounts["state-db"],
+		"dry-run count and apply must consume the same canonical-match computation (spec §5.1)")
+
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	var storedCWD string
+	require.NoError(t, database.QueryRowContext(
+		context.Background(), `SELECT cwd FROM threads WHERE id = ?`, aliasedThreadID,
+	).Scan(&storedCWD))
+	assert.Equal(t, newPath, storedCWD, "the stored cwd must be rewritten to the literal new path, not left as the symlink alias")
+}
+
 func TestMoveSurfacesIdempotentSecondApplyFindsNothing(t *testing.T) {
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{
@@ -409,6 +444,72 @@ func TestCodexDevWarningRequiresPathReference(t *testing.T) {
 	assert.Equal(t, "codex-dev.db contains path references to the moved project and is never rewritten; refusing to move", warning)
 }
 
+// TestCodexDevWarningDetectsSymlinkAliasedValue guards finding H1 (spec
+// §5.1) on the codex-dev.db surface: local_thread_catalog.cwd and
+// automation_runs.source_cwd, like threads.cwd, can hold a symlink-aliased
+// spelling of the project's cwd, since Codex records cwd verbatim and
+// uncanonicalized everywhere. codexDevWarning never rewrites codex-dev.db
+// (that contract is unchanged); it only detects and refuses. Before routing
+// these two columns through canonical matching, a byte-literal comparison
+// silently missed an aliased value, leaving a move free to proceed against
+// a database that does reference the project.
+func TestCodexDevWarningDetectsSymlinkAliasedValue(t *testing.T) {
+	tempRoot := t.TempDir()
+	realProject := filepath.Join(tempRoot, "real", "project")
+	require.NoError(t, os.MkdirAll(realProject, 0o750))
+	require.NoError(t, os.Symlink(filepath.Join(tempRoot, "real"), filepath.Join(tempRoot, "link")))
+	aliasedCWD := filepath.Join(tempRoot, "link", "project")
+
+	path := filepath.Join(tempRoot, "codex-dev.db")
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+	_, err = database.ExecContext(context.Background(), `
+		CREATE TABLE automations (cwds TEXT);
+		CREATE TABLE automation_runs (source_cwd TEXT);
+		CREATE TABLE local_thread_catalog (cwd TEXT NOT NULL);
+	`)
+	require.NoError(t, err)
+	_, err = database.ExecContext(context.Background(), `INSERT INTO local_thread_catalog (cwd) VALUES (?)`, aliasedCWD)
+	require.NoError(t, err)
+
+	warning, err := codexDevWarning(path, realProject)
+
+	require.NoError(t, err)
+	assert.Equal(t, "codex-dev.db contains path references to the moved project and is never rewritten; refusing to move", warning)
+}
+
+// TestCodexDevWarningToleratesNullSourceCWD guards a NULL-handling
+// regression from routing automation_runs.source_cwd through
+// matchingColumnValues' canonical Go-side comparison instead of
+// CountTextColumnRO's substring scan. automation_runs.source_cwd is
+// NULLABLE in this package's own schema fixtures (unlike threads.cwd and
+// local_thread_catalog.cwd, both NOT NULL); CountTextColumnRO's instr()
+// predicate silently excludes a NULL row, but scanning that same row into a
+// plain Go string errors instead, a hard failure on an ordinary
+// codex-dev.db that happens to carry one alongside a genuinely matching row.
+func TestCodexDevWarningToleratesNullSourceCWD(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex-dev.db")
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+	_, err = database.ExecContext(context.Background(), `
+		CREATE TABLE automations (cwds TEXT);
+		CREATE TABLE automation_runs (source_cwd TEXT);
+		CREATE TABLE local_thread_catalog (cwd TEXT NOT NULL);
+	`)
+	require.NoError(t, err)
+	_, err = database.ExecContext(context.Background(), `INSERT INTO automation_runs (source_cwd) VALUES (NULL)`)
+	require.NoError(t, err)
+	_, err = database.ExecContext(context.Background(), `INSERT INTO automation_runs (source_cwd) VALUES (?)`, FixtureProjectPath())
+	require.NoError(t, err)
+
+	warning, err := codexDevWarning(path, FixtureProjectPath())
+
+	require.NoError(t, err)
+	assert.Equal(t, "codex-dev.db contains path references to the moved project and is never rewritten; refusing to move", warning)
+}
+
 func TestResidualWarningsReadsCodexDevFromHomeSQLiteSubdirectory(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	home.SQLiteDir = filepath.Join(t.TempDir(), "redirected-sqlite")
@@ -486,7 +587,7 @@ func TestFinalDatabaseSurfaceReportsSecondCommitPartialStateAndRerunConverges(t 
 	assert.Contains(t, err.Error(), "partial database commit")
 	assert.Contains(t, err.Error(), "re-running the move converges")
 	require.NoError(t, undo.Restore())
-	memoriesCount, countErr := countMemoriesDB(workspace.home.SQLiteDir, req.OldPath, req.NewPath)
+	memoriesCount, countErr := countMemoriesDB(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
 	require.NoError(t, countErr)
 	assert.Zero(t, memoriesCount, "the first memories commit must persist before state fails")
 	_, err = workspace.MoveSurfaces(req)
@@ -613,7 +714,7 @@ func TestCountStateDBReadOnlyFailsForMissingAgentJobsColumn(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	_, err = countStateDBReadOnly(database, FixtureProjectPath())
+	_, err = countStateDBReadOnly(context.Background(), database, FixtureProjectPath())
 
 	require.Error(t, err)
 	// sqlrewrite.CountTextColumnRO now performs this schema check (previously
@@ -674,11 +775,11 @@ func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupWithoutWorktreeChanges(
 func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	undo := tool.NewRestorer()
-	state, _, err := startStateDBRewrites(workspace.home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project", undo)
+	state, _, err := startStateDBRewrites(context.Background(), workspace.home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project", undo)
 	require.NoError(t, err)
 	_, _, err = startDatabaseRewrites(
-		workspace.home.SQLiteDir, memoriesDBGlob, FixtureProjectPath(), "/Users/fixture/renamed-project",
-		func(database *sqlrewrite.DB, _ *sqlrewrite.Tx, _, _ string) (int, error) {
+		context.Background(), workspace.home.SQLiteDir, memoriesDBGlob, FixtureProjectPath(), "/Users/fixture/renamed-project",
+		func(_ context.Context, _ string, database *sqlrewrite.DB, _ *sqlrewrite.Tx, _, _ string) (int, error) {
 			require.NoError(t, database.Close())
 			return 0, assert.AnError
 		}, undo,

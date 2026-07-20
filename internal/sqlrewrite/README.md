@@ -35,6 +35,11 @@ opens and guards.
 - `ErrTextValueTooLarge`: the sentinel `RewriteTextColumn` and
   `CountTextColumnRO` both wrap when a candidate value exceeds the shared
   byte cap; callers assert against it with `errors.Is`.
+- `MaxTextValueBytes`: the shared per-value byte cap (16 MiB)
+  `RewriteTextColumn` and `CountTextColumnRO` enforce, exported so a caller
+  guarding its own path-value materialization outside this package's
+  predicates (`internal/tool/codex`'s `threads.cwd` matcher) can reuse the
+  same cap instead of maintaining a second one.
 - `(*DB).UpdateColumnsByKey(tx *Tx, table, primaryKeyColumn string, primaryKey any, values map[string]any) (int, error)`:
   updates columns on an existing row identified by its single-column primary
   key; never inserts.
@@ -224,7 +229,7 @@ opens and guards.
 
 **Handled.**
 
-- `RewriteTextColumn` and `CountTextColumnRO` share one `maxTextValueBytes`
+- `RewriteTextColumn` and `CountTextColumnRO` share one `MaxTextValueBytes`
   cap (16 MiB) and one `octet_length(...) > ?` guard shape, so a candidate
   value too large to materialize safely is refused identically whether the
   caller is planning a move (read-only) or applying one (transactional).
@@ -232,7 +237,11 @@ opens and guards.
   `errors.Is` regardless of which function produced it.
   `TestRewriteTextColumnRefusesOversizedValues` and
   `TestCountTextColumnRORefusesOversizedValue` each insert a value one byte
-  over the cap and assert the refusal through that sentinel.
+  over the cap and assert the refusal through that sentinel. `MaxTextValueBytes`
+  is exported so a caller matching path values outside a single-column
+  predicate (`internal/tool/codex`'s canonicalizing `threads.cwd` matcher,
+  see its README §cwd matching) can guard against the same class of
+  oversized value with the same cap.
 
 **Refused.**
 

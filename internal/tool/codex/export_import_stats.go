@@ -111,7 +111,7 @@ func (workspace *Workspace) Export(ctx context.Context, project string, selected
 	if err != nil {
 		return result, err
 	}
-	threadIDs, err := workspace.projectThreadIDSet(project, rolloutThreadIDs)
+	threadIDs, err := workspace.projectThreadIDSet(ctx, project, rolloutThreadIDs)
 	if err != nil {
 		return result, err
 	}
@@ -169,13 +169,34 @@ func (workspace *Workspace) recordProfileSQLiteHomeWarning(result *tool.ExportRe
 	return nil
 }
 
+// addBoundedRolloutThreadID adds threadID to ids if not already present,
+// refusing once the running total reaches maxAggregateMatchedThreadRows.
+// Both readAndIdentifyRollouts and ReferenceSurfaces build a rollout-derived
+// id set from rollouts, an uncapped filesystem walk's result
+// (discoverRolloutFiles has no count limit); without this check the map
+// would already be fully materialized by the time projectThreadIDSet's own
+// cap on the larger state-db-plus-rollout union gets a chance to refuse.
+func addBoundedRolloutThreadID(ids map[string]struct{}, threadID string) error {
+	if _, alreadyPresent := ids[threadID]; alreadyPresent {
+		return nil
+	}
+	if len(ids) >= maxAggregateMatchedThreadRows {
+		return fmt.Errorf(
+			"%w: more than %d rollout-derived thread IDs accumulated for project",
+			ErrTooManyMatchedThreadRows, maxAggregateMatchedThreadRows,
+		)
+	}
+	ids[threadID] = struct{}{}
+	return nil
+}
+
 // readAndIdentifyRollouts reads every rollout in rollouts (projectRollouts's
 // matches; projectRollouts already read every discovered rollout once to
 // classify eraA/matches, so this is the second read, of matches only) and
 // caches its lines for Export's later archive-write pass so that read is
 // not repeated a third time. It returns those cached lines alongside the
-// union of thread IDs their session_meta/turn_context lines carry for
-// project.
+// bounded union of thread IDs their session_meta/turn_context lines carry
+// for project (addBoundedRolloutThreadID).
 func (workspace *Workspace) readAndIdentifyRollouts(
 	ctx context.Context, project string, rollouts []string,
 ) (rolloutLines map[string][][]byte, rolloutThreadIDs map[string]struct{}, err error) {
@@ -194,7 +215,9 @@ func (workspace *Workspace) readAndIdentifyRollouts(
 			return nil, nil, fmt.Errorf("identify rollout %s: %w", rollout, err)
 		}
 		rolloutLines[rollout] = lines
-		rolloutThreadIDs[identity.ThreadID] = struct{}{}
+		if err := addBoundedRolloutThreadID(rolloutThreadIDs, identity.ThreadID); err != nil {
+			return nil, nil, err
+		}
 	}
 	return rolloutLines, rolloutThreadIDs, nil
 }
@@ -220,7 +243,11 @@ func (workspace *Workspace) projectRollouts(ctx context.Context, project string)
 			eraA = append(eraA, path)
 			continue
 		}
-		if identityMatchesProject(identity, project) {
+		belongsToProject, err := identityMatchesProject(identity, project)
+		if err != nil {
+			return nil, nil, fmt.Errorf("match rollout %s: %w", path, err)
+		}
+		if belongsToProject {
 			matches = append(matches, path)
 		}
 	}
@@ -255,23 +282,65 @@ func rolloutProjectIdentity(lines [][]byte, project string) (rolloutIdentity, er
 			}
 		}
 	}
-	if !identity.EraA && identity.ThreadID == "" && identityMatchesProject(identity, project) {
-		return rolloutIdentity{}, fmt.Errorf("associated rollout has no session id")
+	if !identity.EraA && identity.ThreadID == "" {
+		belongsToProject, err := identityMatchesProject(identity, project)
+		if err != nil {
+			return rolloutIdentity{}, err
+		}
+		if belongsToProject {
+			return rolloutIdentity{}, fmt.Errorf("associated rollout has no session id")
+		}
 	}
 	return identity, nil
 }
 
-func identityMatchesProject(identity rolloutIdentity, project string) bool {
+func identityMatchesProject(identity rolloutIdentity, project string) (bool, error) {
 	for _, cwd := range identity.CWDs {
-		if pathMatchesProject(cwd, project) {
-			return true
+		matched, err := pathMatchesProject(cwd, project)
+		if err != nil {
+			return false, err
+		}
+		if matched {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-func pathMatchesProject(cwd, project string) bool {
-	return cwd == project || strings.HasPrefix(cwd, project+"/")
+// canonicalizePath resolves symlinks in path and falls back to a lexical
+// filepath.Clean ONLY when path does not exist — the one degradation this
+// function performs, since a recorded cwd for a since-deleted project can
+// only be compared lexically. Every other EvalSymlinks failure (permission
+// denied, a symlink loop, an I/O error) is a genuine failure, not absence,
+// and is returned rather than silently degraded to a possibly-wrong lexical
+// comparison.
+func canonicalizePath(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return filepath.Clean(path), nil
+	}
+	return "", fmt.Errorf("canonicalize %s: %w", path, err)
+}
+
+// pathMatchesProject compares cwd and project after canonicalizePath
+// resolves both through any symlink, so a session recorded through a
+// symlink-aliased cwd (Codex stores config.cwd() verbatim, uncanonicalized)
+// still matches the project cc-port resolved through
+// fsutil.ResolveExistingAncestor (spec §5.1). The equality-or-/-boundary-
+// prefix breadth is unchanged; only the operands are canonicalized first.
+func pathMatchesProject(cwd, project string) (bool, error) {
+	canonicalCWD, err := canonicalizePath(cwd)
+	if err != nil {
+		return false, err
+	}
+	canonicalProject, err := canonicalizePath(project)
+	if err != nil {
+		return false, err
+	}
+	return canonicalCWD == canonicalProject || strings.HasPrefix(canonicalCWD, canonicalProject+"/"), nil
 }
 
 func appendJSONLLines(lines [][]byte) []byte {
@@ -886,9 +955,11 @@ func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project strin
 		if err != nil {
 			return nil, err
 		}
-		rolloutThreadIDs[identity.ThreadID] = struct{}{}
+		if err := addBoundedRolloutThreadID(rolloutThreadIDs, identity.ThreadID); err != nil {
+			return nil, err
+		}
 	}
-	ids, err := workspace.projectThreadIDSet(project, rolloutThreadIDs)
+	ids, err := workspace.projectThreadIDSet(ctx, project, rolloutThreadIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -922,10 +993,7 @@ func (workspace *Workspace) countThreadRows(ctx context.Context, project string)
 		if err != nil {
 			return 0, err
 		}
-		var count int
-		err = database.QueryRowContext(
-			ctx, `SELECT COUNT(*) FROM threads WHERE cwd = ? OR substr(cwd, 1, length(?)+1) = ? || '/'`, project, project, project,
-		).Scan(&count)
+		count, err := countMatchingThreadRows(ctx, database, project)
 		_ = database.Close()
 		if err != nil {
 			return 0, fmt.Errorf("count thread rows in database %s: %w", path, err)
@@ -1114,61 +1182,86 @@ func (workspace *Workspace) knowsProject(ctx context.Context, project string) (b
 	return configTOMLKnowsProject(workspace.home, project)
 }
 
-func (workspace *Workspace) projectThreadIDs(project string) (map[string]struct{}, error) {
+// projectThreadIDs accumulates matched thread IDs across every matched cwd
+// value in every discovered database. matchingThreadCWDs and threadIDsForCWD
+// already bound each individual query; this loop additionally bounds the
+// running TOTAL across every cwd and every database, since that sum is what
+// actually accumulates in threadIDs (spec §5.1).
+func (workspace *Workspace) projectThreadIDs(ctx context.Context, project string) (map[string]struct{}, error) {
 	threadIDs := make(map[string]struct{})
 	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
 	if err != nil {
 		return nil, err
 	}
 	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		database, err := openReadOnlyDatabase(path)
 		if err != nil {
 			return nil, err
 		}
-		const projectThreadIDsQuery = `SELECT id FROM threads
-			WHERE cwd = ? OR substr(cwd, 1, length(?)+1) = ? || '/'`
-		rows, err := database.QueryContext(
-			context.Background(), projectThreadIDsQuery, project, project, project,
-		)
+		matched, err := matchingThreadCWDs(ctx, database, project)
 		if err != nil {
 			_ = database.Close()
-			return nil, fmt.Errorf("query project thread IDs in database %s: %w", path, err)
+			return nil, fmt.Errorf("match thread cwd in database %s: %w", path, err)
 		}
-		for rows.Next() {
-			var threadID string
-			if err := rows.Scan(&threadID); err != nil {
-				_ = rows.Close()
+		for _, cwd := range matched {
+			ids, err := threadIDsForCWD(ctx, database, cwd)
+			if err != nil {
 				_ = database.Close()
-				return nil, fmt.Errorf("scan project thread ID in database %s: %w", path, err)
+				return nil, fmt.Errorf("thread IDs for cwd %q in database %s: %w", cwd, path, err)
 			}
-			threadIDs[threadID] = struct{}{}
+			for _, id := range ids {
+				if _, alreadyPresent := threadIDs[id]; alreadyPresent {
+					continue
+				}
+				if len(threadIDs) >= maxAggregateMatchedThreadRows {
+					_ = database.Close()
+					return nil, fmt.Errorf(
+						"%w: more than %d thread IDs accumulated for project across matched cwd values and databases",
+						ErrTooManyMatchedThreadRows, maxAggregateMatchedThreadRows,
+					)
+				}
+				threadIDs[id] = struct{}{}
+			}
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			_ = database.Close()
-			return nil, fmt.Errorf("iterate project thread IDs in database %s: %w", path, err)
-		}
-		_ = rows.Close()
 		_ = database.Close()
 	}
 	return threadIDs, nil
 }
 
 // projectThreadIDSet unions project's state-database thread IDs
-// (projectThreadIDs) with rolloutThreadIDs, the caller's own rollout-derived
-// set. Export and ReferenceSurfaces both need this exact union — a thread
-// whose state-db row has no matching rollout file, or vice versa, must
-// still count — so one function computes it for both callers instead of
-// each re-deriving it and risking drift (finding FE2: ReferenceSurfaces
-// used to build its id set from rollouts alone, so a state-db-only thread
-// showed zero history and session-index counts even though Export and
-// countThreadRows both included it).
-func (workspace *Workspace) projectThreadIDSet(project string, rolloutThreadIDs map[string]struct{}) (map[string]struct{}, error) {
-	threadIDs, err := workspace.projectThreadIDs(project)
+// (projectThreadIDs, already bounded by maxAggregateMatchedThreadRows) with
+// rolloutThreadIDs, the caller's own rollout-derived set. Export and
+// ReferenceSurfaces both need this exact union — a thread whose state-db
+// row has no matching rollout file, or vice versa, must still count — so
+// one function computes it for both callers instead of each re-deriving it
+// and risking drift (finding FE2: ReferenceSurfaces used to build its id
+// set from rollouts alone, so a state-db-only thread showed zero history
+// and session-index counts even though Export and countThreadRows both
+// included it). The union itself must stay bounded too: projectThreadIDs'
+// own cap only limits what IT accumulates from the state database, not what
+// this function additionally adds from rolloutThreadIDs, so the running
+// total is checked again here as rolloutThreadIDs' own IDs are folded in
+// (spec §5.1).
+func (workspace *Workspace) projectThreadIDSet(
+	ctx context.Context, project string, rolloutThreadIDs map[string]struct{},
+) (map[string]struct{}, error) {
+	threadIDs, err := workspace.projectThreadIDs(ctx, project)
 	if err != nil {
 		return nil, err
 	}
 	for id := range rolloutThreadIDs {
+		if _, alreadyPresent := threadIDs[id]; alreadyPresent {
+			continue
+		}
+		if len(threadIDs) >= maxAggregateMatchedThreadRows {
+			return nil, fmt.Errorf(
+				"%w: more than %d thread IDs accumulated for project across the state database and rollout files",
+				ErrTooManyMatchedThreadRows, maxAggregateMatchedThreadRows,
+			)
+		}
 		threadIDs[id] = struct{}{}
 	}
 	return threadIDs, nil

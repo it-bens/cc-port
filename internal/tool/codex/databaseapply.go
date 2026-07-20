@@ -33,17 +33,17 @@ type pendingMoveDatabases struct {
 	reportWarning func(string)
 }
 
-func startStateDBRewrites(sqliteDir, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
-	return startDatabaseRewrites(sqliteDir, stateDBGlob, oldPath, newPath, rewriteThreadsAndAgentJobs, undo)
+func startStateDBRewrites(ctx context.Context, sqliteDir, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
+	return startDatabaseRewrites(ctx, sqliteDir, stateDBGlob, oldPath, newPath, rewriteThreadsAndAgentJobs, undo)
 }
 
-func startMemoriesDBRewrites(sqliteDir, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
-	return startDatabaseRewrites(sqliteDir, memoriesDBGlob, oldPath, newPath, rewriteStage1TextColumns, undo)
+func startMemoriesDBRewrites(ctx context.Context, sqliteDir, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
+	return startDatabaseRewrites(ctx, sqliteDir, memoriesDBGlob, oldPath, newPath, rewriteStage1TextColumns, undo)
 }
 
 func startDatabaseRewrites(
-	sqliteDir, pattern, oldPath, newPath string,
-	rewrite func(*sqlrewrite.DB, *sqlrewrite.Tx, string, string) (int, error),
+	ctx context.Context, sqliteDir, pattern, oldPath, newPath string,
+	rewrite func(ctx context.Context, path string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string) (int, error),
 	undo *tool.Restorer,
 ) (databaseRewrites, int, error) {
 	paths, err := discoverDatabases(sqliteDir, pattern)
@@ -53,6 +53,9 @@ func startDatabaseRewrites(
 	var rewrites databaseRewrites
 	total := 0
 	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
 		database, err := sqlrewrite.Open(path)
 		if err != nil {
 			return nil, 0, fmt.Errorf("open %s: %w", path, err)
@@ -68,7 +71,7 @@ func startDatabaseRewrites(
 		}
 		rewrites = append(rewrites, pending)
 		undo.RegisterUndo(pending.rollback)
-		count, err := rewrite(database, transaction, oldPath, newPath)
+		count, err := rewrite(ctx, path, database, transaction, oldPath, newPath)
 		if err != nil {
 			return nil, 0, fmt.Errorf("rewrite %s: %w", path, err)
 		}

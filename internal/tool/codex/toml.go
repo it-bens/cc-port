@@ -99,7 +99,11 @@ func configTOMLKnowsProject(home *Home, project string) (bool, error) {
 			return false, err
 		}
 		for _, key := range keys {
-			if pathMatchesProject(key, project) {
+			matched, err := pathMatchesProject(key, project)
+			if err != nil {
+				return false, err
+			}
+			if matched {
 				return true, nil
 			}
 		}

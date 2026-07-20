@@ -19,15 +19,18 @@ import (
 
 const minimumSQLiteVersion = "3.51.3"
 
-// maxTextValueBytes bounds a single TEXT/BLOB value RewriteTextColumn and
+// MaxTextValueBytes bounds a single TEXT/BLOB value RewriteTextColumn and
 // CountTextColumnRO will materialize. Real path-bearing Codex metadata is a
 // few KiB; this 16 MiB ceiling leaves generous headroom while refusing a
 // hostile/corrupted value that could exhaust memory during a move or its
-// preceding read-only dry run.
-const maxTextValueBytes = 16 << 20
+// preceding read-only dry run. Exported so a caller matching path values
+// outside a single-column predicate (Codex's threads.cwd canonicalizing
+// matcher, internal/tool/codex) can guard against the same class of
+// oversized value with the same cap, rather than maintaining a second one.
+const MaxTextValueBytes = 16 << 20
 
 // ErrTextValueTooLarge is returned by RewriteTextColumn and CountTextColumnRO
-// when a candidate TEXT/BLOB value exceeds maxTextValueBytes; both refuse
+// when a candidate TEXT/BLOB value exceeds MaxTextValueBytes; both refuse
 // before materializing the value in Go memory.
 var ErrTextValueTooLarge = errors.New("SQLite text value exceeds byte cap")
 
@@ -223,11 +226,11 @@ func CountTextColumnRO(database *sql.DB, table, column, oldPath string) (int, er
 		quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column),
 	)
 	var byteCount int64
-	switch err := database.QueryRowContext(context.Background(), guardQuery, oldPath, maxTextValueBytes).Scan(&byteCount); {
+	switch err := database.QueryRowContext(context.Background(), guardQuery, oldPath, MaxTextValueBytes).Scan(&byteCount); {
 	case err == nil:
 		return 0, fmt.Errorf(
 			"%w: %s.%s is %d bytes, exceeding the %d byte cap",
-			ErrTextValueTooLarge, table, column, byteCount, maxTextValueBytes,
+			ErrTextValueTooLarge, table, column, byteCount, MaxTextValueBytes,
 		)
 	case !errors.Is(err, sql.ErrNoRows):
 		return 0, fmt.Errorf("guard text values in %s.%s: %w", table, column, err)
@@ -282,7 +285,7 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 		"SELECT %s, octet_length(%s) FROM %s WHERE instr(%s, ?) > 0 AND octet_length(%s) > ?",
 		quoteIdentifier(primaryKeyColumn), quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column),
 	)
-	guardRows, err := transaction.transaction.QueryContext(context.Background(), guardQuery, oldPath, maxTextValueBytes)
+	guardRows, err := transaction.transaction.QueryContext(context.Background(), guardQuery, oldPath, MaxTextValueBytes)
 	if err != nil {
 		return 0, fmt.Errorf("guard text values in %s.%s: %w", table, column, err)
 	}
@@ -295,7 +298,7 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 		}
 		overCapErr := fmt.Errorf(
 			"%w: %s.%s at %s=%v is %d bytes, exceeding the %d byte cap",
-			ErrTextValueTooLarge, table, column, primaryKeyColumn, primaryKey, byteCount, maxTextValueBytes,
+			ErrTextValueTooLarge, table, column, primaryKeyColumn, primaryKey, byteCount, MaxTextValueBytes,
 		)
 		if err := guardRows.Close(); err != nil {
 			return 0, fmt.Errorf("%w; close text value guard for %s.%s: %w", overCapErr, table, column, err)

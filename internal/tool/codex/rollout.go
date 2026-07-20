@@ -145,59 +145,205 @@ func hasStructuredCwd(lines [][]byte) bool {
 	return false
 }
 
-// countRolloutLine returns how many bounded occurrences of oldPath a
-// rewrite would touch in line. session_meta and turn_context lines are
-// always counted; every other line (response items, world-state blobs,
-// compacted summaries) is counted only under deep.
-func countRolloutLine(line []byte, oldPath string, deep bool) int {
-	var probe rolloutLineProbe
-	if err := json.Unmarshal(line, &probe); err != nil {
-		return 0
-	}
-	structured := probe.Type == rolloutTypeSessionMeta || probe.Type == rolloutTypeTurnContext
-	if deep {
-		return rewrite.CountPathInBytesWithJSONEscape(line, oldPath)
-	}
-	if !structured {
-		return 0
-	}
-	return countStructuredRolloutFields(line, probe.Type, oldPath)
+// pathSubstitution pairs a literal byte sequence a rollout rewrite searches
+// for with the value it replaces it with.
+type pathSubstitution struct {
+	old string
+	new string
 }
 
-// rewriteRolloutLine rewrites one rollout JSONL line under the same
-// always-structured / opt-in-prose rule as countRolloutLine, returning how
-// many bounded occurrences it changed (not just whether the line changed,
-// so the total agrees with countRolloutLine's occurrence count). A
-// malformed or non-JSON line is left verbatim, matching the claude
-// adapter's malformed-line-preserved-verbatim convention.
-func rewriteRolloutLine(line []byte, oldPath, newPath string, deep bool) (rewritten []byte, count int) {
-	var probe rolloutLineProbe
-	if err := json.Unmarshal(line, &probe); err != nil {
-		return line, 0
+// rolloutSubstitutionSources returns oldPath plus every distinct cwd this
+// rollout's session_meta/turn_context lines recorded that canonically
+// matches oldPath but differs from it byte-for-byte: Codex records
+// payload.cwd verbatim and uncanonicalized, so a rollout recorded through a
+// symlink-aliased cwd never contains oldPath's literal bytes for the
+// existing boundary-aware substring rewrite to find (spec §5.1, finding
+// H1). planRolloutFile and applyRolloutFile both derive their source list
+// from this one function on their own read of lines, so a dry-run count and
+// an apply can never disagree about which bytes belong to the project.
+//
+// The result is ordered longest-source-first (ties broken by source bytes,
+// so the order never depends on map iteration), because callers apply
+// sources sequentially against progressively mutated bytes: a source that
+// is a boundary-prefix of another source (for example a self-referential
+// symlink alias recorded as oldPath+"/alias") must be substituted before
+// the shorter source, or the shorter source's own substitution pass
+// consumes part of the longer source's match first and the longer source
+// can never be found again.
+func rolloutSubstitutionSources(lines [][]byte, oldPath string) ([]string, error) {
+	identity, err := rolloutProjectIdentity(lines, oldPath)
+	if err != nil {
+		return nil, err
 	}
-	structured := probe.Type == rolloutTypeSessionMeta || probe.Type == rolloutTypeTurnContext
-	if deep {
-		return rewrite.ReplacePathInBytesWithJSONEscape(line, oldPath, newPath)
-	}
-	if !structured {
-		return line, 0
-	}
-	return rewriteStructuredRolloutFields(line, probe.Type, oldPath, newPath)
-}
-
-func countStructuredRolloutFields(line []byte, rolloutType, oldPath string) int {
-	total := 0
-	for _, path := range structuredRolloutFieldPaths(line, rolloutType) {
-		value := gjson.GetBytes(line, path)
-		if value.Type == gjson.String {
-			total += rewrite.CountPathInBytes([]byte(value.String()), oldPath)
+	sources := []string{oldPath}
+	seen := map[string]struct{}{oldPath: {}}
+	for _, cwd := range identity.CWDs {
+		if _, ok := seen[cwd]; ok {
+			continue
+		}
+		seen[cwd] = struct{}{}
+		matches, err := pathMatchesProject(cwd, oldPath)
+		if err != nil {
+			return nil, err
+		}
+		if matches {
+			sources = append(sources, cwd)
 		}
 	}
-	return total
+	sort.Slice(sources, func(left, right int) bool {
+		if len(sources[left]) != len(sources[right]) {
+			return len(sources[left]) > len(sources[right])
+		}
+		return sources[left] < sources[right]
+	})
+	return sources, nil
+}
+
+// ErrSubstitutionWouldReintroduceSource is returned when a rollout has more
+// than one substitution source and applying an earlier one, in sequence,
+// causes a later (not-yet-applied) source to match text it did not match
+// before that step ran. internal/move's nested-move guard only refuses
+// newPath equaling oldPath or newPath being a /-boundary descendant of
+// oldPath from the root; it does not catch oldPath (or another source)
+// reappearing inside text a substitution just wrote, whether whole
+// (contained entirely within one replacement value) or assembled from a
+// replacement's output plus adjacent bytes the rewrite left unchanged
+// (replacing "/longsource" with "/x/foo" inside "/longsource/bar" leaves
+// "/x/foo/bar", completing a match for an unrelated recorded source
+// "/foo/bar" that no single replacement value contains on its own). A
+// containment check over replacement values alone cannot detect the second
+// shape and can also over-refuse: a substring occurrence that would not
+// actually fall on a path boundary is not a real hazard, since
+// rewrite.ReplacePathInBytes(WithJSONEscape) would never match it. With a
+// single source this is harmless: one such pass never re-scans its own
+// output, so there is no later source left to check. A general fix needs a
+// true single-pass multi-pattern substitution primitive with JSON-escape
+// awareness in internal/rewrite, a much larger change than this narrow,
+// doubly-conditional hazard warrants; cc-port refuses rather than risk
+// silently corrupting a recorded path.
+var ErrSubstitutionWouldReintroduceSource = errors.New("rollout substitution would re-introduce a later substitution source")
+
+// guardSubstitutionOrder refuses when applying substitutions sequentially,
+// exactly as rewriteRolloutLine will, causes a later (not-yet-applied)
+// source to match more occurrences than it matched immediately before that
+// step ran. It reuses rewriteRolloutLine itself, called with a growing
+// PREFIX of the ordered substitution list against the untouched original
+// line, so "the state after step k" and "the state after step k-1" are
+// exactly what an apply would actually produce at each point, not a
+// simulation of it; the only new primitive is the counting comparison,
+// reusing rewrite.CountPathInBytesWithJSONEscape (already used by
+// rewriteRolloutLine's own deep branch) over the whole line both times.
+// Comparing the WHOLE line rather than isolating the touched field is
+// still exact: content no substitution reached is identical on both sides
+// of the comparison and contributes nothing to the delta, whether the
+// rewrite is running in --deep or structured mode.
+//
+// A first, simpler design ran the full substitution sequence once, then
+// ran it again over its own output, refusing if the second full pass found
+// anything. That design has a real gap: a corrupted result can itself be a
+// fixed point under further whole-sequence re-application. Concretely
+// (TestPlanAndApplyRolloutFileRefuseWhenSuffixReintroducesSource), sourceA
+// and sourceB have UNEQUAL suffixes past oldPath ("/nested" and
+// "/other/nested"), and sourceA sorts first (longer raw bytes). newPath
+// plus sourceA's suffix happens to spell out sourceB's raw stored bytes
+// exactly; rewriteStructuredRolloutFields' own per-field loop applies every
+// substitution to one field's value in sequence, so within that single,
+// otherwise-unguarded pass sourceB's substitution immediately fires again
+// on the text sourceA's step just produced, settling into a doubled path
+// segment (".../other/other/nested") that no longer contains either
+// source's original literal bytes — so a second full pass over that output
+// finds nothing further, even though the value is already wrong. Had the
+// two suffixes been identical instead, their replacement values would be
+// byte-identical too, and the later step would just rewrite already-correct
+// text rather than produce a doubled segment; the danger here is the
+// unequal-suffix containment, not aliasing as such. Checking after each
+// individual step, while the moment of reintroduction is still observable,
+// is what catches it; this was verified against exactly that case, not
+// assumed. A single source never triggers this: there is no later, pending
+// source left to check.
+func guardSubstitutionOrder(line []byte, substitutions []pathSubstitution, deep bool) error {
+	if len(substitutions) <= 1 {
+		return nil
+	}
+	before, _ := rewriteRolloutLine(line, nil, deep)
+	for step := range substitutions {
+		after, _ := rewriteRolloutLine(line, substitutions[:step+1], deep)
+		for later := step + 1; later < len(substitutions); later++ {
+			source := substitutions[later].old
+			if rewrite.CountPathInBytesWithJSONEscape(after, source) > rewrite.CountPathInBytesWithJSONEscape(before, source) {
+				return fmt.Errorf(
+					"%w: substituting %q for %q introduces a new match for %q that was not present before this step",
+					ErrSubstitutionWouldReintroduceSource, substitutions[step].old, substitutions[step].new, source,
+				)
+			}
+		}
+		before = after
+	}
+	return nil
+}
+
+// rolloutSubstitutions pairs each source rolloutSubstitutionSources reported
+// with the value Apply must write: newPath for the literal oldPath source,
+// or newPath with whatever suffix the source's canonicalized form carried
+// past oldPath's canonical form for a symlink-aliased source — the same
+// suffix-preservation matchingThreadRewrites uses for threads.cwd.
+func rolloutSubstitutions(sources []string, oldPath, newPath string) ([]pathSubstitution, error) {
+	canonicalOldPath, err := canonicalizePath(oldPath)
+	if err != nil {
+		return nil, err
+	}
+	substitutions := make([]pathSubstitution, 0, len(sources))
+	for _, source := range sources {
+		if source == oldPath {
+			substitutions = append(substitutions, pathSubstitution{old: source, new: newPath})
+			continue
+		}
+		canonicalSource, err := canonicalizePath(source)
+		if err != nil {
+			return nil, err
+		}
+		suffix := strings.TrimPrefix(canonicalSource, canonicalOldPath)
+		substitutions = append(substitutions, pathSubstitution{old: source, new: newPath + suffix})
+	}
+	return substitutions, nil
+}
+
+// rewriteRolloutLine rewrites one rollout JSONL line, applying substitutions
+// in order (session_meta and turn_context lines always; every other line —
+// response items, world-state blobs, compacted summaries — only under
+// deep). Substitutions must already be ordered longest-source-first
+// (rolloutSubstitutionSources): planRolloutFile calls this same function to
+// count, over a throwaway copy, rather than counting each source
+// independently against the original line, so a dry-run count can never
+// diverge from what an apply actually replaces — a source-order-dependent
+// outcome is not something two different code paths could disagree about,
+// since only one path exists. A malformed or non-JSON line is left
+// verbatim, matching the claude adapter's malformed-line-preserved-verbatim
+// convention.
+func rewriteRolloutLine(line []byte, substitutions []pathSubstitution, deep bool) (rewritten []byte, count int) {
+	var probe rolloutLineProbe
+	if err := json.Unmarshal(line, &probe); err != nil {
+		return line, 0
+	}
+	structured := probe.Type == rolloutTypeSessionMeta || probe.Type == rolloutTypeTurnContext
+	if deep {
+		updated := line
+		total := 0
+		for _, substitution := range substitutions {
+			var replaced int
+			updated, replaced = rewrite.ReplacePathInBytesWithJSONEscape(updated, substitution.old, substitution.new)
+			total += replaced
+		}
+		return updated, total
+	}
+	if !structured {
+		return line, 0
+	}
+	return rewriteStructuredRolloutFields(line, probe.Type, substitutions)
 }
 
 //nolint:gocritic // Named results would be shadowed by the per-field rewrite values.
-func rewriteStructuredRolloutFields(line []byte, rolloutType, oldPath, newPath string) ([]byte, int) {
+func rewriteStructuredRolloutFields(line []byte, rolloutType string, substitutions []pathSubstitution) ([]byte, int) {
 	updated := line
 	total := 0
 	for _, path := range structuredRolloutFieldPaths(line, rolloutType) {
@@ -205,8 +351,14 @@ func rewriteStructuredRolloutFields(line []byte, rolloutType, oldPath, newPath s
 		if value.Type != gjson.String {
 			continue
 		}
-		rewritten, count := rewrite.ReplacePathInBytes([]byte(value.String()), oldPath, newPath)
-		if count == 0 {
+		rewritten := []byte(value.String())
+		fieldCount := 0
+		for _, substitution := range substitutions {
+			var replaced int
+			rewritten, replaced = rewrite.ReplacePathInBytes(rewritten, substitution.old, substitution.new)
+			fieldCount += replaced
+		}
+		if fieldCount == 0 {
 			continue
 		}
 		var err error
@@ -214,7 +366,7 @@ func rewriteStructuredRolloutFields(line []byte, rolloutType, oldPath, newPath s
 		if err != nil {
 			return line, 0
 		}
-		total += count
+		total += fieldCount
 	}
 	return updated, total
 }
@@ -236,38 +388,81 @@ func structuredRolloutFieldPaths(line []byte, rolloutType string) []string {
 	return paths
 }
 
-// planRolloutFile reports how many occurrences a move would rewrite in
-// path, and whether path is era-A (no structured cwd, therefore skipped
-// entirely regardless of deep).
-func planRolloutFile(path, oldPath string, deep bool, caps TranscodeCaps) (count int, eraA bool, err error) {
-	lines, _, err := readRolloutLines(path, caps)
+// rolloutFileSubstitutions reads path and computes its ordered substitution
+// list, shared by planRolloutFile and applyRolloutFile so the two can never
+// derive a different source order or a different set of replacement values
+// from the same on-disk bytes.
+func rolloutFileSubstitutions(
+	path, oldPath, newPath string, deep bool, caps TranscodeCaps,
+) (lines [][]byte, substitutions []pathSubstitution, eraA bool, err error) {
+	lines, _, err = readRolloutLines(path, caps)
 	if err != nil {
-		return 0, false, fmt.Errorf("read %s: %w", path, err)
+		return nil, nil, false, fmt.Errorf("read %s: %w", path, err)
 	}
 	if !hasStructuredCwd(lines) {
+		return lines, nil, true, nil
+	}
+	sources, err := rolloutSubstitutionSources(lines, oldPath)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("determine substitution sources for %s: %w", path, err)
+	}
+	substitutions, err = rolloutSubstitutions(sources, oldPath, newPath)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("determine substitution values for %s: %w", path, err)
+	}
+	for _, line := range lines {
+		if err := guardSubstitutionOrder(line, substitutions, deep); err != nil {
+			return nil, nil, false, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return lines, substitutions, false, nil
+}
+
+// planRolloutFile reports how many occurrences a move would rewrite in
+// path, and whether path is era-A (no structured cwd, therefore skipped
+// entirely regardless of deep). It counts by running rewriteRolloutLine —
+// the identical sequential substitution pipeline applyRolloutFile uses —
+// over a throwaway copy of each line and summing the reported counts,
+// rather than counting each substitution source independently against the
+// original bytes: sources can overlap (a symlink alias recorded as
+// oldPath+"/alias" is a boundary-prefix of oldPath itself), and independent
+// per-source counting double-counts an overlapping occurrence that the
+// real, order-dependent rewrite only ever touches once (spec §5.1).
+func planRolloutFile(path, oldPath, newPath string, deep bool, caps TranscodeCaps) (count int, eraA bool, err error) {
+	lines, substitutions, eraA, err := rolloutFileSubstitutions(path, oldPath, newPath, deep, caps)
+	if err != nil {
+		return 0, false, err
+	}
+	if eraA {
 		return 0, true, nil
 	}
 	for _, line := range lines {
-		count += countRolloutLine(line, oldPath, deep)
+		_, lineCount := rewriteRolloutLine(line, substitutions, deep)
+		count += lineCount
 	}
 	return count, false, nil
 }
 
 // applyRolloutFile rewrites path in place via TranscodeLines, unless path
-// is era-A, in which case it is left untouched and eraA reports that.
+// is era-A, in which case it is left untouched and eraA reports that. A
+// rollout recorded through a symlink-aliased cwd is rewritten to newPath
+// (with any preserved subdirectory suffix) even though its stored bytes
+// never literally contained oldPath (spec §5.1, finding H1): substitutions
+// come from rolloutFileSubstitutions on this same read of the file, the
+// identical computation planRolloutFile uses, so the two cannot disagree.
 func applyRolloutFile(ctx context.Context, path, oldPath, newPath string, deep bool, caps TranscodeCaps) (count int, eraA bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return 0, false, err
 	}
-	lines, _, err := readRolloutLines(path, caps)
+	_, substitutions, eraA, err := rolloutFileSubstitutions(path, oldPath, newPath, deep, caps)
 	if err != nil {
-		return 0, false, fmt.Errorf("read %s: %w", path, err)
+		return 0, false, err
 	}
-	if !hasStructuredCwd(lines) {
+	if eraA {
 		return 0, true, nil
 	}
 	changedCount, err := TranscodeLines(path, caps, func(line []byte) ([]byte, int) {
-		return rewriteRolloutLine(line, oldPath, newPath, deep)
+		return rewriteRolloutLine(line, substitutions, deep)
 	})
 	if err != nil {
 		return 0, false, fmt.Errorf("transcode %s: %w", path, err)

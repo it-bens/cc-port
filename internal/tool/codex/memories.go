@@ -47,13 +47,16 @@ const (
 // so sqlrewrite.CountTextColumnRO performs the same boundary-aware path scan
 // as Apply's RewriteTextColumn logic rather than the exact/prefix predicate
 // used for path-shaped columns.
-func countMemoriesDB(sqliteDir, oldPath, newPath string) (int, error) {
+func countMemoriesDB(ctx context.Context, sqliteDir, oldPath, newPath string) (int, error) {
 	databases, err := discoverDatabases(sqliteDir, memoriesDBGlob)
 	if err != nil {
 		return 0, err
 	}
 	total := 0
 	for _, path := range databases {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		count, err := countMemoriesDBFile(path, oldPath, newPath)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", path, err)
@@ -85,7 +88,13 @@ func countMemoriesDBReadOnly(database *sql.DB, oldPath string) (int, error) {
 	return total, nil
 }
 
-func rewriteStage1TextColumns(database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string) (int, error) {
+// rewriteStage1TextColumns matches startDatabaseRewrites' shared callback
+// signature (ctx, path); neither is used here since sqlrewrite.RewriteTextColumn
+// takes no context and stage1_outputs' free-text columns carry no cwd
+// canonicalization concern (unlike threads.cwd, see rewriteThreadsAndAgentJobs).
+func rewriteStage1TextColumns(
+	_ context.Context, _ string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string,
+) (int, error) {
 	total := 0
 	for _, column := range []string{stage1RawMemoryColumn, stage1RolloutSummaryColumn} {
 		count, err := database.RewriteTextColumn(transaction, stage1OutputsTable, stage1ThreadIDColumn, column, oldPath, newPath)

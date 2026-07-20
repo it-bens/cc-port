@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -775,6 +776,80 @@ func TestConfigCommentOrValueDoesNotConferProjectKnowledge(t *testing.T) {
 	require.ErrorIs(t, err, tool.ErrProjectAbsent)
 	_, err = workspace.ReferenceSurfaces(t.Context(), commentOnlyProject)
 	require.ErrorIs(t, err, tool.ErrProjectAbsent)
+}
+
+// TestPathMatchesProject_Canonicalizes guards finding H1 (spec §5.1): Codex
+// stores config.cwd() verbatim and uncanonicalized, so a session started
+// through a symlink-aliased cwd never matched the resolved project path
+// cc-port compares it against. pathMatchesProject now canonicalizes both
+// operands before applying the existing equality-or-/-boundary-prefix rule.
+func TestPathMatchesProject_Canonicalizes(t *testing.T) {
+	root := t.TempDir()
+	realProject := filepath.Join(root, "real", "project")
+	require.NoError(t, os.MkdirAll(realProject, 0o750))
+	require.NoError(t, os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "link")))
+	aliasedCWD := filepath.Join(root, "link", "project")
+	unrelated := filepath.Join(root, "real", "other")
+	require.NoError(t, os.MkdirAll(unrelated, 0o750))
+
+	// Neither path below exists on disk, so canonicalizePath falls back to
+	// filepath.Clean for both. cwdWithDotSegment is byte-different from
+	// nonexistentProject (an uncleaned trailing "/." component) but lexically
+	// identical once cleaned, proving the fallback normalizes rather than
+	// comparing raw bytes or refusing to match.
+	nonexistentProject := filepath.Join(root, "does-not-exist", "project")
+	cwdWithDotSegment := nonexistentProject + "/."
+
+	tests := []struct {
+		name    string
+		cwd     string
+		project string
+		want    bool
+	}{
+		{
+			name:    "symlink-aliased cwd matches its canonical project",
+			cwd:     aliasedCWD,
+			project: realProject,
+			want:    true,
+		},
+		{
+			name:    "non-existent cwd falls back to lexical comparison and still matches",
+			cwd:     cwdWithDotSegment,
+			project: nonexistentProject,
+			want:    true,
+		},
+		{
+			name:    "unrelated path does not match",
+			cwd:     unrelated,
+			project: realProject,
+			want:    false,
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			matched, err := pathMatchesProject(testCase.cwd, testCase.project)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, matched)
+		})
+	}
+}
+
+// TestCanonicalizePath_DegradesOnlyOnNotExist guards canonicalizePath's one
+// intended degradation: a symlink loop makes filepath.EvalSymlinks fail with
+// a non-ErrNotExist error (ELOOP), which must propagate as an error rather
+// than silently degrade to a lexical comparison — the lexical fallback is
+// reserved for a path that genuinely does not exist (spec §5.1).
+func TestCanonicalizePath_DegradesOnlyOnNotExist(t *testing.T) {
+	root := t.TempDir()
+	loopA := filepath.Join(root, "loop-a")
+	loopB := filepath.Join(root, "loop-b")
+	require.NoError(t, os.Symlink(loopB, loopA))
+	require.NoError(t, os.Symlink(loopA, loopB))
+
+	_, err := canonicalizePath(loopA)
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, fs.ErrNotExist, "a symlink loop is not absence and must not be treated as one")
 }
 
 // TestEnumerateProjectsIncludesProfileOnlyProject guards the second

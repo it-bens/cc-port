@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 
 // MoveSurfaces implements tool.Mover.
 func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, error) {
-	known, err := workspace.projectKnown(req.OldPath)
+	known, err := workspace.projectKnown(req.OldPath, req.NewPath)
 	if err != nil {
 		return nil, fmt.Errorf("determine project identity: %w", err)
 	}
@@ -51,7 +52,10 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 // row, a config.toml/profile projects key, or a rollout's structured cwd.
 // No identity witness is needed (spec §6.1): Codex stores cwd verbatim,
 // so equality-or-prefix matching against any one source is sufficient.
-func (workspace *Workspace) projectKnown(oldPath string) (bool, error) {
+// newPath is only needed to run planRolloutFile's rewrite-pipeline count
+// identically to how MoveSurfaces' own rolloutsSurface will count and
+// apply; this call only inspects whether that count is positive.
+func (workspace *Workspace) projectKnown(oldPath, newPath string) (bool, error) {
 	stateKnown, err := stateDBKnowsProject(workspace.home.SQLiteDir, oldPath)
 	if err != nil {
 		return false, err
@@ -73,7 +77,7 @@ func (workspace *Workspace) projectKnown(oldPath string) (bool, error) {
 		return false, err
 	}
 	for _, path := range rolloutFiles {
-		count, eraA, err := planRolloutFile(path, oldPath, false, workspace.transcodeCaps)
+		count, eraA, err := planRolloutFile(path, oldPath, newPath, false, workspace.transcodeCaps)
 		if err != nil {
 			return false, fmt.Errorf("%s: %w", path, err)
 		}
@@ -88,8 +92,8 @@ func (workspace *Workspace) projectKnown(oldPath string) (bool, error) {
 func sqlDatabaseSurface(
 	name string,
 	req tool.MoveRequest,
-	count func(oldPath, newPath string) (int, error),
-	start func(oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error),
+	count func(ctx context.Context, oldPath, newPath string) (int, error),
+	start func(ctx context.Context, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error),
 	assign func(databaseRewrites),
 ) tool.Surface {
 	return tool.Surface{
@@ -98,14 +102,14 @@ func sqlDatabaseSurface(
 			if err := ctx.Err(); err != nil {
 				return tool.SurfaceResult{}, err
 			}
-			changed, err := count(req.OldPath, req.NewPath)
+			changed, err := count(ctx, req.OldPath, req.NewPath)
 			return tool.SurfaceResult{Count: changed}, err
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
 				return tool.SurfaceResult{}, err
 			}
-			rewrites, changed, err := start(req.OldPath, req.NewPath, undo)
+			rewrites, changed, err := start(ctx, req.OldPath, req.NewPath, undo)
 			if err != nil {
 				return tool.SurfaceResult{}, err
 			}
@@ -117,11 +121,11 @@ func sqlDatabaseSurface(
 
 func (workspace *Workspace) stateDBSurface(req tool.MoveRequest, pending *pendingMoveDatabases) tool.Surface {
 	return sqlDatabaseSurface("state-db", req,
-		func(oldPath, newPath string) (int, error) {
-			return countStateDB(workspace.home.SQLiteDir, oldPath, newPath)
+		func(ctx context.Context, oldPath, newPath string) (int, error) {
+			return countStateDB(ctx, workspace.home.SQLiteDir, oldPath, newPath)
 		},
-		func(oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
-			return startStateDBRewrites(workspace.home.SQLiteDir, oldPath, newPath, undo)
+		func(ctx context.Context, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
+			return startStateDBRewrites(ctx, workspace.home.SQLiteDir, oldPath, newPath, undo)
 		},
 		func(rewrites databaseRewrites) { pending.state = rewrites },
 	)
@@ -129,11 +133,11 @@ func (workspace *Workspace) stateDBSurface(req tool.MoveRequest, pending *pendin
 
 func (workspace *Workspace) memoriesDBSurface(req tool.MoveRequest, pending *pendingMoveDatabases) tool.Surface {
 	return sqlDatabaseSurface("memories-db", req,
-		func(oldPath, newPath string) (int, error) {
-			return countMemoriesDB(workspace.home.SQLiteDir, oldPath, newPath)
+		func(ctx context.Context, oldPath, newPath string) (int, error) {
+			return countMemoriesDB(ctx, workspace.home.SQLiteDir, oldPath, newPath)
 		},
-		func(oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
-			return startMemoriesDBRewrites(workspace.home.SQLiteDir, oldPath, newPath, undo)
+		func(ctx context.Context, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
+			return startMemoriesDBRewrites(ctx, workspace.home.SQLiteDir, oldPath, newPath, undo)
 		},
 		func(rewrites databaseRewrites) { pending.memories = rewrites },
 	)
@@ -194,7 +198,7 @@ func (workspace *Workspace) rolloutsSurface(req tool.MoveRequest) tool.Surface {
 				if err := ctx.Err(); err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				count, eraA, err := planRolloutFile(path, req.OldPath, req.DeepRewrite, workspace.transcodeCaps)
+				count, eraA, err := planRolloutFile(path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
 				}
@@ -215,7 +219,7 @@ func (workspace *Workspace) rolloutsSurface(req tool.MoveRequest) tool.Surface {
 				if err := ctx.Err(); err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				planCount, eraA, err := planRolloutFile(path, req.OldPath, req.DeepRewrite, workspace.transcodeCaps)
+				planCount, eraA, err := planRolloutFile(path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
 				}
@@ -327,7 +331,7 @@ func (workspace *Workspace) agentsMarketplaceSurface(req tool.MoveRequest) tool.
 func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, error) {
 	warnings := workspace.applyWarningSnapshot()
 
-	eraAWarning, err := workspace.eraAWarning(req.OldPath)
+	eraAWarning, err := workspace.eraAWarning(req.OldPath, req.NewPath)
 	if err != nil {
 		return warnings, err
 	}
@@ -446,15 +450,24 @@ func codexDevWarning(path, oldPath string) (string, error) {
 	defer func() { _ = database.Close() }()
 
 	count := 0
-	for _, column := range []struct{ table, column string }{
-		{table: "automations", column: "cwds"},
-		{table: "automation_runs", column: "source_cwd"},
-		{table: "local_thread_catalog", column: "cwd"},
+	for _, column := range []struct {
+		table, column string
+		countMatches  func(database *sql.DB, table, column, oldPath string) (int, error)
+	}{
+		// automations.cwds is free-text/multi-value (plural name), not a
+		// single verbatim cwd per row, so it stays on CountTextColumnRO's
+		// boundary-aware substring scan. automation_runs.source_cwd and
+		// local_thread_catalog.cwd each hold exactly one cwd per row, like
+		// threads.cwd, so they route through the same canonical matching
+		// (spec §5.1): a symlink-aliased value is detected, not missed.
+		{table: "automations", column: "cwds", countMatches: sqlrewrite.CountTextColumnRO},
+		{table: "automation_runs", column: "source_cwd", countMatches: countMatchingColumnRowsBackground},
+		{table: "local_thread_catalog", column: "cwd", countMatches: countMatchingColumnRowsBackground},
 	} {
 		if err := requireTableColumn(database, column.table, column.column); err != nil {
 			return fmt.Sprintf("codex-dev.db schema drift (%v); refusing to move", err), nil
 		}
-		matches, queryErr := sqlrewrite.CountTextColumnRO(database, column.table, column.column, oldPath)
+		matches, queryErr := column.countMatches(database, column.table, column.column, oldPath)
 		if queryErr != nil {
 			return "", fmt.Errorf("inspect %s.%s in %s: %w", column.table, column.column, path, queryErr)
 		}
@@ -486,14 +499,14 @@ func gitBackupWarning(path string) (string, error) {
 	return fmt.Sprintf("could not remove git baseline rollback backup %s; it was left in place", path), nil
 }
 
-func (workspace *Workspace) eraAWarning(oldPath string) (string, error) {
+func (workspace *Workspace) eraAWarning(oldPath, newPath string) (string, error) {
 	files, err := discoverRolloutFiles(workspace.home)
 	if err != nil {
 		return "", err
 	}
 	count := 0
 	for _, path := range files {
-		_, eraA, err := planRolloutFile(path, oldPath, false, workspace.transcodeCaps)
+		_, eraA, err := planRolloutFile(path, oldPath, newPath, false, workspace.transcodeCaps)
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", path, err)
 		}
