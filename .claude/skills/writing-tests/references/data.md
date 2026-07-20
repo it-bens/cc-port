@@ -161,26 +161,17 @@ func newRewriter(t *testing.T) (fsRoot string, r *rewrite.Replacer) {
 Tests that materialize hundreds of MiB or multi-GiB fixtures to exercise cap-rejection guards, aggregate-size limits, or stream-buffer overflow do not belong in CI. Two-test pattern:
 
 - The production-scale test lives in a sibling file gated by `//go:build large`. The maintainer runs the tagged suites locally before merging changes to cap-guarded code: `go test -tags large ./internal/importer/... ./internal/tool/codex/...`.
-- A small-cap variant in the untagged suite exercises the same branches at KiB scale by overriding the caps through the package's restore-func seam (`restore := archive.SetCaps(archive.Caps{...})` followed by `t.Cleanup(restore)`; `codex.SetTranscodeCaps` is the zstd counterpart).
+- A small-cap variant in the untagged suite exercises the same branches at KiB scale by constructing a small `archive.Caps{...}` or `codex.TranscodeCaps{...}` value and passing it straight into the constructor or function under test (`archive.OpenReader(src, size, caps)`, `codex.NewWorkspace(home, getenv, listProcesses, now, transcodeCaps)`, `readRolloutLines(path, transcodeCaps)`). Caps are injected parameters, never package-global state to override.
 
 Neither test replaces the other. The small-cap variant confirms on every run that the rejection branch fires. The large-tag variant confirms the threshold actually holds at production scale and that no hidden buffer (default `bufio.Scanner`, intermediate slice) breaks before the cap. CI runs both tagged suites in a dedicated step; `make test-large` covers them locally.
 
 ### Pattern
 
 ```go
-// In the package under test, expose the caps behind a restore-func seam.
-var caps = Caps{MaxEntryBytes: 1 << 32, MaxAggregateBytes: 1 << 33}
-
-func SetCaps(next Caps) (restore func()) {
-    previous := caps
-    caps = next
-    return func() { caps = previous }
-}
-
-// Small-cap variant: untagged, fast.
+// Small-cap variant: untagged, fast. Caps are a constructor argument, not
+// package state, so the small value goes straight into the call under test.
 func TestRejectsAggregateAtSmallCap(t *testing.T) {
-    restore := archive.SetCaps(archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072})
-    t.Cleanup(restore)
+    reader, err := archive.OpenReader(src, size, archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072})
     // build a ~4 KiB archive; assert rejection
 }
 
@@ -188,6 +179,7 @@ func TestRejectsAggregateAtSmallCap(t *testing.T) {
 //go:build large
 
 func TestRejectsAggregateAtProductionCap(t *testing.T) {
+    reader, err := archive.OpenReader(src, size, archive.DefaultCaps())
     // build a multi-GiB archive; assert rejection at the production cap
 }
 ```

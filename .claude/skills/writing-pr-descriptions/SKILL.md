@@ -104,7 +104,7 @@ Group the changed files. Modules are taken from `AGENTS.md` §Navigation; catego
 | Rewrite primitive | `internal/rewrite/**` |
 | Lock primitive | `internal/lock/**` |
 | Filesystem primitive | `internal/fsutil/**` |
-| Claude state primitive | `internal/claude/**` |
+| Claude state primitive | `internal/tool/claude/**` |
 | Scan primitive | `internal/scan/**` |
 | UI primitive | `internal/ui/**` |
 | Other internals | `internal/**` not matched above |
