@@ -394,19 +394,32 @@ observable limit stays consistent across commands.
 
 ### Apply contract (move)
 
+`MoveSurfaces` first resolves identity via `resolveMoveIdentity`: it tries
+`OldPath`'s encoded directory, classifying its session witnesses through
+`verifyProjectMoveIdentity`, and falls back to `NewPath`'s encoded
+directory (confirmed by a promotion marker naming `OldPath`'s encoded
+directory) only when `OldPath`'s is entirely absent. This tolerates a prior
+apply interrupted after the sessions surface already rewrote every witness
+to `NewPath` but before the encoded directory itself was promoted. The
+resolved locate path then threads into every subsequent per-project
+surface.
+
 `MoveSurfaces` returns one `tool.Surface` per rewrite unit, in a load-bearing
 order: history, user-wide files, session-keyed groups, config, transcripts
 (only under `--deep`), memory, sessions, then `project-directory` last of
-all. Session-keyed groups, transcripts, memory, and sessions re-verify
-project identity via `LocateProject`'s session witness on each call.
-History, user-wide files (§User-wide registry), and config are home-wide
-rather than per-project, so there is no project identity to re-verify; each
-scans or rewrites its one file directly. The `sessions` surface is the one
-that rewrites the witness's `cwd` field, so it must run after every other
-per-project reference rewrite or a later identity check would see the
-witness already pointing at the new path. `project-directory` runs last
-because it derives paths directly from `Home.ProjectDir` and never calls
-`LocateProject`.
+all. Session-keyed groups, transcripts, memory, and sessions enumerate the
+project via `locateProjectForMove` at the resolved locate path on each
+call; unlike `LocateProject`, it does not re-verify the session witness,
+since `resolveMoveIdentity` already confirmed identity once, up front, and
+a fresh witness re-check on a resumed run would see the witness already
+flipped and hard-refuse the very state a resume expects. History, user-wide
+files (§User-wide registry), and config are home-wide rather than
+per-project, so there is no project identity to verify; each scans or
+rewrites its one file directly. The `sessions` surface is the one that
+rewrites the witness's `cwd` field, so it must run after every other
+per-project reference rewrite. `project-directory` runs last because it
+derives paths directly from `Home.ProjectDir` and never locates via witness
+state.
 
 #### Handled
 
@@ -424,6 +437,19 @@ because it derives paths directly from `Home.ProjectDir` and never calls
   `RefsOnly`, the on-disk project directory) to the new path via
   `rewrite.PromoteDir` with `fsutil.CopyDir`, verifies both copies landed,
   then removes the originals.
+- `resolveMoveIdentity` resumes a move interrupted after the sessions
+  surface rewrote every witness to `NewPath` but before the encoded
+  directory itself was promoted: `OldPath`'s encoded directory, still
+  present, remains the locate path regardless of what its witnesses now
+  say. Once `OldPath`'s encoded directory is gone entirely, it falls back
+  to `NewPath`'s and reads its promotion marker through
+  `rewrite.PromotedFrom`. A marker naming `OldPath`'s encoded directory
+  resumes, even for a project with no session witness at all. No marker
+  reports `tool.ErrProjectAbsent`, the same shape a move that already
+  completed and removed its own marker converges to. A marker naming
+  anything else hard-refuses, naming both the recorded and the expected
+  source, rather than treat a demonstrated foreign promotion as an absent
+  project.
 - `checkEncodedDirCollision` runs before any surface: a move where old and
   new paths encode to the same directory (`ErrEncodedDirAmbiguous`) is
   refused before any write. A plan reports an existing
@@ -445,6 +471,17 @@ because it derives paths directly from `Home.ProjectDir` and never calls
   new encoded directory already exists without a valid promotion marker while
   its old source is still present: refused before any write via
   `checkEncodedDirCollision`.
+- A session witness naming neither `OldPath` nor `NewPath`:
+  `verifyProjectMoveIdentity` refuses before any write, the same guard
+  `verifyProjectIdentity` applies to a single expected path. Two distinct
+  real paths can encode to the same directory name, so a witness reporting
+  a third path is never accepted as a resume, only as a collision.
+- A promotion marker at `NewPath`'s encoded directory naming a path other
+  than `OldPath`'s encoded directory: `resolveMoveIdentity` hard-refuses,
+  naming both the recorded and the expected source.
+- A promotion marker path that exists but is not a regular file (a symlink,
+  a directory, or any other non-regular entry): `rewrite.PromotedFrom`
+  hard-refuses rather than report it as absent.
 
 #### Not covered
 

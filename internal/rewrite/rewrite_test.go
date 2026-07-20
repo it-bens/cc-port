@@ -307,6 +307,94 @@ func TestPromotionMarker(t *testing.T) {
 	assert.NoFileExists(t, markerPath)
 }
 
+// TestPromotedFrom exercises all three outcomes of the tri-state reader
+// directly: no marker, a marker recording one source, and a marker
+// recording a different source. VerifyPromotedFrom collapses the latter two
+// into a single bool when they disagree with a caller-supplied expectation;
+// PromotedFrom reports the recorded value either way so a caller can tell
+// "absent" from "present but names someone else" — the distinction
+// resolveMoveIdentity needs to refuse a foreign promotion marker instead of
+// misreporting it as an absent project.
+func TestPromotedFrom(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "destination")
+	require.NoError(t, os.Mkdir(destination, 0o750))
+
+	source, present, err := rewrite.PromotedFrom(destination)
+	require.NoError(t, err)
+	assert.False(t, present, "an absent marker must report present=false")
+	assert.Empty(t, source)
+
+	markerPath := filepath.Join(destination, rewrite.MarkerFilename)
+	require.NoError(t, os.WriteFile(markerPath, []byte("/source"), 0o600))
+	source, present, err = rewrite.PromotedFrom(destination)
+	require.NoError(t, err)
+	assert.True(t, present)
+	assert.Equal(t, "/source", source)
+
+	require.NoError(t, os.WriteFile(markerPath, []byte("/different-source"), 0o600))
+	source, present, err = rewrite.PromotedFrom(destination)
+	require.NoError(t, err)
+	assert.True(t, present, "a marker naming a different source is still present, just mismatched")
+	assert.Equal(t, "/different-source", source, "PromotedFrom reports the recorded source verbatim, without comparing it")
+}
+
+// TestPromotedFrom_RefusesNonRegularMarker proves the marker path is
+// Lstat'd, never followed: a dangling symlink must hard-fail rather than
+// collapse to the same ENOENT a genuinely absent marker produces (silently
+// degrading a malformed destination to "absent"), and a symlink to a file
+// whose content happens to equal the expected source must hard-fail rather
+// than pass as a genuine promotion proof. A directory at the marker path
+// hard-fails too; asserting on the specific "not a regular file" message
+// confirms the regular-file check itself refuses it, not an incidental
+// read failure that would refuse it anyway.
+func TestPromotedFrom_RefusesNonRegularMarker(t *testing.T) {
+	tests := []struct {
+		name    string
+		arrange func(t *testing.T, root, markerPath string)
+	}{
+		{
+			name: "dangling symlink",
+			arrange: func(t *testing.T, root, markerPath string) {
+				t.Helper()
+				require.NoError(t, os.Symlink(filepath.Join(root, "does-not-exist"), markerPath))
+			},
+		},
+		{
+			name: "symlink to a file with matching content",
+			arrange: func(t *testing.T, root, markerPath string) {
+				t.Helper()
+				target := filepath.Join(root, "target.txt")
+				require.NoError(t, os.WriteFile(target, []byte("/old/project"), 0o600))
+				require.NoError(t, os.Symlink(target, markerPath))
+			},
+		},
+		{
+			name: "directory",
+			arrange: func(t *testing.T, _, markerPath string) {
+				t.Helper()
+				require.NoError(t, os.Mkdir(markerPath, 0o750))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			destination := filepath.Join(root, "destination")
+			require.NoError(t, os.Mkdir(destination, 0o750))
+			markerPath := filepath.Join(destination, rewrite.MarkerFilename)
+			test.arrange(t, root, markerPath)
+
+			source, present, err := rewrite.PromotedFrom(destination)
+
+			require.Error(t, err, "a non-regular entry at the marker path must hard-fail, not report absent")
+			assert.False(t, present)
+			assert.Empty(t, source)
+			assert.Contains(t, err.Error(), "not a regular file")
+		})
+	}
+}
+
 func TestPromotionMarker_VerifiesArbitrarilyOldMarker(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "destination")
 	markerPath := filepath.Join(destination, rewrite.MarkerFilename)

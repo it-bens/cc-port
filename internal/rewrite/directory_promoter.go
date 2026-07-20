@@ -49,21 +49,60 @@ func IsArtifactPath(base string) bool {
 // destination that merely happens to exist.
 const MarkerFilename = ".cc-port-promoted-from"
 
+// PromotedFrom reports destination's promotion marker, distinguishing an
+// absent marker from one that names a different source — a distinction
+// VerifyPromotedFrom's bool collapses away and that a caller needing to
+// treat "no marker" and "marker names someone else" differently (a
+// converged re-run's non-fatal absence versus a foreign-collision refusal)
+// cannot otherwise recover. The marker path is Lstat'd, not Stat'd, so a
+// symlink there is refused rather than followed: following it would let
+// a dangling symlink collapse to the same ENOENT as a genuinely absent marker
+// (silently degrading a malformed destination to "absent" instead of
+// failing hard), and would let a symlink to attacker-controlled content
+// pass as a genuine promotion proof. Anything at the marker path that
+// Lstat resolves but that is not a regular file — symlink, directory,
+// device, socket — is positive evidence of a malformed or planted
+// destination and hard-fails naming the path and its mode; only a
+// genuinely missing path is absence. The Lstat and the ReadFile below are
+// not atomic, so a regular file at Lstat time could in principle be
+// swapped for a symlink before the read. Left open: planting a marker at
+// all already requires write access to the destination's encoded
+// directory inside the user's own Claude home, and the check is content
+// equality against a derivable value (the expected encoded-directory
+// path), so the race grants an attacker with that access no capability
+// they lack without it. Closing it needs an open-then-fstat with
+// O_NOFOLLOW, a non-portable syscall constant this tool's threat model
+// does not warrant.
+func PromotedFrom(destination string) (source string, present bool, err error) {
+	markerPath := filepath.Join(destination, MarkerFilename)
+	info, statErr := os.Lstat(markerPath)
+	if statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("lstat promotion marker for %s: %w", destination, statErr)
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, fmt.Errorf("promotion marker %s is not a regular file (mode %s)", markerPath, info.Mode())
+	}
+	data, err := os.ReadFile(markerPath) //nolint:gosec // G304: Lstat above confirmed a regular file, not a symlink
+	if err != nil {
+		return "", false, fmt.Errorf("read promotion marker for %s: %w", destination, err)
+	}
+	return string(data), true, nil
+}
+
 // VerifyPromotedFrom reports whether destination carries a marker recording
 // exactly source as the path it was promoted from.
 func VerifyPromotedFrom(source, destination string) (bool, error) {
-	markerPath := filepath.Join(destination, MarkerFilename)
-	if _, err := os.Stat(markerPath); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("stat promotion marker for %s: %w", destination, err)
-	}
-	data, err := os.ReadFile(markerPath) //nolint:gosec // G304: caller-supplied, already-validated internal paths
+	recorded, present, err := PromotedFrom(destination)
 	if err != nil {
-		return false, fmt.Errorf("read promotion marker for %s: %w", destination, err)
+		return false, err
 	}
-	return string(data) == source, nil
+	if !present {
+		return false, nil
+	}
+	return recorded == source, nil
 }
 
 // RemoveMarker removes destination's promotion marker once its move fully

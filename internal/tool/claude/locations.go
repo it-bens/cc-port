@@ -47,6 +47,34 @@ type ProjectLocations struct {
 // not exist. Optional resources (memory files, history entries, etc.) are
 // collected with zero values when absent.
 func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, error) {
+	return locateProjectData(claudeHome, projectPath, verifyProjectIdentity)
+}
+
+// locateProjectForMove enumerates projectPath's data WITHOUT re-verifying
+// witness identity. It exists for exactly one caller, MoveSurfaces: a move
+// can be interrupted after sessionsSurface has already rewritten every
+// witness to the move's other path but before the encoded directory
+// itself has been promoted, and the single-path verifyProjectIdentity has
+// no way to tell that state apart from a genuine mismatch. MoveSurfaces
+// resolves identity ONCE, up front, via verifyProjectMoveIdentity (which
+// DOES compare against both of the move's paths and still hard-refuses a
+// witness naming a third, unrelated one); every subsequent enumeration of
+// the SAME already-identity-confirmed directory reuses that result instead
+// of re-running a check that would incorrectly refuse the very witness
+// state a resume expects.
+func locateProjectForMove(claudeHome *Home, projectPath string) (*ProjectLocations, error) {
+	return locateProjectData(claudeHome, projectPath, func(context.Context, *Home, string, []string) error { return nil })
+}
+
+// locateProjectData is the shared engine behind LocateProject and
+// locateProjectForMove: identical enumeration, with the identity check
+// injected so the move-context caller can supply a no-op in place of the
+// hard-refusing verifyProjectIdentity once it has already confirmed
+// identity through a different, move-aware check.
+func locateProjectData(
+	claudeHome *Home, projectPath string,
+	checkIdentity func(ctx context.Context, claudeHome *Home, projectPath string, sessionUUIDs []string) error,
+) (*ProjectLocations, error) {
 	projectDir := claudeHome.ProjectDir(projectPath)
 
 	if _, err := os.Stat(projectDir); err != nil {
@@ -72,7 +100,7 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 		return nil, err
 	}
 
-	if err := verifyProjectIdentity(context.Background(), claudeHome, projectPath, sessionUUIDs); err != nil {
+	if err := checkIdentity(context.Background(), claudeHome, projectPath, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
@@ -454,6 +482,54 @@ func verifyProjectIdentity(ctx context.Context, claudeHome *Home, projectPath st
 	}
 
 	warnIdentityCheckSkipped(encodedDir, projectPath)
+	return nil
+}
+
+// verifyProjectMoveIdentity is the move-context identity check. Unlike
+// verifyProjectIdentity (a single expected path, hard refuse on ANY
+// mismatch), it accepts either of the move's two paths as confirming
+// identity, because a move can be interrupted after sessionsSurface has
+// already rewritten every witness to newPath but before the encoded
+// directory itself has been renamed — the exact state a naive single-path
+// check cannot distinguish from a genuine foreign collision. A witness
+// reporting oldPath or newPath confirms identity; one reporting neither is
+// a foreign collision and is refused exactly as verifyProjectIdentity
+// refuses a single mismatched witness — two distinct real paths can encode
+// to the same directory name, so this guard must never widen to accept a
+// THIRD path. No witness at all is the same skip-with-warning case
+// LocateProject already tolerates for a project with no attributable
+// sessions; the caller resolves the fresh-vs-resumed distinction itself
+// from other evidence (see resolveMoveIdentity).
+func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessionUUIDs []string) error {
+	encodedDir := claudeHome.ProjectDir(oldPath)
+
+	if len(sessionUUIDs) == 0 {
+		warnIdentityCheckSkipped(encodedDir, oldPath)
+		return nil
+	}
+
+	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
+	for _, uuid := range sessionUUIDs {
+		uuidSet[uuid] = struct{}{}
+	}
+
+	cwds, err := walkSessionWitnesses(context.Background(), claudeHome.SessionsDir(), uuidSet)
+	if err != nil {
+		return err
+	}
+	if len(cwds) == 0 {
+		warnIdentityCheckSkipped(encodedDir, oldPath)
+		return nil
+	}
+
+	for _, cwd := range cwds {
+		if cwd != oldPath && cwd != newPath {
+			return fmt.Errorf(
+				"encoded directory %s: sessions/*.json attributes it to %s, neither %q nor %q; refusing to rewrite",
+				encodedDir, formatCwdList(cwds), oldPath, newPath,
+			)
+		}
+	}
 	return nil
 }
 

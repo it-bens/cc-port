@@ -3,6 +3,7 @@ package claude
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -250,6 +251,133 @@ func TestApplyProjectDirectoryMove_RerunAfterPhysicalResidualFailureConverges(t 
 	require.NoError(t, secondErr, "the resumed apply must complete cleanly")
 	assert.NoDirExists(t, oldPath, "re-run must finish removing the leftover physical directory")
 	assert.Empty(t, workspace.moveWarningSnapshot(), "a clean re-run must not carry forward a residual warning")
+}
+
+// TestResolveMoveIdentity_ResumesViaNewPathAfterEncodedDirPromoted guards
+// the OTHER resume sub-case of finding A1 (the "sessions surface still
+// hasn't run yet, but the encoded directory has ALREADY been promoted"
+// window is covered by TestMove_ResumesAfterWitnessFlip in
+// move_contract_test.go): a SIGKILL after projectDirectorySurface has
+// promoted OldPath's encoded directory to NewPath's (writing a marker
+// recording OldPath as its source) but before its final
+// removeAll(oldProjectDir) runs leaves OldPath's encoded directory gone
+// entirely. resolveMoveIdentity must fall back to NewPath and accept it
+// ONLY because the marker proves it was promoted from exactly OldPath —
+// not merely because its witnesses happen to say NewPath, which an
+// unrelated, coincidentally pre-existing project would too.
+func TestResolveMoveIdentity_ResumesViaNewPathAfterEncodedDirPromoted(t *testing.T) {
+	root := t.TempDir()
+	home := &Home{Dir: filepath.Join(root, "dotclaude")}
+	oldPath := "/Users/test/old-project"
+	newPath := "/Users/test/new-project"
+	oldEncodedDir := home.ProjectDir(oldPath)
+	newEncodedDir := home.ProjectDir(newPath)
+
+	const sessionUUID = "aaaaaaaa-0000-4000-8000-000000000001"
+	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, sessionUUID+".jsonl"), []byte("{}"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, rewrite.MarkerFilename), []byte(oldEncodedDir), 0o600))
+	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
+	sessionFile := fmt.Sprintf(`{"sessionId":%q,"cwd":%q}`, sessionUUID, newPath)
+	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "1.json"), []byte(sessionFile), 0o600))
+	workspace := NewWorkspace(home)
+	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
+
+	locatePath, err := workspace.resolveMoveIdentity(req)
+
+	require.NoError(t, err)
+	assert.Equal(t, newPath, locatePath)
+}
+
+// TestResolveMoveIdentity_RefusesNewPathWithoutMarker proves the negative
+// space of the same fallback: a directory at NewPath's encoded location
+// whose OWN witnesses genuinely say NewPath (so verifyProjectMoveIdentity
+// alone would accept it) but that carries no promotion marker recording
+// OldPath must NOT be treated as this move's resume target — it degrades
+// to tool.ErrProjectAbsent instead, matching what a wholly unrelated
+// NewPath with no evidence at all would also produce, so no surface ever
+// touches a coincidentally pre-existing, unrelated project's data.
+func TestResolveMoveIdentity_RefusesNewPathWithoutMarker(t *testing.T) {
+	root := t.TempDir()
+	home := &Home{Dir: filepath.Join(root, "dotclaude")}
+	oldPath := "/Users/test/old-project"
+	newPath := "/Users/test/new-project"
+	newEncodedDir := home.ProjectDir(newPath)
+
+	const sessionUUID = "aaaaaaaa-0000-4000-8000-000000000002"
+	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, sessionUUID+".jsonl"), []byte("{}"), 0o600))
+	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
+	sessionFile := fmt.Sprintf(`{"sessionId":%q,"cwd":%q}`, sessionUUID, newPath)
+	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "1.json"), []byte(sessionFile), 0o600))
+	workspace := NewWorkspace(home)
+	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
+
+	_, err := workspace.resolveMoveIdentity(req)
+
+	require.ErrorIs(t, err, tool.ErrProjectAbsent)
+}
+
+// TestResolveMoveIdentity_ResumesWitnessLessProjectWithValidMarker guards
+// finding A1's witness-less sub-case: a project with no session UUIDs at
+// all (so verifyProjectMoveIdentity resolves identityFresh, the deliberate
+// skip-with-warning case, never identityResume) whose encoded directory is
+// already published at NewPath with a marker naming OldPath must still
+// resume. The marker, not the witness set, is the identity oracle on this
+// fallback branch; witnesses serve only as the foreign-collision veto
+// verifyProjectMoveIdentity already ran without error.
+func TestResolveMoveIdentity_ResumesWitnessLessProjectWithValidMarker(t *testing.T) {
+	root := t.TempDir()
+	home := &Home{Dir: filepath.Join(root, "dotclaude")}
+	oldPath := "/Users/test/old-project"
+	newPath := "/Users/test/new-project"
+	oldEncodedDir := home.ProjectDir(oldPath)
+	newEncodedDir := home.ProjectDir(newPath)
+
+	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, rewrite.MarkerFilename), []byte(oldEncodedDir), 0o600))
+	workspace := NewWorkspace(home)
+	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
+
+	locatePath, err := workspace.resolveMoveIdentity(req)
+
+	require.NoError(t, err)
+	assert.Equal(t, newPath, locatePath)
+}
+
+// TestResolveMoveIdentity_RefusesForeignPromotionMarker proves the negative
+// space of the marker-mismatch case: NewPath's encoded directory carries a
+// marker that positively names a THIRD, unrelated source, not OldPath. That
+// is demonstrated evidence of a foreign promotion, so resolveMoveIdentity
+// must hard refuse and name the recorded source rather than degrade to
+// tool.ErrProjectAbsent — the same misclassification a bool-only marker
+// check cannot avoid, because it collapses "absent" and "names someone
+// else" into the same false. The witness here genuinely says NewPath (so
+// verifyProjectMoveIdentity alone would accept it), isolating the
+// assertion to the marker check.
+func TestResolveMoveIdentity_RefusesForeignPromotionMarker(t *testing.T) {
+	root := t.TempDir()
+	home := &Home{Dir: filepath.Join(root, "dotclaude")}
+	oldPath := "/Users/test/old-project"
+	newPath := "/Users/test/new-project"
+	newEncodedDir := home.ProjectDir(newPath)
+	foreignSource := "/Users/test/unrelated-project"
+
+	const sessionUUID = "aaaaaaaa-0000-4000-8000-000000000003"
+	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, sessionUUID+".jsonl"), []byte("{}"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, rewrite.MarkerFilename), []byte(foreignSource), 0o600))
+	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
+	sessionFile := fmt.Sprintf(`{"sessionId":%q,"cwd":%q}`, sessionUUID, newPath)
+	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "1.json"), []byte(sessionFile), 0o600))
+	workspace := NewWorkspace(home)
+	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
+
+	_, err := workspace.resolveMoveIdentity(req)
+
+	require.Error(t, err)
+	require.NotErrorIs(t, err, tool.ErrProjectAbsent, "a marker naming a third, unrelated source is a foreign promotion, not an absent project")
+	assert.Contains(t, err.Error(), foreignSource, "the error must name the recorded source")
 }
 
 // TestRemoveStagingDir_ReconcilesEmptyStaging proves removeStagingDir
