@@ -1,10 +1,13 @@
 package codex
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -15,6 +18,14 @@ import (
 
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
+
+// ErrCompressedRolloutUnsupported is the sentinel discoverRolloutFiles
+// returns when it finds a .jsonl.zst rollout with no plain .jsonl sibling.
+// cc-port never reads compressed rollouts, so continuing past one would
+// either silently skip that rollout's content or, during move, relocate the
+// project while leaving a stale, unrewritten path trapped inside a rollout
+// cc-port could not touch; refusing by name is the only honest outcome.
+var ErrCompressedRolloutUnsupported = errors.New("compressed rollout unsupported")
 
 // rolloutLineProbe reads just enough of a rollout JSONL line to classify
 // it. Codex tags every RolloutItem line as {"type":…,"payload":…}
@@ -66,7 +77,17 @@ func discoverRolloutFiles(home *Home) ([]string, error) {
 		files = append(files, found...)
 	}
 	sort.Strings(files)
-	return suppressCompressedSiblings(files), nil
+	files = suppressCompressedSiblings(files)
+	var compressed []string
+	for _, path := range files {
+		if strings.HasSuffix(path, ".zst") {
+			compressed = append(compressed, path)
+		}
+	}
+	if len(compressed) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrCompressedRolloutUnsupported, strings.Join(compressed, ", "))
+	}
+	return files, nil
 }
 
 // suppressCompressedSiblings drops every .jsonl.zst entry whose plain
@@ -74,13 +95,13 @@ func discoverRolloutFiles(home *Home) ([]string, error) {
 func suppressCompressedSiblings(files []string) []string {
 	plain := make(map[string]bool, len(files))
 	for _, path := range files {
-		if !strings.HasSuffix(path, zstSuffix) {
+		if !strings.HasSuffix(path, ".zst") {
 			plain[path] = true
 		}
 	}
 	var kept []string
 	for _, path := range files {
-		if strings.HasSuffix(path, zstSuffix) && plain[strings.TrimSuffix(path, zstSuffix)] {
+		if strings.HasSuffix(path, ".zst") && plain[strings.TrimSuffix(path, ".zst")] {
 			continue
 		}
 		kept = append(kept, path)
@@ -101,7 +122,7 @@ func listRolloutFiles(root string) ([]string, error) {
 			return nil
 		}
 		name := entry.Name()
-		if strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".jsonl"+zstSuffix) {
+		if strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".jsonl.zst") {
 			files = append(files, path)
 		}
 		return nil
@@ -381,10 +402,8 @@ func structuredRolloutFieldPaths(line []byte, rolloutType string) []string {
 // callers, so a dry-run count and the plan rolloutsSurfaceWithPlans later
 // applies can never derive a different source order or a different set of
 // replacement values from the same on-disk bytes.
-func rolloutFileSubstitutions(
-	path, oldPath, newPath string, deep bool, caps TranscodeCaps,
-) (lines [][]byte, substitutions []pathSubstitution, eraA bool, err error) {
-	lines, _, err = readRolloutLines(path, caps)
+func rolloutFileSubstitutions(path, oldPath, newPath string, deep bool) (lines [][]byte, substitutions []pathSubstitution, eraA bool, err error) {
+	lines, err = readRolloutLines(path)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -417,8 +436,8 @@ func rolloutFileSubstitutions(
 // oldPath+"/alias" is a boundary-prefix of oldPath itself), and independent
 // per-source counting double-counts an overlapping occurrence that the
 // real, order-dependent rewrite only ever touches once (spec §5.1).
-func planRolloutFile(path, oldPath, newPath string, deep bool, caps TranscodeCaps) (count int, eraA bool, err error) {
-	lines, substitutions, eraA, err := rolloutFileSubstitutions(path, oldPath, newPath, deep, caps)
+func planRolloutFile(path, oldPath, newPath string, deep bool) (count int, eraA bool, err error) {
+	lines, substitutions, eraA, err := rolloutFileSubstitutions(path, oldPath, newPath, deep)
 	if err != nil {
 		return 0, false, err
 	}
@@ -435,14 +454,60 @@ func planRolloutFile(path, oldPath, newPath string, deep bool, caps TranscodeCap
 // applyRolloutSubstitutions applies substitutions captured during preflight.
 // It deliberately performs no path canonicalization, so another tool's apply
 // cannot make a previously canonical match disappear by removing oldPath.
-func applyRolloutSubstitutions(path string, substitutions []pathSubstitution, deep bool, caps TranscodeCaps) (int, error) {
-	changedCount, err := TranscodeLines(path, caps, func(line []byte) ([]byte, int) {
+func applyRolloutSubstitutions(path string, substitutions []pathSubstitution, deep bool) (int, error) {
+	changedCount, err := rewriteRolloutLines(path, func(line []byte) ([]byte, int) {
 		return rewriteRolloutLine(line, substitutions, deep)
 	})
 	if err != nil {
-		return 0, fmt.Errorf("transcode %s: %w", path, err)
+		return 0, fmt.Errorf("rewrite %s: %w", path, err)
 	}
 	return changedCount, nil
+}
+
+func readRolloutLines(path string) (lines [][]byte, err error) {
+	file, err := os.Open(path) //nolint:gosec // G304: path from adapter-controlled rollout discovery
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64<<10), maxCodexJSONLLine)
+	for scanner.Scan() {
+		lines = append(lines, append([]byte(nil), scanner.Bytes()...))
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return nil, fmt.Errorf("scan %s: %w", path, scanErr)
+	}
+	return lines, nil
+}
+
+func rewriteRolloutLines(path string, transform func(line []byte) (rewritten []byte, count int)) (int, error) {
+	lines, err := readRolloutLines(path)
+	if err != nil {
+		return 0, err
+	}
+
+	var output bytes.Buffer
+	count := 0
+	for _, line := range lines {
+		rewrittenLine, lineCount := transform(line)
+		count += lineCount
+		output.Write(rewrittenLine)
+		output.WriteByte('\n')
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if err := rewrite.SafeWriteFile(path, output.Bytes(), info.Mode()); err != nil {
+		return 0, fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		return 0, fmt.Errorf("restore mtime %s: %w", path, err)
+	}
+	return count, nil
 }
 
 func rolloutMalformedWarnings(path string, lines [][]byte) []string {

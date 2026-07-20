@@ -22,7 +22,7 @@ func fixtureWorkspace(t *testing.T) (*Workspace, *Home) {
 	t.Helper()
 	home := SetupFixture(t)
 	home.AgentsDir = FixtureAgentsDir(t)
-	return NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps()), home
+	return NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now), home
 }
 
 func planAndApply(t *testing.T, workspace *Workspace, req tool.MoveRequest) (planCounts, applyCounts map[string]int) {
@@ -68,6 +68,28 @@ func TestMoveSurfacesDryRunApplyCountParity(t *testing.T) {
 	assert.Positive(t, planCounts[categorySessions])
 	assert.Positive(t, planCounts["memories-worktree"])
 	assert.Positive(t, planCounts["agents-marketplace"])
+}
+
+func TestMoveSurfacesRolloutPlanApplyCountParity(t *testing.T) {
+	workspace, _ := fixtureWorkspace(t)
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project", DeepRewrite: true}
+
+	planCounts, applyCounts := planAndApply(t, workspace, req)
+
+	require.Contains(t, planCounts, categorySessions)
+	assert.Equal(t, planCounts[categorySessions], applyCounts[categorySessions])
+}
+
+func TestMoveSurfacesRefusesCompressedOnlyRollout(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	path := filepath.Join(home.Dir, sessionsSubdir, "2026", "07", "18", "rollout-refused.jsonl.zst")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+	require.NoError(t, os.WriteFile(path, []byte("junk"), 0o600))
+
+	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"})
+
+	require.ErrorIs(t, err, ErrCompressedRolloutUnsupported)
+	assert.Contains(t, err.Error(), path)
 }
 
 // TestMove_RewritesSymlinkAliasedThreadCwd guards finding H1 (spec §5.1): a
@@ -144,7 +166,7 @@ func TestMove_ConfigSymlinkAliasRewritesStoredTrustKey(t *testing.T) {
 	config := "# retain\n[projects.\"" + alias + "\"]\ntrust_level = \"trusted\"\n[projects.\"/other\"]\ntrust_level = \"trusted\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(homeDir, configTOMLFileName), []byte(config), 0o600))
 	workspace := NewWorkspace(
-		&Home{Dir: homeDir, SQLiteDir: filepath.Join(homeDir, "sqlite")}, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps(),
+		&Home{Dir: homeDir, SQLiteDir: filepath.Join(homeDir, "sqlite")}, fakeGetenv(nil), noProcesses, time.Now,
 	)
 
 	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: realProject, NewPath: newPath})
@@ -307,7 +329,7 @@ func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
 	gitDir := filepath.Join(root, gitDirName)
 	require.NoError(t, os.MkdirAll(gitDir, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n"), 0o600))
-	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps())
+	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now)
 	undo := tool.NewRestorer()
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
@@ -336,7 +358,7 @@ func TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline(t *testing.T) {
 	// rewritten by an earlier, interrupted apply: it holds newPath, not
 	// oldPath, so this run's own applyMemoriesWorktree count is zero.
 	require.NoError(t, os.WriteFile(filepath.Join(root, "raw_memories.md"), []byte("Notes about "+newPath+".\n"), 0o600))
-	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps())
+	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: newPath}
 	undo := tool.NewRestorer()
 
@@ -882,7 +904,7 @@ func TestPlanningLeavesDatabaseAndWALBytesUntouched(t *testing.T) {
 
 func TestAgentsMarketplaceSurfaceSkippedWhenAgentsDirAbsent(t *testing.T) {
 	home := SetupFixture(t)
-	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps())
+	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
 	surfaces, err := workspace.MoveSurfaces(req)

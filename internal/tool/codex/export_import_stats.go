@@ -206,7 +206,7 @@ func (workspace *Workspace) readAndIdentifyRollouts(
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		lines, _, err := readRolloutLines(rollout, workspace.transcodeCaps)
+		lines, err := readRolloutLines(rollout)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read rollout %s: %w", rollout, err)
 		}
@@ -231,7 +231,7 @@ func (workspace *Workspace) projectRollouts(ctx context.Context, project string)
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		lines, _, err := readRolloutLines(path, workspace.transcodeCaps)
+		lines, err := readRolloutLines(path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read rollout %s: %w", path, err)
 		}
@@ -356,10 +356,10 @@ func (workspace *Workspace) archiveRolloutName(path string) (string, error) {
 	sessionsRoot := filepath.Join(workspace.home.Dir, sessionsSubdir)
 	archivedRoot := filepath.Join(workspace.home.Dir, archivedSessionsSubdir)
 	if relative, ok := relativeWithin(sessionsRoot, path); ok {
-		return archiveSessionRoot + filepath.ToSlash(strings.TrimSuffix(relative, zstSuffix)), nil
+		return archiveSessionRoot + filepath.ToSlash(relative), nil
 	}
 	if relative, ok := relativeWithin(archivedRoot, path); ok {
-		return archiveArchivedRoot + filepath.ToSlash(strings.TrimSuffix(relative, zstSuffix)), nil
+		return archiveArchivedRoot + filepath.ToSlash(relative), nil
 	}
 	return "", fmt.Errorf("rollout %s is outside Codex rollout roots", path)
 }
@@ -947,7 +947,7 @@ func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project strin
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		lines, _, err := readRolloutLines(path, workspace.transcodeCaps)
+		lines, err := readRolloutLines(path)
 		if err != nil {
 			return nil, err
 		}

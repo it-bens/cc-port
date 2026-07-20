@@ -11,7 +11,7 @@ Go CLI that ports Claude Code and OpenAI Codex project state. See `README.md` fo
 - Register every export category in the owning tool's `Categories()`; validate a manifest's category list through `manifest.ApplyToolCategories`. Never hard-code a parallel category list. (internal/manifest/README.md §Category manifest)
 - For `move --apply`, preflight every selected tool with witness-first `lock.Acquire` in registry order, hold all flocks through apply, and release in reverse order; wrap `import` in nested `lock.WithLock` across selected tools. (internal/lock/README.md §Concurrency guard)
 - Contain adversarial archive paths with `os.Root` and bound decompressed reads with per-entry and aggregate caps. (internal/archive/README.md §Contracts)
-- After editing archive or zstd cap-guard code, run `go test -tags large ./internal/importer/... ./internal/tool/codex/...` locally. (internal/importer/README.md §Tests, internal/tool/codex/README.md §Tests)
+- After editing archive cap-guard code, run `go test -tags large ./internal/importer/...` locally. (internal/importer/README.md §Tests)
 - Set an explicit `bufio.Scanner.Buffer` cap on any new line-scanned read over untrusted input. (internal/scan/README.md §Rules files preserved)
 - Cap any `bufio.Scanner` reader of Claude's `history.jsonl` with `claude.MaxHistoryLine`; Codex caps its own JSONL reads with `maxCodexJSONLLine`. (internal/tool/claude/README.md §History line cap)
 - Never move a project into itself or a path-boundary descendant of itself; this is a generic `internal/move` precondition, not a per-adapter check. (internal/move/README.md §Refused)

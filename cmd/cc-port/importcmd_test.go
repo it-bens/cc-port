@@ -29,7 +29,7 @@ import (
 // witness is the one evidence source that reads live machine state instead
 // of the (already hermetic, temp-dir-scoped) Codex home a test controls.
 func newTestToolSet() *tool.Set {
-	return tool.NewSet(claude.New(), codex.NewAdapter(os.Getenv, noopProcessLister, time.Now, codex.DefaultTranscodeCaps()))
+	return tool.NewSet(claude.New(), codex.NewAdapter(os.Getenv, noopProcessLister, time.Now))
 }
 
 func noopProcessLister() ([]codex.ProcessInfo, error) { return nil, nil }
@@ -176,7 +176,6 @@ func buildCodexOnlyArchive(t *testing.T) []byte {
 		func(string) string { return "" },
 		func() ([]codex.ProcessInfo, error) { return nil, nil },
 		time.Now,
-		codex.DefaultTranscodeCaps(),
 	)
 	codexTool := codex.New()
 	selected := make(map[string]bool)

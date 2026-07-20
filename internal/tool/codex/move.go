@@ -53,9 +53,10 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 }
 
 type rolloutRewritePlan struct {
-	lines         [][]byte
 	substitutions []pathSubstitution
 	eraA          bool
+	count         int
+	warnings      []string
 }
 
 type moveRewritePreflight struct {
@@ -83,11 +84,18 @@ func (workspace *Workspace) captureMovePreflight(req tool.MoveRequest) (moveRewr
 	}
 	rollouts := make(map[string]rolloutRewritePlan, len(files))
 	for _, path := range files {
-		lines, substitutions, eraA, err := rolloutFileSubstitutions(path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
+		lines, substitutions, eraA, err := rolloutFileSubstitutions(path, req.OldPath, req.NewPath, req.DeepRewrite)
 		if err != nil {
 			return moveRewritePreflight{}, fmt.Errorf("%s: %w", path, err)
 		}
-		rollouts[path] = rolloutRewritePlan{lines: lines, substitutions: substitutions, eraA: eraA}
+		count := 0
+		if !eraA {
+			for _, line := range lines {
+				_, lineCount := rewriteRolloutLine(line, substitutions, req.DeepRewrite)
+				count += lineCount
+			}
+		}
+		rollouts[path] = rolloutRewritePlan{substitutions: substitutions, eraA: eraA, count: count, warnings: rolloutMalformedWarnings(path, lines)}
 	}
 	return moveRewritePreflight{state: state, config: config, rollouts: rollouts}, nil
 }
@@ -126,7 +134,7 @@ func (workspace *Workspace) projectKnown(oldPath, newPath string) (bool, error) 
 		return false, err
 	}
 	for _, path := range rolloutFiles {
-		count, eraA, err := planRolloutFile(path, oldPath, newPath, false, workspace.transcodeCaps)
+		count, eraA, err := planRolloutFile(path, oldPath, newPath, false)
 		if err != nil {
 			return false, fmt.Errorf("%s: %w", path, err)
 		}
@@ -234,18 +242,12 @@ func (workspace *Workspace) rolloutsSurfaceWithPlans(req tool.MoveRequest, plans
 		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			total := 0
 			var warnings []string
-			for path, plan := range plans {
+			for _, plan := range plans {
 				if err := ctx.Err(); err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				warnings = append(warnings, rolloutMalformedWarnings(path, plan.lines)...)
-				if plan.eraA {
-					continue
-				}
-				for _, line := range plan.lines {
-					_, count := rewriteRolloutLine(line, plan.substitutions, req.DeepRewrite)
-					total += count
-				}
+				warnings = append(warnings, plan.warnings...)
+				total += plan.count
 			}
 			return tool.SurfaceResult{Count: total, Warnings: warnings}, nil
 		},
@@ -256,14 +258,14 @@ func (workspace *Workspace) rolloutsSurfaceWithPlans(req tool.MoveRequest, plans
 				if err := ctx.Err(); err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				warnings = append(warnings, rolloutMalformedWarnings(path, plan.lines)...)
+				warnings = append(warnings, plan.warnings...)
 				if plan.eraA || len(plan.substitutions) == 0 {
 					continue
 				}
 				if err := undo.RegisterFile(path); err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("back up %s: %w", path, err)
 				}
-				changed, err := applyRolloutSubstitutions(path, plan.substitutions, req.DeepRewrite, workspace.transcodeCaps)
+				changed, err := applyRolloutSubstitutions(path, plan.substitutions, req.DeepRewrite)
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
 				}
@@ -549,7 +551,7 @@ func (workspace *Workspace) eraAWarning(oldPath, newPath string) (string, error)
 	}
 	count := 0
 	for _, path := range files {
-		_, eraA, err := planRolloutFile(path, oldPath, newPath, false, workspace.transcodeCaps)
+		_, eraA, err := planRolloutFile(path, oldPath, newPath, false)
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", path, err)
 		}

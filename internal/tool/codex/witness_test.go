@@ -21,7 +21,7 @@ func newWitnessWorkspace(t *testing.T, listProcesses ProcessLister, now func() t
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	return newWorkspace(home, fakeGetenv(nil), listProcesses, now, pidAlive, DefaultTranscodeCaps())
+	return newWorkspace(home, fakeGetenv(nil), listProcesses, now, pidAlive)
 }
 
 func TestActiveWritersEmptyOnFreshHome(t *testing.T) {
@@ -91,7 +91,7 @@ func TestActiveWritersWrapsErrNoWitnessWhenBusyProbeCannotDiscoverDatabases(t *t
 	t.Cleanup(func() { _ = os.Chmod(sqliteDir, 0o700) }) //nolint:gosec // G302: cleanup restores test directory access
 	home := &Home{Dir: dir, SQLiteDir: sqliteDir}
 	workspace := newWorkspace(
-		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false },
 	)
 
 	_, err := workspace.ActiveWriters()
@@ -114,7 +114,7 @@ func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
 	workspace := newWorkspace(
-		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false }, DefaultTranscodeCaps(),
+		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false },
 	)
 
 	active, err := workspace.ActiveWriters()

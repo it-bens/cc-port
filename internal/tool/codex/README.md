@@ -5,29 +5,24 @@
 Implements `tool.Tool` and `tool.Workspace` for OpenAI Codex. Codex stores
 project-associated state in shapes Claude Code never uses: verbatim absolute
 `cwd` strings, a WAL-mode SQLite index with a live desktop writer, TOML
-tables keyed by project path, optionally zstd-compressed session files, and a
-git-baselined memory directory. This adapter concentrates every one of those
+tables keyed by project path, JSONL session files that Codex may compress,
+and a git-baselined memory directory. This adapter concentrates every one of those
 tool-specific facts in this package; `internal/move`, `internal/export`,
 `internal/importer`, and `internal/stats` know nothing about Codex.
 
 ## Public API
 
 - `Adapter`, `New() *Adapter`: wired to the real environment, process table,
-  and wall clock. `NewAdapter(getenv, listProcesses, now, transcodeCaps) *Adapter`:
+  and wall clock. `NewAdapter(getenv, listProcesses, now) *Adapter`:
   same shape with every seam explicit, for tests.
 - `Home`: `Dir`, `SQLiteDir`, `AgentsDir`.
-- `Workspace`, `NewWorkspace(home, getenv, listProcesses, now, transcodeCaps) *Workspace`,
-  `NewWorkspaceForTest(home, getenv, listProcesses, now, pidAlive, transcodeCaps) *Workspace`:
+- `Workspace`, `NewWorkspace(home, getenv, listProcesses, now) *Workspace`,
+  `NewWorkspaceForTest(home, getenv, listProcesses, now, pidAlive) *Workspace`:
   the test variant additionally overrides the process-liveness check so
   adapter tests never touch the live process table.
 - `ProcessLister func() ([]ProcessInfo, error)`, `ProcessInfo{PID, Name}`: the
   process-enumeration seam; production default is `listSystemProcesses`
   (shells out to `ps -Ao pid=,comm=`), darwin/linux only.
-- `TranscodeCaps{MaxDecompressedBytes, MaxLineBytes}`: zstd decompression caps.
-- `TranscodeLines(path, caps, transform)`: rewrites a rollout file (plain
-  `.jsonl` or its `.jsonl.zst` sibling) line by line, decompressing/recompressing
-  transparently, promoted through
-  `rewrite.SafeWriteFile`.
 - `SetupFixture(t *testing.T) *Home`, `FixtureProjectPath() string`,
   `FixtureAgentsDir(t *testing.T) string`: the adapter-local test fixture
   helpers (see §Tests).
@@ -175,6 +170,9 @@ shapes themselves.
   (`rollout/src/compression.rs:141-163,941-943`). Move rewrite, export,
   `projectRollouts`, `knowsProject`, and stats all consume this deduplicated
   form.
+- After sibling suppression, `discoverRolloutFiles` refuses every remaining
+  `.zst` rollout by name with `ErrCompressedRolloutUnsupported`; discovery
+  does not read compressed bytes.
 - Export preserves the root distinction in the archive path
   (`archiveRolloutName` maps `sessions/` and `archived_sessions/` to
   `codex/sessions/…` and `codex/archived-sessions/…`); import stages back to
@@ -225,6 +223,9 @@ shapes themselves.
 - Rewriting era-A rollout bodies under any flag. `--deep` extends rewriting
   into narrative bodies of structured rollouts; it does not create structure
   in an unstructured one.
+- A `.zst` rollout with no plain sibling. Discovery refuses the operation by
+  filename; a crash-window `X.jsonl` plus `X.jsonl.zst` pair still selects the
+  plain file.
 
 **Not covered.**
 
@@ -671,8 +672,7 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
 ## Tests
 
 Unit tests across `move_test.go`, `witness_test.go`, `process_test.go`,
-`home_test.go`, `rollout_test.go`, `transcode_test.go`, and
-`export_import_stats_test.go`. Coverage: three-tier `sqlite_home` resolution,
+`home_test.go`, `rollout_test.go`, and `export_import_stats_test.go`. Coverage: three-tier `sqlite_home` resolution,
 glob-based discovery against generation-suffixed fixture filenames, both
 rollout roots, era-A skip behavior under plain and `--deep` rewrite, the
 process-table and busy-probe witness sources driven through the injected
@@ -686,11 +686,6 @@ thread the same way `Export` would, `pathMatchesProject` matching a
 symlink-aliased cwd against a real symlink built under `t.TempDir`, and a
 symlink-aliased thread row's dry-run count agreeing with what move
 actually rewrites.
-
-`transcode_large_test.go` (`-tags large`) exercises the zstd decompression
-caps at production scale; the default suite asserts the per-line cap wins
-when one compressed line also exceeds the aggregate cap, per the pairing pattern in
-`internal/archive/README.md`.
 
 Fixtures come from `testdata/dotcodex/` staged via `SetupFixture`, following
 the `testutil.SetupFixture` pattern: `SetupFixture` copies the static tree

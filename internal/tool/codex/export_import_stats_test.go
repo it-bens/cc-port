@@ -29,19 +29,9 @@ const (
 	fixtureThreadTwo = "00000000-0000-4000-8000-000000000002"
 )
 
-func TestExportDecompressesRolloutsAndReportsEraA(t *testing.T) {
+func TestExportRolloutsAndReportsEraA(t *testing.T) {
 	home := SetupFixture(t)
-	compressedPath := filepath.Join(
-		home.Dir, sessionsSubdir, "2026", "07", "18", "rollout-compressed.jsonl"+zstSuffix,
-	)
-	require.NoError(t, os.MkdirAll(filepath.Dir(compressedPath), 0o750))
-	line := `{"type":"session_meta","payload":{"session_id":"compressed-thread","cwd":"` +
-		FixtureProjectPath() + `"}}` + "\n"
-	compressed, err := compressZstd([]byte(line))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(compressedPath, compressed, 0o600))
-
-	workspace := newWorkspace(home, func(string) string { return "" }, nil, nil, nil, DefaultTranscodeCaps())
+	workspace := newWorkspace(home, func(string) string { return "" }, nil, nil, nil)
 	var archiveBytes bytes.Buffer
 	writer := zip.NewWriter(&archiveBytes)
 	sink := archive.NewSink(writer, toolName, nil)
@@ -57,19 +47,23 @@ func TestExportDecompressesRolloutsAndReportsEraA(t *testing.T) {
 	for _, file := range reader.File {
 		names = append(names, file.Name)
 	}
-	assert.Contains(t, names, "codex/sessions/2026/07/18/rollout-compressed.jsonl")
-	assert.NotContains(t, names, "codex/sessions/2026/07/18/rollout-compressed.jsonl.zst")
-	for _, file := range reader.File {
-		if file.Name != "codex/sessions/2026/07/18/rollout-compressed.jsonl" {
-			continue
-		}
-		body, err := file.Open()
-		require.NoError(t, err)
-		decompressed, err := io.ReadAll(body)
-		require.NoError(t, err)
-		require.NoError(t, body.Close())
-		assert.Equal(t, line, string(decompressed))
-	}
+	assert.Contains(t, names, "codex/"+eraCPath)
+}
+
+func TestExportRefusesCompressedOnlyRollout(t *testing.T) {
+	home := SetupFixture(t)
+	path := filepath.Join(home.Dir, sessionsSubdir, "2026", "07", "18", "rollout-refused.jsonl.zst")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+	require.NoError(t, os.WriteFile(path, []byte("junk"), 0o600))
+	workspace := quietTestWorkspace(home)
+	writer := zip.NewWriter(io.Discard)
+	sink := archive.NewSink(writer, toolName, nil)
+
+	_, err := workspace.Export(t.Context(), FixtureProjectPath(), map[string]bool{categorySessions: true}, sink)
+
+	require.ErrorIs(t, err, ErrCompressedRolloutUnsupported)
+	assert.Contains(t, err.Error(), path)
+	require.NoError(t, writer.Close())
 }
 
 func TestExportHistoryOnlyIncludesAssociatedHistoryLines(t *testing.T) {
@@ -325,11 +319,7 @@ func TestCodexRoundTripRestoresRolloutsHistoryAndSessionIndex(t *testing.T) {
 func TestCodexRoundTripSucceedsWithCompressedSiblingCrashArtifact(t *testing.T) {
 	sourceHome := SetupFixture(t)
 	plainPath := rolloutFixturePath(sourceHome, eraCPath)
-	plainData, err := os.ReadFile(plainPath) //nolint:gosec // G304: fixture path under t.TempDir()
-	require.NoError(t, err)
-	compressed, err := compressZstd(plainData)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(plainPath+zstSuffix, compressed, 0o600)) //nolint:gosec // G703: fixture path under t.TempDir()
+	require.NoError(t, os.WriteFile(plainPath+".zst", []byte("junk"), 0o600))
 
 	archiveBytes := exportFixtureArchive(t, sourceHome)
 	destinationHome, _ := setupImportDestination(t)
@@ -984,7 +974,7 @@ func readArchiveEntry(t *testing.T, data []byte, name string) []byte {
 func quietTestWorkspace(home *Home) *Workspace {
 	return newWorkspace(
 		home, func(string) string { return "" }, func() ([]ProcessInfo, error) { return nil, nil },
-		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) }, func(int) bool { return false }, DefaultTranscodeCaps(),
+		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) }, func(int) bool { return false },
 	)
 }
 

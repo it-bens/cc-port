@@ -20,7 +20,7 @@ func noProcesses() ([]ProcessInfo, error) { return nil, nil }
 
 func TestDetectReportsAbsentWhenDefaultHomeMissing(t *testing.T) {
 	homeDir := t.TempDir()
-	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now, DefaultTranscodeCaps())
+	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now)
 
 	detected, err := adapter.Detect()
 
@@ -31,7 +31,7 @@ func TestDetectReportsAbsentWhenDefaultHomeMissing(t *testing.T) {
 func TestDetectReportsPresentWhenDefaultHomeExists(t *testing.T) {
 	homeDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o750))
-	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now, DefaultTranscodeCaps())
+	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now)
 
 	detected, err := adapter.Detect()
 
@@ -41,7 +41,7 @@ func TestDetectReportsPresentWhenDefaultHomeExists(t *testing.T) {
 
 func TestOpenDefaultLocationReportsToolAbsent(t *testing.T) {
 	homeDir := t.TempDir()
-	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now, DefaultTranscodeCaps())
+	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now)
 
 	_, err := adapter.Open("")
 
@@ -50,7 +50,7 @@ func TestOpenDefaultLocationReportsToolAbsent(t *testing.T) {
 
 func TestOpenExplicitOverrideMustExist(t *testing.T) {
 	homeDir := t.TempDir()
-	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now, DefaultTranscodeCaps())
+	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now)
 
 	_, err := adapter.Open(filepath.Join(homeDir, "missing-codex-home"))
 
@@ -62,7 +62,7 @@ func TestOpenExplicitOverrideRejectsFile(t *testing.T) {
 	homeDir := t.TempDir()
 	filePath := filepath.Join(homeDir, "not-a-dir")
 	require.NoError(t, os.WriteFile(filePath, []byte("x"), 0o600))
-	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now, DefaultTranscodeCaps())
+	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now)
 
 	_, err := adapter.Open(filePath)
 
@@ -75,7 +75,7 @@ func TestOpenExplicitOverrideCanonicalizesSymlink(t *testing.T) {
 	require.NoError(t, os.MkdirAll(realDir, 0o750))
 	linkDir := filepath.Join(homeDir, "link-codex")
 	require.NoError(t, os.Symlink(realDir, linkDir))
-	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now, DefaultTranscodeCaps())
+	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now)
 
 	workspace, err := adapter.Open(linkDir)
 
@@ -206,7 +206,7 @@ func TestProfileSQLiteHomeWarning_ReportsDivergentOverlay(t *testing.T) {
 func TestOpenPopulatesAgentsDirFromHome(t *testing.T) {
 	homeDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o750))
-	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now, DefaultTranscodeCaps())
+	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses, time.Now)
 
 	workspaceIface, err := adapter.Open("")
 	require.NoError(t, err)
