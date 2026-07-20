@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -167,6 +168,45 @@ func TestReadManifest_RejectsOversizedNamedPipe(t *testing.T) {
 
 	require.ErrorIs(t, err, manifest.ErrManifestFileTooLarge)
 	<-done
+}
+
+func TestReadManifest_RejectsOverlongPlaceholderKey(t *testing.T) {
+	overlongKey := "{{" + strings.Repeat("A", 4100) + "}}" // well over the 4 KiB cap
+	metadata := &manifest.Metadata{
+		Tools: []manifest.Tool{{
+			Name:         "claude",
+			Placeholders: []manifest.Placeholder{{Key: overlongKey, Original: "/home/user"}},
+		}},
+	}
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+	require.NoError(t, manifest.WriteManifest(path, metadata))
+
+	_, err := manifest.ReadManifest(path)
+
+	require.ErrorIs(t, err, manifest.ErrPlaceholderKeyTooLong)
+}
+
+func TestReadManifest_RejectsMalformedPlaceholderKey(t *testing.T) {
+	for name, key := range map[string]string{
+		"no braces at all":       "TOKEN",
+		"missing closing braces": "{{TOKEN",
+		"empty inner segment":    "{{}}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			metadata := &manifest.Metadata{
+				Tools: []manifest.Tool{{
+					Name:         "claude",
+					Placeholders: []manifest.Placeholder{{Key: key, Original: "/home/user"}},
+				}},
+			}
+			path := filepath.Join(t.TempDir(), "metadata.xml")
+			require.NoError(t, manifest.WriteManifest(path, metadata))
+
+			_, err := manifest.ReadManifest(path)
+
+			require.ErrorIs(t, err, manifest.ErrPlaceholderKeyMalformed)
+		})
+	}
 }
 
 func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {

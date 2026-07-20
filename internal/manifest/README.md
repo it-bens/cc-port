@@ -54,6 +54,12 @@ through a neutral third party.
 - `ErrManifestEntryTooLarge`: returned by `ReadManifestFromZip` when the
   `metadata.xml` zip entry's decoded size exceeds the cap. Tests assert via
   `errors.Is`.
+- `ErrPlaceholderKeyTooLong`: returned by both `ReadManifest` and
+  `ReadManifestFromZip` when a declared placeholder key exceeds
+  `maxPlaceholderKeyBytes` (4 KiB). Tests assert via `errors.Is`.
+- `ErrPlaceholderKeyMalformed`: returned by both `ReadManifest` and
+  `ReadManifestFromZip` when a declared placeholder key is not
+  `"{{" + non-empty inner segment + "}}"`. Tests assert via `errors.Is`.
 - `ErrNilSource`: returned by `ReadManifestFromZip` when `src` is nil. Tests
   assert via `errors.Is`.
 - `UnknownCategoriesError`: returned by `ApplyToolCategories` when a tool's
@@ -143,6 +149,62 @@ Both `ReadManifest` and `ReadManifestFromZip` enforce the same 4 MiB cap.
 - None at runtime. The cap is fully enforced by this package on every read
   path.
 
+### Placeholder key validation
+
+`ReadManifest` and `ReadManifestFromZip` both call `validatePlaceholderKeys`
+after `validateTools`, closing off the entry point where a declared
+placeholder key enters the system. It checks two axes: length and grammar.
+
+#### Handled
+
+- Every placeholder key across every tool block is checked against
+  `maxPlaceholderKeyBytes` (4 KiB) before the manifest reaches any caller.
+  4 KiB sits far below the resolver's roughly 64 KiB peek window (see
+  [`internal/archive/README.md`](../archive/README.md) §Placeholder
+  machinery); a key too long for that window would pass through
+  unsubstituted instead of tripping the closed-placeholder refusal import
+  promises. Real keys are tens of bytes, for example
+  `{{CODEX_PROJECT_PATH}}`.
+- Every placeholder key is also checked against the grammar
+  `"{{" + non-empty inner segment + "}}"`. The streaming resolver anchors
+  its matching on a leading `{` byte and compares by exact byte prefix. A
+  key that does not begin with `{` can never match. A key that begins
+  with `{` in some other shape, a hand-built `{X` for example, still
+  could. The grammar check exists not because other shapes are
+  unmatchable. It exists so every declared key has one unambiguous,
+  well-formed shape, giving the closed-placeholder contract a single
+  checkable key form. This axis matters specifically because the
+  manifest arrives from an imported archive: an untrusted archive can
+  declare any key text at all, not only the `{{...}}`-shaped keys
+  cc-port's own export path emits, so the grammar cannot be assumed and
+  must be checked here.
+- Together, the two checks guarantee every key declared in a manifest is
+  one `archive.ResolvePlaceholdersStream` can structurally match: within
+  the peek window, and anchored on `{`. This is the untrusted input
+  surface, since an imported archive's manifest can declare any key text.
+  cc-port's own implicit anchor keys (`{{PROJECT_PATH}}`, `{{HOME}}`,
+  `{{CODEX_PROJECT_PATH}}`, and similar) never reach this gate. They are
+  compile-time constants `internal/importer` merges in after manifest
+  validation, not values parsed from a manifest.
+
+#### Refused
+
+- A placeholder key over 4 KiB: `ErrPlaceholderKeyTooLong`, naming the tool
+  and the key's length.
+- A placeholder key that is not `"{{" + non-empty inner segment + "}}"`:
+  `ErrPlaceholderKeyMalformed`, naming the tool and the key.
+
+#### Not covered
+
+- None at runtime, for a key declared in a manifest. Both checks run on
+  every manifest read path, before such a key can reach
+  `archive.ResolvePlaceholdersStream`. A key that bypasses manifest
+  parsing entirely, such as cc-port's own implicit anchors or a hand-built
+  resolutions map passed directly to `archive.ResolveEntryBytes` or
+  `ResolvePlaceholdersStream`, is outside this gate's reach by
+  construction (see [`internal/archive/README.md`](../archive/README.md)
+  §Placeholder machinery).
+
 ## Tests
 
 Unit tests in `categories_test.go` and `manifest_test.go`:
@@ -157,6 +219,9 @@ Unit tests in `categories_test.go` and `manifest_test.go`:
   when unset, and `(*Metadata).ToolBlock`.
 - Oversize-rejection tests for both `ReadManifest` and `ReadManifestFromZip`
   asserting the 4 MiB cap.
+- `ReadManifest` rejecting a placeholder key over the 4 KiB cap, and
+  rejecting a placeholder key that is not `"{{...}}"`-shaped (no braces,
+  a missing closing brace, and an empty inner segment).
 - `ReadManifestFromZip`'s nil-source refusal.
 
 ## References

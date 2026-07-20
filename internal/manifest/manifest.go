@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -75,6 +76,30 @@ var ErrManifestFileTooLarge = errors.New("manifest file too large")
 // message names the entry and the limit; callers discriminate via errors.Is.
 var ErrManifestEntryTooLarge = errors.New("manifest entry too large")
 
+// maxPlaceholderKeyBytes bounds a declared placeholder key so the streaming
+// resolver's fixed peek window can always match it. Real keys are tens of
+// bytes (e.g. {{CODEX_PROJECT_PATH}}); 4 KiB is generous headroom, well
+// under the resolver's 64 KiB read window.
+const maxPlaceholderKeyBytes = 4 << 10
+
+// ErrPlaceholderKeyTooLong is returned when a manifest declares a
+// placeholder key longer than maxPlaceholderKeyBytes. The streaming
+// resolver peeks only up to its reader's fixed window to find a match; a
+// key longer than that window can never match and would otherwise pass
+// through unsubstituted instead of tripping the closed-placeholder refusal
+// import promises. The wrapping message names the tool and key length;
+// callers discriminate via errors.Is.
+var ErrPlaceholderKeyTooLong = errors.New("manifest declares a placeholder key over the length limit")
+
+// ErrPlaceholderKeyMalformed is returned when a manifest declares a
+// placeholder key that is not "{{" + non-empty inner segment + "}}". The
+// streaming resolver anchors matching on a leading '{' byte, so a key in
+// any other shape can never match and would otherwise pass through a body
+// unsubstituted instead of tripping the closed-placeholder refusal import
+// promises. The wrapping message names the tool and the offending key;
+// callers discriminate via errors.Is.
+var ErrPlaceholderKeyMalformed = errors.New("manifest declares a placeholder key with invalid grammar")
+
 // ErrNilSource is returned by ReadManifestFromZip when src is nil. The message
 // hints that the caller's pipeline likely missed MaterializeStage. Mirrors
 // importer.ErrSourceNil.
@@ -132,6 +157,9 @@ func ReadManifest(path string) (*Metadata, error) {
 	if err := validateTools(&metadata); err != nil {
 		return nil, err
 	}
+	if err := validatePlaceholderKeys(&metadata); err != nil {
+		return nil, err
+	}
 
 	return &metadata, nil
 }
@@ -186,6 +214,9 @@ func readManifestEntry(file *zip.File) (*Metadata, error) {
 	if err := validateTools(&metadata); err != nil {
 		return nil, err
 	}
+	if err := validatePlaceholderKeys(&metadata); err != nil {
+		return nil, err
+	}
 	return &metadata, nil
 }
 
@@ -198,4 +229,37 @@ func validateTools(metadata *Metadata) error {
 		seen[block.Name] = struct{}{}
 	}
 	return nil
+}
+
+// validatePlaceholderKeys refuses any tool block whose declared placeholder
+// key exceeds maxPlaceholderKeyBytes or is not "{{...}}"-shaped, before the
+// key ever reaches archive.ResolvePlaceholdersStream. Both checks guarantee
+// every key the resolver sees is one it can structurally match: the length
+// cap keeps a key inside the resolver's fixed peek window, and the grammar
+// check keeps it anchored on the '{' byte the resolver's matching starts
+// from. A key an untrusted archive declares in some other shape must be
+// refused here, loudly, rather than silently left unsubstituted in a body.
+func validatePlaceholderKeys(metadata *Metadata) error {
+	for _, block := range metadata.Tools {
+		for _, placeholder := range block.Placeholders {
+			if len(placeholder.Key) > maxPlaceholderKeyBytes {
+				return fmt.Errorf("%w: tool %q key is %d bytes > limit %d",
+					ErrPlaceholderKeyTooLong, block.Name, len(placeholder.Key), maxPlaceholderKeyBytes)
+			}
+			if !isWellFormedPlaceholderKey(placeholder.Key) {
+				return fmt.Errorf("%w: tool %q key %q",
+					ErrPlaceholderKeyMalformed, block.Name, placeholder.Key)
+			}
+		}
+	}
+	return nil
+}
+
+// isWellFormedPlaceholderKey reports whether key is "{{" followed by a
+// non-empty inner segment followed by "}}" — the only shape
+// archive.ResolvePlaceholdersStream's '{'-anchored matching can ever
+// resolve.
+func isWellFormedPlaceholderKey(key string) bool {
+	const prefix, suffix = "{{", "}}"
+	return strings.HasPrefix(key, prefix) && strings.HasSuffix(key, suffix) && len(key) > len(prefix)+len(suffix)
 }
