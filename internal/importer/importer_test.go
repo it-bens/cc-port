@@ -4,13 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -184,12 +182,10 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 }
 
 func quietCodexWorkspace(home *codex.Home) *codex.Workspace {
-	return codex.NewWorkspaceForTest(
+	return codex.NewWorkspace(
 		home,
 		func(string) string { return "" },
 		func() ([]codex.ProcessInfo, error) { return nil, nil },
-		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) },
-		func(int) bool { return false },
 	)
 }
 
@@ -270,50 +266,6 @@ func TestRun_UnregisteredManifestToolFailsHard(t *testing.T) {
 		Caps:       archive.DefaultCaps(),
 	})
 	require.Error(t, err, "an archive naming an unregistered tool must fail hard, not silently skip")
-}
-
-// buildArchiveWithManyEntries returns an archive whose metadata.xml declares
-// the claude tool but whose central directory also carries entryCount
-// dummy claude-prefixed entries, for proving Run enforces MaxEntries on the
-// manifest read that happens before archive.OpenReader.
-func buildArchiveWithManyEntries(t *testing.T, entryCount int) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	writer := zip.NewWriter(&buf)
-
-	for i := range entryCount {
-		entry, err := writer.Create(fmt.Sprintf("claude/sessions/%d.jsonl", i))
-		require.NoError(t, err)
-		_, err = entry.Write([]byte("{}"))
-		require.NoError(t, err)
-	}
-
-	_, err := archive.WriteMetadata(writer, &manifest.Metadata{
-		Tools: []manifest.Tool{{Name: "claude"}},
-	})
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-	return buf.Bytes()
-}
-
-func TestRun_RefusesArchiveDeclaringTooManyEntries(t *testing.T) {
-	const maxEntries = 5
-	body := buildArchiveWithManyEntries(t, maxEntries+1) // + metadata.xml itself, so total > maxEntries
-
-	home := blankHome(t)
-	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
-
-	_, err := importer.Run(context.Background(), toolSet, targets, &importer.Options{
-		Source:     bytes.NewReader(body),
-		Size:       int64(len(body)),
-		TargetPath: "/Users/test/Projects/many-entries",
-		Caps:       archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 1 << 20, MaxEntries: maxEntries},
-	})
-
-	var countErr *manifest.EntryCountCapError
-	require.ErrorAs(t, err, &countErr, "the import path must refuse via the manifest read, before archive.OpenReader runs")
-	assert.Equal(t, maxEntries, countErr.Limit)
 }
 
 func TestRun_StagingEnforcesAggregateCapWithoutPlaceholders(t *testing.T) {

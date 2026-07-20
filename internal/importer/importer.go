@@ -122,7 +122,7 @@ func withAllLocks(targets []tool.Target, fn func() error) error {
 func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, options *Options) (*Result, error) {
 	preflightPhase := options.Reporter.Phase("preflight", 0, progress.UnitItems)
 
-	metadata, err := manifest.ReadManifestFromZip(options.Source, options.Size, options.Caps.MaxEntries)
+	metadata, err := manifest.ReadManifestFromZip(options.Source, options.Size)
 	if err != nil {
 		return nil, fmt.Errorf("read metadata from archive: %w", err)
 	}

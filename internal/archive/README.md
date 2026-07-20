@@ -21,11 +21,11 @@ neither.
   - `Entry`: `Name` (tool-relative), `Modified`;
     `(Entry).ReadAll() ([]byte, error)`, `(Entry).WithAggregateCounter(*AggregateCounter) Entry`.
 - **Caps**
-  - `Caps`: `MaxEntryBytes`, `MaxAggregateBytes`, `MaxEntries`.
+  - `Caps`: `MaxEntryBytes`, `MaxAggregateBytes`.
   - `AggregateCounter`, `NewAggregateCounter(maxAggregateBytes int64) *AggregateCounter`,
     `(*AggregateCounter).AddEntry(name string, n int64) error`.
-  - `ErrEntryCapExceeded`, `ErrAggregateCapExceeded`, `ErrEntryCountCapExceeded`,
-    `EntryCapError`, `AggregateCapError`, `EntryCountCapError`.
+  - `ErrEntryCapExceeded`, `ErrAggregateCapExceeded`, `EntryCapError`,
+    `AggregateCapError`.
 - **Classification**
   - `ClassifyPresentKeys(ctx context.Context, entries []RawEntry, candidateKeys []string, maxAggregateBytes int64) (map[string]struct{}, error)`:
     finds which candidate placeholder keys appear as a literal substring in
@@ -87,27 +87,6 @@ neither.
   classification use that same reader, so the cap can reject an entry before
   its whole body decodes. The counter includes classification reads and refuses
   once its total passes `Caps.MaxAggregateBytes` (4 GiB by default).
-- `OpenReader` closes an axis neither byte cap reaches: an archive of
-  hundreds of thousands of zero-byte entries, each still allocating a
-  `RawEntry`, a `Staged` record, and a temp inode, can stay far under both
-  byte caps. It refuses when the archive's End Of Central Directory record
-  declares more entries than `Caps.MaxEntries` (200,000 by default), before
-  `zip.NewReader`'s central-directory parse ever runs. That parse is itself
-  eagerly O(entries), bounded by neither the declared record count nor the
-  declared directory size, only by the archive's actual bytes, so a
-  post-parse check alone cannot prevent the allocation it exists to bound.
-  A trailer declaring the zip64 sentinel is resolved through the zip64
-  locator and end record rather than skipped: a plain EOCD's 16-bit count
-  field tops out at 65,535, so the 200,000 default can only ever be
-  exceeded by a zip64 archive. A post-parse count check remains as a
-  backstop for a trailer that under-declares the true count (see "Not
-  covered" below). `MaxEntries` set to zero disables both checks.
-  `manifest.ReadManifestFromZip`, which reads the same archive's
-  `metadata.xml` before `OpenReader` ever runs on the import and pull
-  paths, carries an equivalent `maxEntries`-bounded guard (see
-  [`internal/manifest/README.md`](../manifest/README.md) §Archive
-  entry-count cap); it cannot share this package's implementation because
-  this package already imports `internal/manifest`, for `WriteMetadata`.
 
 **Refused.**
 
@@ -115,23 +94,12 @@ neither.
   `EntryCapError` names the entry, its size, and the limit.
 - An archive whose running aggregate exceeds the active cap: `AggregateCapError`
   names the entry that tipped the total over.
-- An archive whose declared or observed central directory entry count
-  exceeds the active `MaxEntries` cap: `EntryCountCapError` names the count
-  and the limit.
 
 **Not covered.**
 
 - Compression-ratio bombs below both caps. A body that decompresses to just
   under the per-entry limit, repeated just under the aggregate limit's entry
   count, is accepted; the caps bound absolute bytes, not compression ratio.
-- An archive whose central directory deliberately mis-declares its entry
-  count below the real total, evading the early End Of Central Directory
-  check. `zip.NewReader` still parses the full central directory once,
-  bounded only by the archive's byte size (a central-directory header is at
-  least 46 bytes, and the in-memory `File` structs amplify that by a small
-  constant); the post-parse count check then catches the mismatch. Closing
-  this fully would mean replacing stdlib directory parsing with a bespoke
-  implementation, which is disproportionate for a local single-user tool.
 
 ### os.Root containment
 
@@ -242,11 +210,7 @@ neither.
 Unit tests in `archive_test.go`, `resolve_test.go`, `mtime_test.go`, and the
 internal `applymtime_internal_test.go` and `validarchiveentryname_internal_test.go`.
 Coverage: tool-prefix split and the malformed-prefix refusal, per-entry and
-entry-count cap rejection (both the post-parse case and the early
-End-Of-Central-Directory refusal, proven by a trailer-only archive that
-would otherwise fail with a generic format error), the zip64 sentinel
-resolving to the true declared count rather than being skipped,
-`ClassifyPresentKeys` finding only referenced
+aggregate byte-cap rejection, `ClassifyPresentKeys` finding only referenced
 keys, the placeholder stream's start/middle/end and read-boundary-straddling
 cases, `ResolveEntryBytes` bounding expansion incrementally before the
 resolved body is fully allocated, zip-slip rejection at both `RawEntries`

@@ -3,9 +3,7 @@ package codex
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"syscall"
 
 	"github.com/it-bens/cc-port/internal/tool"
 )
@@ -88,21 +86,4 @@ func (workspace *Workspace) busyProbeWitness() ([]tool.ActiveWriter, error) {
 		}
 	}
 	return active, nil
-}
-
-// processAlive reports whether pid identifies a running process, tolerating
-// a permission-denied signal (owned by another user, still alive).
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-	return errors.Is(err, syscall.EPERM)
 }

@@ -30,7 +30,7 @@ witness blocks mutation while a live writer is present.
 - `tool.ActiveWriter`: witness result with `Pid int` and `Cwd string`. Each
   tool supplies its own witness through `Workspace.ActiveWriters`:
   `internal/tool/claude.FindActive` for Claude Code, and
-  `internal/tool/codex`'s five-source witness (see
+  `internal/tool/codex`'s process-table and busy-probe witness (see
   `internal/tool/codex/README.md` §Witness evidence order) for Codex.
 - `FileName`: constant. The name (`.cc-port.lock`) of the advisory-lock file
   cc-port creates inside each tool's own home directory (`workspace.home.Dir`

@@ -112,15 +112,14 @@ and the sweep's job is to port what each tool actually knows.
 
 ### Construction seams
 
-Adapters obtain environment lookups, process observation, and, where needed,
-the clock through constructor fields that default to real sources rather than
-free in-line calls. Codex's `NewAdapter(getenv, listProcesses, now,
-transcodeCaps)` makes home resolution (`$CODEX_SQLITE_HOME`), its witness's
-process-table scan, and its freshness window testable without global mutation. Claude's
-`NewAdapter(getenv, processLiveness)` routes default-home resolution and
-per-session witness liveness through constructor seams; it checks the specific
-PIDs named in session files rather than scanning a process table.
-`New()` wires the real sources for production use.
+Adapters obtain environment lookups and process observation through
+constructor fields that default to real sources rather than free in-line
+calls. Codex's `NewAdapter(getenv, listProcesses)` makes home resolution
+(`$CODEX_SQLITE_HOME`) and its witness's process-table scan testable without
+global mutation. Claude's `NewAdapter(getenv, processLiveness)` routes
+default-home resolution and per-session witness liveness through constructor
+seams; it checks the specific PIDs named in session files rather than
+scanning a process table. `New()` wires the real sources for production use.
 
 ## Contracts
 
@@ -304,23 +303,11 @@ README that implements a `Surface` points here instead of restating it.
 
 ### The apply bracket
 
-Within one tool's apply: any surface whose storage is SQL opens its
-transaction and registers its rollback with the `tool.Restorer` (via
-`RegisterUndo`) before any other surface runs. `internal/tool/codex`'s
-state-db and memories-db surfaces are the concrete instance, each calling
-`sqlrewrite.Open`, beginning a transaction, and deferring `commit` to the
-last surface. Every file surface in between is individually atomic: it
-snapshots the file's pre-image with `Restorer.RegisterFile` before
-overwriting it via a sibling-temp-and-rename (`rewrite.SafeWriteFile` or
-`archive`'s equivalent). Directory promotion registers staging removal, then
-copies into the sibling staging directory and writes its source marker there.
-The final rename publishes the marked destination atomically. The same
-register-before-rename ordering
-governs the git-baseline surface's `.git`-to-backup rename, including its
-stranded-backup reconciliation on the next apply (`internal/tool/codex/README.md`
-§Git baseline handling). The final surface in the list commits every open SQL
-transaction and checkpoints each database afterward; no other surface
-commits or checkpoints early.
+Within one tool's apply, SQL surfaces begin their transactions and register
+rollback with `tool.Restorer` before subsequent surfaces run. File surfaces
+register pre-images before sibling-temp-and-rename writes. Directory promotion
+copies into sibling staging and publishes with an atomic rename. The final
+surface commits open SQL transactions and checkpoints each database.
 
 ### In-process failure
 
@@ -332,18 +319,13 @@ before the apply attempt began.
 
 ### SIGKILL and re-run convergence
 
-A `SIGKILL` at any point during apply leaves files possibly part-rewritten
-and every open SQL transaction uncommitted: the transaction dies with the
-process, so the database itself is untouched. Every surface is individually
-idempotent: a rewritten file contains no remaining occurrences of the old
-path, and a rewritten database row no longer matches the old path predicate.
-Re-running the same move therefore converges to the same end state regardless
-of where the previous attempt was killed. A leftover directory staging artifact
-is reconciled during the locked apply, while a promoted destination whose
-marker names the source resumes at source removal. Marker verification checks
-its content, not its age. Both properties (crash rollback,
-re-run idempotence) are covered by adapter and move-package tests; this prose
-is the one place the contract itself is described.
+After an interrupt, the two-path witness accepts witnesses naming either the
+old or new path, allowing reference rewrites to converge. Directory-promotion
+interrupts are handled by destination classification: a non-empty staging
+directory, or a destination that exists while its source remains, is refused
+with instructions; an empty staging directory is removed and an existing
+destination with no source is converged. SQLite transactions that were not
+committed are rolled back by SQLite.
 
 ### No cross-tool rollback
 
@@ -355,33 +337,6 @@ correctly rewritten, and there is nothing to roll back to. The caller sees a
 per-tool table and exits non-zero when any tool failed, with the failed
 tool's own state left exactly as its own apply bracket guarantees (rolled
 back to pre-apply, per §In-process failure).
-
-### Two adjudicated residual windows
-
-Two narrow windows are accepted trade-offs of the commit-order choice
-described in §The apply bracket, not defects:
-
-1. **The serial-commit window between the memories and state databases.**
-   Two SQLite transactions cannot commit atomically against each other.
-   `internal/tool/codex`'s commit surface commits the memories-database
-   transaction before the state-database transaction, deliberately, because
-   `threads.cwd` in the state database is the identity source project lookups
-   key on. A failure between the two commits leaves the project still
-   discoverable (memories committed, state not yet), and a re-run converges:
-   the memories rewrite is idempotent, so re-applying it against
-   already-rewritten rows is a no-op, and the state commit that failed
-   previously is retried.
-2. **The narrower multiple-state-generation edge inside that window.** Codex
-   can carry more than one generation-suffixed `state_*.sqlite` file. If the
-   memories commit succeeds, then the process is killed before every
-   `state_*.sqlite` transaction commits, one state database's `threads.cwd`
-   can end up correctly rewritten while another's `agent_jobs` path columns
-   remain unrewritten. A project identity resolved from the first database
-   plus an `agent_jobs` reference resolved from the second could reference a
-   path that no longer round-trips consistently. This is accepted: the
-   partial-commit error message names exactly which databases committed
-   before the failure, so the operator has what they need to re-run the move
-   and converge.
 
 ## Pipeline composition (cross-cutting)
 

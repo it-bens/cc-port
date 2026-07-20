@@ -3,9 +3,7 @@ package manifest_test
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/binary"
 	"encoding/xml"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
@@ -132,7 +129,7 @@ func assertZIPRoundTrip(t *testing.T, original *manifest.Metadata, temporaryDire
 	zipInfo, err := zipFile.Stat()
 	require.NoError(t, err, "stat zip")
 
-	fromZip, err := manifest.ReadManifestFromZip(zipFile, zipInfo.Size(), archive.DefaultCaps().MaxEntries)
+	fromZip, err := manifest.ReadManifestFromZip(zipFile, zipInfo.Size())
 	if err != nil {
 		t.Fatalf("ReadManifestFromZip: %v", err)
 	}
@@ -239,7 +236,7 @@ func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
 	zipInfo, err := zipFile.Stat()
 	require.NoError(t, err, "stat zip")
 
-	_, err = manifest.ReadManifestFromZip(zipFile, zipInfo.Size(), archive.DefaultCaps().MaxEntries)
+	_, err = manifest.ReadManifestFromZip(zipFile, zipInfo.Size())
 	require.ErrorIs(t, err, manifest.ErrManifestEntryTooLarge)
 }
 
@@ -331,112 +328,7 @@ func createTestZip(zipPath, sourcePath string) error {
 }
 
 func TestReadManifestFromZip_NilSrc(t *testing.T) {
-	_, err := manifest.ReadManifestFromZip(nil, 0, archive.DefaultCaps().MaxEntries)
+	_, err := manifest.ReadManifestFromZip(nil, 0)
 
 	require.ErrorIs(t, err, manifest.ErrNilSource)
-}
-
-func TestReadManifestFromZip_RefusesTooManyDeclaredEntries(t *testing.T) {
-	const maxEntries = 5
-
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "many-entries.zip")
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	zipWriter := zip.NewWriter(archiveFile)
-	for i := 0; i <= maxEntries; i++ {
-		_, err := zipWriter.Create(fmt.Sprintf("entry-%d", i))
-		require.NoError(t, err)
-	}
-	require.NoError(t, zipWriter.Close())
-	require.NoError(t, archiveFile.Close())
-
-	zipFile, err := os.Open(archivePath) //nolint:gosec // G304: test-controlled temp path
-	require.NoError(t, err, "open zip")
-	t.Cleanup(func() { _ = zipFile.Close() })
-	zipInfo, err := zipFile.Stat()
-	require.NoError(t, err, "stat zip")
-
-	_, err = manifest.ReadManifestFromZip(zipFile, zipInfo.Size(), maxEntries)
-
-	var countErr *manifest.EntryCountCapError
-	require.ErrorAs(t, err, &countErr)
-	assert.Equal(t, maxEntries+1, countErr.Count)
-	assert.Equal(t, maxEntries, countErr.Limit)
-}
-
-// TestReadManifestFromZip_RefusesDeclaredOverflowBeforeParsing proves the
-// refusal above fires from the cheap End Of Central Directory trailer scan,
-// before zip.NewReader's eager central-directory parse ever runs -- not
-// from the parsed archive. buildBareEOCD below is not a parseable ZIP (it
-// carries no central directory bytes, only the trailer); if the maxEntries
-// check ran after zip.NewReader instead of before it, this archive would
-// fail with a generic "not a valid zip file" error instead of
-// EntryCountCapError.
-func TestReadManifestFromZip_RefusesDeclaredOverflowBeforeParsing(t *testing.T) {
-	const maxEntries = 5
-	const declaredEntries = maxEntries + 1
-
-	body := buildBareEOCD(t, declaredEntries)
-
-	_, err := manifest.ReadManifestFromZip(bytes.NewReader(body), int64(len(body)), maxEntries)
-
-	var countErr *manifest.EntryCountCapError
-	require.ErrorAs(t, err, &countErr)
-	assert.Equal(t, declaredEntries, countErr.Count)
-	assert.Equal(t, maxEntries, countErr.Limit)
-}
-
-// buildBareEOCD returns the 22-byte fixed portion of a ZIP End Of Central
-// Directory record declaring entryCount entries, with no comment and no
-// preceding central directory -- the whole "archive" is just this trailer.
-func buildBareEOCD(t *testing.T, entryCount uint16) []byte {
-	t.Helper()
-	record := make([]byte, 22)
-	binary.LittleEndian.PutUint32(record[0:4], 0x06054b50)   // EOCD signature
-	binary.LittleEndian.PutUint16(record[8:10], entryCount)  // records on this disk
-	binary.LittleEndian.PutUint16(record[10:12], entryCount) // total records
-	return record
-}
-
-// TestReadManifestFromZip_RefusesTooManyDeclaredEntriesViaZip64 proves the
-// zip64 sentinel is resolved, not just skipped: a plain (non-zip64) EOCD's
-// 16-bit entry-count field tops out at 65,535, so a maxEntries cap in the
-// hundreds of thousands (the production default archive.DefaultCaps ships)
-// can only ever be exceeded by a zip64 archive. Without resolving the
-// sentinel, the early check could never fire against such a cap.
-func TestReadManifestFromZip_RefusesTooManyDeclaredEntriesViaZip64(t *testing.T) {
-	const maxEntries = 200_000
-	const declaredEntries = maxEntries + 1
-
-	body := buildBareZip64EOCD(t, declaredEntries)
-
-	_, err := manifest.ReadManifestFromZip(bytes.NewReader(body), int64(len(body)), maxEntries)
-
-	var countErr *manifest.EntryCountCapError
-	require.ErrorAs(t, err, &countErr)
-	assert.Equal(t, declaredEntries, countErr.Count)
-	assert.Equal(t, maxEntries, countErr.Limit)
-}
-
-// buildBareZip64EOCD returns a synthetic trailer -- a zip64 End Of Central
-// Directory record, the zip64 locator pointing at it, and a plain EOCD
-// record carrying the zip64 sentinel -- declaring entryCount entries. Like
-// buildBareEOCD, this is not a parseable ZIP; it exists only to drive
-// declaredEntryCount's zip64 resolution path directly.
-func buildBareZip64EOCD(t *testing.T, entryCount uint64) []byte {
-	t.Helper()
-	zip64End := make([]byte, 56)
-	binary.LittleEndian.PutUint32(zip64End[0:4], 0x06064b50)   // zip64 EOCD signature
-	binary.LittleEndian.PutUint64(zip64End[32:40], entryCount) // total entries
-
-	locator := make([]byte, 20)
-	binary.LittleEndian.PutUint32(locator[0:4], 0x07064b50) // zip64 locator signature
-	binary.LittleEndian.PutUint64(locator[8:16], 0)         // zip64 EOCD record starts at offset 0
-
-	eocd := make([]byte, 22)
-	binary.LittleEndian.PutUint32(eocd[0:4], 0x06054b50) // EOCD signature
-	binary.LittleEndian.PutUint16(eocd[10:12], 0xffff)   // zip64 sentinel
-
-	return append(append(zip64End, locator...), eocd...)
 }

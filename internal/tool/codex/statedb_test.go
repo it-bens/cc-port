@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,27 +37,6 @@ func TestCountStateDBReadOnlyUsesByteExactThreadPredicate(t *testing.T) {
 
 	assert.Equal(t, applied, planned)
 	assert.Equal(t, 1, planned)
-}
-
-// TestMatchingThreadCWDsRefusesOversizedCWD guards the bound in
-// guardColumnByteCap: a threads.cwd value larger than
-// sqlrewrite.MaxTextValueBytes must refuse before matchingThreadCWDs
-// materializes it, with the same discriminable sqlrewrite.ErrTextValueTooLarge
-// sentinel CountTextColumnRO already returns for agent_jobs/stage1_outputs,
-// rather than silently scanning an unbounded value into memory.
-func TestMatchingThreadCWDsRefusesOversizedCWD(t *testing.T) {
-	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "state.sqlite"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, database.Close()) })
-	_, err = database.ExecContext(context.Background(), `CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL)`)
-	require.NoError(t, err)
-	oversizedCWD := "/" + strings.Repeat("a", sqlrewrite.MaxTextValueBytes+1)
-	_, err = database.ExecContext(context.Background(), `INSERT INTO threads (id, cwd) VALUES (?, ?)`, "oversized-thread", oversizedCWD)
-	require.NoError(t, err)
-
-	_, err = matchingThreadCWDs(context.Background(), database, FixtureProjectPath())
-
-	require.ErrorIs(t, err, sqlrewrite.ErrTextValueTooLarge)
 }
 
 // createStateDBNoCaseFixture declares threads.cwd COLLATE NOCASE (the

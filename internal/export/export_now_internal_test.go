@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
@@ -36,7 +35,7 @@ func TestRun_UsesNowForManifestCreated(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	metadata, err := manifest.ReadManifestFromZip(bytes.NewReader(output.Bytes()), int64(output.Len()), archive.DefaultCaps().MaxEntries)
+	metadata, err := manifest.ReadManifestFromZip(bytes.NewReader(output.Bytes()), int64(output.Len()))
 	require.NoError(t, err)
 	assert.Equal(t, pinned, metadata.Created)
 }

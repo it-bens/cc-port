@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +30,7 @@ const (
 
 func TestExportRolloutsAndReportsEraA(t *testing.T) {
 	home := SetupFixture(t)
-	workspace := newWorkspace(home, func(string) string { return "" }, nil, nil, nil)
+	workspace := newWorkspace(home, func(string) string { return "" }, nil)
 	var archiveBytes bytes.Buffer
 	writer := zip.NewWriter(&archiveBytes)
 	sink := archive.NewSink(writer, toolName, nil)
@@ -972,10 +971,7 @@ func readArchiveEntry(t *testing.T, data []byte, name string) []byte {
 }
 
 func quietTestWorkspace(home *Home) *Workspace {
-	return newWorkspace(
-		home, func(string) string { return "" }, func() ([]ProcessInfo, error) { return nil, nil },
-		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) }, func(int) bool { return false },
-	)
+	return newWorkspace(home, func(string) string { return "" }, func() ([]ProcessInfo, error) { return nil, nil })
 }
 
 func setupImportDestination(t *testing.T) (home *Home, config []byte) {

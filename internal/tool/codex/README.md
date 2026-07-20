@@ -12,14 +12,13 @@ tool-specific facts in this package; `internal/move`, `internal/export`,
 
 ## Public API
 
-- `Adapter`, `New() *Adapter`: wired to the real environment, process table,
-  and wall clock. `NewAdapter(getenv, listProcesses, now) *Adapter`:
-  same shape with every seam explicit, for tests.
+- `Adapter`, `New() *Adapter`: wired to the real environment and process
+  table. `NewAdapter(getenv, listProcesses) *Adapter`: same shape with every
+  seam explicit, for tests.
 - `Home`: `Dir`, `SQLiteDir`, `AgentsDir`.
-- `Workspace`, `NewWorkspace(home, getenv, listProcesses, now) *Workspace`,
-  `NewWorkspaceForTest(home, getenv, listProcesses, now, pidAlive) *Workspace`:
-  the test variant additionally overrides the process-liveness check so
-  adapter tests never touch the live process table.
+- `Workspace`, `NewWorkspace(home, getenv, listProcesses) *Workspace`: tests
+  supply a fake getenv or process lister so they never touch the live
+  process table.
 - `ProcessLister func() ([]ProcessInfo, error)`, `ProcessInfo{PID, Name}`: the
   process-enumeration seam; production default is `listSystemProcesses`
   (shells out to `ps -Ao pid=,comm=`), darwin/linux only.
@@ -321,214 +320,143 @@ shapes themselves.
 **Handled.**
 
 - Codex records `config.cwd()` verbatim and uncanonicalized
-  (`rollout/src/recorder.rs`); the only normalization it applies is
-  `normalize_for_native_workdir`, a no-op on every platform but Windows
-  (`utils/path-utils/src/lib.rs`). cc-port resolves its own project argument
-  through `fsutil.ResolveExistingAncestor`, a full `filepath.EvalSymlinks`.
-  Before this canonicalizing rule, a session started through a
-  symlink-aliased cwd (`codex -C /link/project` where `/link` targets
-  `/real`) never matched `/real/project`, so its rollout, thread row, and
-  agent-job references were all invisible to export, stats, and move.
-- `canonicalizePath` resolves symlinks when a path exists and falls back to
-  `filepath.Clean` when it does not (spec §5.1). This is not source-faithful
-  to Codex's own comparator, `paths_match_after_normalization`
-  (`utils/path-utils/src/lib.rs`): when either side's `canonicalize()` call
-  fails, Codex's fallback compares the two ORIGINAL paths as given
-  (`left.as_ref() == right.as_ref()`), with no lexical-clean step anywhere
-  in that branch, while `canonicalizePath` runs the input through
-  `filepath.Clean`, which resolves `.`/`..` segments. A stored cwd
-  containing an unresolved `..` component can therefore compare differently
-  under the two fallbacks. cc-port's choice trades that narrow, documented
-  divergence for a fallback that behaves like a real path rather than an
-  opaque byte string. `pathMatchesProject` canonicalizes both operands
-  before applying the existing equality-or-`/`-boundary-prefix rule, which
-  fixes every rollout- and config-key-matching call site at once:
-  `identityMatchesProject` and `configTOMLKnowsProject` both route through
-  it.
+  (`rollout/src/recorder.rs`). Its normalizer,
+  `normalize_for_native_workdir`, and its comparator,
+  `paths_match_after_normalization`, both live in
+  `utils/path-utils/src/lib.rs`: the former is a no-op except on Windows,
+  the latter falls back to a literal comparison of the two original paths
+  when either side's `canonicalize()` fails, with no lexical-clean step.
+  cc-port resolves its project argument via
+  `fsutil.ResolveExistingAncestor`, a full `filepath.EvalSymlinks`;
+  without it, a symlink-aliased project directory left its rollout, thread
+  row, and agent-job references invisible to export, stats, and move.
+  cc-port's own comparator, `canonicalizePath`, resolves symlinks when a
+  path exists and falls back to `filepath.Clean` otherwise (spec §5.1); a
+  stored cwd with unresolved `..` can therefore compare differently under
+  the two fallbacks, accepted because cc-port's fallback behaves like a
+  real path rather than an opaque byte string. `pathMatchesProject`
+  canonicalizes both operands before the existing
+  equality-or-`/`-boundary-prefix rule, fixing every rollout- and
+  config-key-matching call site at once: `identityMatchesProject` and
+  `configTOMLKnowsProject` both route through it.
 - `threads.cwd` matching moves the same rule into Go, since symlink
-  resolution cannot be expressed as a SQL predicate: `matchingThreadCWDs`
-  fetches every distinct stored value (forcing `COLLATE BINARY` so a
-  case-insensitive column collation cannot fold two byte-different values
-  together first) and canonicalizes each. `stateDBFileKnowsProject`,
-  `countStateDBReadOnly`, `countThreadRows`, `projectThreadIDs`, and the move
-  rewrite all derive their matched-value set from this one function, so a
-  dry-run count and an apply can never implement different matching rules.
-  That parity is algorithmic, not temporal: count and rewrite still open
-  separate connections at separate times, so a concurrent writer to the
-  database, or a symlink target changing between the two calls, can still
-  move the matched set between a dry-run and the apply that follows it.
-- The move rewrite can no longer rely solely on a `COLLATE BINARY`
-  equality/prefix SQL predicate for `threads.cwd`. `matchingThreadRewrites`
-  computes the canonical match in Go, then each matched row is rewritten by
-  primary key through `sqlrewrite.UpdateColumnsByKey`, preserving the
-  original suffix (any path past the matched project boundary) computed from
-  the canonical forms rather than from literal byte offsets.
-- A rollout file's own recorded `payload.cwd` text needs the same treatment:
+  resolution cannot run as a SQL predicate: `matchingThreadCWDs` fetches
+  every distinct stored value under `COLLATE BINARY` (blocking a
+  case-insensitive collation from folding byte-different values together)
+  and canonicalizes each. `stateDBFileKnowsProject`,
+  `countStateDBReadOnly`, `countThreadRows`, `projectThreadIDs`, and the
+  move rewrite all derive their matched-value set from this one function,
+  so a dry-run count and an apply never diverge; parity is algorithmic,
+  not temporal, since count and rewrite open separate connections at
+  separate times and a concurrent writer or a retargeted symlink can still
+  shift the matched set between them. `COLLATE BINARY` equality or prefix
+  SQL alone cannot drive the rewrite either: `matchingThreadRewrites`
+  computes the canonical match in Go, and `sqlrewrite.UpdateColumnsByKey`
+  rewrites each matched row by primary key, preserving the original
+  suffix, the path past the project boundary, from the canonical forms
+  rather than literal byte offsets.
+- A rollout's own recorded `payload.cwd` needs the same fix:
   `rewriteRolloutLine` matches literal bytes via `internal/rewrite`, so a
   symlink-aliased rollout's stored cwd never contained oldPath's literal
-  bytes for a plain substring rewrite to find. `rolloutSubstitutionSources`
-  derives, from the rollout's own session_meta/turn_context cwd values,
-  every stored value that canonically matches the project; `rolloutSubstitutions`
-  pairs each with the value it rewrites to (`newPath`, or `newPath` plus
-  whatever suffix a symlink-aliased value's canonical form carried past the
-  project boundary). `planRolloutFile` and `MoveSurfaces`' own preflight
-  (`captureMovePreflight`) derive their source list from the same function on
-  their own read of the rollout, so a symlink-aliased rollout is rewritten by
-  move instead of left stale.
-- `matchingColumnValues` (and `threadIDsForCWD`) bound their SQL scans
-  instead of materializing an unbounded result set: `guardColumnByteCap`
-  refuses before reading any single value larger than
-  `sqlrewrite.MaxTextValueBytes`, the same cap and
-  `sqlrewrite.ErrTextValueTooLarge` sentinel `CountTextColumnRO` already
-  enforces for `agent_jobs`/`stage1_outputs`, and `maxMatchedThreadRows`
-  caps how many distinct values or per-value ids either function will
-  materialize per call, failing with `ErrTooManyMatchedThreadRows`
-  otherwise. `matchingThreadCWDs` and `countMatchingThreadRows` are
-  `threads.cwd`'s instances of `matchingColumnValues`/
-  `countMatchingColumnRows`; `codexDevWarning` reuses the same generic
-  functions directly for `codex-dev.db`'s `local_thread_catalog.cwd` and
-  `automation_runs.source_cwd` (see below).
-  That per-call cap alone does not bound the total across many matched
-  values or many databases, so `matchingThreadRewrites`, `projectThreadIDs`,
-  and `projectThreadIDSet` each separately track a running total against
-  `maxAggregateMatchedThreadRows`. `matchingThreadRewrites` accumulates
-  rewrites per state database with a plain length check: `threads.cwd` is a
-  single column, so no id can recur across the matched cwd values within one
-  file's pass, and no deduplication is needed. `projectThreadIDs`
-  accumulates thread IDs across every matched cwd and every database, and
-  `projectThreadIDSet` folds in the caller's own rollout-derived id set on
-  top of that; both track a set and check membership before counting an id
-  against the cap, so a duplicate id arriving from a second database or from
-  the rollout-derived set never falsely trips the cap by itself, and only a
-  genuinely new id counts as growth. The rollout-derived set
-  `projectThreadIDSet` folds in is itself bounded before that fold:
-  `rollouts` comes from an uncapped filesystem walk, so `Export`'s
-  `readAndIdentifyRollouts` and `ReferenceSurfaces` both route every
-  insert into it through `addBoundedRolloutThreadID`, the same
-  membership-then-cap check against `maxAggregateMatchedThreadRows`,
-  before the union ever sees the set.
-  Two call sites carry a real request context, not `context.Background()`:
-  the `stateDBSurfaceWithPlans` Plan path (`countStateDB`) and the
-  export/stats path (`countThreadRows`, `projectThreadIDs`,
-  `projectThreadIDSet`). On both, the scan also checks `ctx.Err()` per row
-  and is cancellable. `matchingThreadRewrites` checks `ctx.Err()` per row
-  too, but its sole caller, `stateDBRewritePlansForProject`, runs from
-  `MoveSurfaces`' own preflight with `context.Background()` (`MoveSurfaces`
-  itself takes no context), so it is bounded but never cancellable from a
-  caller.
+  bytes to find. `rolloutSubstitutionSources` derives, from the rollout's
+  session_meta/turn_context cwd values, every stored value canonically
+  matching the project; `rolloutSubstitutions` pairs each with the value
+  it rewrites to (`newPath`, plus whatever suffix a symlink-aliased
+  value's canonical form carried past the project boundary).
+  `planRolloutFile` and `MoveSurfaces`' preflight (`captureMovePreflight`)
+  derive their source list from the same function on their own read of the
+  rollout, so a symlink-aliased rollout gets rewritten instead of left
+  stale.
+- `matchingThreadCWDs` and `countMatchingThreadRows` are `threads.cwd`'s
+  instances of `matchingColumnValues` and `countMatchingColumnRows`;
+  `codexDevWarning` reuses those generic functions for `codex-dev.db`'s
+  `local_thread_catalog.cwd` and `automation_runs.source_cwd`. Two call
+  sites carry a real request context rather than `context.Background()`
+  and check `ctx.Err()` per row: the `stateDBSurfaceWithPlans` Plan path
+  (`countStateDB`) and the export/stats path (`countThreadRows`,
+  `projectThreadIDs`, `projectThreadIDSet`). `matchingThreadRewrites`
+  checks `ctx.Err()` too, but its sole caller,
+  `stateDBRewritePlansForProject`, runs from `MoveSurfaces`' own preflight
+  with `context.Background()` (`MoveSurfaces` itself takes no context), so
+  it is never cancellable.
 
 **Refused.**
 
-- Widening the match breadth beyond the existing equality-or-`/`-boundary-
-  prefix rule. cc-port already matches subdirectories under a project's cwd,
-  a documented deviation from Codex's own strict-equality
-  `paths_match_after_normalization`; canonicalizing the operands does not
-  touch that breadth.
-- Rewriting a rollout with two or more substitution sources when applying
-  an earlier one, in sequence (`rolloutSubstitutionSources` orders sources
-  longest-first), causes a later, not-yet-applied source to match text it
-  did not match before that step ran. `guardSubstitutionOrder` detects this
-  by observation, not prediction: called once per line from
-  `rolloutFileSubstitutions`, it calls `rewriteRolloutLine` itself with a
-  growing PREFIX of the ordered substitution list (`nil`, then the first
-  substitution, then the first two, and so on) against the untouched
-  original line, so each state it compares is exactly what an apply would
-  actually produce at that point, not a simulation of it. After each step
-  it checks, for every later source, whether
-  `rewrite.CountPathInBytesWithJSONEscape` finds more occurrences of that
-  source in the state just produced than it found in the state before that
-  step. An increase can only come from text the step just wrote: whole
-  (`newPath`, or `newPath` plus a suffix, contains the later source
-  outright: `oldPath=/real/project`, `newPath=/elsewhere/real/project/thing`;
-  `internal/move`'s `validateNotNested` refuses `newPath` nested under
-  `oldPath` from the root, not `oldPath` reappearing as a middle path
-  segment of an unrelated `newPath`) or assembled from the replacement plus
-  bytes the rewrite left unchanged (replacing `/longsource` with `/x/foo`
-  inside `/longsource/bar` leaves `/x/foo/bar`, completing a match for an
-  unrelated recorded source `/foo/bar` that no single replacement value
-  contains on its own, and that a check over replacement values alone
-  cannot see). A decrease is always safe: a longer, boundary-prefix source
-  correctly consumed an occurrence a shorter source would otherwise have
-  matched too. No change is the common safe case, but not a guaranteed
-  one: a step that introduces one new match for a later source while also
-  consuming an existing occurrence of that same source nets to no change
-  and passes this check regardless (see Not covered below). All three
-  shapes below were reproduced by running the unguarded code: `newPath`
-  containing a source directly duplicates the destination inside itself;
-  a source's suffix completing a different source writes that source's
-  line with the wrong
-  suffix; and the straddling shape corrupts unrelated prose text that was
-  never supposed to change beyond the swapped source. A single source is
-  unaffected and always succeeds, since one
+- Widening the match breadth beyond the existing
+  equality-or-`/`-boundary-prefix rule. cc-port already matches
+  subdirectories under a project's cwd, a documented deviation from
+  Codex's own strict-equality `paths_match_after_normalization`;
+  canonicalizing the operands does not touch that breadth.
+- Rewriting a rollout with two or more substitution sources by applying
+  them in sequence (`rolloutSubstitutionSources` orders sources
+  longest-first): an earlier rewrite can make a later, not-yet-applied
+  source match text it did not match before. `guardSubstitutionOrder`
+  catches this by observation: it replays `rewriteRolloutLine` against the
+  original line with a growing prefix of the ordered substitution list, so
+  each state it checks is what an apply would actually produce, and after
+  each step counts whether `rewrite.CountPathInBytesWithJSONEscape` finds
+  more occurrences of any later source than before. An increase can only
+  come from the step's own output: the replacement can contain the later
+  source outright (`oldPath=/real/project`,
+  `newPath=/elsewhere/real/project/thing`; `internal/move`'s
+  `validateNotNested` blocks only `newPath` nested under `oldPath` from
+  the root, not mid-path reappearance), or the replacement plus untouched
+  bytes can assemble one (`/longsource` to `/x/foo` inside
+  `/longsource/bar` leaves `/x/foo/bar`, completing the unrelated source
+  `/foo/bar`). A decrease is always safe; no change is common but not
+  guaranteed (see Not covered). Removing the guard reproduces
+  self-duplication, suffix completion, and straddling corruption of
+  unrelated prose; a single source always succeeds, since one
   `rewrite.ReplacePathInBytes`(`WithJSONEscape`) pass never re-scans its
-  own output: there is no later source left to check.
-  `guardSubstitutionOrder` refuses with `ErrSubstitutionWouldReintroduceSource`
-  so plan and apply refuse identically instead of a dry run previewing a
-  move that would then corrupt the rollout. An earlier design ran the full
-  substitution sequence once, then ran it again over its own output,
-  refusing only if the second full pass found anything; that design has a
-  real gap verified against the suffix-completion case above, where the
-  corrupted result is itself stable under further whole-sequence
-  re-application (the doubled path segment no longer contains either
-  source's literal bytes), so a second full pass finds nothing even though
-  the value is already wrong. Checking after each individual step, while
-  the moment of reintroduction is still observable, is what catches it. A
-  general fix needs a true single-pass multi-pattern substitution primitive
-  with JSON-escape awareness in `internal/rewrite`; refusing is the
-  narrower, honest answer until that primitive exists.
+  own output. `guardSubstitutionOrder` refuses with
+  `ErrSubstitutionWouldReintroduceSource`, so plan and apply refuse
+  identically rather than previewing a move that later corrupts the
+  rollout. An earlier two-pass design (apply the full sequence once, then
+  rescan its own output for a second-pass hit) missed suffix-completion
+  corruption, which stays stable under a repeated whole-sequence pass;
+  checking after each step catches it while reintroduction is still
+  observable. A general fix needs a true single-pass multi-pattern
+  substitution primitive with JSON-escape awareness in `internal/rewrite`;
+  refusing is the narrower answer until it exists.
 
 **Not covered.**
 
-- A recorded cwd whose target no longer exists on disk. `canonicalizePath`
-  can only resolve symlinks for a path that still exists; a symlink-aliased
-  cwd for a project since deleted falls back to `filepath.Clean` and
-  compares lexically, a narrower fallback than Codex's own
-  `paths_match_after_normalization` takes (see Handled above).
-- Cancellation on every call path whose own entry point carries no context.
-  Two such paths reach the matching scan, both because the interface they
-  implement declares no `context.Context` parameter for them to receive one
-  from: `MoveSurfaces` → `projectKnown` → `stateDBKnowsProject` →
-  `stateDBFileKnowsProject`, which calls `matchingThreadCWDs` with
-  `context.Background()` (statedb.go); and `Placeholders` →
-  `knowsProject(context.Background(), project)` → `countThreadRows` →
-  `countMatchingThreadRows` → `matchingThreadCWDs` (export_import_stats.go).
-  Neither path can be canceled mid-scan. What bounds DO apply differs by
-  path: both reach `matchingThreadCWDs` directly, so both get its per-query
-  bounds (`guardColumnByteCap`'s per-value byte cap and
-  `maxMatchedThreadRows`' per-query distinct-value cap). Neither reaches
-  `maxAggregateMatchedThreadRows`: that cap only bounds functions that
-  accumulate actual thread IDs or rewrites across matched cwd values or
-  databases (`projectThreadIDs`, `projectThreadIDSet`,
-  `matchingThreadRewrites`), and neither `projectKnown`'s chain (which only
-  asks `len(matched) > 0`) nor `knowsProject`'s (which only sums a plain
-  count through `countMatchingThreadRows`) calls into any of those.
-- `guardSubstitutionOrder` compares aggregate occurrence counts of each
-  later source before and after a step, not occurrence identity (byte
-  positions). A step that introduces one new match for a later source
-  while also consuming an existing occurrence of that same source
-  elsewhere in the same line nets to no change: the guard permits it, and
-  the later, still-pending substitution then rewrites the freshly
-  produced text. Reaching this needs a rollout carrying two or more
-  aliased cwd values in a specific containment arrangement, paired with a
-  destination whose replacement text both reassembles one recorded
-  source and overlaps an existing occurrence of another. Closing it
-  exactly needs tracking occurrence identity instead of counts; cc-port
-  accepts the narrower, count-based check as the honest answer until that
-  tracking exists. The imprecision also runs the other way: a step whose
-  introduced match would, once the later source's own substitution
-  actually ran, produce byte-identical text still gets refused, a false
-  refusal rather than a real hazard, since a plain count cannot tell the
-  two apart.
+- A recorded cwd whose target no longer exists on disk: a symlink-aliased
+  cwd for a since-deleted project falls back to `filepath.Clean` and
+  compares lexically (see Handled: `canonicalizePath`), narrower than
+  Codex's own `paths_match_after_normalization`.
+- Cancellation on every call path whose entry point carries no context,
+  since the interface it implements declares no `context.Context`
+  parameter. Two chains reach `matchingThreadCWDs` via
+  `context.Background()`: `MoveSurfaces` → `projectKnown` →
+  `stateDBKnowsProject` → `stateDBFileKnowsProject` (statedb.go), and
+  `Placeholders` → `knowsProject` → `countThreadRows` →
+  `countMatchingThreadRows` (export_import_stats.go). Neither is
+  cancellable mid-scan or bounded, so a scan over a corrupt or hostile own
+  state database runs to completion.
+- Occurrence counts, not identity (byte positions): a step that introduces
+  one new match for a later source while consuming an existing occurrence
+  of that source elsewhere in the line nets to no change, so
+  `guardSubstitutionOrder` permits it and the later substitution rewrites
+  the freshly produced text. Reaching this needs a rollout with two or
+  more aliased cwd values, paired with a destination whose replacement
+  text both reassembles one recorded source and overlaps an existing
+  occurrence of another. Closing it exactly needs tracking occurrence
+  identity instead of counts; cc-port accepts the narrower, count-based
+  check until that exists. The imprecision runs both ways: a step whose
+  introduced match would, once the later source's own substitution ran,
+  produce byte-identical text still gets refused, a false refusal rather
+  than a real hazard, since a plain count cannot tell the two apart.
 - `automations.cwds` stays on `sqlrewrite.CountTextColumnRO`'s literal
-  substring scan, not `matchingColumnValues`' canonical comparison. It is
-  free-text and multi-value, plural by name and holding more than one cwd
-  per row, so the single-value canonical matcher does not apply to it;
-  detecting an aliased value inside it would first require parsing the
-  field's own internal structure. A symlink-aliased path recorded only in
-  `automations.cwds` therefore produces no warning, and `codex-dev.db` is
-  neither rewritten nor used to refuse the move on that account. The two
-  single-value columns, `automation_runs.source_cwd` and
-  `local_thread_catalog.cwd`, are canonically matched (see Handled above).
+  substring scan, not `matchingColumnValues`' canonical comparison: it is
+  free-text and multi-value (more than one cwd per row), so the
+  single-value matcher does not apply, and detecting an aliased value
+  inside would need parsing the field's structure first. A symlink-aliased
+  path recorded only in `automations.cwds` therefore produces no warning,
+  and `codex-dev.db` is neither rewritten nor used to refuse the move on
+  that account. The two single-value columns, `automation_runs.source_cwd`
+  and `local_thread_catalog.cwd`, are canonically matched (see Handled
+  above).
 
 ### Reference thread-ID union
 

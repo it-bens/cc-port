@@ -19,10 +19,6 @@ var ErrEntryCapExceeded = errors.New("archive entry exceeds per-entry size limit
 // bytes across all entries observed so far exceeds the active aggregate cap.
 var ErrAggregateCapExceeded = errors.New("archive aggregate decompressed size exceeds limit")
 
-// ErrEntryCountCapExceeded is returned when an archive's central directory
-// carries more entries than the active MaxEntries cap.
-var ErrEntryCountCapExceeded = errors.New("archive entry count exceeds limit")
-
 // ErrZipSlip is returned when an archive entry's resolved relative path
 // would land outside its staging base directory.
 var ErrZipSlip = errors.New("staging path escapes containment base")
@@ -67,16 +63,3 @@ func (e *AggregateCapError) Error() string {
 }
 
 func (e *AggregateCapError) Unwrap() error { return ErrAggregateCapExceeded }
-
-// EntryCountCapError names the central directory entry count and limit that
-// tripped ErrEntryCountCapExceeded. Callers inspect it via errors.As.
-type EntryCountCapError struct {
-	Count int
-	Limit int
-}
-
-func (e *EntryCountCapError) Error() string {
-	return fmt.Sprintf("%s: %d entries > limit %d", ErrEntryCountCapExceeded, e.Count, e.Limit)
-}
-
-func (e *EntryCountCapError) Unwrap() error { return ErrEntryCountCapExceeded }

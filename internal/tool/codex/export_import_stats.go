@@ -169,25 +169,8 @@ func (workspace *Workspace) recordProfileSQLiteHomeWarning(result *tool.ExportRe
 	return nil
 }
 
-// addBoundedRolloutThreadID adds threadID to ids if not already present,
-// refusing once the running total reaches maxAggregateMatchedThreadRows.
-// Both readAndIdentifyRollouts and ReferenceSurfaces build a rollout-derived
-// id set from rollouts, an uncapped filesystem walk's result
-// (discoverRolloutFiles has no count limit); without this check the map
-// would already be fully materialized by the time projectThreadIDSet's own
-// cap on the larger state-db-plus-rollout union gets a chance to refuse.
-func addBoundedRolloutThreadID(ids map[string]struct{}, threadID string) error {
-	if _, alreadyPresent := ids[threadID]; alreadyPresent {
-		return nil
-	}
-	if len(ids) >= maxAggregateMatchedThreadRows {
-		return fmt.Errorf(
-			"%w: more than %d rollout-derived thread IDs accumulated for project",
-			ErrTooManyMatchedThreadRows, maxAggregateMatchedThreadRows,
-		)
-	}
+func addRolloutThreadID(ids map[string]struct{}, threadID string) {
 	ids[threadID] = struct{}{}
-	return nil
 }
 
 // readAndIdentifyRollouts reads every rollout in rollouts (projectRollouts's
@@ -195,8 +178,7 @@ func addBoundedRolloutThreadID(ids map[string]struct{}, threadID string) error {
 // classify eraA/matches, so this is the second read, of matches only) and
 // caches its lines for Export's later archive-write pass so that read is
 // not repeated a third time. It returns those cached lines alongside the
-// bounded union of thread IDs their session_meta/turn_context lines carry
-// for project (addBoundedRolloutThreadID).
+// union of thread IDs their session_meta/turn_context lines carry for project.
 func (workspace *Workspace) readAndIdentifyRollouts(
 	ctx context.Context, project string, rollouts []string,
 ) (rolloutLines map[string][][]byte, rolloutThreadIDs map[string]struct{}, err error) {
@@ -215,9 +197,7 @@ func (workspace *Workspace) readAndIdentifyRollouts(
 			return nil, nil, fmt.Errorf("identify rollout %s: %w", rollout, err)
 		}
 		rolloutLines[rollout] = lines
-		if err := addBoundedRolloutThreadID(rolloutThreadIDs, identity.ThreadID); err != nil {
-			return nil, nil, err
-		}
+		addRolloutThreadID(rolloutThreadIDs, identity.ThreadID)
 	}
 	return rolloutLines, rolloutThreadIDs, nil
 }
@@ -955,9 +935,7 @@ func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project strin
 		if err != nil {
 			return nil, err
 		}
-		if err := addBoundedRolloutThreadID(rolloutThreadIDs, identity.ThreadID); err != nil {
-			return nil, err
-		}
+		addRolloutThreadID(rolloutThreadIDs, identity.ThreadID)
 	}
 	ids, err := workspace.projectThreadIDSet(ctx, project, rolloutThreadIDs)
 	if err != nil {
@@ -1183,10 +1161,7 @@ func (workspace *Workspace) knowsProject(ctx context.Context, project string) (b
 }
 
 // projectThreadIDs accumulates matched thread IDs across every matched cwd
-// value in every discovered database. matchingThreadCWDs and threadIDsForCWD
-// already bound each individual query; this loop additionally bounds the
-// running TOTAL across every cwd and every database, since that sum is what
-// actually accumulates in threadIDs (spec §5.1).
+// value in every discovered database.
 func (workspace *Workspace) projectThreadIDs(ctx context.Context, project string) (map[string]struct{}, error) {
 	threadIDs := make(map[string]struct{})
 	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
@@ -1216,13 +1191,6 @@ func (workspace *Workspace) projectThreadIDs(ctx context.Context, project string
 				if _, alreadyPresent := threadIDs[id]; alreadyPresent {
 					continue
 				}
-				if len(threadIDs) >= maxAggregateMatchedThreadRows {
-					_ = database.Close()
-					return nil, fmt.Errorf(
-						"%w: more than %d thread IDs accumulated for project across matched cwd values and databases",
-						ErrTooManyMatchedThreadRows, maxAggregateMatchedThreadRows,
-					)
-				}
 				threadIDs[id] = struct{}{}
 			}
 		}
@@ -1231,8 +1199,7 @@ func (workspace *Workspace) projectThreadIDs(ctx context.Context, project string
 	return threadIDs, nil
 }
 
-// projectThreadIDSet unions project's state-database thread IDs
-// (projectThreadIDs, already bounded by maxAggregateMatchedThreadRows) with
+// projectThreadIDSet unions project's state-database thread IDs with
 // rolloutThreadIDs, the caller's own rollout-derived set. Export and
 // ReferenceSurfaces both need this exact union — a thread whose state-db
 // row has no matching rollout file, or vice versa, must still count — so
@@ -1240,11 +1207,7 @@ func (workspace *Workspace) projectThreadIDs(ctx context.Context, project string
 // and risking drift (finding FE2: ReferenceSurfaces used to build its id
 // set from rollouts alone, so a state-db-only thread showed zero history
 // and session-index counts even though Export and countThreadRows both
-// included it). The union itself must stay bounded too: projectThreadIDs'
-// own cap only limits what IT accumulates from the state database, not what
-// this function additionally adds from rolloutThreadIDs, so the running
-// total is checked again here as rolloutThreadIDs' own IDs are folded in
-// (spec §5.1).
+// included it).
 func (workspace *Workspace) projectThreadIDSet(
 	ctx context.Context, project string, rolloutThreadIDs map[string]struct{},
 ) (map[string]struct{}, error) {
@@ -1255,12 +1218,6 @@ func (workspace *Workspace) projectThreadIDSet(
 	for id := range rolloutThreadIDs {
 		if _, alreadyPresent := threadIDs[id]; alreadyPresent {
 			continue
-		}
-		if len(threadIDs) >= maxAggregateMatchedThreadRows {
-			return nil, fmt.Errorf(
-				"%w: more than %d thread IDs accumulated for project across the state database and rollout files",
-				ErrTooManyMatchedThreadRows, maxAggregateMatchedThreadRows,
-			)
 		}
 		threadIDs[id] = struct{}{}
 	}

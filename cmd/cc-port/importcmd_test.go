@@ -3,7 +3,6 @@ package main
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/binary"
 	"encoding/xml"
 	"os"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -29,7 +27,7 @@ import (
 // witness is the one evidence source that reads live machine state instead
 // of the (already hermetic, temp-dir-scoped) Codex home a test controls.
 func newTestToolSet() *tool.Set {
-	return tool.NewSet(claude.New(), codex.NewAdapter(os.Getenv, noopProcessLister, time.Now))
+	return tool.NewSet(claude.New(), codex.NewAdapter(os.Getenv, noopProcessLister))
 }
 
 func noopProcessLister() ([]codex.ProcessInfo, error) { return nil, nil }
@@ -53,50 +51,6 @@ func TestImportManifestCmd_OverwriteGuard(t *testing.T) {
 	err := runImportManifest(cmd, []string{archivePath})
 
 	require.ErrorIs(t, err, errOutputExists)
-}
-
-// TestImportManifestCmd_RefusesArchiveDeclaringTooManyEntries proves the
-// standalone "import manifest" subcommand enforces MaxEntries on its
-// manifest read -- the one path that, before this change, called
-// manifest.ReadManifestFromZip with no cap at all. The archive here is a
-// trailer-only zip64 buffer declaring more entries than archive.DefaultCaps
-// allows, so the test doesn't need to construct that many real entries.
-func TestImportManifestCmd_RefusesArchiveDeclaringTooManyEntries(t *testing.T) {
-	archivePath := filepath.Join(t.TempDir(), "many-entries.zip")
-	declaredEntries := uint64(archive.DefaultCaps().MaxEntries) + 1 //nolint:gosec // G115: DefaultCaps().MaxEntries is a positive constant
-	require.NoError(t, os.WriteFile(archivePath, buildBareZip64EOCDArchive(t, declaredEntries), 0o600))
-	cmd := newImportManifestCmd()
-	require.NoError(t, cmd.Flags().Set("output", filepath.Join(t.TempDir(), "manifest.xml")))
-
-	err := runImportManifest(cmd, []string{archivePath})
-
-	var countErr *manifest.EntryCountCapError
-	require.ErrorAs(t, err, &countErr)
-	assert.Equal(t, archive.DefaultCaps().MaxEntries, countErr.Limit)
-}
-
-// buildBareZip64EOCDArchive returns a synthetic ZIP trailer -- a zip64 End
-// Of Central Directory record, the zip64 locator pointing at it, and a
-// plain EOCD record carrying the zip64 sentinel -- declaring entryCount
-// entries. It is not a parseable ZIP; a plain (non-zip64) EOCD's 16-bit
-// count field tops out at 65,535, well under DefaultCaps' 200,000-entry
-// MaxEntries, so only a zip64 trailer can exercise this refusal at
-// production scale.
-func buildBareZip64EOCDArchive(t *testing.T, entryCount uint64) []byte {
-	t.Helper()
-	zip64End := make([]byte, 56)
-	binary.LittleEndian.PutUint32(zip64End[0:4], 0x06064b50)   // zip64 EOCD signature
-	binary.LittleEndian.PutUint64(zip64End[32:40], entryCount) // total entries
-
-	locator := make([]byte, 20)
-	binary.LittleEndian.PutUint32(locator[0:4], 0x07064b50) // zip64 locator signature
-	binary.LittleEndian.PutUint64(locator[8:16], 0)         // zip64 EOCD record starts at offset 0
-
-	eocd := make([]byte, 22)
-	binary.LittleEndian.PutUint32(eocd[0:4], 0x06054b50) // EOCD signature
-	binary.LittleEndian.PutUint16(eocd[10:12], 0xffff)   // zip64 sentinel
-
-	return append(append(zip64End, locator...), eocd...)
 }
 
 func TestImportCmd_PassphraseFlagsRegistered(t *testing.T) {
@@ -175,7 +129,6 @@ func buildCodexOnlyArchive(t *testing.T) []byte {
 		sourceHome,
 		func(string) string { return "" },
 		func() ([]codex.ProcessInfo, error) { return nil, nil },
-		time.Now,
 	)
 	codexTool := codex.New()
 	selected := make(map[string]bool)

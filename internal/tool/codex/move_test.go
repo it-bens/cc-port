@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +21,7 @@ func fixtureWorkspace(t *testing.T) (*Workspace, *Home) {
 	t.Helper()
 	home := SetupFixture(t)
 	home.AgentsDir = FixtureAgentsDir(t)
-	return NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now), home
+	return NewWorkspace(home, fakeGetenv(nil), noProcesses), home
 }
 
 func planAndApply(t *testing.T, workspace *Workspace, req tool.MoveRequest) (planCounts, applyCounts map[string]int) {
@@ -166,7 +165,7 @@ func TestMove_ConfigSymlinkAliasRewritesStoredTrustKey(t *testing.T) {
 	config := "# retain\n[projects.\"" + alias + "\"]\ntrust_level = \"trusted\"\n[projects.\"/other\"]\ntrust_level = \"trusted\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(homeDir, configTOMLFileName), []byte(config), 0o600))
 	workspace := NewWorkspace(
-		&Home{Dir: homeDir, SQLiteDir: filepath.Join(homeDir, "sqlite")}, fakeGetenv(nil), noProcesses, time.Now,
+		&Home{Dir: homeDir, SQLiteDir: filepath.Join(homeDir, "sqlite")}, fakeGetenv(nil), noProcesses,
 	)
 
 	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: realProject, NewPath: newPath})
@@ -329,7 +328,7 @@ func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
 	gitDir := filepath.Join(root, gitDirName)
 	require.NoError(t, os.MkdirAll(gitDir, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n"), 0o600))
-	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now)
+	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses)
 	undo := tool.NewRestorer()
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
@@ -358,7 +357,7 @@ func TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline(t *testing.T) {
 	// rewritten by an earlier, interrupted apply: it holds newPath, not
 	// oldPath, so this run's own applyMemoriesWorktree count is zero.
 	require.NoError(t, os.WriteFile(filepath.Join(root, "raw_memories.md"), []byte("Notes about "+newPath+".\n"), 0o600))
-	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses, time.Now)
+	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: newPath}
 	undo := tool.NewRestorer()
 
@@ -700,7 +699,6 @@ func TestResidualWarningsKeepsCheckpointWarningWhenLaterScanFails(t *testing.T) 
 
 func TestMoveApplyRefusesWhenCodexDevReferencesMovedProject(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	workspace.now = func() time.Time { return time.Now().Add(time.Hour) }
 	createCodexDevDatabase(t, home, `INSERT INTO local_thread_catalog (cwd) VALUES ('/Users/fixture/codexproject')`)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	targets := []tool.Target{{Tool: New(), Workspace: workspace}}
@@ -721,7 +719,6 @@ func TestMoveApplyRefusesWhenCodexDevReferencesMovedProject(t *testing.T) {
 
 func TestMoveApplyProceedsWhenCodexDevReferencesOtherProject(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	workspace.now = func() time.Time { return time.Now().Add(time.Hour) }
 	createCodexDevDatabase(t, home, `INSERT INTO local_thread_catalog (cwd) VALUES ('/Users/fixture/other-project')`)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	targets := []tool.Target{{Tool: New(), Workspace: workspace}}
@@ -735,7 +732,6 @@ func TestMoveApplyProceedsWhenCodexDevReferencesOtherProject(t *testing.T) {
 
 func TestMoveApplyRefusesWhenCodexDevSchemaDrifts(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	workspace.now = func() time.Time { return time.Now().Add(time.Hour) }
 	path := filepath.Join(home.Dir, "sqlite", "codex-dev.db")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
 	database, err := sql.Open("sqlite", path)
@@ -904,7 +900,7 @@ func TestPlanningLeavesDatabaseAndWALBytesUntouched(t *testing.T) {
 
 func TestAgentsMarketplaceSurfaceSkippedWhenAgentsDirAbsent(t *testing.T) {
 	home := SetupFixture(t)
-	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses, time.Now)
+	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
 	surfaces, err := workspace.MoveSurfaces(req)

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -144,11 +143,9 @@ func TestApply_RejectedNestedMoveLeavesClaudeStateUnchangedAcrossRetries(t *test
 }
 
 func quietCodexWorkspace(home *codex.Home) *codex.Workspace {
-	return codex.NewWorkspaceForTest(
+	return codex.NewWorkspace(
 		home,
 		func(string) string { return "" },
 		func() ([]codex.ProcessInfo, error) { return nil, nil },
-		func() time.Time { return time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC) },
-		func(int) bool { return false },
 	)
 }

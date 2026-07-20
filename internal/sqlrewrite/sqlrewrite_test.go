@@ -147,67 +147,6 @@ func TestRewriteTextColumnPreservesTextAndBlobStorage(t *testing.T) {
 	assert.Equal(t, "blob", blobType)
 }
 
-func TestRewriteTextColumnRefusesOversizedValues(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "oversized.sqlite")
-	database := openSQLite(t, path)
-	require.NoError(t, prepareWAL(database))
-	require.NoError(t, execute(database, "CREATE TABLE documents (id TEXT PRIMARY KEY, text_content TEXT)"))
-	withinCapOldPath := "/a/within-cap"
-	withinCapNewPath := "/a/rewritten"
-	overCapOldPath := "/a/over-cap"
-	overCapNewPath := "/a/never-written"
-	overCapValue := overCapOldPath + strings.Repeat("x", 16<<20+1-len(overCapOldPath))
-	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "within-cap", "prefix "+withinCapOldPath+"/notes"))
-	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "null", nil))
-	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "over-cap", overCapValue))
-	require.NoError(t, database.Close())
-
-	rewriter, err := Open(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-
-	transaction, err := rewriter.Begin()
-	require.NoError(t, err)
-	changed, err := rewriter.RewriteTextColumn(transaction, "documents", "id", "text_content", withinCapOldPath, withinCapNewPath)
-	require.NoError(t, err)
-	require.NoError(t, transaction.Commit())
-	assert.Equal(t, 1, changed)
-
-	transaction, err = rewriter.Begin()
-	require.NoError(t, err)
-	_, err = rewriter.RewriteTextColumn(transaction, "documents", "id", "text_content", overCapOldPath, overCapNewPath)
-	require.Error(t, err)
-	// RewriteTextColumn and CountTextColumnRO must refuse through the same sentinel.
-	assert.ErrorIs(t, err, ErrTextValueTooLarge)   //nolint:testifylint // require.Error above establishes err.
-	assert.ErrorContains(t, err, "documents")      //nolint:testifylint // require.Error above establishes err.
-	assert.ErrorContains(t, err, "text_content")   //nolint:testifylint // require.Error above establishes err.
-	assert.ErrorContains(t, err, "id=over-cap")    //nolint:testifylint // require.Error above establishes err.
-	assert.ErrorContains(t, err, "16777217 bytes") //nolint:testifylint // require.Error above establishes err.
-	require.NoError(t, transaction.Rollback())
-
-	verification := openSQLite(t, path)
-	var withinCapValue string
-	query := "SELECT text_content FROM documents WHERE id = 'within-cap'"
-	require.NoError(t, verification.QueryRowContext(context.Background(), query).Scan(&withinCapValue))
-	assert.Equal(t, "prefix "+withinCapNewPath+"/notes", withinCapValue)
-}
-
-func TestCountTextColumnRORefusesOversizedValue(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "oversized-count.sqlite")
-	database := openSQLite(t, path)
-	require.NoError(t, execute(database, "CREATE TABLE documents (id TEXT PRIMARY KEY, text_content TEXT)"))
-	oldPath := "/a/over-cap"
-	overCapValue := oldPath + strings.Repeat("x", 16<<20+1-len(oldPath))
-	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", "over-cap", overCapValue))
-	require.NoError(t, database.Close())
-
-	countDatabase := openSQLite(t, path)
-	_, err := CountTextColumnRO(countDatabase, "documents", "text_content", oldPath)
-
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrTextValueTooLarge, "CountTextColumnRO must refuse an oversized candidate with the same sentinel RewriteTextColumn uses")
-}
-
 func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "update.sqlite")
 	database := openSQLite(t, path)

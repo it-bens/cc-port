@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -22,28 +21,26 @@ var (
 	_ tool.Workspace = (*Workspace)(nil)
 )
 
-// Adapter implements tool.Tool for OpenAI Codex. Environment lookups,
-// process enumeration, and the clock enter via these fields rather than
-// free in-line calls (spec §1 construction seams), so Detect, Open, and
-// the witness Open returns are all testable without global mutation.
+// Adapter implements tool.Tool for OpenAI Codex. Environment lookups and
+// process enumeration enter via these fields rather than free in-line
+// calls (spec §1 construction seams), so Detect, Open, and the witness
+// Open returns are all testable without global mutation.
 type Adapter struct {
 	getenv        func(string) string
 	listProcesses ProcessLister
-	now           func() time.Time
-	pidAlive      func(int) bool
 }
 
-// New returns the Codex tool adapter, wired to the real environment, the
-// real process table, and the wall clock.
+// New returns the Codex tool adapter, wired to the real environment and the
+// real process table.
 func New() *Adapter {
-	return NewAdapter(os.Getenv, listSystemProcesses, time.Now)
+	return NewAdapter(os.Getenv, listSystemProcesses)
 }
 
 // NewAdapter returns a Codex tool adapter with explicit seams. Production
-// callers use New; tests supply a fake getenv, process lister, or clock to
-// drive Detect, Open, and the witness without touching live machine state.
-func NewAdapter(getenv func(string) string, listProcesses ProcessLister, now func() time.Time) *Adapter {
-	return &Adapter{getenv: getenv, listProcesses: listProcesses, now: now, pidAlive: processAlive}
+// callers use New; tests supply a fake getenv or process lister to drive
+// Detect, Open, and the witness without touching live machine state.
+func NewAdapter(getenv func(string) string, listProcesses ProcessLister) *Adapter {
+	return &Adapter{getenv: getenv, listProcesses: listProcesses}
 }
 
 // Name implements tool.Tool.
@@ -101,7 +98,7 @@ func (adapter *Adapter) openAt(dir string) (tool.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newWorkspace(home, adapter.getenv, adapter.listProcesses, adapter.now, adapter.pidAlive), nil
+	return newWorkspace(home, adapter.getenv, adapter.listProcesses), nil
 }
 
 func dirExists(dir string) (bool, error) {
@@ -122,31 +119,16 @@ func dirExists(dir string) (bool, error) {
 // as the Adapter that resolved it. Exported for fixtures that already hold
 // a *Home and need a Workspace without going through Adapter.Open's
 // flag-parsing path.
-func NewWorkspace(home *Home, getenv func(string) string, listProcesses ProcessLister, now func() time.Time) *Workspace {
-	return newWorkspace(home, getenv, listProcesses, now, processAlive)
-}
-
-// NewWorkspaceForTest returns a workspace with every external witness seam
-// supplied by the caller. It is for cross-package adapter tests that must
-// exercise import orchestration without scanning the host process table.
-func NewWorkspaceForTest(
-	home *Home,
-	getenv func(string) string,
-	listProcesses ProcessLister,
-	now func() time.Time,
-	pidAlive func(int) bool,
-) *Workspace {
-	return newWorkspace(home, getenv, listProcesses, now, pidAlive)
+func NewWorkspace(home *Home, getenv func(string) string, listProcesses ProcessLister) *Workspace {
+	return newWorkspace(home, getenv, listProcesses)
 }
 
 func newWorkspace(
 	home *Home,
 	getenv func(string) string,
 	listProcesses ProcessLister,
-	now func() time.Time,
-	pidAlive func(int) bool,
 ) *Workspace {
-	return &Workspace{home: home, getenv: getenv, listProcesses: listProcesses, now: now, pidAlive: pidAlive}
+	return &Workspace{home: home, getenv: getenv, listProcesses: listProcesses}
 }
 
 // Workspace implements tool.Workspace for one resolved Codex home.
@@ -154,8 +136,6 @@ type Workspace struct {
 	home           *Home
 	getenv         func(string) string
 	listProcesses  ProcessLister
-	now            func() time.Time
-	pidAlive       func(int) bool
 	applyWarnings  []string
 	warningMutex   sync.Mutex
 	historyAppends [][]byte

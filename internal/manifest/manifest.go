@@ -4,13 +4,10 @@ package manifest
 
 import (
 	"archive/zip"
-	"bytes"
-	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -78,28 +75,6 @@ var ErrManifestFileTooLarge = errors.New("manifest file too large")
 // metadata.xml zip entry's decoded size exceeds maxManifestBytes. The wrapping
 // message names the entry and the limit; callers discriminate via errors.Is.
 var ErrManifestEntryTooLarge = errors.New("manifest entry too large")
-
-// ErrManifestArchiveTooManyEntries is returned by ReadManifestFromZip when
-// the archive's central directory carries more entries than the active
-// maxEntries cap. Mirrors archive.EntryCountCapError: this package cannot
-// import internal/archive (archive already imports manifest, for
-// WriteMetadata), so it carries its own instance of the same shape.
-var ErrManifestArchiveTooManyEntries = errors.New("manifest: archive entry count exceeds limit")
-
-// EntryCountCapError names the declared or observed entry count and limit
-// that tripped ErrManifestArchiveTooManyEntries. Callers inspect it via
-// errors.As. Named to match archive.EntryCountCapError's shape; the
-// package qualifier (manifest.EntryCountCapError) disambiguates the two.
-type EntryCountCapError struct {
-	Count int
-	Limit int
-}
-
-func (e *EntryCountCapError) Error() string {
-	return fmt.Sprintf("%s: %d entries > limit %d", ErrManifestArchiveTooManyEntries, e.Count, e.Limit)
-}
-
-func (e *EntryCountCapError) Unwrap() error { return ErrManifestArchiveTooManyEntries }
 
 // maxPlaceholderKeyBytes bounds a declared placeholder key so the streaming
 // resolver's fixed peek window can always match it. Real keys are tens of
@@ -193,28 +168,13 @@ func ReadManifest(path string) (*Metadata, error) {
 // bytes. Callers open the source (file, decrypted tempfile, in-memory bytes)
 // and pass it through; the manifest package never touches paths.
 // Rejects entries whose decoded size exceeds maxManifestBytes.
-//
-// maxEntries bounds the archive's declared entry count the same way
-// archive.Caps.MaxEntries bounds archive.OpenReader; zero disables the
-// check. An archive whose End Of Central Directory record declares more
-// entries than maxEntries is refused before zip.NewReader's eager,
-// unbounded central-directory parse runs; the post-parse count below is the
-// backstop for a trailer that under-declares the true count.
-func ReadManifestFromZip(src io.ReaderAt, size int64, maxEntries int) (*Metadata, error) {
+func ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error) {
 	if src == nil {
 		return nil, ErrNilSource
-	}
-	if maxEntries > 0 {
-		if declared, ok := declaredEntryCount(src, size); ok && declared > uint64(maxEntries) {
-			return nil, &EntryCountCapError{Count: clampToInt(declared), Limit: maxEntries}
-		}
 	}
 	reader, err := zip.NewReader(src, size)
 	if err != nil {
 		return nil, fmt.Errorf("open zip archive: %w", err)
-	}
-	if maxEntries > 0 && len(reader.File) > maxEntries {
-		return nil, &EntryCountCapError{Count: len(reader.File), Limit: maxEntries}
 	}
 
 	for _, file := range reader.File {
@@ -224,123 +184,6 @@ func ReadManifestFromZip(src io.ReaderAt, size int64, maxEntries int) (*Metadata
 		return readManifestEntry(file)
 	}
 	return nil, fmt.Errorf("metadata.xml not found in zip archive")
-}
-
-const (
-	// eocdLen is the fixed-length portion of a ZIP End Of Central Directory
-	// record, before its variable-length comment.
-	eocdLen = 22
-	// eocdMaxCommentLen is the largest comment an EOCD record's 16-bit
-	// comment-length field can declare.
-	eocdMaxCommentLen = 1<<16 - 1
-	// eocdZip64Sentinel is the EOCD entry-count value meaning "see the
-	// zip64 End Of Central Directory record instead" -- a plain (non-zip64)
-	// archive can never declare more than this many entries at all, so a
-	// caller passing a maxEntries above this range can only ever be
-	// exceeded by a zip64 archive; resolving this sentinel is what makes
-	// the early check reachable at such a cap, not an optional extra.
-	eocdZip64Sentinel = 1<<16 - 1
-	// zip64LocatorLen is the fixed length of a zip64 End Of Central
-	// Directory Locator, which immediately precedes the EOCD record when
-	// the archive declares the zip64 sentinel.
-	zip64LocatorLen = 20
-	// zip64EndFixedLen is the fixed-length portion of a zip64 End Of
-	// Central Directory record, before its extra data.
-	zip64EndFixedLen = 56
-)
-
-var (
-	// eocdSignature opens a ZIP End Of Central Directory record ("PK\x05\x06").
-	eocdSignature = []byte{'P', 'K', 0x05, 0x06}
-	// zip64LocatorSignature opens a zip64 End Of Central Directory Locator
-	// ("PK\x06\x07").
-	zip64LocatorSignature = []byte{'P', 'K', 0x06, 0x07}
-	// zip64EndSignature opens a zip64 End Of Central Directory record
-	// ("PK\x06\x06").
-	zip64EndSignature = []byte{'P', 'K', 0x06, 0x06}
-)
-
-// declaredEntryCount reads only the fixed-size End Of Central Directory
-// trailer at the tail of the archive -- not its central directory -- to
-// learn how many entries it declares, following the zip64 locator and end
-// record immediately preceding the EOCD when its 16-bit count field is
-// saturated. ok is false whenever the trailer (or, for a zip64 archive, the
-// locator/end record) can't be located; callers fall back to their own
-// authoritative parse in that case. This exists purely to refuse an
-// honestly-oversized archive before zip.NewReader's eager, unbounded
-// central-directory parse runs -- it is not a replacement for that parse.
-// Duplicated from internal/archive's identical helper: this package cannot
-// import that one (see ErrManifestArchiveTooManyEntries).
-func declaredEntryCount(src io.ReaderAt, size int64) (count uint64, ok bool) {
-	if size < eocdLen {
-		return 0, false
-	}
-	windowLen := int64(eocdLen + eocdMaxCommentLen)
-	if windowLen > size {
-		windowLen = size
-	}
-	window := make([]byte, windowLen)
-	if _, err := src.ReadAt(window, size-windowLen); err != nil && !errors.Is(err, io.EOF) {
-		return 0, false
-	}
-
-	for i := len(window) - eocdLen; i >= 0; i-- {
-		if !bytes.Equal(window[i:i+4], eocdSignature) {
-			continue
-		}
-		commentLen := int(binary.LittleEndian.Uint16(window[i+20 : i+22]))
-		if i+eocdLen+commentLen > len(window) {
-			continue // truncated comment: not a genuine EOCD match, keep scanning
-		}
-		declared := binary.LittleEndian.Uint16(window[i+10 : i+12])
-		if declared != eocdZip64Sentinel {
-			return uint64(declared), true
-		}
-		eocdOffset := size - windowLen + int64(i)
-		return zip64DeclaredEntryCount(src, eocdOffset, size)
-	}
-	return 0, false
-}
-
-// zip64DeclaredEntryCount resolves the true entry count for a zip64 archive
-// by reading the zip64 locator immediately before eocdOffset, then the
-// zip64 End Of Central Directory record it points at. Both are fixed-size
-// records read at a known offset -- this is not central-directory parsing,
-// just two more bounded reads.
-func zip64DeclaredEntryCount(src io.ReaderAt, eocdOffset, size int64) (count uint64, ok bool) {
-	locatorOffset := eocdOffset - zip64LocatorLen
-	if locatorOffset < 0 {
-		return 0, false
-	}
-	locator := make([]byte, zip64LocatorLen)
-	if _, err := src.ReadAt(locator, locatorOffset); err != nil {
-		return 0, false
-	}
-	if !bytes.Equal(locator[0:4], zip64LocatorSignature) {
-		return 0, false
-	}
-	zip64EndOffset := int64(binary.LittleEndian.Uint64(locator[8:16])) //nolint:gosec // G115: bounds-checked below
-	if zip64EndOffset < 0 || zip64EndOffset > size-zip64EndFixedLen {
-		return 0, false
-	}
-	zip64End := make([]byte, zip64EndFixedLen)
-	if _, err := src.ReadAt(zip64End, zip64EndOffset); err != nil {
-		return 0, false
-	}
-	if !bytes.Equal(zip64End[0:4], zip64EndSignature) {
-		return 0, false
-	}
-	return binary.LittleEndian.Uint64(zip64End[32:40]), true
-}
-
-// clampToInt converts n to int, saturating at math.MaxInt for a value that
-// would otherwise overflow. Used only for EntryCountCapError's diagnostic
-// Count field; the refusal decision itself always compares in uint64.
-func clampToInt(n uint64) int {
-	if n > math.MaxInt {
-		return math.MaxInt
-	}
-	return int(n)
 }
 
 // readManifestEntry reads metadata.xml from a single zip entry, enforces the

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,18 +13,16 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
-var fixedWitnessNow = time.Date(2030, time.January, 2, 3, 4, 5, 0, time.UTC)
-
-func newWitnessWorkspace(t *testing.T, listProcesses ProcessLister, now func() time.Time, pidAlive func(int) bool) *Workspace {
+func newWitnessWorkspace(t *testing.T, listProcesses ProcessLister) *Workspace {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	return newWorkspace(home, fakeGetenv(nil), listProcesses, now, pidAlive)
+	return newWorkspace(home, fakeGetenv(nil), listProcesses)
 }
 
 func TestActiveWritersEmptyOnFreshHome(t *testing.T) {
-	workspace := newWitnessWorkspace(t, noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWitnessWorkspace(t, noProcesses)
 
 	active, err := workspace.ActiveWriters()
 
@@ -37,7 +34,7 @@ func TestActiveWritersDetectsCodexProcess(t *testing.T) {
 	lister := func() ([]ProcessInfo, error) {
 		return []ProcessInfo{{PID: 4242, Name: "codex"}}, nil
 	}
-	workspace := newWitnessWorkspace(t, lister, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWitnessWorkspace(t, lister)
 
 	active, err := workspace.ActiveWriters()
 
@@ -50,7 +47,7 @@ func TestActiveWritersDetectsCodexProcessByBasenameOfFullPath(t *testing.T) {
 	lister := func() ([]ProcessInfo, error) {
 		return []ProcessInfo{{PID: 4242, Name: "/Users/fixture/.local/bin/codex"}}, nil
 	}
-	workspace := newWitnessWorkspace(t, lister, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWitnessWorkspace(t, lister)
 
 	active, err := workspace.ActiveWriters()
 
@@ -62,7 +59,7 @@ func TestActiveWritersIgnoresUnrelatedProcess(t *testing.T) {
 	lister := func() ([]ProcessInfo, error) {
 		return []ProcessInfo{{PID: 4242, Name: "vim"}}, nil
 	}
-	workspace := newWitnessWorkspace(t, lister, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWitnessWorkspace(t, lister)
 
 	active, err := workspace.ActiveWriters()
 
@@ -72,7 +69,7 @@ func TestActiveWritersIgnoresUnrelatedProcess(t *testing.T) {
 
 func TestActiveWritersWrapsErrNoWitnessWhenProcessListFails(t *testing.T) {
 	lister := func() ([]ProcessInfo, error) { return nil, assert.AnError }
-	workspace := newWitnessWorkspace(t, lister, func() time.Time { return fixedWitnessNow }, func(int) bool { return false })
+	workspace := newWitnessWorkspace(t, lister)
 
 	_, err := workspace.ActiveWriters()
 
@@ -90,9 +87,7 @@ func TestActiveWritersWrapsErrNoWitnessWhenBusyProbeCannotDiscoverDatabases(t *t
 	require.NoError(t, os.Chmod(sqliteDir, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(sqliteDir, 0o700) }) //nolint:gosec // G302: cleanup restores test directory access
 	home := &Home{Dir: dir, SQLiteDir: sqliteDir}
-	workspace := newWorkspace(
-		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false },
-	)
+	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses)
 
 	_, err := workspace.ActiveWriters()
 
@@ -113,9 +108,7 @@ func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
 	defer func() { _, _ = blocker.ExecContext(context.Background(), "ROLLBACK") }()
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(
-		home, fakeGetenv(nil), noProcesses, func() time.Time { return fixedWitnessNow }, func(int) bool { return false },
-	)
+	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses)
 
 	active, err := workspace.ActiveWriters()
 

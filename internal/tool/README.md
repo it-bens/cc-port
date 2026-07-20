@@ -126,7 +126,7 @@ A third adapter is one new package (`internal/tool/<name>`) plus one line in
   and every existing substrate primitive.
 - `internal/rewrite` and `internal/sqlrewrite` are growable substrate, not
   closed sets: a new tool whose storage fits an existing engine (raw bytes,
-  JSONL, SQL, TOML, zstd-lines) inherits it unchanged; a new tool needing a
+  JSONL, SQL, TOML) inherits it unchanged; a new tool needing a
   genuinely new operation on an existing substrate adds that operation to
   the primitive, reusing its existing safety envelope, rather than opening
   an ad-hoc connection outside it.

@@ -4,7 +4,6 @@ package sqlrewrite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -18,21 +17,6 @@ import (
 )
 
 const minimumSQLiteVersion = "3.51.3"
-
-// MaxTextValueBytes bounds a single TEXT/BLOB value RewriteTextColumn and
-// CountTextColumnRO will materialize. Real path-bearing Codex metadata is a
-// few KiB; this 16 MiB ceiling leaves generous headroom while refusing a
-// hostile/corrupted value that could exhaust memory during a move or its
-// preceding read-only dry run. Exported so a caller matching path values
-// outside a single-column predicate (Codex's threads.cwd canonicalizing
-// matcher, internal/tool/codex) can guard against the same class of
-// oversized value with the same cap, rather than maintaining a second one.
-const MaxTextValueBytes = 16 << 20
-
-// ErrTextValueTooLarge is returned by RewriteTextColumn and CountTextColumnRO
-// when a candidate TEXT/BLOB value exceeds MaxTextValueBytes; both refuse
-// before materializing the value in Go memory.
-var ErrTextValueTooLarge = errors.New("SQLite text value exceeds byte cap")
 
 // FileDSN encodes path as a `file:` URL DSN carrying params as its query
 // string, so a path containing '?' or other DSN-significant bytes opens the
@@ -152,9 +136,8 @@ func (database *DB) CheckpointTruncate() error {
 	return nil
 }
 
-// CountTextColumnRO counts rows whose TEXT/BLOB column contains a bounded
-// reference to oldPath, refusing any candidate value larger than the shared
-// per-value cap before materializing it.
+// CountTextColumnRO counts rows whose TEXT/BLOB column contains a
+// boundary-aware reference to oldPath.
 func CountTextColumnRO(database *sql.DB, table, column, oldPath string) (int, error) {
 	if err := validatePathArguments(oldPath, oldPath); err != nil {
 		return 0, err
@@ -164,22 +147,6 @@ func CountTextColumnRO(database *sql.DB, table, column, oldPath string) (int, er
 	}
 	if err := requireColumns(database, table, column); err != nil {
 		return 0, err
-	}
-
-	// #nosec G201 -- table and column names are quoted identifiers, never values.
-	guardQuery := fmt.Sprintf(
-		"SELECT octet_length(%s) FROM %s WHERE instr(%s, ?) > 0 AND octet_length(%s) > ? LIMIT 1",
-		quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column),
-	)
-	var byteCount int64
-	switch err := database.QueryRowContext(context.Background(), guardQuery, oldPath, MaxTextValueBytes).Scan(&byteCount); {
-	case err == nil:
-		return 0, fmt.Errorf(
-			"%w: %s.%s is %d bytes, exceeding the %d byte cap",
-			ErrTextValueTooLarge, table, column, byteCount, MaxTextValueBytes,
-		)
-	case !errors.Is(err, sql.ErrNoRows):
-		return 0, fmt.Errorf("guard text values in %s.%s: %w", table, column, err)
 	}
 
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
@@ -213,7 +180,7 @@ func CountTextColumnRO(database *sql.DB, table, column, oldPath string) (int, er
 	return count, nil
 }
 
-// RewriteTextColumn rewrites bounded path references in TEXT or BLOB values
+// RewriteTextColumn rewrites path references in TEXT or BLOB values
 // and writes each changed row back by its declared primary key.
 func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error) {
 	if err := validatePathArguments(oldPath, newPath); err != nil {
@@ -224,39 +191,6 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 	}
 	if err := requirePrimaryKeyAndColumn(transaction.transaction, table, primaryKeyColumn, column); err != nil {
 		return 0, err
-	}
-
-	// #nosec G201 -- table and column names are quoted identifiers, never values.
-	guardQuery := fmt.Sprintf(
-		"SELECT %s, octet_length(%s) FROM %s WHERE instr(%s, ?) > 0 AND octet_length(%s) > ?",
-		quoteIdentifier(primaryKeyColumn), quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column),
-	)
-	guardRows, err := transaction.transaction.QueryContext(context.Background(), guardQuery, oldPath, MaxTextValueBytes)
-	if err != nil {
-		return 0, fmt.Errorf("guard text values in %s.%s: %w", table, column, err)
-	}
-	if guardRows.Next() {
-		var primaryKey any
-		var byteCount int64
-		if err := guardRows.Scan(&primaryKey, &byteCount); err != nil {
-			_ = guardRows.Close()
-			return 0, fmt.Errorf("read text value guard from %s.%s: %w", table, column, err)
-		}
-		overCapErr := fmt.Errorf(
-			"%w: %s.%s at %s=%v is %d bytes, exceeding the %d byte cap",
-			ErrTextValueTooLarge, table, column, primaryKeyColumn, primaryKey, byteCount, MaxTextValueBytes,
-		)
-		if err := guardRows.Close(); err != nil {
-			return 0, fmt.Errorf("%w; close text value guard for %s.%s: %w", overCapErr, table, column, err)
-		}
-		return 0, overCapErr
-	}
-	if err := guardRows.Err(); err != nil {
-		_ = guardRows.Close()
-		return 0, fmt.Errorf("guard text values in %s.%s: %w", table, column, err)
-	}
-	if err := guardRows.Close(); err != nil {
-		return 0, fmt.Errorf("close text value guard for %s.%s: %w", table, column, err)
 	}
 
 	// #nosec G201 -- table and column names are quoted identifiers, never values.

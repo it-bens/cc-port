@@ -67,11 +67,11 @@ When the behavior is real but the current exported API hides it, four production
 | Pattern | Production-code shape | Test usage |
 |---|---|---|
 | `io.Writer` parameter | Function takes `out io.Writer` instead of writing to `os.Stdout`; cobra wires the live default via `cmd.OutOrStdout()`. | Test passes `&bytes.Buffer{}` and asserts on its contents. |
-| Constructor-field injection | Ambient dependencies enter as constructor parameters: `codex.NewAdapter(getenv, listProcesses, now)`; `codex.NewWorkspaceForTest` additionally takes `pidAlive`, so every external witness seam is caller-supplied. | Test constructs the adapter with fakes: a `getenv` returning fixture homes, a canned `ProcessLister`, a fixed clock. |
+| Constructor-field injection | Ambient dependencies enter as constructor parameters: `codex.NewAdapter(getenv, listProcesses)`; `claude.NewWorkspaceForTest` additionally takes a `processLiveness` check, so every external witness seam is caller-supplied. | Test constructs the adapter with fakes: a `getenv` returning fixture homes, a canned `ProcessLister`, a fake liveness check. |
 | Exported pure helper | Inline rewrite logic is extracted into an exported pure function (`claude.RewriteSessionFile`, `claude.RewriteUserConfig`) that the production caller and the test both invoke. | Test exercises the helper directly without staging the surrounding pipeline. |
 | Package-level fn-var seam | `var removeAll = os.RemoveAll`, `var now = time.Now`; production calls through the indirection. | Test reassigns the var inside the test body and restores via `t.Cleanup`. |
 
-A mutation test also runs at the level where the witness it would trip is a seam. The codex CLI running a test suite is itself a codex process, so a cmd-level codex-mutation test refuses on the live-writer witness and proves nothing; codex-mutation tests live at the importer/adapter level through `codex.NewWorkspaceForTest`.
+A mutation test also runs at the level where the witness it would trip is a seam. The codex CLI running a test suite is itself a codex process, so a cmd-level codex-mutation test refuses on the live-writer witness and proves nothing; codex-mutation tests live at the importer/adapter level through `codex.NewWorkspace`.
 
 Anti-pattern: introducing a seam that no production caller actually needs, only to make the test pass. That is the same `package foo` internal-test smell, dressed in a `With*` option.
 

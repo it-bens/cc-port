@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,103 +82,6 @@ func TestEntry_ReadAll_RejectsOverEntryCap(t *testing.T) {
 
 	_, err = entries[0].Entry.ReadAll()
 	require.ErrorIs(t, err, archive.ErrEntryCapExceeded)
-}
-
-func TestOpenReader_RefusesTooManyEntries(t *testing.T) {
-	const maxEntries = 5
-	entries := make(map[string]string, maxEntries+1)
-	for i := 0; i <= maxEntries; i++ {
-		entries[fmt.Sprintf("claude/entry-%d", i)] = ""
-	}
-	body := buildZip(t, entries)
-
-	_, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{
-		MaxEntryBytes: 1 << 20, MaxAggregateBytes: 1 << 20, MaxEntries: maxEntries,
-	})
-
-	var countErr *archive.EntryCountCapError
-	require.ErrorAs(t, err, &countErr)
-	assert.Equal(t, maxEntries+1, countErr.Count)
-	assert.Equal(t, maxEntries, countErr.Limit)
-}
-
-// TestOpenReader_RefusesDeclaredOverflowBeforeParsing proves the refusal
-// above fires from the cheap End Of Central Directory trailer scan, before
-// zip.NewReader's eager central-directory parse ever runs -- not from the
-// parsed archive. buildBareEOCD below is not a parseable ZIP (it carries no
-// central directory bytes, only the trailer); if the MaxEntries check ran
-// after zip.NewReader instead of before it, this archive would fail with a
-// generic "not a valid zip file" error instead of EntryCountCapError.
-func TestOpenReader_RefusesDeclaredOverflowBeforeParsing(t *testing.T) {
-	const maxEntries = 5
-	const declaredEntries = maxEntries + 1
-
-	body := buildBareEOCD(t, declaredEntries)
-
-	_, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{
-		MaxEntryBytes: 1 << 20, MaxAggregateBytes: 1 << 20, MaxEntries: maxEntries,
-	})
-
-	var countErr *archive.EntryCountCapError
-	require.ErrorAs(t, err, &countErr)
-	assert.Equal(t, declaredEntries, countErr.Count)
-	assert.Equal(t, maxEntries, countErr.Limit)
-}
-
-// buildBareEOCD returns the 22-byte fixed portion of a ZIP End Of Central
-// Directory record declaring entryCount entries, with no comment and no
-// preceding central directory -- the whole "archive" is just this trailer.
-func buildBareEOCD(t *testing.T, entryCount uint16) []byte {
-	t.Helper()
-	record := make([]byte, 22)
-	binary.LittleEndian.PutUint32(record[0:4], 0x06054b50)   // EOCD signature
-	binary.LittleEndian.PutUint16(record[8:10], entryCount)  // records on this disk
-	binary.LittleEndian.PutUint16(record[10:12], entryCount) // total records
-	return record
-}
-
-// TestOpenReader_RefusesTooManyDeclaredEntriesViaZip64 proves the zip64
-// sentinel is resolved, not just skipped: a plain (non-zip64) EOCD's 16-bit
-// entry-count field tops out at 65,535, so DefaultCaps' 200,000-entry
-// MaxEntries can only ever be exceeded by a zip64 archive. Without
-// resolving the sentinel, the early check could never fire against the cap
-// this tool actually ships.
-func TestOpenReader_RefusesTooManyDeclaredEntriesViaZip64(t *testing.T) {
-	const maxEntries = 200_000
-	const declaredEntries = maxEntries + 1
-
-	body := buildBareZip64EOCD(t, declaredEntries)
-
-	_, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{
-		MaxEntryBytes: 1 << 20, MaxAggregateBytes: 1 << 20, MaxEntries: maxEntries,
-	})
-
-	var countErr *archive.EntryCountCapError
-	require.ErrorAs(t, err, &countErr)
-	assert.Equal(t, declaredEntries, countErr.Count)
-	assert.Equal(t, maxEntries, countErr.Limit)
-}
-
-// buildBareZip64EOCD returns a synthetic trailer -- a zip64 End Of Central
-// Directory record, the zip64 locator pointing at it, and a plain EOCD
-// record carrying the zip64 sentinel -- declaring entryCount entries. Like
-// buildBareEOCD, this is not a parseable ZIP; it exists only to drive
-// declaredEntryCount's zip64 resolution path directly.
-func buildBareZip64EOCD(t *testing.T, entryCount uint64) []byte {
-	t.Helper()
-	zip64End := make([]byte, 56)
-	binary.LittleEndian.PutUint32(zip64End[0:4], 0x06064b50)   // zip64 EOCD signature
-	binary.LittleEndian.PutUint64(zip64End[32:40], entryCount) // total entries
-
-	locator := make([]byte, 20)
-	binary.LittleEndian.PutUint32(locator[0:4], 0x07064b50) // zip64 locator signature
-	binary.LittleEndian.PutUint64(locator[8:16], 0)         // zip64 EOCD record starts at offset 0
-
-	eocd := make([]byte, 22)
-	binary.LittleEndian.PutUint32(eocd[0:4], 0x06054b50) // EOCD signature
-	binary.LittleEndian.PutUint16(eocd[10:12], 0xffff)   // zip64 sentinel
-
-	return append(append(zip64End, locator...), eocd...)
 }
 
 func TestClassifyPresentKeys_FindsOnlyReferencedKeys(t *testing.T) {

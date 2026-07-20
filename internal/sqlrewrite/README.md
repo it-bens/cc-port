@@ -20,21 +20,12 @@ opens and guards.
 - `(*DB).Begin() (*Tx, error)`, `Tx`, `(*Tx).Commit() error`, `(*Tx).Rollback() error`.
 - `(*DB).CheckpointTruncate() error`: folds the WAL into the main database
   and truncates it. Called once more after a rewrite transaction commits.
-- `CountTextColumnRO(db *sql.DB, table, column, oldPath string) (int, error)`:
-  counts TEXT or BLOB rows containing a bounded reference to `oldPath` on the
-  caller's read-only connection, sharing `RewriteTextColumn`'s per-value byte
-  cap and refusal.
+  - `CountTextColumnRO(db *sql.DB, table, column, oldPath string) (int, error)`:
+    counts TEXT or BLOB rows containing a boundary-aware reference to `oldPath`
+    on the caller's read-only connection.
 - `(*DB).RewriteTextColumn(tx *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error)`:
   streams matching TEXT or BLOB rows, applies `rewrite.ReplacePathInBytes` in
   Go, and writes each changed row back by its declared primary key.
-- `ErrTextValueTooLarge`: the sentinel `RewriteTextColumn` and
-  `CountTextColumnRO` both wrap when a candidate value exceeds the shared
-  byte cap; callers assert against it with `errors.Is`.
-- `MaxTextValueBytes`: the shared per-value byte cap (16 MiB)
-  `RewriteTextColumn` and `CountTextColumnRO` enforce, exported so a caller
-  guarding its own path-value materialization outside this package's
-  predicates (`internal/tool/codex`'s `threads.cwd` matcher) can reuse the
-  same cap instead of maintaining a second one.
 - `(*DB).UpdateColumnsByKey(tx *Tx, table, primaryKeyColumn string, primaryKey any, values map[string]any) (int, error)`:
   updates columns on an existing row identified by its single-column primary
   key; never inserts.
@@ -190,35 +181,6 @@ opens and guards.
   caller is responsible for passing a value the underlying column accepts;
   a wrong type surfaces as whatever error `database/sql` itself returns.
 
-### Bounded value materialization
-
-**Handled.**
-
-- `RewriteTextColumn` and `CountTextColumnRO` share one `MaxTextValueBytes`
-  cap (16 MiB) and one `octet_length(...) > ?` guard shape, so a candidate
-  value too large to materialize safely is refused identically whether the
-  caller is planning a move (read-only) or applying one (transactional).
-  Both wrap `ErrTextValueTooLarge`, so a caller checks the refusal with
-  `errors.Is` regardless of which function produced it.
-  `TestRewriteTextColumnRefusesOversizedValues` and
-  `TestCountTextColumnRORefusesOversizedValue` each insert a value one byte
-  over the cap and assert the refusal through that sentinel. `MaxTextValueBytes`
-  is exported so a caller matching path values outside a single-column
-  predicate (`internal/tool/codex`'s canonicalizing `threads.cwd` matcher,
-  see its README §cwd matching) can guard against the same class of
-  oversized value with the same cap.
-
-**Refused.**
-
-- Reading an oversized value's full bytes before checking its size. Both
-  functions run the `octet_length` guard as its own query first, so the
-  oversized row's TEXT/BLOB payload is never pulled into Go memory.
-
-**Not covered.**
-
-- A cap tighter than 16 MiB for a specific table or column. The cap is
-  package-wide; no call site can lower it.
-
 ### Update-only mutation
 
 **Handled.**
@@ -250,6 +212,5 @@ Unit tests in `sqlrewrite_test.go`: the version-floor drift test, the
 busy-refusal timing test, the checkpoint-on-open test against a fixture
 database with a synthetic `-wal`, `FileDSN` round-tripping a table through a
 path whose directory segment contains `?`, `RewriteTextColumn` fixtures
-covering a TEXT and a BLOB column, the shared `ErrTextValueTooLarge` refusal
-asserted from both `RewriteTextColumn` and `CountTextColumnRO`, and
-`UpdateColumnsByKey`'s update-without-insert behavior.
+covering a TEXT and a BLOB column, and `UpdateColumnsByKey`'s
+update-without-insert behavior.
