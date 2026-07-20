@@ -54,21 +54,9 @@ func rolloutRoots(home *Home) []string {
 // logical rollout or a duplicate archive entry corrupts the whole import;
 // this mirrors Codex's own walker, which applies the identical suppression
 // (rollout/src/compression.rs:141-163, should_skip_compressed_sibling at
-// 941-943). The freshness witness needs every physical file's mtime, so it
-// uses discoverRolloutFilesRaw instead. A missing root is not an error: a
-// fresh Codex home may not have written it yet.
+// 941-943). A missing root is not an error: a fresh Codex home may not have
+// written it yet.
 func discoverRolloutFiles(home *Home) ([]string, error) {
-	files, err := discoverRolloutFilesRaw(home)
-	if err != nil {
-		return nil, err
-	}
-	return suppressCompressedSiblings(files), nil
-}
-
-// discoverRolloutFilesRaw returns every rollout .jsonl and .jsonl.zst file
-// exactly as found on disk, in sorted order, including a .jsonl.zst
-// crash-window sibling discoverRolloutFiles would suppress.
-func discoverRolloutFilesRaw(home *Home) ([]string, error) {
 	var files []string
 	for _, root := range rolloutRoots(home) {
 		found, err := listRolloutFiles(root)
@@ -78,7 +66,7 @@ func discoverRolloutFilesRaw(home *Home) ([]string, error) {
 		files = append(files, found...)
 	}
 	sort.Strings(files)
-	return files, nil
+	return suppressCompressedSiblings(files), nil
 }
 
 // suppressCompressedSiblings drops every .jsonl.zst entry whose plain

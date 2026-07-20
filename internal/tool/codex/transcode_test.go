@@ -71,10 +71,8 @@ func TestTranscodeLinesRoundTripsCompressedFile(t *testing.T) {
 	require.NoError(t, err, "output must remain a valid zstd frame")
 }
 
-// TestTranscodeLinesPreservesMtime guards the success-path regression: a
-// rewritten rollout's mtime must not bump to the rewrite time, or Codex's
-// freshness witness (120s window) reads it as an active writer and blocks
-// the next mutating operation.
+// TestTranscodeLinesPreservesMtime ensures a content-only rewrite preserves
+// the source file's observable metadata.
 func TestTranscodeLinesPreservesMtime(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte("line one\n"), 0o600))

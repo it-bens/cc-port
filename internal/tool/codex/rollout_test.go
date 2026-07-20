@@ -60,8 +60,7 @@ func TestDiscoverRolloutFilesFindsBothRoots(t *testing.T) {
 // removing the plain one), and Codex never re-compresses once the plain
 // file is gone, so the pair is durable with no self-heal. Every rollout
 // consumer must see one logical file, mirroring Codex's own walker
-// (should_skip_compressed_sibling); the freshness witness alone needs the
-// raw, non-deduplicated enumeration for its mtime evidence.
+// (should_skip_compressed_sibling).
 func TestDiscoverRolloutFiles_SuppressesCompressedSibling(t *testing.T) {
 	home := SetupFixture(t)
 	plainPath := rolloutFixturePath(home, eraCPath)
@@ -76,11 +75,6 @@ func TestDiscoverRolloutFiles_SuppressesCompressedSibling(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, files, plainPath, "the plain file is always kept")
 	assert.NotContains(t, files, compressedPath, "the crash-window .zst sibling is suppressed once the plain file exists")
-
-	raw, err := discoverRolloutFilesRaw(home)
-	require.NoError(t, err)
-	assert.Contains(t, raw, compressedPath, "the witness's raw enumeration must still see the crash-window sibling")
-	assert.Contains(t, raw, plainPath)
 }
 
 func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {

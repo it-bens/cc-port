@@ -136,14 +136,9 @@ func TranscodeLines(path string, caps TranscodeCaps, transform func(line []byte)
 	if err := rewrite.SafeWriteFile(path, finalBytes, info.Mode()); err != nil {
 		return 0, fmt.Errorf("write %s: %w", path, err)
 	}
-	// SafeWriteFile promotes through a fresh temp file, so path's mtime is
-	// now the rewrite time. Codex's freshness witness keys on rollout mtime
-	// within a 120s window (witness.go, freshnessWitness): left unrestored,
-	// every successful move would make the just-rewritten rollout look like
-	// an active writer and block the next mutating operation for up to two
-	// minutes. Restoring the source mtime here mirrors the claude adapter's
-	// rewriteTwicePreservingMtime (move.go); Go's os.FileInfo carries no
-	// portable atime, so the captured mtime stands in for both.
+	// SafeWriteFile promotes through a fresh temp file, so restore the source
+	// mtime after publication. A content-only rewrite must remain
+	// indistinguishable from the source to anything that reads mtime.
 	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 		return 0, fmt.Errorf("restore mtime %s: %w", path, err)
 	}

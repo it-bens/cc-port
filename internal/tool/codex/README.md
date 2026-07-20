@@ -166,19 +166,15 @@ shapes themselves.
   `archived_sessions/` (`rollout/src/lib.rs:21-22`); archiving physically
   renames the file from one root to the other
   (`thread-store/src/local/archive_thread.rs:41-53`). `rolloutRoots` walks
-  both roots for `discoverRolloutFiles` and `discoverRolloutFilesRaw` alike,
-  so every rollout surface (move rewrite, export, residual scanning) sees
-  the same combined file set regardless of which root a given rollout
-  currently sits under.
+  both roots for `discoverRolloutFiles`, so every rollout surface (move
+  rewrite, export, residual scanning) sees the same combined file set
+  regardless of which root a given rollout currently sits under.
 - `discoverRolloutFiles` returns one file per LOGICAL rollout: when both
   `X.jsonl` and a crash-window `X.jsonl.zst` sibling exist, only the plain
   file is kept, mirroring Codex's own walker
   (`rollout/src/compression.rs:141-163,941-943`). Move rewrite, export,
-  `projectRollouts`, `knowsProject`, and stats all consume this
-  deduplicated form; only the freshness witness reads the raw,
-  non-deduplicated `discoverRolloutFilesRaw`, since it needs every physical
-  file's mtime and the compression-lock witness, WAL/SHM freshness, and
-  process-table witness already cover the same signal independently.
+  `projectRollouts`, `knowsProject`, and stats all consume this deduplicated
+  form.
 - Export preserves the root distinction in the archive path
   (`archiveRolloutName` maps `sessions/` and `archived_sessions/` to
   `codex/sessions/…` and `codex/archived-sessions/…`); import stages back to
@@ -200,37 +196,18 @@ shapes themselves.
 
 **Handled.**
 
-- `ActiveWriters` gathers five evidence sources, every one regardless of an
-  earlier source's outcome, so a dry-run reports every signal at once: (1) a
-  running Codex process (`codex`, `codex-tui`, `codex-app-server`) is the
-  primary signal, since a plain `codex`/`codex exec` run holds a database
-  open with no daemon directory and no marker file; (2) any rollout under
-  either root, or any `-wal`/`-shm` sibling, modified within the last 120
-  seconds; (3) a live PID in `app-server-daemon/app-server.pid`, or a held
-  flock on `app-server-daemon/daemon.lock`; (4)
-  `$CODEX_HOME/.tmp/rollout-compression.lock`, counted only when its mtime is
-  inside a six-hour staleness window and its embedded PID is alive, since the
-  marker persists after a successful run and presence alone proves nothing;
-  (5) `SQLITE_BUSY` on a `BEGIN IMMEDIATE` probe against each discovered
-  database.
-- A source that cannot be read (not merely finds nothing) makes the whole
-  call return an error wrapping `tool.ErrNoWitness`, which blocks mutation
-  exactly like a positive result: an unreadable witness cannot be treated as
-  "no writers."
-
-**Refused.**
-
-- Trusting presence of the compression lock marker alone. Its age and
-  embedded PID are both checked; a stale or dead-PID marker is not evidence.
+- `ActiveWriters` collects both sources regardless of either outcome, so a
+  dry-run reports every signal at once: a process-table match for `codex`,
+  `codex-tui`, or `codex-app-server`; and `SQLITE_BUSY` on a `BEGIN
+  IMMEDIATE` probe against each discovered database.
+- If either source cannot be consulted, `ActiveWriters` returns an error
+  wrapping `tool.ErrNoWitness`. Mutation treats that failure like positive
+  liveness evidence rather than assuming there are no writers.
 
 **Not covered.**
 
-- A cooperative shutdown protocol. The desktop app offers none; detection is
-  best-effort evidence with hard refusal on any positive signal, backstopped
-  by `sqlrewrite`'s `busy_timeout=0` at actual write time. The witness also
-  does not cross-check a PID file's embedded process start time against the
-  live process's actual start time, a deliberate scope simplification
-  against Codex's own PID-reuse guard.
+- A cooperative shutdown protocol. Detection is evidence only; the actual
+  database write is separately protected by `sqlrewrite`'s `busy_timeout=0`.
 
 ### Era-A rollout handling
 
@@ -698,14 +675,12 @@ Unit tests across `move_test.go`, `witness_test.go`, `process_test.go`,
 `export_import_stats_test.go`. Coverage: three-tier `sqlite_home` resolution,
 glob-based discovery against generation-suffixed fixture filenames, both
 rollout roots, era-A skip behavior under plain and `--deep` rewrite, the
-witness's five evidence sources driven through the injected process lister
-and clock (fake PID files, fresh and stale marker mtimes) rather than the
-live process table or wall clock, `codex-dev.db` refusal on both a
+process-table and busy-probe witness sources driven through the injected
+process lister rather than the live process table, `codex-dev.db` refusal on both a
 path-reference hit and a schema-drift case, the sidecar's apply-and-remainder
 counting, `config.toml` byte-identity across an import, a divergent profile
 overlay's `sqlite_home` warning, `discoverRolloutFiles` suppressing a
-crash-window `.jsonl.zst` sibling while the freshness witness's raw
-enumeration still sees it, same-second history entries surviving on
+crash-window `.jsonl.zst` sibling, same-second history entries surviving on
 distinct `text`, `ReferenceSurfaces` counting a state-database-only
 thread the same way `Export` would, `pathMatchesProject` matching a
 symlink-aliased cwd against a real symlink built under `t.TempDir`, and a
