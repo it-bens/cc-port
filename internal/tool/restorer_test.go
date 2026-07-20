@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,6 +70,52 @@ func TestRestorer_RollbackFromSiblingBackup(t *testing.T) {
 	got, err := os.ReadFile(target) //nolint:gosec // test-controlled path
 	require.NoError(t, err)
 	assert.Equal(t, original, got)
+}
+
+// TestRestorer_RestoresMtime covers both RegisterFile branches: a small
+// file held in memory, and a large file (>1 MiB, no injectable threshold
+// exists on Restorer, so this test writes a real file past it) routed
+// through the sibling-backup path. Both must restore the file's original,
+// pre-mutation modification time, not the time the restore write happened.
+func TestRestorer_RestoresMtime(t *testing.T) {
+	t.Run("in-memory branch", func(t *testing.T) {
+		tmp := t.TempDir()
+		target := filepath.Join(tmp, "small.txt")
+		require.NoError(t, os.WriteFile(target, []byte("original"), 0o600))
+		past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
+		require.NoError(t, os.Chtimes(target, past, past))
+
+		restorer := tool.NewRestorer()
+		require.NoError(t, restorer.RegisterFile(target))
+		require.NoError(t, os.WriteFile(target, []byte("mutated"), 0o600))
+
+		require.NoError(t, restorer.Restore())
+
+		info, err := os.Stat(target)
+		require.NoError(t, err)
+		assert.WithinDuration(t, past, info.ModTime(), time.Second,
+			"restore must reapply the pre-mutation mtime, not the restore time")
+	})
+
+	t.Run("sibling backup branch", func(t *testing.T) {
+		tmp := t.TempDir()
+		target := filepath.Join(tmp, "large.txt")
+		original := []byte(strings.Repeat("abc\n", 300_000)) // >1 MiB: forces the sibling-backup path
+		require.NoError(t, os.WriteFile(target, original, 0o600))
+		past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
+		require.NoError(t, os.Chtimes(target, past, past))
+
+		restorer := tool.NewRestorer()
+		require.NoError(t, restorer.RegisterFile(target))
+		require.NoError(t, os.WriteFile(target, []byte("mutated"), 0o600))
+
+		require.NoError(t, restorer.Restore())
+
+		info, err := os.Stat(target)
+		require.NoError(t, err)
+		assert.WithinDuration(t, past, info.ModTime(), time.Second,
+			"restore must reapply the pre-mutation mtime, not the restore time")
+	})
 }
 
 func TestRestorer_CleanupRemovesSiblingBackupsWithoutRestoring(t *testing.T) {

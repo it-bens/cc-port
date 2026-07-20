@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/assert"
@@ -68,6 +69,27 @@ func TestTranscodeLinesRoundTripsCompressedFile(t *testing.T) {
 	defer decoder.Close()
 	_, err = decoder.DecodeAll(raw, nil)
 	require.NoError(t, err, "output must remain a valid zstd frame")
+}
+
+// TestTranscodeLinesPreservesMtime guards the success-path regression: a
+// rewritten rollout's mtime must not bump to the rewrite time, or Codex's
+// freshness witness (120s window) reads it as an active writer and blocks
+// the next mutating operation.
+func TestTranscodeLinesPreservesMtime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte("line one\n"), 0o600))
+	past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(path, past, past))
+
+	_, err := TranscodeLines(path, DefaultTranscodeCaps(), func(_ []byte) ([]byte, int) {
+		return []byte("LINE ONE"), 1
+	})
+
+	require.NoError(t, err)
+	info, statErr := os.Stat(path)
+	require.NoError(t, statErr)
+	assert.WithinDuration(t, past, info.ModTime(), time.Second,
+		"a rewritten rollout must keep its pre-rewrite mtime")
 }
 
 func TestTranscodeLinesRejectsOversizedLine(t *testing.T) {

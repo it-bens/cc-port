@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/it-bens/cc-port/internal/rewrite"
 )
@@ -41,33 +42,46 @@ func NewRestorer() *Restorer {
 	return &Restorer{}
 }
 
-// RegisterFile snapshots path's current contents before a caller overwrites
-// it in place. Files under siblingBackupThreshold are held as an in-memory
-// byte copy; larger files are streamed to a sibling backup file first, so
-// restoring a large rewritten file does not hold the whole original in RAM.
+// RegisterFile snapshots path's current contents, mode, and modification
+// time before a caller overwrites it in place. Files under
+// siblingBackupThreshold are held as an in-memory byte copy; larger files
+// are streamed to a sibling backup file first, so restoring a large
+// rewritten file does not hold the whole original in RAM. Restoring through
+// either path reapplies the captured modification time, so a rollback puts
+// back the exact pre-image rather than a copy time-stamped at restore time.
 func (restorer *Restorer) RegisterFile(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("stat %s for rollback snapshot: %w", path, err)
 	}
 	if info.Size() < siblingBackupThreshold {
-		return restorer.registerInMemory(path, info.Mode())
+		return restorer.registerInMemory(path, info.Mode(), info.ModTime())
 	}
-	return restorer.registerSibling(path, info.Mode())
+	return restorer.registerSibling(path, info.Mode(), info.ModTime())
 }
 
-func (restorer *Restorer) registerInMemory(path string, mode os.FileMode) error {
+func (restorer *Restorer) registerInMemory(path string, mode os.FileMode, modTime time.Time) error {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path is caller-supplied, already-validated internal state
 	if err != nil {
 		return fmt.Errorf("read %s for rollback snapshot: %w", path, err)
 	}
 	restorer.restores = append(restorer.restores, func() error {
-		return rewrite.SafeWriteFile(path, data, mode)
+		if err := rewrite.SafeWriteFile(path, data, mode); err != nil {
+			return err
+		}
+		// SafeWriteFile promotes through a fresh temp file, so the restored
+		// path's mtime is the restore time, not the pre-mutation time this
+		// snapshot captured; Chtimes puts the original back. Go's os.FileInfo
+		// carries no portable atime, so the captured mtime stands in for both.
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			return fmt.Errorf("restore mtime %s: %w", path, err)
+		}
+		return nil
 	})
 	return nil
 }
 
-func (restorer *Restorer) registerSibling(path string, mode os.FileMode) error {
+func (restorer *Restorer) registerSibling(path string, mode os.FileMode, modTime time.Time) error {
 	source, err := os.Open(path) //nolint:gosec // G304: path is caller-supplied, already-validated internal state
 	if err != nil {
 		return fmt.Errorf("open %s for rollback snapshot: %w", path, err)
@@ -91,7 +105,16 @@ func (restorer *Restorer) registerSibling(path string, mode os.FileMode) error {
 	}
 
 	restorer.restores = append(restorer.restores, func() error {
-		return os.Rename(sibling, path)
+		if err := os.Rename(sibling, path); err != nil {
+			return err
+		}
+		// The sibling's own mtime is when RegisterFile wrote the backup, not
+		// when the original content was last modified; Chtimes restores the
+		// captured pre-mutation time the rename alone cannot carry.
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			return fmt.Errorf("restore mtime %s: %w", path, err)
+		}
+		return nil
 	})
 	restorer.cleanups = append(restorer.cleanups, func() {
 		_ = os.Remove(sibling)

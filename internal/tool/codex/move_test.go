@@ -87,6 +87,38 @@ func TestMoveSurfacesIdempotentSecondApplyFindsNothing(t *testing.T) {
 		"re-running the same move must converge: the old path is gone, so the tool no longer knows the project")
 }
 
+// TestMove_SucceedsThenFreshnessWitnessQuiet guards the success-path
+// mtime-preservation regression: TranscodeLines rewrites every matching
+// rollout during a successful move, and if it left the rewrite time behind
+// instead of restoring the pre-rewrite mtime, freshnessWitness would read
+// the just-rewritten rollouts as an active writer and block the next
+// mutating operation for up to 120s.
+func TestMove_SucceedsThenFreshnessWitnessQuiet(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	fixedNow := time.Now()
+	workspace.now = func() time.Time { return fixedNow }
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project", DeepRewrite: true}
+
+	rolloutFiles, err := discoverRolloutFiles(home)
+	require.NoError(t, err)
+	require.NotEmpty(t, rolloutFiles, "sanity: the fixture must carry at least one rollout")
+	past := fixedNow.Add(-1 * time.Hour)
+	for _, path := range rolloutFiles {
+		require.NoError(t, os.Chtimes(path, past, past))
+	}
+
+	undo := tool.NewRestorer()
+	count, err := workspace.rolloutsSurface(req).Apply(context.Background(), undo)
+	require.NoError(t, err)
+	require.Positive(t, count.Count, "sanity: the apply must actually have rewritten a rollout")
+	undo.Cleanup()
+
+	active, activeErr := workspace.freshnessWitness()
+
+	require.NoError(t, activeErr)
+	assert.Empty(t, active, "a successful move must not leave the just-rewritten rollouts looking like a live writer")
+}
+
 func TestMoveSurfacesReportsProjectAbsentForUnknownProject(t *testing.T) {
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: "/Users/fixture/never-seen", NewPath: "/Users/fixture/also-never-seen"}
