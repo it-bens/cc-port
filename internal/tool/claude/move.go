@@ -417,7 +417,7 @@ func (workspace *Workspace) scanHistoryFile(ctx context.Context, oldPath string)
 			malformed = append(malformed, lineNumber)
 			continue
 		}
-		if rewrite.CountPathInBytes(line, oldPath) > 0 {
+		if rewrite.CountPathInBytesWithJSONEscape(line, oldPath) > 0 {
 			count++
 		}
 	}

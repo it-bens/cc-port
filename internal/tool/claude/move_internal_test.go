@@ -45,6 +45,28 @@ func TestHistorySurfaceApply_IsIdempotent(t *testing.T) {
 	assert.Zero(t, second.Count)
 }
 
+// TestScanHistoryFile_CountsJSONEscapedPath pins Plan/Apply count parity for
+// a path that appears in history.jsonl only in its JSON-escaped form
+// ("\/" instead of "/"). Apply rewrites through StreamHistoryJSONL, which
+// matches both forms; Plan must count the same occurrences or a dry-run
+// preview undercounts a rename Apply actually performs.
+func TestScanHistoryFile_CountsJSONEscapedPath(t *testing.T) {
+	home := &Home{Dir: t.TempDir()}
+	line := `{"project":"/other/project","display":"see \/old\/project\/main.go"}` + "\n"
+	require.NoError(t, os.WriteFile(home.HistoryFile(), []byte(line), 0o600))
+	workspace := NewWorkspace(home)
+	surface := workspace.historySurface(tool.MoveRequest{OldPath: "/old/project", NewPath: "/new/project"})
+
+	planned, err := surface.Plan(context.Background())
+	require.NoError(t, err)
+	applied, err := surface.Apply(context.Background(), tool.NewRestorer())
+	require.NoError(t, err)
+
+	assert.Equal(t, applied.Count, planned.Count,
+		"a path referenced only in its JSON-escaped form must count the same in Plan and Apply")
+	assert.Equal(t, 1, planned.Count)
+}
+
 func TestSnapshotPaths_EnumeratesProjectSnapshots(t *testing.T) {
 	fileHistoryDir := filepath.Join(t.TempDir(), "file-history")
 	firstSnapshot := filepath.Join(fileHistoryDir, "primary-session", "first@v1")
