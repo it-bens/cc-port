@@ -1,6 +1,7 @@
 package claude_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func resolvedPathByEncodedName(enumerations []claude.ProjectEnumeration) map[str
 func TestEnumerateProjects_ResolvesWitnessLabels(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	enumerations, err := claude.EnumerateProjects(claudeHome)
+	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)
 
 	labels := resolvedPathByEncodedName(enumerations)
@@ -43,7 +44,7 @@ func TestEnumerateProjects_ResolvesWitnessLabels(t *testing.T) {
 func TestEnumerateProjects_PopulatesDiskLocations(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	enumerations, err := claude.EnumerateProjects(claudeHome)
+	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)
 
 	var myproject *claude.ProjectEnumeration
@@ -68,7 +69,7 @@ func TestEnumerateProjects_WitnessLessLabelFallsBackToEmpty(t *testing.T) {
 	transcript := filepath.Join(orphanDir, "aaaaaaaa-0000-0000-0000-000000000001.jsonl")
 	require.NoError(t, os.WriteFile(transcript, []byte("{}\n"), 0o600))
 
-	enumerations, err := claude.EnumerateProjects(claudeHome)
+	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)
 
 	require.Len(t, enumerations, 1)
@@ -80,9 +81,27 @@ func TestEnumerateProjects_WitnessLessLabelFallsBackToEmpty(t *testing.T) {
 func TestEnumerateProjects_EmptyProjectsDirYieldsNoProjects(t *testing.T) {
 	claudeHome := newEmptyHome(t)
 
-	enumerations, err := claude.EnumerateProjects(claudeHome)
+	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)
 	assert.Empty(t, enumerations, "an absent projects directory is not an error")
+}
+
+// TestEnumerateProjects_CancelledContextOnMissingProjectsDirReturnsError pins
+// that a canceled context is never masked as "nothing to enumerate": an
+// absent projects directory and a canceled context produce the same shape
+// of result (empty slice, nil-looking) unless the entry-time and
+// missing-directory checks distinguish them. Without those checks a caller
+// could not tell a canceled run apart from a genuinely empty home.
+func TestEnumerateProjects_CancelledContextOnMissingProjectsDirReturnsError(t *testing.T) {
+	claudeHome := newEmptyHome(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	enumerations, err := claude.EnumerateProjects(ctx, claudeHome)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, enumerations, "a canceled context must not return a plausible-looking empty result")
 }
 
 func TestEnumerateProjects_SkipsNonDirectoryEntries(t *testing.T) {
@@ -91,7 +110,7 @@ func TestEnumerateProjects_SkipsNonDirectoryEntries(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(claudeHome.ProjectsDir(), "stray.txt"), []byte("x"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(claudeHome.ProjectsDir(), "-tmp-real"), 0o750))
 
-	enumerations, err := claude.EnumerateProjects(claudeHome)
+	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)
 
 	require.Len(t, enumerations, 1, "a stray file under projects/ must not be enumerated")
@@ -122,12 +141,93 @@ func TestEnumerateProjects_MultiWitnessDisagreementPicksFirstByName(t *testing.T
 	require.NoError(t, os.WriteFile(filepath.Join(claudeHome.SessionsDir(), uuidB+".json"),
 		[]byte(fmt.Sprintf(`{"sessionId":%q,"cwd":"/Users/test/Projects/two"}`, uuidB)), 0o600))
 
-	enumerations, err := claude.EnumerateProjects(claudeHome)
+	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err, "a witness disagreement is not an error in all-projects mode")
 
 	labels := resolvedPathByEncodedName(enumerations)
 	assert.Equal(t, "/Users/test/Projects/one", labels["-Users-test-Projects-collide"],
 		"the first witness by sorted session-file name must win the tie-break")
+}
+
+// countdownContext cancels the wrapped context the moment its Err method
+// has been consulted callsUntilCancel+1 times, rather than being canceled
+// up front. This lets a test force cancellation to land at a specific point
+// inside a walk deterministically (no wall-clock race, no dependence on
+// scheduling) instead of only proving the trivial pre-canceled case.
+type countdownContext struct {
+	context.Context
+	cancel           context.CancelFunc
+	callsUntilCancel int
+}
+
+func (c *countdownContext) Err() error {
+	if c.callsUntilCancel <= 0 {
+		c.cancel()
+	} else {
+		c.callsUntilCancel--
+	}
+	return c.Context.Err()
+}
+
+// TestEnumerateProjects_CancelsMidEnumeration pins that cancellation
+// observed partway through resolveWitnessPath's session-witness walk stops
+// the whole enumeration before it reaches a second, later project (finding
+// CL1): walkSessionWitnesses — the dominant cost the finding named, since
+// it scans the entire shared sessions/ directory once per project rather
+// than a bounded per-project set — must honor ctx just as the outer
+// per-project loop does.
+//
+// None of the ten decoy witness files match project "a"'s own UUID, so
+// resolveWitnessPath finds no match and collectSessionFiles (gated on a
+// resolved path) never runs; project "a" otherwise declares no other
+// session-UUID-keyed data, so none of its other collectors ever consult
+// ctx either. That leaves walkSessionWitnesses's own per-entry check as
+// the only one the budget below can land on. A context pre-canceled from
+// the start would only prove the outer loop's check fires before any work
+// starts; countdownContext instead lets several witnesses be inspected
+// first, so cancellation genuinely lands mid-walk. This isolation was
+// verified by temporarily disabling walkSessionWitnesses's check alone
+// (every other new check in this package stayed active): the test then
+// completes successfully with no error, since nothing else in the run
+// consumes enough of the budget to trip cancellation on its own.
+func TestEnumerateProjects_CancelsMidEnumeration(t *testing.T) {
+	claudeHome := newEmptyHome(t)
+	require.NoError(t, os.MkdirAll(claudeHome.ProjectsDir(), 0o750))
+	require.NoError(t, os.MkdirAll(claudeHome.SessionsDir(), 0o750))
+
+	const projectAUUID = "aaaaaaaa-0000-4000-8000-000000000000"
+	projectADir := filepath.Join(claudeHome.ProjectsDir(), "-tmp-project-a")
+	require.NoError(t, os.MkdirAll(projectADir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(projectADir, projectAUUID+".jsonl"), []byte("{}\n"), 0o600))
+
+	// None of these match projectAUUID, so walkSessionWitnesses scans all
+	// ten without ever finding a witness for project "a".
+	const decoyWitnessCount = 10
+	for index := range decoyWitnessCount {
+		decoyUUID := fmt.Sprintf("00000000-0000-4000-8000-%012d", index)
+		decoyWitness := fmt.Sprintf(`{"sessionId":%q,"cwd":"/Users/test/Projects/decoy"}`, decoyUUID)
+		require.NoError(t, os.WriteFile(filepath.Join(claudeHome.SessionsDir(), decoyUUID+".json"), []byte(decoyWitness), 0o600))
+	}
+
+	// A second project, sorted after "a", that must never be reached if
+	// cancellation genuinely lands while still walking the decoy witnesses.
+	require.NoError(t, os.MkdirAll(filepath.Join(claudeHome.ProjectsDir(), "-tmp-project-b"), 0o750))
+
+	baseCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	// Allows 6 non-canceled Err() calls: the outer per-project loop's check
+	// for project "a", collectProjectDirEntries's single check for its one
+	// transcript file, then the first four decoy witnesses. The 7th call
+	// (the fifth decoy) triggers cancel(), well before the tenth decoy or
+	// project "a"'s other collectors (which never run: no witness match
+	// means no resolved path, and its lone UUID never gets an independent
+	// exhaustive scan the way the shared sessions/ directory does).
+	ctx := &countdownContext{Context: baseCtx, cancel: cancel, callsUntilCancel: 6}
+
+	enumerations, err := claude.EnumerateProjects(ctx, claudeHome)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, enumerations, "a mid-walk cancellation must not return a partial enumeration")
 }
 
 // newEmptyHome returns a Home rooted at a fresh temp directory with no staged

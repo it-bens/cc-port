@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,40 +61,46 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 		ProjectDir:  projectDir,
 	}
 
-	sessionUUIDs, err := collectProjectDirEntries(locations, projectDir)
+	// LocateProject resolves a single caller-supplied project path and has no
+	// context.Context of its own to thread (out of scope for the enumeration
+	// cancellation fix, which targets EnumerateProjects's all-projects walk).
+	// context.Background() below is a real "no cancellation source", not a
+	// silently degraded default: LocateProject's per-project cost is bounded
+	// and unaffected by the finding these collectors are otherwise shared for.
+	sessionUUIDs, err := collectProjectDirEntries(context.Background(), locations, projectDir)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := verifyProjectIdentity(claudeHome, projectPath, sessionUUIDs); err != nil {
+	if err := verifyProjectIdentity(context.Background(), claudeHome, projectPath, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectMemoryFiles(locations, projectDir); err != nil {
+	if err := collectMemoryFiles(context.Background(), locations, projectDir); err != nil {
 		return nil, err
 	}
 
-	if err := collectFileHistoryDirs(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectFileHistoryDirs(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectSessionFiles(locations, claudeHome, projectPath); err != nil {
+	if err := collectSessionFiles(context.Background(), locations, claudeHome, projectPath); err != nil {
 		return nil, err
 	}
 
-	if err := collectTodos(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectTodos(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectUsageData(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectUsageData(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectPluginsData(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectPluginsData(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectTaskFiles(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectTaskFiles(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
@@ -108,7 +115,10 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 	return locations, nil
 }
 
-func collectProjectDirEntries(locations *ProjectLocations, projectDir string) ([]string, error) {
+func collectProjectDirEntries(ctx context.Context, locations *ProjectLocations, projectDir string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("read project directory: %w", err)
@@ -117,6 +127,9 @@ func collectProjectDirEntries(locations *ProjectLocations, projectDir string) ([
 	uuidSet := make(map[string]struct{})
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		name := entry.Name()
 
 		if entry.IsDir() {
@@ -144,38 +157,62 @@ func collectProjectDirEntries(locations *ProjectLocations, projectDir string) ([
 		sessionUUIDs = append(sessionUUIDs, uuid)
 	}
 	sort.Strings(sessionUUIDs)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return sessionUUIDs, nil
 }
 
-func collectMemoryFiles(locations *ProjectLocations, projectDir string) error {
+func collectMemoryFiles(ctx context.Context, locations *ProjectLocations, projectDir string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	memoryDir := filepath.Join(projectDir, "memory")
 	entries, err := os.ReadDir(memoryDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return nil
 		}
 		return fmt.Errorf("read memory directory: %w", err)
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if entry.IsDir() || rewrite.IsArtifactPath(entry.Name()) {
 			continue
 		}
 		locations.MemoryFiles = append(locations.MemoryFiles, filepath.Join(memoryDir, entry.Name()))
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 
-func collectFileHistoryDirs(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+func collectFileHistoryDirs(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	fileHistoryBase := claudeHome.FileHistoryDir()
 
 	for _, uuid := range sessionUUIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		candidate := filepath.Join(fileHistoryBase, uuid)
 		if _, err := os.Stat(candidate); err == nil {
 			locations.FileHistoryDirs = append(locations.FileHistoryDirs, candidate)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("stat file-history directory for session %s: %w", uuid, err)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -188,11 +225,17 @@ func collectFileHistoryDirs(locations *ProjectLocations, claudeHome *Home, sessi
 // Including a file when either UUID matches catches todo state for sub-agents
 // whose parent session belongs to the project; in practice the two UUIDs are
 // equal in every existing file, but the format admits the divergent case.
-func collectTodos(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+func collectTodos(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	todosDir := claudeHome.TodosDir()
 	entries, err := os.ReadDir(todosDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return nil
 		}
 		return fmt.Errorf("read todos directory: %w", err)
@@ -204,6 +247,9 @@ func collectTodos(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if entry.IsDir() {
 			continue
 		}
@@ -227,6 +273,9 @@ func collectTodos(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []
 			locations.TodoFiles = append(locations.TodoFiles, filepath.Join(todosDir, name))
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -234,7 +283,10 @@ func collectTodos(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []
 // for each session UUID in the project's set. Both subdirectories are checked
 // independently — either may exist without the other on older Claude Code
 // installs.
-func collectUsageData(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+func collectUsageData(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	base := claudeHome.UsageDataDir()
 	for _, subdir := range []struct {
 		name string
@@ -251,6 +303,9 @@ func collectUsageData(locations *ProjectLocations, claudeHome *Home, sessionUUID
 			return fmt.Errorf("stat usage-data/%s: %w", subdir.name, err)
 		}
 		for _, uuid := range sessionUUIDs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			candidate := filepath.Join(dir, uuid+".json")
 			if _, err := os.Stat(candidate); err == nil {
 				*subdir.dest = append(*subdir.dest, candidate)
@@ -258,6 +313,9 @@ func collectUsageData(locations *ProjectLocations, claudeHome *Home, sessionUUID
 				return fmt.Errorf("stat usage-data/%s/%s: %w", subdir.name, uuid, err)
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -267,11 +325,17 @@ func collectUsageData(locations *ProjectLocations, claudeHome *Home, sessionUUID
 // — the walk visits every namespace and treats them identically. The subtree
 // is flattened to a list of absolute file paths so downstream consumers see a
 // uniform shape across session-keyed groups.
-func collectPluginsData(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+func collectPluginsData(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	base := claudeHome.PluginsDataDir()
 	namespaces, err := os.ReadDir(base)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return nil
 		}
 		return fmt.Errorf("read plugins/data directory: %w", err)
@@ -283,6 +347,9 @@ func collectPluginsData(locations *ProjectLocations, claudeHome *Home, sessionUU
 	}
 
 	for _, namespace := range namespaces {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !namespace.IsDir() {
 			continue
 		}
@@ -292,6 +359,9 @@ func collectPluginsData(locations *ProjectLocations, claudeHome *Home, sessionUU
 			return fmt.Errorf("read plugins/data/%s: %w", namespace.Name(), err)
 		}
 		for _, sessionEntry := range sessionEntries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !sessionEntry.IsDir() {
 				continue
 			}
@@ -299,11 +369,14 @@ func collectPluginsData(locations *ProjectLocations, claudeHome *Home, sessionUU
 				continue
 			}
 			sessionDir := filepath.Join(namespaceDir, sessionEntry.Name())
-			if err := appendFilesRecursive(&locations.PluginsDataFiles, sessionDir); err != nil {
+			if err := appendFilesRecursive(ctx, &locations.PluginsDataFiles, sessionDir); err != nil {
 				return fmt.Errorf("walk plugins/data/%s/%s: %w",
 					namespace.Name(), sessionEntry.Name(), err)
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -313,9 +386,15 @@ func collectPluginsData(locations *ProjectLocations, claudeHome *Home, sessionUU
 // `.highwatermark` sidecars. This collector deliberately reports every file;
 // consumers iterating via the registry apply the sidecar filter so the policy
 // decision lives in one place.
-func collectTaskFiles(locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+func collectTaskFiles(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	base := claudeHome.TasksDir()
 	for _, uuid := range sessionUUIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		candidate := filepath.Join(base, uuid)
 		info, err := os.Stat(candidate)
 		if err != nil {
@@ -327,9 +406,12 @@ func collectTaskFiles(locations *ProjectLocations, claudeHome *Home, sessionUUID
 		if !info.IsDir() {
 			continue
 		}
-		if err := appendFilesRecursive(&locations.TaskFiles, candidate); err != nil {
+		if err := appendFilesRecursive(ctx, &locations.TaskFiles, candidate); err != nil {
 			return fmt.Errorf("walk tasks/%s: %w", uuid, err)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -342,7 +424,7 @@ func collectTaskFiles(locations *ProjectLocations, claudeHome *Home, sessionUUID
 // another's. No witness (no sessions attributed, or none readable) logs a
 // one-line warning to os.Stderr and returns nil so fresh projects still
 // work.
-func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []string) error {
+func verifyProjectIdentity(ctx context.Context, claudeHome *Home, projectPath string, sessionUUIDs []string) error {
 	encodedDir := claudeHome.ProjectDir(projectPath)
 
 	if len(sessionUUIDs) == 0 {
@@ -355,7 +437,7 @@ func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []
 		uuidSet[uuid] = struct{}{}
 	}
 
-	cwds, err := walkSessionWitnesses(claudeHome.SessionsDir(), uuidSet)
+	cwds, err := walkSessionWitnesses(ctx, claudeHome.SessionsDir(), uuidSet)
 	if err != nil {
 		return err
 	}
@@ -383,10 +465,16 @@ func verifyProjectIdentity(claudeHome *Home, projectPath string, sessionUUIDs []
 // confirmed), a contradiction (identity rejected), or the resolved label
 // (all-projects enumeration), so verifyProjectIdentity and EnumerateProjects
 // share one walk.
-func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}) (cwds []string, err error) {
+func walkSessionWitnesses(ctx context.Context, sessionsDir string, uuidSet map[string]struct{}) (cwds []string, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read sessions directory: %w", err)
@@ -394,6 +482,9 @@ func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}) (cwds
 
 	seen := make(map[string]struct{})
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
@@ -417,6 +508,9 @@ func walkSessionWitnesses(sessionsDir string, uuidSet map[string]struct{}) (cwds
 			cwds = append(cwds, probe.Cwd)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return cwds, nil
 }
 
@@ -438,17 +532,26 @@ func warnIdentityCheckSkipped(encodedDir, projectPath string) {
 	)
 }
 
-func collectSessionFiles(locations *ProjectLocations, claudeHome *Home, projectPath string) error {
+func collectSessionFiles(ctx context.Context, locations *ProjectLocations, claudeHome *Home, projectPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	sessionsDir := claudeHome.SessionsDir()
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return nil
 		}
 		return fmt.Errorf("read sessions directory: %w", err)
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
@@ -468,6 +571,9 @@ func collectSessionFiles(locations *ProjectLocations, claudeHome *Home, projectP
 		if sessionFile.Cwd == projectPath {
 			locations.SessionFiles = append(locations.SessionFiles, sessionFilePath)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -529,10 +635,19 @@ func checkConfigBlock(locations *ProjectLocations, claudeHome *Home, projectPath
 
 // appendFilesRecursive appends every non-directory entry under dir to *dst.
 // Filtering (e.g. sidecars) is the caller's responsibility.
-func appendFilesRecursive(dst *[]string, dir string) error {
+func appendFilesRecursive(ctx context.Context, dst *[]string, dir string) error {
+	// The callback below already checks ctx.Err() per visited entry; this
+	// entry check additionally catches an already-canceled context before
+	// the recursive walk starts at all.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
 		}
 		if entry.IsDir() {
 			return nil

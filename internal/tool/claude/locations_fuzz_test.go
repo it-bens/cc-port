@@ -1,6 +1,7 @@
 package claude_test
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func FuzzVerifyProjectIdentity(f *testing.F) {
 			sessionUUIDs = []string{sessionID}
 		}
 
-		err = claude.VerifyProjectIdentityForTest(home, projectPath, sessionUUIDs)
+		err = claude.VerifyProjectIdentityForTest(context.Background(), home, projectPath, sessionUUIDs)
 		gotError := err != nil
 		wantError := inProjectSet && cwd != projectPath
 

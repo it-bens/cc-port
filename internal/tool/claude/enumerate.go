@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -26,11 +27,17 @@ type ProjectEnumeration struct {
 // session witness when one exists and is left empty otherwise. Reference counts
 // are out of scope here — they need a confirmed real path — so the global
 // history and config surfaces are not consulted.
-func EnumerateProjects(claudeHome *Home) ([]ProjectEnumeration, error) {
+func EnumerateProjects(ctx context.Context, claudeHome *Home) ([]ProjectEnumeration, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	projectsDir := claudeHome.ProjectsDir()
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read projects directory: %w", err)
@@ -38,6 +45,9 @@ func EnumerateProjects(claudeHome *Home) ([]ProjectEnumeration, error) {
 
 	var enumerations []ProjectEnumeration
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !entry.IsDir() {
 			continue
 		}
@@ -45,18 +55,18 @@ func EnumerateProjects(claudeHome *Home) ([]ProjectEnumeration, error) {
 		projectDir := filepath.Join(projectsDir, encodedName)
 
 		locations := &ProjectLocations{ProjectDir: projectDir}
-		sessionUUIDs, err := collectProjectDirEntries(locations, projectDir)
+		sessionUUIDs, err := collectProjectDirEntries(ctx, locations, projectDir)
 		if err != nil {
 			return nil, err
 		}
 
-		resolvedPath, err := resolveWitnessPath(claudeHome, sessionUUIDs)
+		resolvedPath, err := resolveWitnessPath(ctx, claudeHome, sessionUUIDs)
 		if err != nil {
 			return nil, err
 		}
 		locations.ProjectPath = resolvedPath
 
-		if err := collectDiskFootprintLocations(locations, claudeHome, resolvedPath, sessionUUIDs); err != nil {
+		if err := collectDiskFootprintLocations(ctx, locations, claudeHome, resolvedPath, sessionUUIDs); err != nil {
 			return nil, err
 		}
 
@@ -66,6 +76,9 @@ func EnumerateProjects(claudeHome *Home) ([]ProjectEnumeration, error) {
 			Locations:    locations,
 		})
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return enumerations, nil
 }
 
@@ -74,7 +87,10 @@ func EnumerateProjects(claudeHome *Home) ([]ProjectEnumeration, error) {
 // witness exists. When witnesses disagree (a lossy-encoding collision) the
 // first by session-file name wins; os.ReadDir's sorted order keeps the choice
 // deterministic.
-func resolveWitnessPath(claudeHome *Home, sessionUUIDs []string) (string, error) {
+func resolveWitnessPath(ctx context.Context, claudeHome *Home, sessionUUIDs []string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if len(sessionUUIDs) == 0 {
 		return "", nil
 	}
@@ -82,8 +98,11 @@ func resolveWitnessPath(claudeHome *Home, sessionUUIDs []string) (string, error)
 	for _, uuid := range sessionUUIDs {
 		uuidSet[uuid] = struct{}{}
 	}
-	cwds, err := walkSessionWitnesses(claudeHome.SessionsDir(), uuidSet)
+	cwds, err := walkSessionWitnesses(ctx, claudeHome.SessionsDir(), uuidSet)
 	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	if len(cwds) == 0 {
@@ -99,30 +118,31 @@ func resolveWitnessPath(claudeHome *Home, sessionUUIDs []string) (string, error)
 // unconditionally. The history and config surfaces carry no per-project disk
 // footprint and are deliberately skipped.
 func collectDiskFootprintLocations(
+	ctx context.Context,
 	locations *ProjectLocations,
 	claudeHome *Home,
 	resolvedPath string,
 	sessionUUIDs []string,
 ) error {
-	if err := collectMemoryFiles(locations, locations.ProjectDir); err != nil {
+	if err := collectMemoryFiles(ctx, locations, locations.ProjectDir); err != nil {
 		return err
 	}
-	if err := collectFileHistoryDirs(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectFileHistoryDirs(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return err
 	}
 	if resolvedPath != "" {
-		if err := collectSessionFiles(locations, claudeHome, resolvedPath); err != nil {
+		if err := collectSessionFiles(ctx, locations, claudeHome, resolvedPath); err != nil {
 			return err
 		}
 	}
-	if err := collectTodos(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectTodos(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return err
 	}
-	if err := collectUsageData(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectUsageData(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return err
 	}
-	if err := collectPluginsData(locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectPluginsData(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return err
 	}
-	return collectTaskFiles(locations, claudeHome, sessionUUIDs)
+	return collectTaskFiles(ctx, locations, claudeHome, sessionUUIDs)
 }

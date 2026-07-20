@@ -347,7 +347,7 @@ func orderDisk(byCategory map[string]diskUsage) []tool.SizeCategory {
 
 // EnumerateProjects implements tool.Auditor.
 func (workspace *Workspace) EnumerateProjects(ctx context.Context) ([]tool.ProjectInfo, error) {
-	enumerations, err := EnumerateProjects(workspace.home)
+	enumerations, err := EnumerateProjects(ctx, workspace.home)
 	if err != nil {
 		return nil, fmt.Errorf("enumerate projects: %w", err)
 	}
