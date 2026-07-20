@@ -16,7 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
@@ -233,7 +235,12 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	r := newFileRemote(t)
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
+	// Original must be a path the fixture's own export bodies actually
+	// contain, so the placeholder token is embedded and the corrected
+	// referenced-in-body classifier (finding FE3) still flags it as
+	// unresolved. A never-referenced Original would legitimately no longer
+	// be flagged, which is exactly the bug this classifier fixes.
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", testutil.FixtureProjectPath(), "host-user")
 	targets, _ := buildTestTargets(t)
 
 	source := openSourceForTest(t, r, "k", "")
@@ -262,6 +269,60 @@ func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 	}
 	if len(plan.UnresolvedPlaceholders["claude"]) != 0 {
 		t.Fatalf("UnresolvedPlaceholders[claude] = %v, want empty (sender Resolve covers)", plan.UnresolvedPlaceholders["claude"])
+	}
+}
+
+// TestPullImportGateAgree pins that PlanPull's unresolved-placeholder
+// classification and the import preflight ExecutePull runs under the hood
+// agree on the same archive (finding FE3): pull must no longer refuse an
+// archive plain import accepts, and both must still refuse an archive that
+// genuinely has an unresolved, referenced placeholder.
+func TestPullImportGateAgree(t *testing.T) {
+	const key = "{{SECRET}}"
+
+	tests := []struct {
+		name        string
+		original    string
+		wantRefused bool
+	}{
+		{
+			name:        "declared, referenced, unresolved: both refuse",
+			original:    testutil.FixtureProjectPath(),
+			wantRefused: true,
+		},
+		{
+			name:        "declared but never referenced: both accept",
+			original:    "/Users/sender/never-referenced",
+			wantRefused: false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			r := newFileRemote(t)
+			injectArchiveWithDeclaredPlaceholder(t, r, "k", key, testCase.original, "host-user")
+			homeB := buildTestHomeBlank(t)
+			targetsB := targetsFor(homeB)
+			targetPath := filepath.Join(t.TempDir(), "pulled-project")
+
+			source := openSourceForTest(t, r, "k", "")
+			pullOpts := PullOptions{AllTools: toolSetForTest(), Targets: targetsB, Name: "k", TargetPath: targetPath}
+			plan, err := PlanPull(context.Background(), pullOpts, source)
+			require.NoError(t, err)
+
+			planRefuses := len(plan.UnresolvedPlaceholders["claude"]) > 0
+			assert.Equal(t, testCase.wantRefused, planRefuses, "PlanPull's unresolved-placeholder verdict")
+
+			_, err = ExecutePull(context.Background(), pullOpts, plan, source)
+
+			if testCase.wantRefused {
+				require.Error(t, err, "import preflight must refuse the same archive PlanPull flagged unresolved")
+				var missingErr *importer.MissingResolutionsError
+				assert.ErrorAs(t, err, &missingErr)
+			} else {
+				require.NoError(t, err, "import preflight must accept the same archive PlanPull cleared")
+			}
+		})
 	}
 }
 

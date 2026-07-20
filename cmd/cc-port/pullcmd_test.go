@@ -108,10 +108,15 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 }
 
 func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
-	tmpHome, _ := setupCmdFixture(t)
+	tmpHome, projectPath := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
 	url := "file://" + t.TempDir()
-	injectArchiveWithDeclaredPlaceholderAtURL(t, url, "myproj", "{{SECRET}}", "/Users/sender/secret", "host-user")
+	// Original must be a path the fixture's own archived bodies actually
+	// contain, so the placeholder is embedded and genuinely referenced.
+	// Under the corrected classifier (finding FE3), a declared-but-never-
+	// referenced placeholder no longer blocks --apply — see the sibling
+	// TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts below.
+	injectArchiveWithDeclaredPlaceholderAtURL(t, url, "myproj", "{{SECRET}}", projectPath, "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 	emptyManifestPath := filepath.Join(t.TempDir(), "empty-manifest.xml")
 	require.NoError(t, manifest.WriteManifest(emptyManifestPath, &manifest.Metadata{}))
@@ -131,6 +136,48 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	if !errors.Is(err, syncc.ErrUnresolvedPlaceholder) {
 		t.Fatalf("err = %v, want ErrUnresolvedPlaceholder", err)
 	}
+}
+
+// TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts is the accept-side
+// sibling of TestPull_ApplyWithUnresolvedPlaceholdersRefuses: a declared
+// placeholder whose Original never appears in any archived body must not
+// block --apply on either command, and pull must agree with plain import
+// on the exact same archive bytes (finding FE3 — pull used to refuse
+// archives plain import accepted).
+func TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts(t *testing.T) {
+	tmpHome, _ := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	placeholders := map[string][]manifest.Placeholder{
+		"claude": {{Key: "{{SECRET}}", Original: "/Users/sender/never-referenced"}},
+	}
+	body := buildCmdArchiveBytes(t, "host-user", "", placeholders)
+
+	url := "file://" + t.TempDir()
+	writeAtURL(t, url, "myproj", body)
+	pullTargetPath := filepath.Join(t.TempDir(), "pulled-project")
+
+	pullCmd := newRootCmd(noopBanner{})
+	pullCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-home", claudeFixtureDir,
+		"--to", pullTargetPath,
+		"--remote", url,
+		"--apply",
+	})
+	require.NoError(t, pullCmd.Execute(), "pull --apply must accept a declared-but-unused placeholder")
+
+	archivePath := filepath.Join(t.TempDir(), "same-archive.zip")
+	require.NoError(t, os.WriteFile(archivePath, body, 0o600))
+	importTargetPath := filepath.Join(t.TempDir(), "imported-project")
+	importHomeDir := filepath.Join(t.TempDir(), "import-claude-home")
+	require.NoError(t, os.MkdirAll(importHomeDir, 0o750))
+
+	importCmd := newRootCmd(noopBanner{})
+	importCmd.SetArgs([]string{
+		"import", archivePath, importTargetPath,
+		"--claude-home", importHomeDir,
+	})
+	require.NoError(t, importCmd.Execute(), "import must accept the same declared-but-unused placeholder")
 }
 
 func TestPull_AcceptsValidCredentialsFile(t *testing.T) {

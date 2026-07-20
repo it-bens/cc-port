@@ -111,12 +111,122 @@ func TestClassifyPresentKeys_FindsOnlyReferencedKeys(t *testing.T) {
 	entries, err := reader.RawEntries()
 	require.NoError(t, err)
 
-	present, err := archive.ClassifyPresentKeys(entries, []string{"{{PROJECT_PATH}}", "{{HOME}}"}, archive.DefaultCaps().MaxAggregateBytes)
+	present, err := archive.ClassifyPresentKeys(
+		context.Background(), entries, []string{"{{PROJECT_PATH}}", "{{HOME}}"}, archive.DefaultCaps().MaxAggregateBytes,
+	)
 	require.NoError(t, err)
 	_, hasProjectPath := present["{{PROJECT_PATH}}"]
 	_, hasHome := present["{{HOME}}"]
 	assert.True(t, hasProjectPath)
 	assert.False(t, hasHome)
+}
+
+// countdownContext cancels the wrapped context the moment its Err method
+// has been consulted callsUntilCancel+1 times, rather than being canceled
+// up front. This lets a test force cancellation to land at a specific point
+// inside a scan deterministically (no wall-clock race, no dependence on
+// scheduling) instead of only proving the trivial pre-canceled case.
+type countdownContext struct {
+	context.Context
+	cancel           context.CancelFunc
+	callsUntilCancel int
+}
+
+func (c *countdownContext) Err() error {
+	if c.callsUntilCancel <= 0 {
+		c.cancel()
+	} else {
+		c.callsUntilCancel--
+	}
+	return c.Context.Err()
+}
+
+// buildOrderedZip archives count entries named "claude/entry-<NN>.txt", each
+// holding body, in a deterministic, index-ascending order (unlike buildZip's
+// map, whose Go iteration order is randomized), so a countdown-context test
+// can rely on which entry a given Err() call count lands on.
+func buildOrderedZip(t *testing.T, count int, body string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for index := range count {
+		entryWriter, err := writer.Create(fmt.Sprintf("claude/entry-%02d.txt", index))
+		require.NoError(t, err)
+		_, err = entryWriter.Write([]byte(body))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	return buf.Bytes()
+}
+
+func openOrderedEntries(t *testing.T, body []byte) []archive.RawEntry {
+	t.Helper()
+	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.DefaultCaps())
+	require.NoError(t, err)
+	entries, err := reader.RawEntries()
+	require.NoError(t, err)
+	return entries
+}
+
+// TestClassifyPresentKeys_CancelsMidScan pins that a canceled context stops
+// the per-entry classification walk partway through, rather than only
+// checking ctx before the walk starts or after it finishes: callers that
+// decompress and inspect archive bodies up to the aggregate cap (import
+// preflight, pull planning) must be able to interrupt that cost. The
+// budget is sized to exhaust while several, but not all, of ten entries
+// have been opened, so this test exercises the per-entry check inside the
+// loop specifically rather than the entry-time check before it.
+func TestClassifyPresentKeys_CancelsMidScan(t *testing.T) {
+	entries := openOrderedEntries(t, buildOrderedZip(t, 10, "no placeholder token here"))
+
+	baseCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	// Allows 4 non-canceled Err() calls: the entry check, then the first
+	// three of ten entries. The 5th call (the fourth entry) triggers
+	// cancel(), so entries 5-10 are never opened.
+	ctx := &countdownContext{Context: baseCtx, cancel: cancel, callsUntilCancel: 4}
+
+	present, err := archive.ClassifyPresentKeys(ctx, entries, []string{"{{PROJECT_PATH}}"}, archive.DefaultCaps().MaxAggregateBytes)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, present, "a canceled context must not return partial classification results")
+}
+
+// TestClassifyPresentKeys_CancelsAfterFinalEntry pins the check after the
+// scan loop: cancellation observed only once every entry has already
+// passed its own per-entry check must still surface as an error, not a
+// successful-looking result. The budget is sized to exhaust exactly on the
+// call after the last of three entries, so every per-entry check inside
+// the loop already succeeded and only the post-loop check can be
+// responsible for the error this test asserts.
+func TestClassifyPresentKeys_CancelsAfterFinalEntry(t *testing.T) {
+	entries := openOrderedEntries(t, buildOrderedZip(t, 3, "no placeholder token here"))
+
+	baseCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	// Allows 4 non-canceled Err() calls: the entry check, then all three
+	// entries. The 5th call — reached only after the loop has opened every
+	// entry — is the post-loop check, which triggers cancel().
+	ctx := &countdownContext{Context: baseCtx, cancel: cancel, callsUntilCancel: 4}
+
+	present, err := archive.ClassifyPresentKeys(ctx, entries, []string{"{{PROJECT_PATH}}"}, archive.DefaultCaps().MaxAggregateBytes)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, present, "a canceled context must not return a complete classification result")
+}
+
+// TestClassifyPresentKeys_CancelledContextOnNoEntriesReturnsError pins that
+// a canceled context is never masked as "nothing present": with zero
+// entries, the per-entry loop never runs, so this path depends on the
+// entry-time and post-loop checks alone.
+func TestClassifyPresentKeys_CancelledContextOnNoEntriesReturnsError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	present, err := archive.ClassifyPresentKeys(ctx, nil, []string{"{{PROJECT_PATH}}"}, archive.DefaultCaps().MaxAggregateBytes)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, present, "a canceled context must not return a plausible-looking empty result")
 }
 
 func TestResolvePlaceholdersStream_SubstitutesLongestMatchFirst(t *testing.T) {

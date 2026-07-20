@@ -27,9 +27,11 @@ neither.
   - `ErrEntryCapExceeded`, `ErrAggregateCapExceeded`, `ErrEntryCountCapExceeded`,
     `EntryCapError`, `AggregateCapError`, `EntryCountCapError`.
 - **Classification**
-  - `ClassifyPresentKeys(entries []RawEntry, candidateKeys []string, maxAggregateBytes int64) (map[string]struct{}, error)`:
+  - `ClassifyPresentKeys(ctx context.Context, entries []RawEntry, candidateKeys []string, maxAggregateBytes int64) (map[string]struct{}, error)`:
     finds which candidate placeholder keys appear as a literal substring in
     at least one entry's body, without retaining any body after inspection.
+    Checks `ctx.Err()` before opening each entry, so a canceled context stops
+    the walk before decompressing the next body.
 - **Placeholder resolution**
   - `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`:
     stream-level token substitution bounded by the longest declared key, not

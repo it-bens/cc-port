@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os/user"
-	"sort"
 	"time"
 
 	"github.com/it-bens/cc-port/internal/archive"
@@ -186,14 +185,31 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 // and returns a PullPlan describing what ExecutePull would do.
 //
 //nolint:gocritic // hugeParam: by-value PullOptions matches the public Plan/Execute contract.
-func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*PullPlan, error) {
+func PlanPull(ctx context.Context, opts PullOptions, source pipeline.Source) (*PullPlan, error) {
 	if opts.Name == "" {
 		return nil, errors.New("sync.PlanPull: Name is empty")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
 	if err != nil {
 		return nil, fmt.Errorf("sync.PlanPull: read manifest: %w", err)
+	}
+
+	caps := archive.DefaultCaps()
+	reader, err := archive.OpenReader(source.ReaderAt, source.Size, caps)
+	if err != nil {
+		return nil, fmt.Errorf("sync.PlanPull: open archive: %w", err)
+	}
+	entries, err := reader.RawEntries()
+	if err != nil {
+		return nil, fmt.Errorf("sync.PlanPull: read archive entries: %w", err)
+	}
+	entriesByTool := make(map[string][]archive.RawEntry, len(entries))
+	for _, entry := range entries {
+		entriesByTool[entry.ToolName] = append(entriesByTool[entry.ToolName], entry)
 	}
 
 	plan := &PullPlan{
@@ -218,6 +234,9 @@ func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*Pul
 	}
 
 	for _, block := range metadata.Tools {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		plan.Tools = append(plan.Tools, block.Name)
 		plan.DeclaredPlaceholders[block.Name] = block.Placeholders
 
@@ -229,44 +248,48 @@ func PlanPull(_ context.Context, opts PullOptions, source pipeline.Source) (*Pul
 		if err != nil {
 			return nil, fmt.Errorf("sync.PlanPull: implicit anchors for %s: %w", block.Name, err)
 		}
-		plan.UnresolvedPlaceholders[block.Name] = computeUnresolved(block, opts.FromManifest, anchors)
+		unresolved, err := importer.UnresolvedReferencedKeys(
+			ctx, block, anchors, pullResolutions(block, opts.FromManifest), entriesByTool[block.Name], caps.MaxAggregateBytes,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("sync.PlanPull: unresolved placeholders for %s: %w", block.Name, err)
+		}
+		plan.UnresolvedPlaceholders[block.Name] = unresolved
 	}
 
+	// A manifest with no tool blocks, or where every block's target was
+	// skipped above, never calls the classifier at all, so this pre-return
+	// check is what catches a canceled context on that path.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 
-// computeUnresolved diffs one tool's declared placeholders against the
-// sender's own pre-filled Resolve values, an optional --from-manifest
-// override, and the recipient's implicit anchors. Returns the alphabetized
-// list of declared keys with no resolution.
-func computeUnresolved(block manifest.Tool, fromManifest *manifest.Metadata, anchors map[string]string) []string {
-	covered := make(map[string]bool, len(block.Placeholders))
+// pullResolutions builds the covered-key value map PlanPull feeds to
+// importer.UnresolvedReferencedKeys: the sender's own pre-filled Resolve
+// values plus an optional --from-manifest override. Implicit anchors are
+// not folded in here — UnresolvedReferencedKeys already treats them as a
+// separate skip condition, so PlanPull passes anchors alongside this map
+// rather than merging the two, mirroring import preflight's own split
+// between mergeResolutions' resolutions map and its anchors parameter.
+func pullResolutions(block manifest.Tool, fromManifest *manifest.Metadata) map[string]string {
+	resolutions := make(map[string]string, len(block.Placeholders))
 	for _, placeholder := range block.Placeholders {
 		if placeholder.Resolve != "" {
-			covered[placeholder.Key] = true
-		}
-		if _, implicit := anchors[placeholder.Key]; implicit {
-			covered[placeholder.Key] = true
+			resolutions[placeholder.Key] = placeholder.Resolve
 		}
 	}
 	if fromManifest != nil {
 		if overrideBlock, ok := fromManifest.ToolBlock(block.Name); ok {
 			for _, placeholder := range overrideBlock.Placeholders {
 				if placeholder.Resolve != "" {
-					covered[placeholder.Key] = true
+					resolutions[placeholder.Key] = placeholder.Resolve
 				}
 			}
 		}
 	}
-
-	var missing []string
-	for _, placeholder := range block.Placeholders {
-		if !covered[placeholder.Key] {
-			missing = append(missing, placeholder.Key)
-		}
-	}
-	sort.Strings(missing)
-	return missing
+	return resolutions
 }
 
 // ExecutePull runs importer.Run against the pre-opened source.

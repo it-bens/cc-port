@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/lock"
@@ -15,6 +16,26 @@ import (
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/tool"
 )
+
+// fileHistoryTool is the wire name of the one tool whose export ever writes
+// an entry under fileHistoryEntryPrefix (internal/tool/claude's private
+// toolName constant, duplicated here). This package is generic
+// orchestration and must never import a tool adapter (see this package's
+// AGENTS.md), so the name can't be looked up from the tool contract, and
+// tool.Category (Name, Description, DefaultSelected) has no field a tool
+// could use to declare a category's bodies opaque — adding one would be a
+// new abstraction built for this single case. Scoping the prefix check to
+// this literal tool name keeps the adapter knowledge this package is
+// forced to embed as narrow as possible: a same-shaped path under any
+// other tool (e.g. a hypothetical "codex/file-history/...") is not
+// excluded, because no other tool owns this category.
+const fileHistoryTool = "claude"
+
+// fileHistoryEntryPrefix is the tool-relative archive path prefix Claude's
+// Stage routes to a sibling temp with resolutions == nil (see
+// internal/tool/claude/import.go's "file-history/" case): file-history
+// snapshot bodies are never placeholder-substituted on import.
+const fileHistoryEntryPrefix = "file-history/"
 
 // Options configures an import operation. Source/Size let the importer
 // accept any random-access bytes (file, decrypted tempfile, in-memory)
@@ -126,7 +147,7 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	}
 	entriesByTool := groupEntriesByTool(entries)
 
-	result, present, resolutionsByTool, err := preflightTargets(targets, options, blocksByTool, entriesByTool)
+	result, present, resolutionsByTool, err := preflightTargets(ctx, targets, options, blocksByTool, entriesByTool)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +187,7 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 }
 
 func preflightTargets(
+	ctx context.Context,
 	targets []tool.Target,
 	options *Options,
 	blocksByTool map[string]manifest.Tool,
@@ -176,6 +198,9 @@ func preflightTargets(
 	resolutionsByTool := make(map[string]map[string]string, len(targets))
 
 	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return Result{}, nil, nil, err
+		}
 		name := target.Tool.Name()
 		block, ok := blocksByTool[name]
 		if !ok {
@@ -193,13 +218,19 @@ func preflightTargets(
 		if err != nil {
 			return Result{}, nil, nil, err
 		}
-		if err := checkMissingResolutions(name, block, anchors, resolutions, entriesByTool[name], options.Caps.MaxAggregateBytes); err != nil {
+		if err := checkMissingResolutions(ctx, name, block, anchors, resolutions, entriesByTool[name], options.Caps.MaxAggregateBytes); err != nil {
 			return Result{}, nil, nil, err
 		}
 		resolutionsByTool[name] = resolutions
 		present = append(present, target)
 	}
 
+	// An empty targets list, or a run where every target's tool is absent
+	// from the manifest, never calls the classifier at all, so this
+	// pre-return check is what catches a canceled context on that path.
+	if err := ctx.Err(); err != nil {
+		return Result{}, nil, nil, err
+	}
 	return result, present, resolutionsByTool, nil
 }
 
@@ -308,8 +339,45 @@ func mergeResolutions(
 // lacks a resolution, before any write has occurred. A declared key the
 // archive never embeds does not need a resolution.
 func checkMissingResolutions(
+	ctx context.Context,
 	toolName string, block manifest.Tool, anchors, resolutions map[string]string, entries []archive.RawEntry, maxAggregateBytes int64,
 ) error {
+	missing, err := UnresolvedReferencedKeys(ctx, block, anchors, resolutions, entries, maxAggregateBytes)
+	if err != nil {
+		return fmt.Errorf("%s: %w", toolName, err)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("archive preflight: %w", &MissingResolutionsError{Tool: toolName, Keys: missing})
+}
+
+// UnresolvedReferencedKeys returns the alphabetized declared keys in block
+// that lack a resolution AND appear as a bounded reference in at least one
+// of entries' bodies. A declared key the archive never embeds does not need
+// a resolution, so it is never flagged.
+//
+// File-history snapshot bodies are excluded from the reference scan before
+// classification: cc-port never inspects or rewrites snapshot contents
+// (docs/architecture.md §File-history policy), and Stage never substitutes
+// placeholders into them either, so a token that appears only inside an
+// opaque snapshot will never be rewritten on import regardless of whether
+// it is resolved. Counting it as "referenced" would demand a resolution
+// for a key the write path will never touch — excluding it keeps the
+// closed-placeholder contract honest rather than weakening it.
+//
+// This is the single gate both import preflight (checkMissingResolutions,
+// above) and pull planning (sync.PlanPull) use, so an archive one path
+// accepts the other can no longer refuse: anchors marks placeholder keys
+// the recipient resolves implicitly, and resolutions marks placeholder keys
+// already covered by a sender-baked-in or --from-manifest resolve value.
+func UnresolvedReferencedKeys(
+	ctx context.Context,
+	block manifest.Tool, anchors, resolutions map[string]string, entries []archive.RawEntry, maxAggregateBytes int64,
+) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	candidateKeys := make([]string, 0, len(block.Placeholders))
 	for _, placeholder := range block.Placeholders {
 		if _, implicit := anchors[placeholder.Key]; implicit {
@@ -321,12 +389,12 @@ func checkMissingResolutions(
 		candidateKeys = append(candidateKeys, placeholder.Key)
 	}
 	if len(candidateKeys) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	present, err := archive.ClassifyPresentKeys(entries, candidateKeys, maxAggregateBytes)
+	present, err := archive.ClassifyPresentKeys(ctx, referencableEntries(entries), candidateKeys, maxAggregateBytes)
 	if err != nil {
-		return fmt.Errorf("classify declared placeholders for %s: %w", toolName, err)
+		return nil, fmt.Errorf("classify declared placeholders: %w", err)
 	}
 	var missing []string
 	for _, key := range candidateKeys {
@@ -334,11 +402,22 @@ func checkMissingResolutions(
 			missing = append(missing, key)
 		}
 	}
-	if len(missing) == 0 {
-		return nil
-	}
 	sort.Strings(missing)
-	return fmt.Errorf("archive preflight: %w", &MissingResolutionsError{Tool: toolName, Keys: missing})
+	return missing, nil
+}
+
+// referencableEntries drops every Claude file-history snapshot entry from
+// entries. See UnresolvedReferencedKeys for why opaque snapshot bodies
+// never count as a placeholder reference.
+func referencableEntries(entries []archive.RawEntry) []archive.RawEntry {
+	filtered := make([]archive.RawEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.ToolName == fileHistoryTool && strings.HasPrefix(entry.Entry.Name, fileHistoryEntryPrefix) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 func preflightStagingDirs(present []tool.Target, targetPath string) error {
