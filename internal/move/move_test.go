@@ -248,23 +248,19 @@ func TestClaudeMove_DryRunLeavesStrandedStagingForApply(t *testing.T) {
 	staging := home.ProjectDir(newPath) + rewrite.StagingSuffix
 	require.NoError(t, os.MkdirAll(staging, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(staging, "partial"), []byte("partial"), 0o600))
-	// The marker simulates a crash between PromoteDir's marker write and its
-	// final rename — the only window where a stranded staging directory is
-	// provably cc-port's own artifact; removeStagingDir now refuses to
-	// delete a staging directory that lacks it.
-	require.NoError(t, os.WriteFile(filepath.Join(staging, rewrite.MarkerFilename), []byte(home.ProjectDir(oldPath)), 0o600))
 
 	plan, err := move.DryRun(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
 	require.NoError(t, err)
 	assert.DirExists(t, staging)
-	assert.Contains(t, plan.ByTool[0].Warnings, "stranded staging directory will be reconciled on apply: "+staging)
+	assert.Contains(t, plan.ByTool[0].Warnings, "stranded staging path requires apply handling: "+staging)
 
 	result, err := move.Apply(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
 	require.NoError(t, err)
-	require.False(t, result.Failed())
-	assert.NoDirExists(t, staging)
+	require.True(t, result.Failed())
+	require.ErrorContains(t, result.ByTool[0].Err, staging)
+	assert.DirExists(t, staging)
 }
 
 func TestClaudeMoveApply_RemovesStagingDirectoryBeforePromoting(t *testing.T) {
@@ -275,11 +271,6 @@ func TestClaudeMoveApply_RemovesStagingDirectoryBeforePromoting(t *testing.T) {
 	newPath := oldPath + "-renamed"
 	staging := home.ProjectDir(newPath) + ".cc-port-staging.tmp"
 	require.NoError(t, os.MkdirAll(staging, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(staging, "partial"), []byte("partial"), 0o600))
-	// See TestClaudeMove_DryRunLeavesStrandedStagingForApply: the marker
-	// simulates the only crash window where a stranded staging directory is
-	// provably cc-port's own.
-	require.NoError(t, os.WriteFile(filepath.Join(staging, rewrite.MarkerFilename), []byte(home.ProjectDir(oldPath)), 0o600))
 
 	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
@@ -298,15 +289,14 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 	oldEncodedDir := home.ProjectDir(oldPath)
 	newEncodedDir := home.ProjectDir(newPath)
 	require.NoError(t, os.MkdirAll(newEncodedDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(newEncodedDir, rewrite.MarkerFilename), []byte(oldEncodedDir), 0o600))
 
-	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	_, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
-	require.NoError(t, err)
-	require.False(t, result.Failed())
-	assert.NoDirExists(t, oldEncodedDir)
+	require.Error(t, err)
+	require.ErrorContains(t, err, oldEncodedDir)
+	require.ErrorContains(t, err, newEncodedDir)
+	assert.DirExists(t, oldEncodedDir)
 	assert.DirExists(t, newEncodedDir)
-	assert.NoFileExists(t, filepath.Join(newEncodedDir, rewrite.MarkerFilename))
 }
 
 func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {

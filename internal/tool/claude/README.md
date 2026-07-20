@@ -103,9 +103,9 @@ from the encoded form.
 
 `checkEncodedDirCollision` (`move.go`) enforces the encoded-name safety check
 for `cc-port move`: it aborts before any write when old and new encode
-identically, and refuses a target encoded directory that already exists,
-carries no valid promotion marker, and whose old source is still present
-(see §Apply contract (move)).
+identically, and refuses a target encoded directory that already exists
+while its old source is still present, naming both paths (see §Apply
+contract (move)).
 
 `cc-port import` does not refuse on an existing encoded directory. Promotion
 overwrites it in place: `rewrite.SafeRenamePromoter` backs up any displaced
@@ -397,14 +397,14 @@ observable limit stays consistent across commands.
 
 ### Apply contract (move)
 
-`MoveSurfaces` first resolves identity via `resolveMoveIdentity`: it tries
-`OldPath`'s encoded directory, classifying its session witnesses through
-`verifyProjectMoveIdentity`, and falls back to `NewPath`'s encoded
-directory (confirmed by a promotion marker naming `OldPath`'s encoded
-directory) only when `OldPath`'s is entirely absent. This tolerates a prior
-apply interrupted after the sessions surface already rewrote every witness
-to `NewPath` but before the encoded directory itself was promoted. The
-resolved locate path then threads into every subsequent per-project
+`MoveSurfaces` first resolves identity via `resolveMoveIdentity`: it locates
+`OldPath`'s encoded directory and classifies its session witnesses through
+`verifyProjectMoveIdentity`, which accepts a witness naming either `OldPath`
+or `NewPath`. This tolerates a prior apply interrupted after the sessions
+surface already rewrote every witness to `NewPath` but before the encoded
+directory itself was promoted. When `OldPath`'s encoded directory is
+entirely absent, `resolveMoveIdentityState` returns `tool.ErrProjectAbsent`.
+The resolved locate path then threads into every subsequent per-project
 surface.
 
 `MoveSurfaces` returns one `tool.Surface` per rewrite unit, in a load-bearing
@@ -440,58 +440,35 @@ state.
   `RefsOnly`, the on-disk project directory) to the new path via
   `rewrite.PromoteDir` with `fsutil.CopyDir`, verifies both copies landed,
   then removes the originals.
-- `resolveMoveIdentity` resumes a move interrupted after the sessions
-  surface rewrote every witness to `NewPath` but before the encoded
-  directory itself was promoted: `OldPath`'s encoded directory, still
-  present, remains the locate path regardless of what its witnesses now
-  say. Once `OldPath`'s encoded directory is gone entirely, it falls back
-  to `NewPath`'s and reads its promotion marker through
-  `rewrite.PromotedFrom`. A marker naming `OldPath`'s encoded directory
-  resumes, even for a project with no session witness at all. No marker
-  reports `tool.ErrProjectAbsent`, the same shape a move that already
-  completed and removed its own marker converges to. A marker naming
-  anything else hard-refuses, naming both the recorded and the expected
-  source, rather than treat a demonstrated foreign promotion as an absent
-  project.
+- `resolveMoveIdentity` keeps `OldPath`'s encoded directory as the locate
+  path when the sessions surface has already rewritten witnesses to
+  `NewPath` but that directory remains present.
 - `checkEncodedDirCollision` runs before any surface: a move where old and
   new paths encode to the same directory (`ErrEncodedDirAmbiguous`) is
   refused before any write. A plan reports an existing
-  `.cc-port-staging.tmp` sibling and the project-directory surface reconciles
-  it during locked Apply. A target that has already converged, with a valid
-  promotion marker naming this source or with the source already gone, resumes
-  without a second copy rather than refusing. It removes the leftover source
-  after reference rewrites; see
+  `.cc-port-staging.tmp` sibling. Apply removes it only when empty and refuses
+  a non-empty staging directory. A destination whose source is already gone
+  is converged; it removes the leftover source after reference rewrites; see
   [`internal/rewrite/README.md`](../../rewrite/README.md) §Directory
-  promotion for the marker mechanism.
+  promotion for the staging-and-atomic-rename mechanism.
 - If removing the physical source directory fails, Apply completes with an
   `ErrResidualSourceDir`-prefixed warning; if removing the old encoded project
   data directory fails, it completes with an `old encoded project data
-  directory still present` warning. A physical-source residual retains the
-  encoded destination's promotion marker, so the next run can resolve the
-  resume state and retry cleanup; a fully converged move removes that marker.
+  directory still present` warning.
 
 #### Refused
 
 - Moves where old and new paths encode to the same directory, or where the
-  new encoded directory already exists without a valid promotion marker while
-  its old source is still present: refused before any write via
-  `checkEncodedDirCollision`.
+  new encoded directory already exists while its old source is still present:
+  refused before any write via `checkEncodedDirCollision`. The refusal names
+  both paths and instructs users to delete the destination and re-run.
 - A session witness naming neither `OldPath` nor `NewPath`:
   `verifyProjectMoveIdentity` refuses before any write, the same guard
   `verifyProjectIdentity` applies to a single expected path. Two distinct
   real paths can encode to the same directory name, so a witness reporting
   a third path is never accepted as a resume, only as a collision.
-- A fresh move whose encoded source directory has no readable session witness:
-  the project-directory surface refuses promotion and removal because there is
-  no ownership corroboration for that destructive operation. Read-only
-  enumeration retains its documented warning-and-proceed behavior, and a
-  marked resume remains valid without a witness.
-- A promotion marker at `NewPath`'s encoded directory naming a path other
-  than `OldPath`'s encoded directory: `resolveMoveIdentity` hard-refuses,
-  naming both the recorded and the expected source.
-- A promotion marker path that exists but is not a regular file (a symlink,
-  a directory, or any other non-regular entry): `rewrite.PromotedFrom`
-  hard-refuses rather than report it as absent.
+- A non-empty staging directory: Apply refuses rather than deleting data it
+  cannot prove it owns.
 
 #### Not covered
 

@@ -26,13 +26,8 @@ Every path-rewriting command routes through this package so the boundary contrac
   - `SafeWriteFile(path string, data []byte, permissions os.FileMode) error`: write-then-rename helper for single-file atomic writes.
   - `PromoteDir(ctx context.Context, source, destination string, undo undoRegistrar, copyDir func(context.Context, string, string, func()) error) error`:
     stages `source` into a sibling `.cc-port-staging.tmp` directory beside
-    `destination`, writes a promotion marker recording `source` inside the
-    staging directory, then renames it into place. The directory-promotion
+    `destination`, then atomically renames it into place. The directory-promotion
     counterpart to `SafeRenamePromoter`, used by `move`'s project-directory surface.
-  - `VerifyPromotedFrom(source, destination string) (bool, error)`:
-    reports whether `destination` carries a marker recording exactly `source`.
-  - `RemoveMarker(destination string) error`: removes `destination`'s
-    promotion marker; a missing marker is not an error.
 
 ## Contracts
 
@@ -147,80 +142,33 @@ any other way fails the check.
 
 ### Directory promotion
 
-`PromoteDir` refuses upfront when `source`'s top level contains an entry
-named `.cc-port-promoted-from` (a regular file, a symlink, or a directory),
-checked via `os.Lstat` before any staging state exists. It then creates a
-sibling `<destination>.cc-port-staging.tmp` directory, writes
-`.cc-port-promoted-from` inside it through an `os.Root` opened on the
-staging directory, copies `source` into it, re-verifies the marker through a
-second contained root, then renames the staging directory onto
-`destination`. Writing the marker before the copy means a crash mid-copy
-still strands a staging directory attributable to this promotion, whether or
-not the copy itself finished. The rename still publishes a fully marked
-destination in one operation, and a mid-copy failure never leaves a partial
-directory at the real destination path. `move`'s project-directory surface
-is its only caller ([`internal/tool/claude/README.md`](../tool/claude/README.md)
-§Apply contract (move)); `import` still promotes through
-`SafeRenamePromoter`, not this primitive.
-
-The marker write uses `O_CREATE|O_EXCL` and fails hard on any pre-existing
-entry at that name. The upfront source-side check above already refuses
-every case where `source` itself would collide. The one production caller,
-`internal/tool/claude/move.go`'s `applyProjectDirectoryMove`, also always
-reconciles a stranded staging directory via `removeStagingDir` immediately
-before calling in. So staging is always absent or freshly created at this
-point, and any `O_EXCL` failure here is a genuinely foreign collision.
-
-The post-copy re-verification opens a separate contained root and checks two
-things. `os.SameFile` confirms the entry at the marker path is still the
-exact file the write step created. Its content must also still match
-`source` exactly. Content alone would miss a same-bytes replacement;
-identity alone would miss an in-place rewrite of the same file's bytes.
-`PromoteDir` refuses on either mismatch, naming the collision, without
-repairing or trusting what it finds.
-
-The promoted marker records `source` at
-`<destination>/.cc-port-promoted-from`. `VerifyPromotedFrom` resumes only
-when that content exactly matches `source`, regardless of the marker's mtime.
+`PromoteDir` creates a sibling `<destination>.cc-port-staging.tmp` directory,
+copies `source` into it, then renames the staging directory onto
+`destination`. The rename publishes the completed directory in one operation,
+so a failed copy never leaves a partial directory at the real destination
+path. `move`'s project-directory surface is its only caller
+([`internal/tool/claude/README.md`](../tool/claude/README.md) §Apply contract
+(move)); `import` still promotes through `SafeRenamePromoter`.
 
 #### Handled
 
 - A destination that does not yet exist: staged copy, then an atomic
   `os.Rename` onto `destination`.
-- A destination carrying a marker that names exactly `source`: the caller
-  treats the promotion as already done and skips the copy.
 - Rollback via the caller's `undo.RegisterUndo`: before the rename, removes
-  the staging directory; after the rename, removes `destination` with its
-  marker.
-
-#### Refused
-
-- A marker that names a different source: `VerifyPromotedFrom` returns false
-  rather than treating it as valid.
-- A `source` whose top level contains any entry named
-  `.cc-port-promoted-from`, regardless of type: `PromoteDir` fails hard
-  before the copy starts, naming the collision, rather than promoting a
-  destination whose marker could no longer attest the copy it claims to.
+  the staging directory; after the rename, removes `destination`.
 
 #### Not covered
 
 - Classifying whether `destination` is safe to promote into. `PromoteDir`
   performs no destination-existence check itself; the caller decides
-  promote vs. resume vs. refuse before invoking it
+  promote vs. converged vs. refuse before invoking it
   ([`internal/tool/claude/README.md`](../tool/claude/README.md) §Apply
   contract (move)).
 
 ## Tests
 
-Unit tests in `rewrite_test.go` cover `PromoteDir` and promotion markers:
-inside-destination placement, rollback, arbitrarily old markers, and the
-source-side and post-copy collision refusals. The source-side refusal is
-isolated per entry type (regular file, symlink, directory) via a `copyDir`
-stub that fails the test if it runs at all; the post-copy identity and
-content checks are isolated from each other (a same-bytes replacement is
-caught only by identity, an in-place content rewrite only by content). One
-further case runs the collision refusal through the real `fsutil.CopyDir` as
-an integration check rather than an isolated one. Tests also cover
+Unit tests in `rewrite_test.go` cover `PromoteDir`'s staging, copy, atomic
+rename, and rollback behavior. Tests also cover
 `ReplacePathInBytes` (including dot-boundary lookahead),
 `SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
 `ContainsBoundedPath`, the `Count*` primitives (boundary cases, the

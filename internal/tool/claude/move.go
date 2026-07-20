@@ -78,21 +78,10 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	}
 
 	// Ordering is load-bearing: every surface but "sessions" and
-	// "project-directory" locates the project via locatePath, which
-	// re-enumerates the encoded directory resolveMoveIdentity already
-	// confirmed above. The "sessions" surface is the one surface that
-	// rewrites the sessions/*.json witness's cwd field, so it must run
-	// last among the reference rewrites — otherwise a later surface's
-	// enumeration would see the witness already pointing at NewPath and,
-	// on a FRESH (non-resumed) run, mismatch locatePath (still OldPath at
-	// that point). "project-directory" runs last of all: it derives paths
-	// directly from Home.ProjectDir and never locates via witness state,
-	// so it does not depend on it. locatePath itself is resume-aware
-	// (finding A1): on a fresh run it is OldPath, and it stays OldPath for
-	// a resume whose encoded directory has not yet been promoted (the
-	// data is still fully readable there, witnesses notwithstanding); only
-	// once the encoded directory has ALREADY been promoted to NewPath does
-	// it become NewPath, at which point every witness already agrees.
+	// "project-directory" locates the project via locatePath. The "sessions"
+	// surface rewrites the sessions/*.json witness's cwd field, so it must run
+	// last among the reference rewrites: the two-path witness acceptance depends
+	// on later surfaces still seeing the old-path witness.
 	var surfaces []tool.Surface
 	surfaces = append(surfaces, workspace.historySurface(req))
 	surfaces = append(surfaces, workspace.userWideSurfaces(req)...)
@@ -109,32 +98,9 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	return surfaces, nil
 }
 
-// resolveMoveIdentity determines which of req.OldPath or req.NewPath
-// currently identifies the project's encoded directory, tolerating a move
-// interrupted after sessionsSurface has already rewritten every witness to
-// NewPath but before the encoded directory itself has been promoted
-// (finding A1). It tries OldPath's encoded directory first: if present,
-// verifyProjectMoveIdentity classifies its witnesses (still readable
-// there regardless of promotion state) and, absent a foreign-collision
-// refusal, OldPath remains the locate path — the data has not moved yet,
-// so it is still fully enumerable there even once every witness already
-// says NewPath. Only when OldPath's encoded directory is entirely absent
-// does it fall back to NewPath's. There, the promotion marker — not the
-// witness set — is the identity oracle: witnesses at this point still
-// serve only as the foreign-collision veto (verifyProjectMoveIdentity
-// hard-refuses any witness naming a third path, and otherwise accepts a
-// witness naming either OldPath or NewPath, or no witness at all — a
-// project with no session witness, or none carrying a readable cwd,
-// legitimately has nothing to say here and must still be resumable — see
-// finding A1). The marker is then read directly through rewrite.PromotedFrom, which
-// distinguishes absence from mismatch: a marker naming OldPath resumes; a
-// missing marker is merely an ABSENCE of proof — projectDirectorySurface's
-// own cleanup removes it once a move completes successfully, so a fully
-// converged re-run reaches this exact shape too — and degrades to
-// tool.ErrProjectAbsent, the same outcome an unrelated NewPath with no
-// evidence at all would also produce; a marker naming a THIRD path is
-// positive evidence of a foreign promotion and hard-refuses, naming both
-// the recorded and the expected source.
+// moveIdentity preserves the old encoded directory as the locate path when
+// witnesses have already flipped to NewPath before the directory move. A
+// third-path witness remains a foreign-collision refusal.
 type moveIdentity struct {
 	locatePath          string
 	identitySkipWarning string
@@ -164,32 +130,7 @@ func (workspace *Workspace) resolveMoveIdentityState(req tool.MoveRequest) (move
 	case !errors.Is(err, os.ErrNotExist):
 		return moveIdentity{}, err
 	}
-
-	newDir := claudeHome.ProjectDir(req.NewPath)
-	sessionUUIDs, err = collectProjectDirEntries(ctx, &ProjectLocations{}, newDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return moveIdentity{}, fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, oldDir)
-		}
-		return moveIdentity{}, err
-	}
-	skipWarning, err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs)
-	if err != nil {
-		return moveIdentity{}, err
-	}
-	recordedSource, present, err := rewrite.PromotedFrom(newDir)
-	if err != nil {
-		return moveIdentity{}, err
-	}
-	if !present {
-		return moveIdentity{}, fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, oldDir)
-	}
-	if recordedSource != oldDir {
-		return moveIdentity{}, fmt.Errorf(
-			"encoded directory %s: promotion marker names %s, not %s; refusing to rewrite", newDir, recordedSource, oldDir,
-		)
-	}
-	return moveIdentity{locatePath: req.NewPath, identitySkipWarning: skipWarning}, nil
+	return moveIdentity{}, fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, oldDir)
 }
 
 // ResidualWarnings implements tool.Mover: content a move preserves verbatim
@@ -242,7 +183,10 @@ func checkPhysicalDestination(oldPath, newPath string) error {
 		return fmt.Errorf("stat destination project directory %s: %w", newPath, err)
 	}
 	if state == destinationRefused {
-		return fmt.Errorf("refusing to move: destination project directory already exists: %s", newPath)
+		return fmt.Errorf(
+			"refusing to move: destination %s exists while source %s remains; deleting the destination and re-running is always safe",
+			newPath, oldPath,
+		)
 	}
 	return nil
 }
@@ -283,7 +227,10 @@ func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string) error {
 		return fmt.Errorf("stat new project directory %s: %w", newEncodedDir, err)
 	}
 	if state == destinationRefused {
-		return fmt.Errorf("%w: %s", ErrEncodedDirCollision, newEncodedDir)
+		return fmt.Errorf(
+			"%w: destination %s already exists while source %s remains; deleting the destination and re-running is always safe",
+			ErrEncodedDirCollision, newEncodedDir, oldEncodedDir,
+		)
 	}
 	return nil
 }
@@ -292,78 +239,28 @@ type destinationState int
 
 const (
 	destinationPromote destinationState = iota
-	destinationResume
+	destinationConverged
 	destinationRefused
 )
 
 func classifyDestination(source, destination string) (destinationState, error) {
-	if _, err := os.Stat(destination); err != nil {
+	if _, err := os.Lstat(destination); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return destinationPromote, nil
 		}
 		return 0, fmt.Errorf("stat %s: %w", destination, err)
 	}
-	verified, err := rewrite.VerifyPromotedFrom(source, destination)
-	if err != nil {
-		return 0, err
-	}
-	if verified {
-		return destinationResume, nil
-	}
-	// No valid marker: only safe to treat as already-converged when source
-	// is also already gone (nothing left that could be lost). A
-	// still-present source alongside an unverified destination is exactly
-	// the foreign-collision signature and must refuse — this is the case
-	// that previously risked deleting a source that was never copied
-	// anywhere.
 	if _, err := os.Stat(source); err == nil {
 		return destinationRefused, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return 0, fmt.Errorf("stat %s: %w", source, err)
 	}
-	return destinationResume, nil
+	return destinationConverged, nil
 }
 
-// removeStagingDir reconciles a stranded staging directory before its
-// promote runs, using two independent ownership proofs and refusing when
-// neither holds:
-//
-//   - Empty: rewrite.PromoteDir creates the staging directory before it
-//     writes the marker, so a crash in that narrow window strands an empty,
-//     unmarked directory. An empty directory holds no data, so it is always
-//     safe to reconcile regardless of marker state.
-//   - Marker match: for anything non-empty, rewrite.VerifyPromotedFrom(source,
-//     staging) is the only ownership proof. PromoteDir writes the marker
-//     before copying, so both a completed staging and a crash-stranded
-//     partial copy for THIS move carry a marker whose content equals source,
-//     and both are reconciled (deleted, so the promote restarts from a clean
-//     copy — the crash-safe convergence path).
-//
-// A non-empty directory that fails the marker match — a foreign directory,
-// or a currently-locatable real project that happens to sit at the staging
-// path — is refused rather than deleted: deleting foreign data at this path
-// is exactly the silent-loss failure this guard exists to prevent. The
-// marker match is deliberately the only ownership test; a separate
-// project-locatability check is not added on top of it, since that would
-// give the encoded-dir and physical-dir call sites inconsistent refusal
-// semantics for the same underlying geometry. staging equaling source is
-// checked explicitly for a precise message, even though it would also fail
-// the marker check (the caller's move-source/staging-suffix collision
-// precondition should already have refused this before any surface ran;
-// checked again here as a second, independent line of defense).
-//
-// A source-side marker collision — source's top level containing an entry
-// named rewrite.MarkerFilename, of any type — is refused by
-// rewrite.PromoteDir itself, before it creates or marks a staging
-// directory, so removeStagingDir never sees a staging directory stranded by
-// that cause (see internal/rewrite/README.md §Directory promotion).
-//
-// The removal is deliberately not made undoable through the Restorer:
-// backing up an arbitrarily large directory to make this reversible is
-// worse than simply never deleting non-owned data.
 func removeStagingDir(destination, source string) error {
 	staging := destination + rewrite.StagingSuffix
-	info, err := os.Stat(staging)
+	info, err := os.Lstat(staging)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -381,13 +278,7 @@ func removeStagingDir(destination, source string) error {
 		return fmt.Errorf("inspect staging directory %s: %w", staging, err)
 	}
 	if !empty {
-		promoted, err := rewrite.VerifyPromotedFrom(source, staging)
-		if err != nil {
-			return fmt.Errorf("verify staging ownership %s: %w", staging, err)
-		}
-		if !promoted {
-			return fmt.Errorf("refusing to remove staging directory %s: not provably cc-port's staging for %s (no matching promotion marker)", staging, source)
-		}
+		return fmt.Errorf("refusing to remove non-empty staging directory %s", staging)
 	}
 	if err := os.RemoveAll(staging); err != nil {
 		return fmt.Errorf("remove staging directory %s: %w", staging, err)
@@ -934,7 +825,14 @@ func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest, identi
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			err := workspace.applyProjectDirectoryMove(ctx, req, undo)
-			return tool.SurfaceResult{Count: 1}, err
+			// The move runs either the plan or the apply path, never both, so
+			// carrying the skip here mirrors the plan and keeps a witnessless
+			// --apply from proceeding silently.
+			var warnings []string
+			if identitySkipWarning != "" {
+				warnings = append(warnings, identitySkipWarning)
+			}
+			return tool.SurfaceResult{Count: 1, Warnings: warnings}, err
 		},
 	}
 }
@@ -943,13 +841,16 @@ func strandedStagingWarnings(destinations []string) ([]string, error) {
 	var warnings []string
 	for _, destination := range destinations {
 		staging := destination + rewrite.StagingSuffix
-		if _, err := os.Stat(staging); err != nil {
+		// Lstat, matching removeStagingDir's apply-time probe, so the plan and
+		// the apply agree on what sits at the staging path: a symlink there is
+		// the entry itself, not whatever it points at.
+		if _, err := os.Lstat(staging); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
-			return nil, fmt.Errorf("stat staging directory %s: %w", staging, err)
+			return nil, fmt.Errorf("stat staging path %s: %w", staging, err)
 		}
-		warnings = append(warnings, "stranded staging directory will be reconciled on apply: "+staging)
+		warnings = append(warnings, "stranded staging path requires apply handling: "+staging)
 	}
 	return warnings, nil
 }
@@ -961,7 +862,7 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 	if err := removeStagingDir(newProjectDir, oldProjectDir); err != nil {
 		return fmt.Errorf("reconcile project data staging: %w", err)
 	}
-	if err := promoteOrResume(ctx, oldProjectDir, newProjectDir, undo); err != nil {
+	if err := promoteIfNeeded(ctx, oldProjectDir, newProjectDir, undo); err != nil {
 		return fmt.Errorf("copy project directory: %w", err)
 	}
 
@@ -969,7 +870,7 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 		if err := removeStagingDir(req.NewPath, req.OldPath); err != nil {
 			return fmt.Errorf("reconcile on-disk project staging: %w", err)
 		}
-		if err := promoteOrResume(ctx, req.OldPath, req.NewPath, undo); err != nil {
+		if err := promoteIfNeeded(ctx, req.OldPath, req.NewPath, undo); err != nil {
 			return fmt.Errorf("copy project on disk: %w", err)
 		}
 	}
@@ -983,38 +884,28 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 		}
 	}
 
-	physicalSourceRemoved := req.RefsOnly
 	if !req.RefsOnly {
 		if err := removeAll(req.OldPath); err != nil {
 			workspace.addMoveWarning(fmt.Sprintf("%v: %s: %v", ErrResidualSourceDir, req.OldPath, err))
-		} else if err := rewrite.RemoveMarker(req.NewPath); err != nil {
-			physicalSourceRemoved = true
-			workspace.addMoveWarning(fmt.Sprintf("could not remove promotion marker: %v", err))
-		} else {
-			physicalSourceRemoved = true
 		}
 	}
 	if err := removeAll(oldProjectDir); err != nil {
 		workspace.addMoveWarning(fmt.Sprintf("old encoded project data directory still present: %s: %v", oldProjectDir, err))
-	} else if physicalSourceRemoved {
-		if err := rewrite.RemoveMarker(newProjectDir); err != nil {
-			workspace.addMoveWarning(fmt.Sprintf("could not remove promotion marker: %v", err))
-		}
 	}
 	return nil
 }
 
-func promoteOrResume(ctx context.Context, source, destination string, undo *tool.Restorer) error {
+func promoteIfNeeded(ctx context.Context, source, destination string, undo *tool.Restorer) error {
 	state, err := classifyDestination(source, destination)
 	if err != nil {
 		return err
 	}
 	switch state {
-	case destinationResume:
+	case destinationConverged:
 		return nil
 	case destinationRefused:
 		return fmt.Errorf(
-			"unexpected unverified destination %s (source %s): preflight should already have refused this move",
+			"destination %s already exists while source %s remains; deleting the destination and re-running is always safe",
 			destination, source,
 		)
 	default:
