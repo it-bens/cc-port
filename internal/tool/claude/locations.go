@@ -496,17 +496,15 @@ func verifyProjectIdentity(ctx context.Context, claudeHome *Home, projectPath st
 // a foreign collision and is refused exactly as verifyProjectIdentity
 // refuses a single mismatched witness — two distinct real paths can encode
 // to the same directory name, so this guard must never widen to accept a
-// THIRD path. No witness at all is the same skip-with-warning case
-// LocateProject already tolerates for a project with no attributable
-// sessions; the caller resolves the fresh-vs-resumed distinction itself
-// from other evidence (see resolveMoveIdentity). It returns corroborated false
-// for that skip so the destructive fresh promotion can refuse it.
-func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessionUUIDs []string) (corroborated bool, err error) {
+// THIRD path. No witness at all is the same skip case LocateProject already
+// tolerates for a project with no attributable sessions; it returns the
+// warning text so the move path can surface it as a structured plan
+// warning instead of a stderr note.
+func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessionUUIDs []string) (skipWarning string, err error) {
 	encodedDir := claudeHome.ProjectDir(oldPath)
 
 	if len(sessionUUIDs) == 0 {
-		warnIdentityCheckSkipped(encodedDir, oldPath)
-		return false, nil
+		return identityCheckSkippedMessage(encodedDir, oldPath), nil
 	}
 
 	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
@@ -516,22 +514,21 @@ func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessio
 
 	cwds, err := walkSessionWitnesses(context.Background(), claudeHome.SessionsDir(), uuidSet)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	if len(cwds) == 0 {
-		warnIdentityCheckSkipped(encodedDir, oldPath)
-		return false, nil
+		return identityCheckSkippedMessage(encodedDir, oldPath), nil
 	}
 
 	for _, cwd := range cwds {
 		if cwd != oldPath && cwd != newPath {
-			return false, fmt.Errorf(
+			return "", fmt.Errorf(
 				"encoded directory %s: sessions/*.json attributes it to %s, neither %q nor %q; refusing to rewrite",
 				encodedDir, formatCwdList(cwds), oldPath, newPath,
 			)
 		}
 	}
-	return true, nil
+	return "", nil
 }
 
 // walkSessionWitnesses inspects every sessions/*.json and returns the distinct
@@ -602,11 +599,15 @@ func formatCwdList(cwds []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-func warnIdentityCheckSkipped(encodedDir, projectPath string) {
-	fmt.Fprintf(os.Stderr,
-		"note: no witness in sessions/*.json attributes %s to project %s; identity check skipped\n",
+func identityCheckSkippedMessage(encodedDir, projectPath string) string {
+	return fmt.Sprintf(
+		"no witness in sessions/*.json attributes %s to project %s; identity check skipped",
 		encodedDir, projectPath,
 	)
+}
+
+func warnIdentityCheckSkipped(encodedDir, projectPath string) {
+	fmt.Fprintln(os.Stderr, "note: "+identityCheckSkippedMessage(encodedDir, projectPath))
 }
 
 func collectSessionFiles(ctx context.Context, locations *ProjectLocations, claudeHome *Home, projectPath string) error {

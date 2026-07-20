@@ -104,7 +104,7 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	surfaces = append(surfaces,
 		workspace.memorySurface(req, locatePath),
 		workspace.sessionsSurface(req, locatePath),
-		workspace.projectDirectorySurface(req, identity.freshUncorroborated),
+		workspace.projectDirectorySurface(req, identity.identitySkipWarning),
 	)
 	return surfaces, nil
 }
@@ -137,7 +137,7 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 // the recorded and the expected source.
 type moveIdentity struct {
 	locatePath          string
-	freshUncorroborated bool
+	identitySkipWarning string
 }
 
 func (workspace *Workspace) resolveMoveIdentity(req tool.MoveRequest) (string, error) {
@@ -156,11 +156,11 @@ func (workspace *Workspace) resolveMoveIdentityState(req tool.MoveRequest) (move
 	sessionUUIDs, err := collectProjectDirEntries(ctx, &ProjectLocations{}, oldDir)
 	switch {
 	case err == nil:
-		corroborated, err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs)
+		skipWarning, err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs)
 		if err != nil {
 			return moveIdentity{}, err
 		}
-		return moveIdentity{locatePath: req.OldPath, freshUncorroborated: !corroborated}, nil
+		return moveIdentity{locatePath: req.OldPath, identitySkipWarning: skipWarning}, nil
 	case !errors.Is(err, os.ErrNotExist):
 		return moveIdentity{}, err
 	}
@@ -173,7 +173,8 @@ func (workspace *Workspace) resolveMoveIdentityState(req tool.MoveRequest) (move
 		}
 		return moveIdentity{}, err
 	}
-	if _, err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs); err != nil {
+	skipWarning, err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs)
+	if err != nil {
 		return moveIdentity{}, err
 	}
 	recordedSource, present, err := rewrite.PromotedFrom(newDir)
@@ -188,7 +189,7 @@ func (workspace *Workspace) resolveMoveIdentityState(req tool.MoveRequest) (move
 			"encoded directory %s: promotion marker names %s, not %s; refusing to rewrite", newDir, recordedSource, oldDir,
 		)
 	}
-	return moveIdentity{locatePath: req.NewPath}, nil
+	return moveIdentity{locatePath: req.NewPath, identitySkipWarning: skipWarning}, nil
 }
 
 // ResidualWarnings implements tool.Mover: content a move preserves verbatim
@@ -914,22 +915,10 @@ func rewriteTwicePreservingMtime(
 // to the new path and removing the originals. Its Plan reports one because
 // Claude always relocates its encoded project directory; RefsOnly suppresses
 // only the physical project-directory copy.
-func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest, freshUncorroborated bool) tool.Surface {
-	uncorroboratedErr := func() error {
-		if !freshUncorroborated {
-			return nil
-		}
-		return fmt.Errorf(
-			"encoded directory %s: no sessions/*.json witness corroborates fresh move from %q to %q; refusing to promote or remove uncorroborated directory",
-			workspace.home.ProjectDir(req.OldPath), req.OldPath, req.NewPath,
-		)
-	}
+func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest, identitySkipWarning string) tool.Surface {
 	return tool.Surface{
 		Name: tool.SurfaceProjectDirectory,
 		Plan: func(_ context.Context) (tool.SurfaceResult, error) {
-			if err := uncorroboratedErr(); err != nil {
-				return tool.SurfaceResult{}, err
-			}
 			destinations := []string{workspace.home.ProjectDir(req.NewPath)}
 			if !req.RefsOnly {
 				destinations = append(destinations, req.NewPath)
@@ -938,12 +927,12 @@ func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest, freshU
 			if err != nil {
 				return tool.SurfaceResult{}, err
 			}
+			if identitySkipWarning != "" {
+				warnings = append(warnings, identitySkipWarning)
+			}
 			return tool.SurfaceResult{Count: 1, Warnings: warnings}, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
-			if err := uncorroboratedErr(); err != nil {
-				return tool.SurfaceResult{}, err
-			}
 			err := workspace.applyProjectDirectoryMove(ctx, req, undo)
 			return tool.SurfaceResult{Count: 1}, err
 		},

@@ -273,35 +273,111 @@ func TestMoveSurfaces_RerunAfterPhysicalResidualFailureConverges(t *testing.T) {
 	require.ErrorIs(t, err, tool.ErrProjectAbsent, "a third run after convergence must report absent")
 }
 
-func TestMoveSurfaces_RefusesFreshWitnesslessProjectDirectoryPromotion(t *testing.T) {
+// witnesslessProjectWorkspace stages a project whose encoded directory holds
+// data but which no sessions/*.json witness attributes to any path — the
+// shape of every project whose sessions Claude has already rotated away, and
+// the overwhelmingly common case for a cold project a user wants to move.
+// Its transcript is named "session.jsonl", not a canonical UUID, so
+// collectProjectDirEntries yields zero sessionUUIDs and
+// verifyProjectMoveIdentity takes its `len(sessionUUIDs) == 0` skip branch.
+func witnesslessProjectWorkspace(t *testing.T) (workspace *Workspace, home *Home, oldPath, newPath string) {
+	t.Helper()
+	return stageWitnesslessProject(t, "session.jsonl")
+}
+
+// uuidTranscriptWitnessedByNoSessionsWorkspace stages the same witness-less
+// shape as witnesslessProjectWorkspace, except the transcript's filename IS a
+// canonical session UUID, so collectProjectDirEntries yields one
+// sessionUUID. With no sessions/ directory at all, walkSessionWitnesses still
+// returns no cwds, so verifyProjectMoveIdentity instead takes its OTHER skip
+// branch: `len(cwds) == 0`.
+func uuidTranscriptWitnessedByNoSessionsWorkspace(t *testing.T) (workspace *Workspace, home *Home, oldPath, newPath string) {
+	t.Helper()
+	return stageWitnesslessProject(t, "11111111-2222-3333-4444-555555555555.jsonl")
+}
+
+func stageWitnesslessProject(t *testing.T, transcriptName string) (workspace *Workspace, home *Home, oldPath, newPath string) {
+	t.Helper()
 	root := t.TempDir()
-	home := &Home{Dir: filepath.Join(root, "dotclaude")}
-	oldPath := filepath.Join(root, "old-project")
-	newPath := filepath.Join(root, "new-project")
-	oldEncodedDir := home.ProjectDir(oldPath)
-	require.NoError(t, os.MkdirAll(oldEncodedDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(oldEncodedDir, "foreign.jsonl"), []byte("foreign"), 0o600))
-	workspace := NewWorkspace(home)
+	home = &Home{Dir: filepath.Join(root, "dotclaude")}
+	oldPath = filepath.Join(root, "old-project")
+	newPath = filepath.Join(root, "new-project")
+	require.NoError(t, os.MkdirAll(home.ProjectDir(oldPath), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home.ProjectDir(oldPath), transcriptName), []byte("{}\n"), 0o600))
+	return NewWorkspace(home), home, oldPath, newPath
+}
+
+// countWarningOccurrences reports how many of warnings equal target: a
+// dedup-sensitive assertion needs an exact count, since assert.Contains
+// cannot distinguish one occurrence from an accidental duplicate.
+func countWarningOccurrences(warnings []string, target string) int {
+	count := 0
+	for _, warning := range warnings {
+		if warning == target {
+			count++
+		}
+	}
+	return count
+}
+
+func projectDirectorySurfaceOf(t *testing.T, surfaces []tool.Surface) tool.Surface {
+	t.Helper()
+	for _, surface := range surfaces {
+		if surface.Name == tool.SurfaceProjectDirectory {
+			return surface
+		}
+	}
+	t.Fatal("MoveSurfaces must include the project-directory surface")
+	return tool.Surface{}
+}
+
+func TestMoveSurfaces_PlansWitnesslessProjectDirectoryPromotion(t *testing.T) {
+	workspace, home, oldPath, newPath := witnesslessProjectWorkspace(t)
 
 	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	require.NoError(t, err)
+	result, err := projectDirectorySurfaceOf(t, surfaces).Plan(t.Context())
 
-	require.NoError(t, err, "read-only identity resolution remains deliberately permissive")
-	foundProjectDirectory := false
+	require.NoError(t, err, "a project with no session witness must still render a plan")
+	assert.Equal(t, 1, result.Count)
+	assert.Equal(t, 1, countWarningOccurrences(result.Warnings, identityCheckSkippedMessage(home.ProjectDir(oldPath), oldPath)),
+		"the skipped identity check must surface as a structured plan warning exactly once")
+}
+
+// TestMoveSurfaces_PlansUUIDWitnessedProjectDirectoryPromotion covers
+// verifyProjectMoveIdentity's OTHER skip branch: sessionUUIDs is non-empty
+// (the encoded directory's only transcript carries a canonical UUID stem),
+// but no sessions/ directory exists at all, so walkSessionWitnesses still
+// returns no cwds.
+func TestMoveSurfaces_PlansUUIDWitnessedProjectDirectoryPromotion(t *testing.T) {
+	workspace, home, oldPath, newPath := uuidTranscriptWitnessedByNoSessionsWorkspace(t)
+
+	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	require.NoError(t, err)
+	result, err := projectDirectorySurfaceOf(t, surfaces).Plan(t.Context())
+
+	require.NoError(t, err, "a project with a UUID-named transcript but no sessions/ directory must still render a plan")
+	assert.Equal(t, 1, result.Count)
+	assert.Equal(t, 1, countWarningOccurrences(result.Warnings, identityCheckSkippedMessage(home.ProjectDir(oldPath), oldPath)),
+		"the skipped identity check must surface as a structured plan warning exactly once")
+}
+
+func TestMoveSurfaces_AppliesWitnesslessProjectDirectoryPromotion(t *testing.T) {
+	workspace, home, oldPath, newPath := witnesslessProjectWorkspace(t)
+
+	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	require.NoError(t, err)
+	undo := tool.NewRestorer()
 	for _, surface := range surfaces {
-		if surface.Name != tool.SurfaceProjectDirectory {
-			continue
-		}
-		foundProjectDirectory = true
-		_, err = surface.Apply(t.Context(), tool.NewRestorer())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), oldEncodedDir)
-		assert.Contains(t, err.Error(), oldPath)
-		assert.Contains(t, err.Error(), newPath)
-		break
+		_, err := surface.Apply(t.Context(), undo)
+		require.NoError(t, err, "apply %s", surface.Name)
 	}
-	require.True(t, foundProjectDirectory, "MoveSurfaces must include the destructive project-directory surface")
-	assert.DirExists(t, oldEncodedDir, "an uncorroborated directory must never be removed")
-	assert.NoDirExists(t, home.ProjectDir(newPath), "an uncorroborated directory must never be promoted")
+	undo.Cleanup()
+
+	assert.NoDirExists(t, home.ProjectDir(oldPath), "the old encoded directory must be gone after convergence")
+	assert.FileExists(t, filepath.Join(home.ProjectDir(newPath), "session.jsonl"),
+		"the project's data must have carried over to the new encoded directory")
 }
 
 // TestResolveMoveIdentity_ResumesViaNewPathAfterEncodedDirPromoted guards
