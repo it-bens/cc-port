@@ -527,14 +527,14 @@ func validArchiveRolloutName(relative string, archived bool) bool {
 
 // Finalize appends deduplicated line stores without replacing their inodes,
 // then applies sidecar rows only to existing threads through sqlrewrite.
-func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archive.StagedSet) ([]string, error) {
+func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *archive.StagedSet) ([]string, error) {
 	if project == "" {
 		return nil, fmt.Errorf("finalize Codex import: target project is empty")
 	}
-	if err := appendUniqueHistory(filepath.Join(workspace.home.Dir, codexHistoryFile), workspace.historyAppends); err != nil {
+	if err := appendUniqueHistory(ctx, filepath.Join(workspace.home.Dir, codexHistoryFile), workspace.historyAppends); err != nil {
 		return nil, err
 	}
-	if err := appendUniqueExact(filepath.Join(workspace.home.Dir, sessionIndexFile), workspace.indexAppends); err != nil {
+	if err := appendUniqueExact(ctx, filepath.Join(workspace.home.Dir, sessionIndexFile), workspace.indexAppends); err != nil {
 		return nil, err
 	}
 	unapplied, err := workspace.applyThreadSidecars()
@@ -552,9 +552,22 @@ func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archi
 	return warnings, nil
 }
 
-func scanLines(path string) ([][]byte, error) {
+func scanLines(ctx context.Context, path string) ([][]byte, error) {
+	// Checked before opening anything: without this, a canceled context
+	// scanning a missing or empty file falls straight through to the
+	// (nil, nil) returns below, indistinguishable from a genuine "no
+	// lines" result — the caller could never tell cancellation happened.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	file, err := os.Open(path) //nolint:gosec // G304: resolved Codex home path
 	if errors.Is(err, fs.ErrNotExist) {
+		// Re-checked here too: the missing-file branch returns before the
+		// scan loop even starts, so it must not report success on its own
+		// if cancellation landed during the os.Open call above.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, nil
 	}
 	if err != nil {
@@ -565,6 +578,9 @@ func scanLines(path string) ([][]byte, error) {
 	scanner.Buffer(make([]byte, 64<<10), maxCodexJSONLLine)
 	var lines [][]byte
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(bytes.TrimSpace(scanner.Bytes())) > 0 {
 			lines = append(lines, append([]byte(nil), scanner.Bytes()...))
 		}
@@ -572,11 +588,17 @@ func scanLines(path string) ([][]byte, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	// Checked again after the loop: cancellation observed right after the
+	// final line (or on an empty file, where the loop never ran) must
+	// still surface as an error rather than a successful-looking result.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return lines, nil
 }
 
-func appendUniqueHistory(path string, chunks [][]byte) error {
-	existing, err := scanLines(path)
+func appendUniqueHistory(ctx context.Context, path string, chunks [][]byte) error {
+	existing, err := scanLines(ctx, path)
 	if err != nil {
 		return fmt.Errorf("scan existing history: %w", err)
 	}
@@ -608,8 +630,8 @@ func appendUniqueHistory(path string, chunks [][]byte) error {
 	return appendLinesToFile(path, appendLines)
 }
 
-func appendUniqueExact(path string, chunks [][]byte) error {
-	existing, err := scanLines(path)
+func appendUniqueExact(ctx context.Context, path string, chunks [][]byte) error {
+	existing, err := scanLines(ctx, path)
 	if err != nil {
 		return fmt.Errorf("scan existing session index: %w", err)
 	}
@@ -864,7 +886,7 @@ func (workspace *Workspace) countThreadRows(ctx context.Context, project string)
 	return total, nil
 }
 func countHistoryForIDs(ctx context.Context, path string, ids map[string]struct{}) (int, error) {
-	lines, err := scanLines(path)
+	lines, err := scanLines(ctx, path)
 	if err != nil {
 		return 0, err
 	}
@@ -883,7 +905,7 @@ func countHistoryForIDs(ctx context.Context, path string, ids map[string]struct{
 	return count, nil
 }
 func countIndexForIDs(ctx context.Context, path string, ids map[string]struct{}) (int, error) {
-	lines, err := scanLines(path)
+	lines, err := scanLines(ctx, path)
 	if err != nil {
 		return 0, err
 	}

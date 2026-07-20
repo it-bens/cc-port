@@ -250,6 +250,115 @@ func TestCodexImportRerunDoesNotDuplicateHistoryOrSessionIndex(t *testing.T) {
 	assertFileBytes(t, filepath.Join(destinationHome.Dir, sessionIndexFile), index)
 }
 
+// countdownContext cancels the wrapped context the moment its Err method
+// has been consulted callsUntilCancel+1 times, rather than being canceled
+// up front. This lets a test force cancellation to land at a specific point
+// inside a scan deterministically (no wall-clock race, no dependence on
+// scheduling) instead of only proving the trivial pre-canceled case.
+type countdownContext struct {
+	context.Context
+	cancel           context.CancelFunc
+	callsUntilCancel int
+}
+
+func (c *countdownContext) Err() error {
+	if c.callsUntilCancel <= 0 {
+		c.cancel()
+	} else {
+		c.callsUntilCancel--
+	}
+	return c.Context.Err()
+}
+
+// TestScanLines_CancelsMidScan pins that a canceled context stops scanLines
+// before it materializes the whole file into memory, rather than checking
+// ctx only after the scan loop finishes (finding FE4): history.jsonl and
+// session_index.jsonl are append-only and never rotated, so an unbounded
+// scan with no per-line cancellation check can stall a cancel indefinitely.
+// Cancellation is budgeted to land partway through the scan loop rather
+// than pre-canceled, so this test actually exercises the per-line check
+// inside the loop rather than only the entry-time check before it.
+func TestScanLines_CancelsMidScan(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	content := bytes.Repeat([]byte(`{"session_id":"aaaaaaaa-0000-4000-8000-000000000001"}`+"\n"), 10_000)
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+
+	baseCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	// Allows 5 non-canceled Err() calls: the entry check, then the first
+	// four lines. The 6th call (the fifth line) triggers cancel(), so the
+	// remaining 9,995 lines are never scanned.
+	ctx := &countdownContext{Context: baseCtx, cancel: cancel, callsUntilCancel: 5}
+
+	lines, err := scanLines(ctx, path)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, lines, "a canceled context must not return partial scan results")
+}
+
+// TestScanLines_CancelsAfterFinalLine pins the check after the scan loop:
+// cancellation observed only once every line has already passed its own
+// per-line check (or, on a file with no lines, once the loop body never
+// ran at all) must still surface as an error, not a successful-looking
+// result. Without this check, a canceled context that survives past the
+// last line would return a complete, valid-looking slice with a nil
+// error. The budget is sized to exhaust exactly on the call after the
+// last of three lines, so every per-line check inside the loop already
+// succeeded and only the post-loop check can be responsible for the
+// error this test asserts.
+func TestScanLines_CancelsAfterFinalLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	content := bytes.Repeat([]byte(`{"session_id":"aaaaaaaa-0000-4000-8000-000000000001"}`+"\n"), 3)
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+
+	baseCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	// Allows 4 non-canceled Err() calls: the entry check, then all three
+	// lines. The 5th call — reached only after scanner.Scan() returns
+	// false at EOF — is the post-loop check, which triggers cancel().
+	ctx := &countdownContext{Context: baseCtx, cancel: cancel, callsUntilCancel: 4}
+
+	lines, err := scanLines(ctx, path)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, lines, "a canceled context must not return a complete scan result")
+}
+
+// TestScanLines_CancelledContextOnEmptyFileReturnsError pins that a
+// canceled context is never masked as "no lines": an empty file makes
+// scanner.Scan() return false on the very first call, so the scan loop's
+// per-line check never fires. Without the entry-time check, this path
+// returns (nil, nil) — indistinguishable from a genuinely empty,
+// uncancelled scan — instead of surfacing the cancellation (finding FE4).
+func TestScanLines_CancelledContextOnEmptyFileReturnsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.jsonl")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	lines, err := scanLines(ctx, path)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, lines, "a canceled context must not return a plausible-looking empty result")
+}
+
+// TestScanLines_CancelledContextOnMissingFileReturnsError pins the other
+// early-return path a canceled context must not fall through: a missing
+// file returns (nil, nil) before the scan loop ever starts, so only the
+// entry-time ctx check (not the post-loop one) can catch cancellation here.
+func TestScanLines_CancelledContextOnMissingFileReturnsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	lines, err := scanLines(ctx, path)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, lines, "a canceled context must not return a plausible-looking empty result")
+}
+
 func TestAppendLinesToFileSeparatesTornPriorRecord(t *testing.T) {
 	tests := []struct {
 		name    string
