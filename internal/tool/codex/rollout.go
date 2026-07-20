@@ -44,10 +44,32 @@ func rolloutRoots(home *Home) []string {
 	}
 }
 
-// discoverRolloutFiles walks both rollout roots and returns every
-// rollout .jsonl and .jsonl.zst file, in sorted order. A missing root is
-// not an error: a fresh Codex home may not have written it yet.
+// discoverRolloutFiles walks both rollout roots and returns the LOGICAL
+// rollout set, in sorted order: when both X.jsonl and its X.jsonl.zst
+// sibling exist, only X.jsonl is kept. Codex's own compression worker can
+// leave both on disk momentarily — it persists the compressed file before
+// removing the plain one (rollout/src/compression.rs:632-651) — and never
+// re-compresses once the plain file is gone, so a crash in that window
+// strands the pair with no self-heal. Every data consumer (export, move,
+// projectRollouts, knowsProject, stats) must see exactly one file per
+// logical rollout or a duplicate archive entry corrupts the whole import;
+// this mirrors Codex's own walker, which applies the identical suppression
+// (rollout/src/compression.rs:141-163, should_skip_compressed_sibling at
+// 941-943). The freshness witness needs every physical file's mtime, so it
+// uses discoverRolloutFilesRaw instead. A missing root is not an error: a
+// fresh Codex home may not have written it yet.
 func discoverRolloutFiles(home *Home) ([]string, error) {
+	files, err := discoverRolloutFilesRaw(home)
+	if err != nil {
+		return nil, err
+	}
+	return suppressCompressedSiblings(files), nil
+}
+
+// discoverRolloutFilesRaw returns every rollout .jsonl and .jsonl.zst file
+// exactly as found on disk, in sorted order, including a .jsonl.zst
+// crash-window sibling discoverRolloutFiles would suppress.
+func discoverRolloutFilesRaw(home *Home) ([]string, error) {
 	var files []string
 	for _, root := range rolloutRoots(home) {
 		found, err := listRolloutFiles(root)
@@ -58,6 +80,25 @@ func discoverRolloutFiles(home *Home) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
+}
+
+// suppressCompressedSiblings drops every .jsonl.zst entry whose plain
+// .jsonl counterpart is also present in files.
+func suppressCompressedSiblings(files []string) []string {
+	plain := make(map[string]bool, len(files))
+	for _, path := range files {
+		if !strings.HasSuffix(path, zstSuffix) {
+			plain[path] = true
+		}
+	}
+	var kept []string
+	for _, path := range files {
+		if strings.HasSuffix(path, zstSuffix) && plain[strings.TrimSuffix(path, zstSuffix)] {
+			continue
+		}
+		kept = append(kept, path)
+	}
+	return kept
 }
 
 func listRolloutFiles(root string) ([]string, error) {

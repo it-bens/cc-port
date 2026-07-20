@@ -5,9 +5,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/it-bens/cc-port/internal/tool"
 )
+
+// ErrProjectAbsenceUnresolved reports that a project was not found under
+// this adapter's base-resolved Home.SQLiteDir while a discovered profile
+// overlay declares a different sqlite_home this adapter has no way to
+// resolve against (see profileSQLiteHomeWarning). It is distinct from
+// tool.ErrProjectAbsent, which means every source this adapter can check
+// agrees the project is unknown: it does not match
+// errors.Is(err, tool.ErrProjectAbsent), so move/export/stats sweep
+// semantics correctly treat it as a hard failure instead of silently
+// skipping Codex the way a genuine absence would.
+var ErrProjectAbsenceUnresolved = errors.New("project absence could not be established: a profile overlay declares a divergent sqlite_home")
 
 // configTOMLFileName is Codex's top-level configuration file, flat under the
 // home directory (core/src/config/mod.rs:272, CONFIG_TOML_FILE).
@@ -70,6 +85,89 @@ func resolveSQLiteDir(dir string, getenv func(string) string) (string, error) {
 		return resolveAgainstCWD(envValue)
 	}
 	return dir, nil
+}
+
+// profileSQLiteHomeWarning inspects every discovered profile overlay
+// (<profile>.config.toml) for a sqlite_home declaration that resolves to a
+// directory other than home.SQLiteDir. Codex's profile-v2 selection
+// (the --profile CLI flag) is a runtime argument, never recorded in
+// config.toml: core/src/config/mod.rs:3047-3054 refuses to start Codex at
+// all when a legacy `profile` key is even present in config.toml, so there
+// is no on-disk record of which profile, if any, was active for the
+// sessions currently on disk. resolveSQLiteDir therefore always resolves
+// against base config.toml, matching Codex's own behavior with no
+// --profile flag; this warns rather than silently trusting that
+// resolution whenever a profile overlay declares a sqlite_home that
+// disagrees with it. On its own this only warns a known project's state
+// may be incomplete; projectAbsenceError uses the same check to stop an
+// unknown project from being reported as flatly absent.
+func profileSQLiteHomeWarning(home *Home, getenv func(string) string) (string, error) {
+	files, err := discoverConfigTOMLFiles(home)
+	if err != nil {
+		return "", err
+	}
+	var divergent []string
+	for _, path := range files {
+		if filepath.Base(path) == configTOMLFileName {
+			continue
+		}
+		data, err := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled config discovery
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return "", fmt.Errorf("read %s: %w", path, err)
+		}
+		var probe struct {
+			SQLiteHome string `toml:"sqlite_home"`
+		}
+		if unmarshalErr := toml.Unmarshal(data, &probe); unmarshalErr != nil {
+			return "", fmt.Errorf("parse %s for sqlite_home: %w", path, unmarshalErr)
+		}
+		if probe.SQLiteHome == "" {
+			continue
+		}
+		resolved, err := resolveAgainstHome(home.Dir, probe.SQLiteHome, getenv("HOME"))
+		if err != nil {
+			return "", fmt.Errorf("resolve sqlite_home in %s: %w", path, err)
+		}
+		if resolved != home.SQLiteDir {
+			divergent = append(divergent, filepath.Base(path))
+		}
+	}
+	if len(divergent) == 0 {
+		return "", nil
+	}
+	sort.Strings(divergent)
+	return fmt.Sprintf(
+		"%s declare(s) a sqlite_home different from the resolved %s; Codex's active --profile is a runtime flag not "+
+			"recorded on disk, so cc-port cannot determine which is authoritative and inspects only the base config.toml resolution",
+		strings.Join(divergent, ", "), home.SQLiteDir,
+	), nil
+}
+
+// projectAbsenceError decides what "not found under every source this
+// adapter checks" means once knowsProject or projectKnown reports false.
+// Reporting a confident tool.ErrProjectAbsent derived only from the
+// base-resolved SQLiteDir is a best-guess answer presented as fact
+// whenever a profile overlay might hold the project's real state under a
+// directory this adapter never looked in; fail-hard forbids that, so this
+// returns ErrProjectAbsenceUnresolved instead whenever a divergent overlay
+// exists. When no overlay diverges, the overwhelmingly common case, this
+// returns the ordinary tool.ErrProjectAbsent and every caller's behavior
+// is unchanged.
+func (workspace *Workspace) projectAbsenceError() error {
+	warning, err := profileSQLiteHomeWarning(workspace.home, workspace.getenv)
+	if err != nil {
+		return err
+	}
+	if warning == "" {
+		return tool.ErrProjectAbsent
+	}
+	return fmt.Errorf(
+		"%w: not found in the base-resolved sqlite directory %s; %s",
+		ErrProjectAbsenceUnresolved, workspace.home.SQLiteDir, warning,
+	)
 }
 
 func resolveAgainstHome(home, path, osHome string) (string, error) {

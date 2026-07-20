@@ -128,6 +128,23 @@ func TestMoveSurfacesReportsProjectAbsentForUnknownProject(t *testing.T) {
 	assert.ErrorIs(t, err, tool.ErrProjectAbsent)
 }
 
+// TestMoveSurfaces_ReturnsUnresolvedErrorWhenProfileOverlayDiverges is the
+// move-side counterpart to the export-family test of the same name in
+// export_import_stats_test.go: MoveSurfaces must not report a bare
+// tool.ErrProjectAbsent for a project unknown to every source this adapter
+// checks under the base-resolved SQLiteDir when a profile overlay declares
+// a different sqlite_home this adapter cannot resolve against.
+func TestMoveSurfaces_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *testing.T) {
+	workspace, project := divergentProfileUnknownProjectFixture(t)
+	req := tool.MoveRequest{OldPath: project, NewPath: "/Users/fixture/renamed-elsewhere"}
+
+	_, err := workspace.MoveSurfaces(req)
+
+	require.ErrorIs(t, err, ErrProjectAbsenceUnresolved)
+	assert.NotErrorIs(t, err, tool.ErrProjectAbsent,
+		"a divergent profile overlay must not be reported as bare absence")
+}
+
 func TestConfigSurfaceDiscoversProfileOverlay(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	files, err := discoverConfigTOMLFiles(home)
@@ -303,6 +320,33 @@ func TestResidualWarningsReportsEraAAndGitBaselineLeftInPlace(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, warnings, 3, "era-A, marketplace residual, and git-baseline-left-in-place warnings: %v", warnings)
+}
+
+// TestResidualWarnings_WarnsOnDivergentProfileSQLiteHome guards the wiring
+// of profileSQLiteHomeWarning into the move command's existing warning
+// channel: a profile overlay declaring a sqlite_home different from the
+// resolved one must surface through the same ResidualWarnings call every
+// other move residual reports through.
+func TestResidualWarnings_WarnsOnDivergentProfileSQLiteHome(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home.Dir, "work.config.toml"),
+		[]byte("sqlite_home = \""+elsewhere+"\"\n\n[projects.\""+FixtureProjectPath()+"\"]\ntrust_level = \"trusted\"\n"),
+		0o600,
+	))
+
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	warnings, err := workspace.ResidualWarnings(req)
+
+	require.NoError(t, err)
+	found := false
+	for _, warning := range warnings {
+		if strings.Contains(warning, "work.config.toml") {
+			found = true
+		}
+	}
+	assert.True(t, found, "a profile overlay declaring a different sqlite_home must be reported: %v", warnings)
 }
 
 func TestGoalsWarningReportsOnlyPopulatedGoalsDatabases(t *testing.T) {

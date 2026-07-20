@@ -56,6 +56,30 @@ shapes themselves.
 - `Home.AgentsDir` is `$HOME/.agents`, populated only when `$HOME` resolves;
   every surface rooted there activates only when the directory exists on
   disk.
+- `profileSQLiteHomeWarning` checks every discovered `<profile>.config.toml`
+  overlay for a `sqlite_home` different from the resolved `Home.SQLiteDir`.
+  For a project this adapter already knows, both `ResidualWarnings` (move)
+  and `Export` call it and add its result to their warnings, so a divergent
+  overlay is reported rather than silently trusted. See Not covered for the
+  paths that still resolve against base config.toml with no warning, and
+  for why no path resolves against the overlay instead.
+- `projectAbsenceError` covers the case a warning cannot reach: a project
+  this adapter finds nowhere under the base-resolved directory. Every guard
+  that would otherwise report a bare `tool.ErrProjectAbsent`
+  (`Placeholders`, `Export`, `ReferenceSurfaces`, `DiskCategories`, and
+  `MoveSurfaces`) calls it first. When a profile overlay declares a
+  divergent `sqlite_home`, it returns `ErrProjectAbsenceUnresolved`
+  instead, naming the overlay and the base directory checked. That error
+  does not match `errors.Is(err, tool.ErrProjectAbsent)`, so
+  move/export/stats sweep semantics treat it as a hard failure rather than
+  silently skipping Codex. `ActiveWriters` is genuinely exempt: it never
+  answers whether a particular project exists. `EnumerateProjects` is
+  exempt only from this project-specific guard, since it too takes no
+  project argument; it remains subject to the same base-only resolution
+  limit as every other surface (see Not covered), so it can still omit a
+  profile-only project from an all-project listing with no warning. When
+  no overlay diverges, all five guarded call sites behave exactly as
+  before.
 
 **Refused.**
 
@@ -68,6 +92,43 @@ shapes themselves.
 - A `sqlite_home` value that itself does not exist. Resolution only computes
   the path; database discovery (`discoverDatabases`) separately treats a
   missing directory as "no databases found," not an error.
+- Resolving `Home.SQLiteDir` against the profile a past Codex session
+  actually used. Codex selects a profile-v2 overlay only from the runtime
+  `--profile` flag (`config/src/state.rs:38-53`,
+  `core/src/config/mod.rs:1755-1763`, `resolve_profile_v2_config_path`) and
+  persists neither the profile name nor its resolved `sqlite_home` anywhere
+  Codex itself reads back: not in `config.toml`'s own `profile` key, an
+  unrelated legacy mechanism Codex 0.144.5 refuses to start with at all
+  when present (`core/src/config/mod.rs:3047-3054`); not in any
+  `state/migrations/*.sql` column; and not in `SessionMeta` or
+  `TurnContextItem` (`protocol/src/protocol.rs:3014-3062,3209-3252`). No
+  later tool can determine which profile, if any, wrote the state on disk,
+  so `Home.SQLiteDir` always resolves against base `config.toml`, matching
+  Codex's own behavior with no `--profile` flag.
+- Warning about a divergent profile overlay for a project this adapter
+  already knows, anywhere but move and export. `ReferenceSurfaces` and
+  `DiskCategories` (stats) add no per-call warning for a known project's
+  possibly-incomplete data: `tool.Auditor`'s three methods return counts,
+  sizes, and project listings, with no channel to warn through on success.
+  `ActiveWriters`'s `busyProbeWitness` is not project-scoped at all: it
+  probes every database discovered under `Home.SQLiteDir` regardless of
+  project, and `tool.Workspace.ActiveWriters` returns writers and an error
+  with the same no-warning shape. A divergent profile is silent in both
+  cases as long as the project stays otherwise known.
+- `EnumerateProjects` carries the same base-only resolution limit in a
+  worse shape. It builds its candidate project set from
+  `discoverDatabases(Home.SQLiteDir, ...)` thread cwds and
+  `discoverConfigTOMLFiles` project keys alone, so a project known only
+  through a thread row under a divergent profile's `sqlite_home` never
+  becomes a candidate: it is missing from the listing entirely, not
+  reported incomplete. `EnumerateProjects` also forwards whatever error
+  `DiskCategories` returns for any one candidate project
+  (`export_import_stats.go:1081`) without scoping the failure to that
+  project, so one project's lower-level read failure aborts the whole
+  listing. All three cases above are a deliberate residual, not an
+  oversight: inferring the active profile instead (the sole overlay, or
+  the most recently modified one) would silently inspect a directory that
+  may be wrong, the exact failure this section exists to avoid.
 
 ### Glob, don't pin
 
@@ -104,11 +165,20 @@ shapes themselves.
 - Rollouts live under two physical roots: `sessions/YYYY/MM/DD/` and the flat
   `archived_sessions/` (`rollout/src/lib.rs:21-22`); archiving physically
   renames the file from one root to the other
-  (`thread-store/src/local/archive_thread.rs:41-53`). `rolloutRoots` and
-  `discoverRolloutFiles` walk both roots every time, so every rollout
-  surface (move rewrite, export, the witness's freshness check, residual
-  scanning) sees the same combined file set regardless of which root a given
-  rollout currently sits under.
+  (`thread-store/src/local/archive_thread.rs:41-53`). `rolloutRoots` walks
+  both roots for `discoverRolloutFiles` and `discoverRolloutFilesRaw` alike,
+  so every rollout surface (move rewrite, export, residual scanning) sees
+  the same combined file set regardless of which root a given rollout
+  currently sits under.
+- `discoverRolloutFiles` returns one file per LOGICAL rollout: when both
+  `X.jsonl` and a crash-window `X.jsonl.zst` sibling exist, only the plain
+  file is kept, mirroring Codex's own walker
+  (`rollout/src/compression.rs:141-163,941-943`). Move rewrite, export,
+  `projectRollouts`, `knowsProject`, and stats all consume this
+  deduplicated form; only the freshness witness reads the raw,
+  non-deduplicated `discoverRolloutFilesRaw`, since it needs every physical
+  file's mtime and the compression-lock witness, WAL/SHM freshness, and
+  process-table witness already cover the same signal independently.
 - Export preserves the root distinction in the archive path
   (`archiveRolloutName` maps `sessions/` and `archived_sessions/` to
   `codex/sessions/…` and `codex/archived-sessions/…`); import stages back to
@@ -194,7 +264,11 @@ shapes themselves.
   through the shared `appendLinesToFile` helper, which opens each file with
   `O_APPEND` (`os.O_RDWR|os.O_CREATE|os.O_APPEND`) and never renames or
   replaces it. `appendUniqueHistory` deduplicates by `(session_id,
-  timestamp)`, and `appendUniqueExact` deduplicates by exact line match. Both
+  timestamp, text)`. Codex timestamps `history.jsonl` at whole-second
+  precision (`message-history/src/lib.rs:121-125`), so two distinct prompts
+  submitted to one thread within the same wall-clock second need `text` in
+  the key to survive as separate lines instead of collapsing into one on
+  import. `appendUniqueExact` deduplicates by exact line match. Both
   scan the existing file first (`scanLines`), so re-importing the same
   archive never appends a duplicate line.
 - For `history.jsonl`, never replacing the file is load-bearing: Codex's own
@@ -263,6 +337,28 @@ shapes themselves.
 
 - Guaranteeing every sidecar row applies on the first import. A thread whose
   row Codex has not yet created is expected to need the documented re-run.
+
+### Reference thread-ID union
+
+**Handled.**
+
+- `Export` and `ReferenceSurfaces` both need the same thread-ID set for one
+  project: its state-database rows (`projectThreadIDs`) unioned with the IDs
+  its own rollout files carry. `projectThreadIDSet` computes that union once
+  and both callers feed it, so a thread with a state-db row but no matching
+  rollout file (or the reverse) counts consistently everywhere instead of
+  only where a given call site happened to look.
+
+**Refused.**
+
+- Deriving a project's thread-ID set from rollouts alone anywhere in this
+  package. A rollout-only set undercounts relative to `countThreadRows` and
+  to what `Export` archives.
+
+**Not covered.**
+
+- Nothing beyond the two current callers; a third caller needing the same
+  set uses `projectThreadIDSet` rather than re-deriving it.
 
 ### Config never ported
 
@@ -397,7 +493,12 @@ witness's five evidence sources driven through the injected process lister
 and clock (fake PID files, fresh and stale marker mtimes) rather than the
 live process table or wall clock, `codex-dev.db` refusal on both a
 path-reference hit and a schema-drift case, the sidecar's apply-and-remainder
-counting, and `config.toml` byte-identity across an import.
+counting, `config.toml` byte-identity across an import, a divergent profile
+overlay's `sqlite_home` warning, `discoverRolloutFiles` suppressing a
+crash-window `.jsonl.zst` sibling while the freshness witness's raw
+enumeration still sees it, same-second history entries surviving on
+distinct `text`, and `ReferenceSurfaces` counting a state-database-only
+thread the same way `Export` would.
 
 `transcode_large_test.go` (`-tags large`) exercises the zstd decompression
 caps at production scale; the default suite asserts the per-line cap wins

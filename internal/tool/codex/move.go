@@ -24,7 +24,7 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 		return nil, fmt.Errorf("inspect codex-dev database: %w", err)
 	}
 	if !known && refusalWarning == "" {
-		return nil, tool.ErrProjectAbsent
+		return nil, workspace.projectAbsenceError()
 	}
 
 	workspace.clearApplyWarnings()
@@ -381,6 +381,14 @@ func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, er
 	}
 	if backupWarning != "" {
 		warnings = append(warnings, backupWarning)
+	}
+
+	sqliteHomeWarning, err := profileSQLiteHomeWarning(workspace.home, workspace.getenv)
+	if err != nil {
+		return warnings, err
+	}
+	if sqliteHomeWarning != "" {
+		warnings = append(warnings, sqliteHomeWarning)
 	}
 
 	return warnings, nil

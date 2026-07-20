@@ -99,10 +99,15 @@ func (workspace *Workspace) processTableWitness() ([]tool.ActiveWriter, error) {
 
 // freshnessWitness is evidence source 2: any rollout under either sessions
 // root, or any -wal/-shm sibling of a discovered database, modified within
-// freshnessWindow.
+// freshnessWindow. It reads the raw (non-deduplicated) rollout enumeration,
+// not discoverRolloutFiles: a .jsonl.zst crash-window sibling that
+// discoverRolloutFiles suppresses is itself still fresh-mtime evidence a
+// compression run just touched this home, and losing that specific signal
+// is safe only because the compression-lock witness, WAL/SHM freshness, and
+// the process-table witness already cover the same window independently.
 func (workspace *Workspace) freshnessWitness() ([]tool.ActiveWriter, error) {
 	cutoff := workspace.now().Add(-freshnessWindow)
-	rollouts, err := discoverRolloutFiles(workspace.home)
+	rollouts, err := discoverRolloutFilesRaw(workspace.home)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,6 +100,119 @@ func TestExportHistoryOnlyIncludesAssociatedHistoryLines(t *testing.T) {
 		return
 	}
 	t.Fatal("history entry was not exported")
+}
+
+// TestExport_WarnsOnDivergentProfileSQLiteHome guards finding H2 on the
+// export path: unlike move, Export has no separate residual-scan step, so
+// the same profileSQLiteHomeWarning must be checked inline and surfaced
+// through tool.ExportResult.Warnings, the export command's own warning
+// channel, or a divergent profile's state would be silently omitted from
+// the archive with no signal to the user.
+func TestExport_WarnsOnDivergentProfileSQLiteHome(t *testing.T) {
+	home := SetupFixture(t)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home.Dir, "work.config.toml"),
+		[]byte("sqlite_home = \""+elsewhere+"\"\n\n[projects.\""+FixtureProjectPath()+"\"]\ntrust_level = \"trusted\"\n"),
+		0o600,
+	))
+	workspace := quietTestWorkspace(home)
+	var archiveBytes bytes.Buffer
+	writer := zip.NewWriter(&archiveBytes)
+	sink := archive.NewSink(writer, toolName, nil)
+
+	result, err := workspace.Export(t.Context(), FixtureProjectPath(), map[string]bool{categoryHistory: true}, sink)
+
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	found := false
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "work.config.toml") {
+			found = true
+		}
+	}
+	assert.True(t, found, "Export must warn when a profile overlay declares a different sqlite_home: %v", result.Warnings)
+}
+
+// divergentProfileUnknownProjectFixture stages a fixture whose
+// work.config.toml declares a sqlite_home the adapter never resolves
+// against, then returns a Workspace and a project path with no evidence
+// anywhere this adapter checks: no rollout, no state-db thread row under
+// the base-resolved SQLiteDir, and no config.toml/profile [projects] key.
+// The returned project deliberately differs from FixtureProjectPath(),
+// which the fixture's rollouts and state db do reference. Shared by the
+// export-family and move absence tests below.
+func divergentProfileUnknownProjectFixture(t *testing.T) (workspace *Workspace, unrelatedProject string) {
+	t.Helper()
+	home := SetupFixture(t)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home.Dir, "work.config.toml"),
+		[]byte("sqlite_home = \""+elsewhere+"\"\n\n[projects.\""+FixtureProjectPath()+"\"]\ntrust_level = \"trusted\"\n"),
+		0o600,
+	))
+	return quietTestWorkspace(home), "/Users/fixture/only-under-divergent-profile"
+}
+
+// TestProjectAbsence_ReturnsUnresolvedErrorWhenProfileOverlayDiverges guards
+// the case finding H2 is actually about: a project whose only state might
+// live under a profile-declared sqlite_home this adapter cannot resolve
+// against must not be reported as a bare tool.ErrProjectAbsent, a
+// best-guess "project does not exist" derived from a directory known to
+// possibly be the wrong one. Every guard that would otherwise return
+// tool.ErrProjectAbsent must return the discriminable
+// ErrProjectAbsenceUnresolved instead, which does not match
+// errors.Is(err, tool.ErrProjectAbsent), so multi-tool sweep semantics
+// (move/export/stats) surface it as a hard failure rather than silently
+// skipping Codex the way a genuine absence would.
+func TestProjectAbsence_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(t *testing.T, workspace *Workspace, project string) error
+	}{
+		{
+			name: "Placeholders",
+			call: func(_ *testing.T, workspace *Workspace, project string) error {
+				_, err := workspace.Placeholders(project, nil)
+				return err
+			},
+		},
+		{
+			name: "Export",
+			call: func(t *testing.T, workspace *Workspace, project string) error {
+				var archiveBytes bytes.Buffer
+				writer := zip.NewWriter(&archiveBytes)
+				sink := archive.NewSink(writer, toolName, nil)
+				_, err := workspace.Export(t.Context(), project, map[string]bool{categoryHistory: true}, sink)
+				return err
+			},
+		},
+		{
+			name: "ReferenceSurfaces",
+			call: func(t *testing.T, workspace *Workspace, project string) error {
+				_, err := workspace.ReferenceSurfaces(t.Context(), project)
+				return err
+			},
+		},
+		{
+			name: "DiskCategories",
+			call: func(t *testing.T, workspace *Workspace, project string) error {
+				_, err := workspace.DiskCategories(t.Context(), project)
+				return err
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			workspace, project := divergentProfileUnknownProjectFixture(t)
+
+			err := testCase.call(t, workspace, project)
+
+			require.ErrorIs(t, err, ErrProjectAbsenceUnresolved)
+			assert.NotErrorIs(t, err, tool.ErrProjectAbsent,
+				"a divergent profile overlay must not be reported as bare absence")
+		})
+	}
 }
 
 func TestExportReportsMalformedSharedJSONLLines(t *testing.T) {
@@ -197,6 +311,32 @@ func TestCodexRoundTripRestoresRolloutsHistoryAndSessionIndex(t *testing.T) {
 	assertImportedRolloutMatches(t, sourceHome, destinationHome, archived)
 	assertFileBytes(t, filepath.Join(destinationHome.Dir, codexHistoryFile), history)
 	assertFileBytes(t, filepath.Join(destinationHome.Dir, sessionIndexFile), index)
+}
+
+// TestCodexRoundTripSucceedsWithCompressedSiblingCrashArtifact is the
+// end-to-end regression for finding H4: before discoverRolloutFiles
+// suppressed the .zst crash-window sibling, both the plain rollout and its
+// stranded compressed copy discovered as separate files, archiveRolloutName
+// stripped the .zst suffix from both, and the two entries collided at the
+// same archive path — zip.Writer.Create does not reject duplicate names,
+// so import staged the same destination path twice, the second promotion
+// failed, and the whole import rolled back across every selected tool.
+func TestCodexRoundTripSucceedsWithCompressedSiblingCrashArtifact(t *testing.T) {
+	sourceHome := SetupFixture(t)
+	plainPath := rolloutFixturePath(sourceHome, eraCPath)
+	plainData, err := os.ReadFile(plainPath) //nolint:gosec // G304: fixture path under t.TempDir()
+	require.NoError(t, err)
+	compressed, err := compressZstd(plainData)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(plainPath+zstSuffix, compressed, 0o600)) //nolint:gosec // G703: fixture path under t.TempDir()
+
+	archiveBytes := exportFixtureArchive(t, sourceHome)
+	destinationHome, _ := setupImportDestination(t)
+
+	result := importFixtureArchive(t, archiveBytes, destinationHome)
+
+	assert.Empty(t, result.Warnings)
+	assertImportedRolloutMatches(t, sourceHome, destinationHome, eraCPath)
 }
 
 func TestCodexImportLeavesConfigTOMLByteIdentical(t *testing.T) {
@@ -359,6 +499,29 @@ func TestScanLines_CancelledContextOnMissingFileReturnsError(t *testing.T) {
 	assert.Empty(t, lines, "a canceled context must not return a plausible-looking empty result")
 }
 
+// TestAppendUniqueHistory_KeepsDistinctSameSecondEntries guards finding H5:
+// historyKey used to dedup on (session_id, ts) alone, and Codex timestamps
+// history.jsonl at whole-second precision, so two distinct prompts
+// submitted to the same thread within one wall-clock second collapsed to
+// one on import. Keying on text too must let both survive, while a later
+// import of a byte-for-byte identical record still dedups.
+func TestAppendUniqueHistory_KeepsDistinctSameSecondEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), codexHistoryFile)
+	first := []byte(`{"session_id":"` + fixtureThreadOne + `","ts":100,"text":"first prompt"}` + "\n")
+	second := []byte(`{"session_id":"` + fixtureThreadOne + `","ts":100,"text":"second prompt"}` + "\n")
+	duplicateOfFirst := []byte(`{"session_id":"` + fixtureThreadOne + `","ts":100,"text":"first prompt"}` + "\n")
+
+	require.NoError(t, appendUniqueHistory(t.Context(), path, [][]byte{first, second}))
+	afterFirstImport := readFileBytes(t, path)
+	require.Equal(t, string(first)+string(second), string(afterFirstImport),
+		"two distinct prompts sharing (session_id, ts) must both survive")
+
+	require.NoError(t, appendUniqueHistory(t.Context(), path, [][]byte{duplicateOfFirst}))
+
+	assert.Equal(t, string(afterFirstImport), string(readFileBytes(t, path)),
+		"a record identical to one already present (session_id, ts, and text) must dedup")
+}
+
 func TestAppendLinesToFileSeparatesTornPriorRecord(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -465,6 +628,39 @@ func TestCodexStageRejectsHostileRolloutNamesAndAcceptsRecorderNames(t *testing.
 		require.NoError(t, err, name)
 		require.Len(t, staged, 1, name)
 		_ = os.Remove(staged[0].Temp)
+	}
+}
+
+// TestReferenceSurfaces_CountsStateDBOnlyThread guards finding FE2:
+// ReferenceSurfaces used to build its history/session-index id set from
+// projectRollouts alone, so a thread with a state-db row but no matching
+// rollout file showed zero history and session-index counts even though
+// countThreadRows counted it and Export (which seeds from projectThreadIDs
+// and unions rollout IDs) would have included it. projectThreadIDSet must
+// now give ReferenceSurfaces the same union Export uses.
+func TestReferenceSurfaces_CountsStateDBOnlyThread(t *testing.T) {
+	home := SetupFixture(t)
+	const stateOnlyThread = "00000000-0000-4000-8000-000000000099"
+	insertThreadRow(t, filepath.Join(home.SQLiteDir, stateDBFileName), stateOnlyThread, threadRowMetadata{})
+	history := []byte(`{"session_id":"` + stateOnlyThread + `","ts":100,"text":"state-db only"}` + "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, codexHistoryFile), history, 0o600))
+	index := []byte(`{"id":"` + stateOnlyThread + `","thread_name":"state-db only"}` + "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, sessionIndexFile), index, 0o600))
+	workspace := quietTestWorkspace(home)
+
+	references, err := workspace.ReferenceSurfaces(t.Context(), FixtureProjectPath())
+
+	require.NoError(t, err)
+	for _, name := range []string{"history lines", "session-index lines"} {
+		found := false
+		for _, surface := range references {
+			if surface.Name != name {
+				continue
+			}
+			found = true
+			assert.Positive(t, surface.Count, "surface %s must count a thread known only via the state db", name)
+		}
+		require.True(t, found, "surface %s must be present", name)
 	}
 }
 

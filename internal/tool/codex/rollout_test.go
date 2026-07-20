@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -27,6 +28,35 @@ func TestDiscoverRolloutFilesFindsBothRoots(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, files, rolloutFixturePath(home, eraCPath))
 	assert.Contains(t, files, rolloutFixturePath(home, "archived_sessions/rollout-2026-07-10T09-00-00-00000000-0000-4000-8000-000000000002.jsonl"))
+}
+
+// TestDiscoverRolloutFiles_SuppressesCompressedSibling guards finding H4:
+// a crash mid-compression can leave both X.jsonl and X.jsonl.zst on disk
+// (rollout/src/compression.rs:632-651 persists the compressed file before
+// removing the plain one), and Codex never re-compresses once the plain
+// file is gone, so the pair is durable with no self-heal. Every rollout
+// consumer must see one logical file, mirroring Codex's own walker
+// (should_skip_compressed_sibling); the freshness witness alone needs the
+// raw, non-deduplicated enumeration for its mtime evidence.
+func TestDiscoverRolloutFiles_SuppressesCompressedSibling(t *testing.T) {
+	home := SetupFixture(t)
+	plainPath := rolloutFixturePath(home, eraCPath)
+	compressedPath := plainPath + zstSuffix
+	plainData, err := os.ReadFile(plainPath) //nolint:gosec // G304: fixture path under t.TempDir()
+	require.NoError(t, err)
+	compressed, err := compressZstd(plainData)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(compressedPath, compressed, 0o600)) //nolint:gosec // G703: fixture path under t.TempDir()
+
+	files, err := discoverRolloutFiles(home)
+	require.NoError(t, err)
+	assert.Contains(t, files, plainPath, "the plain file is always kept")
+	assert.NotContains(t, files, compressedPath, "the crash-window .zst sibling is suppressed once the plain file exists")
+
+	raw, err := discoverRolloutFilesRaw(home)
+	require.NoError(t, err)
+	assert.Contains(t, raw, compressedPath, "the witness's raw enumeration must still see the crash-window sibling")
+	assert.Contains(t, raw, plainPath)
 }
 
 func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {

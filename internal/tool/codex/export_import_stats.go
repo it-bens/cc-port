@@ -51,6 +51,7 @@ type rolloutIdentity struct {
 type historyRecord struct {
 	SessionID string `json:"session_id"`
 	Timestamp any    `json:"ts"`
+	Text      string `json:"text"`
 }
 
 type threadSidecar struct {
@@ -73,7 +74,7 @@ func (workspace *Workspace) Placeholders(project string, _ map[string]bool) ([]m
 		return nil, err
 	}
 	if !known {
-		return nil, tool.ErrProjectAbsent
+		return nil, workspace.projectAbsenceError()
 	}
 	return []manifest.Placeholder{
 		{Key: codexProjectPathKey, Original: project},
@@ -89,7 +90,10 @@ func (workspace *Workspace) Export(ctx context.Context, project string, selected
 		return result, err
 	}
 	if !known {
-		return result, tool.ErrProjectAbsent
+		return result, workspace.projectAbsenceError()
+	}
+	if err := workspace.recordProfileSQLiteHomeWarning(&result); err != nil {
+		return result, err
 	}
 	rollouts, eraA, err := workspace.projectRollouts(ctx, project)
 	if err != nil {
@@ -103,25 +107,13 @@ func (workspace *Workspace) Export(ctx context.Context, project string, selected
 		))
 	}
 
-	threadIDs, err := workspace.projectThreadIDs(project)
+	rolloutLines, rolloutThreadIDs, err := workspace.readAndIdentifyRollouts(ctx, project, rollouts)
 	if err != nil {
 		return result, err
 	}
-	rolloutLines := make(map[string][][]byte, len(rollouts))
-	for _, rollout := range rollouts {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		lines, _, err := readRolloutLines(rollout, workspace.transcodeCaps)
-		if err != nil {
-			return result, fmt.Errorf("read rollout %s: %w", rollout, err)
-		}
-		identity, err := rolloutProjectIdentity(lines, project)
-		if err != nil {
-			return result, fmt.Errorf("identify rollout %s: %w", rollout, err)
-		}
-		rolloutLines[rollout] = lines
-		threadIDs[identity.ThreadID] = struct{}{}
+	threadIDs, err := workspace.projectThreadIDSet(project, rolloutThreadIDs)
+	if err != nil {
+		return result, err
 	}
 	if selected[categorySessions] {
 		for _, rollout := range rollouts {
@@ -159,6 +151,52 @@ func (workspace *Workspace) Export(ctx context.Context, project string, selected
 
 func recordCodexEntry(result *tool.ExportResult, category string, written archive.WrittenEntry) {
 	result.Categories[category] = append(result.Categories[category], tool.ArchiveEntry{ArchivePath: written.Name, Size: written.Size})
+}
+
+// recordProfileSQLiteHomeWarning appends profileSQLiteHomeWarning's result
+// to result.Warnings when non-empty, mirroring the same check move's
+// ResidualWarnings makes: Export has no separate residual-scan step, so it
+// must surface a divergent profile overlay inline rather than silently
+// archiving only what base config.toml's SQLiteDir resolves to.
+func (workspace *Workspace) recordProfileSQLiteHomeWarning(result *tool.ExportResult) error {
+	warning, err := profileSQLiteHomeWarning(workspace.home, workspace.getenv)
+	if err != nil {
+		return err
+	}
+	if warning != "" {
+		result.Warnings = append(result.Warnings, warning)
+	}
+	return nil
+}
+
+// readAndIdentifyRollouts reads every rollout in rollouts (projectRollouts's
+// matches; projectRollouts already read every discovered rollout once to
+// classify eraA/matches, so this is the second read, of matches only) and
+// caches its lines for Export's later archive-write pass so that read is
+// not repeated a third time. It returns those cached lines alongside the
+// union of thread IDs their session_meta/turn_context lines carry for
+// project.
+func (workspace *Workspace) readAndIdentifyRollouts(
+	ctx context.Context, project string, rollouts []string,
+) (rolloutLines map[string][][]byte, rolloutThreadIDs map[string]struct{}, err error) {
+	rolloutLines = make(map[string][][]byte, len(rollouts))
+	rolloutThreadIDs = make(map[string]struct{}, len(rollouts))
+	for _, rollout := range rollouts {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		lines, _, err := readRolloutLines(rollout, workspace.transcodeCaps)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read rollout %s: %w", rollout, err)
+		}
+		identity, err := rolloutProjectIdentity(lines, project)
+		if err != nil {
+			return nil, nil, fmt.Errorf("identify rollout %s: %w", rollout, err)
+		}
+		rolloutLines[rollout] = lines
+		rolloutThreadIDs[identity.ThreadID] = struct{}{}
+	}
+	return rolloutLines, rolloutThreadIDs, nil
 }
 
 func (workspace *Workspace) projectRollouts(ctx context.Context, project string) (matches, eraA []string, err error) {
@@ -675,7 +713,14 @@ func historyKey(line []byte) (string, error) {
 	if err := json.Unmarshal(line, &record); err != nil {
 		return "", fmt.Errorf("parse history line for deduplication: %w", err)
 	}
-	encoded, err := json.Marshal([]any{record.SessionID, record.Timestamp})
+	// Codex timestamps history.jsonl at whole-second precision
+	// (message-history/src/lib.rs:121-125, SystemTime::now()...as_secs()), so
+	// two distinct prompts submitted to one thread within the same
+	// wall-clock second share (session_id, ts). Text joins the key so those
+	// two survive rather than collapsing into one on import, while an
+	// identical re-imported record (same session, timestamp, and text)
+	// still dedups.
+	encoded, err := json.Marshal([]any{record.SessionID, record.Timestamp, record.Text})
 	if err != nil {
 		return "", err
 	}
@@ -818,7 +863,7 @@ func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project strin
 		return nil, err
 	}
 	if !known {
-		return nil, tool.ErrProjectAbsent
+		return nil, workspace.projectAbsenceError()
 	}
 	rollouts, _, err := workspace.projectRollouts(ctx, project)
 	if err != nil {
@@ -828,7 +873,7 @@ func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project strin
 	if err != nil {
 		return nil, err
 	}
-	ids := make(map[string]struct{})
+	rolloutThreadIDs := make(map[string]struct{}, len(rollouts))
 	for _, path := range rollouts {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -841,7 +886,11 @@ func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project strin
 		if err != nil {
 			return nil, err
 		}
-		ids[identity.ThreadID] = struct{}{}
+		rolloutThreadIDs[identity.ThreadID] = struct{}{}
+	}
+	ids, err := workspace.projectThreadIDSet(project, rolloutThreadIDs)
+	if err != nil {
+		return nil, err
 	}
 	history, err := countHistoryForIDs(ctx, filepath.Join(workspace.home.Dir, codexHistoryFile), ids)
 	if err != nil {
@@ -933,7 +982,7 @@ func (workspace *Workspace) DiskCategories(ctx context.Context, project string) 
 		return nil, err
 	}
 	if !known {
-		return nil, tool.ErrProjectAbsent
+		return nil, workspace.projectAbsenceError()
 	}
 	rollouts, _, err := workspace.projectRollouts(ctx, project)
 	if err != nil {
@@ -1101,6 +1150,26 @@ func (workspace *Workspace) projectThreadIDs(project string) (map[string]struct{
 		}
 		_ = rows.Close()
 		_ = database.Close()
+	}
+	return threadIDs, nil
+}
+
+// projectThreadIDSet unions project's state-database thread IDs
+// (projectThreadIDs) with rolloutThreadIDs, the caller's own rollout-derived
+// set. Export and ReferenceSurfaces both need this exact union — a thread
+// whose state-db row has no matching rollout file, or vice versa, must
+// still count — so one function computes it for both callers instead of
+// each re-deriving it and risking drift (finding FE2: ReferenceSurfaces
+// used to build its id set from rollouts alone, so a state-db-only thread
+// showed zero history and session-index counts even though Export and
+// countThreadRows both included it).
+func (workspace *Workspace) projectThreadIDSet(project string, rolloutThreadIDs map[string]struct{}) (map[string]struct{}, error) {
+	threadIDs, err := workspace.projectThreadIDs(project)
+	if err != nil {
+		return nil, err
+	}
+	for id := range rolloutThreadIDs {
+		threadIDs[id] = struct{}{}
 	}
 	return threadIDs, nil
 }

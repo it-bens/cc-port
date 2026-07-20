@@ -162,6 +162,47 @@ func TestResolveSQLiteDirDoesNotExpandTildeEnvironmentValue(t *testing.T) {
 	assert.Equal(t, filepath.Join(currentDir, "~", "state"), sqliteDir)
 }
 
+func TestProfileSQLiteHomeWarning_EmptyWhenNoOverlayDeclaresSQLiteHome(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "work.config.toml"),
+		[]byte("[projects.\"/Users/fixture/project\"]\ntrust_level = \"trusted\"\n"),
+		0o600,
+	))
+	home := &Home{Dir: dir, SQLiteDir: dir}
+
+	warning, err := profileSQLiteHomeWarning(home, fakeGetenv(nil))
+
+	require.NoError(t, err)
+	assert.Empty(t, warning)
+}
+
+// TestProfileSQLiteHomeWarning_ReportsDivergentOverlay guards the fail-loud
+// path for finding H2: Codex's active --profile selection is a runtime CLI
+// argument never recorded in config.toml (core/src/config/mod.rs:3047-3054
+// refuses to start Codex at all when a legacy `profile` key is present), so
+// resolveSQLiteDir can never determine which profile, if any, was active
+// for the state currently on disk and always resolves against base
+// config.toml. When a discovered profile overlay declares a sqlite_home
+// different from that resolution, cc-port must say so rather than silently
+// trusting the base resolution.
+func TestProfileSQLiteHomeWarning_ReportsDivergentOverlay(t *testing.T) {
+	dir := t.TempDir()
+	elsewhere := filepath.Join(dir, "elsewhere")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "work.config.toml"),
+		[]byte("sqlite_home = \""+elsewhere+"\"\n"),
+		0o600,
+	))
+	home := &Home{Dir: dir, SQLiteDir: dir}
+
+	warning, err := profileSQLiteHomeWarning(home, fakeGetenv(nil))
+
+	require.NoError(t, err)
+	assert.Contains(t, warning, "work.config.toml")
+	assert.Contains(t, warning, dir)
+}
+
 func TestOpenPopulatesAgentsDirFromHome(t *testing.T) {
 	homeDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o750))
