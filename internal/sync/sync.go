@@ -133,7 +133,8 @@ func PlanPush(_ context.Context, opts PushOptions, prior *PriorRead) (*PushPlan,
 	plan.PriorSize = prior.Source.Size
 	plan.PriorEncrypted = prior.WasEncrypted
 
-	priorMetadata, err := manifest.ReadManifestFromZip(prior.Source.ReaderAt, prior.Source.Size)
+	caps := archive.DefaultCaps()
+	priorMetadata, err := manifest.ReadManifestFromZip(prior.Source.ReaderAt, prior.Source.Size, caps.MaxEntries)
 	if err != nil {
 		return nil, fmt.Errorf("sync.PlanPush: read prior manifest: %w", err)
 	}
@@ -193,12 +194,12 @@ func PlanPull(ctx context.Context, opts PullOptions, source pipeline.Source) (*P
 		return nil, err
 	}
 
-	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
+	caps := archive.DefaultCaps()
+	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size, caps.MaxEntries)
 	if err != nil {
 		return nil, fmt.Errorf("sync.PlanPull: read manifest: %w", err)
 	}
 
-	caps := archive.DefaultCaps()
 	reader, err := archive.OpenReader(source.ReaderAt, source.Size, caps)
 	if err != nil {
 		return nil, fmt.Errorf("sync.PlanPull: open archive: %w", err)

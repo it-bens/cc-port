@@ -41,11 +41,14 @@ through a neutral third party.
 - **Manifest I/O**
   - `WriteManifest(path string, metadata *Metadata) error`
   - `ReadManifest(path string) (*Metadata, error)`
-  - `ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error)`:
+  - `ReadManifestFromZip(src io.ReaderAt, size int64, maxEntries int) (*Metadata, error)`:
     parses `metadata.xml` from a ZIP exposed as `io.ReaderAt` + size. Callers
     open the source (file, materialized tempfile, or in-memory bytes) and
     pass it through; this package never touches paths. Refuses a nil `src`
-    with an error naming `MaterializeStage`.
+    with an error naming `MaterializeStage`. `maxEntries` bounds the
+    archive's declared entry count the same way `archive.Caps.MaxEntries`
+    bounds `archive.OpenReader`; zero disables the check (see §Archive
+    entry-count cap).
 
 ### Errors
 
@@ -54,6 +57,10 @@ through a neutral third party.
 - `ErrManifestEntryTooLarge`: returned by `ReadManifestFromZip` when the
   `metadata.xml` zip entry's decoded size exceeds the cap. Tests assert via
   `errors.Is`.
+- `ErrManifestArchiveTooManyEntries`: returned by `ReadManifestFromZip` when
+  the archive's declared or observed entry count exceeds `maxEntries`.
+  `EntryCountCapError` names the count and the limit; tests assert
+  via `errors.As`.
 - `ErrPlaceholderKeyTooLong`: returned by both `ReadManifest` and
   `ReadManifestFromZip` when a declared placeholder key exceeds
   `maxPlaceholderKeyBytes` (4 KiB). Tests assert via `errors.Is`.
@@ -148,6 +155,48 @@ Both `ReadManifest` and `ReadManifestFromZip` enforce the same 4 MiB cap.
 - None at runtime. The cap is fully enforced by this package on every read
   path.
 
+### Archive entry-count cap
+
+`ReadManifestFromZip` enforces the same `MaxEntries` bound `archive.OpenReader`
+does, refusing before `zip.NewReader`'s eager central-directory parse when
+possible.
+
+#### Handled
+
+- `ReadManifestFromZip` refuses when the archive's End Of Central Directory
+  record declares more entries than `maxEntries`, before `zip.NewReader`
+  runs. `maxEntries` set to zero disables the check.
+- A trailer that declares the zip64 sentinel is resolved through the zip64
+  locator and end record rather than skipped: a plain EOCD's 16-bit count
+  field tops out at 65,535, so `archive.DefaultCaps()`'s default of 200,000
+  can only ever be exceeded by a zip64 archive.
+- A `zip.NewReader` parse that succeeds despite an under-declared trailer is
+  caught by a post-parse count check afterward, mirroring
+  `archive.OpenReader`'s two-tier enforcement.
+- Every production call site threads `maxEntries` from the same
+  `archive.Caps.MaxEntries` value the archive package uses
+  (`archive.DefaultCaps()` by default), so a caller cannot forget the cap on
+  one path while enforcing it on another (see
+  [`internal/archive/README.md`](../archive/README.md) §Entry decompression
+  caps).
+
+#### Refused
+
+- An archive whose declared or observed entry count exceeds `maxEntries`:
+  `EntryCountCapError`, naming the count and the limit.
+
+#### Not covered
+
+- The same residual as `archive.OpenReader`'s early check: an archive that
+  deliberately mis-declares its central directory still costs one eager
+  `zip.NewReader` parse before the post-parse count check catches it (see
+  [`internal/archive/README.md`](../archive/README.md) §Entry decompression
+  caps).
+- This package cannot import `internal/archive` (that package already
+  imports this one, for `WriteMetadata`), so the trailer-scanning logic is
+  duplicated rather than shared; each copy is covered by its own package's
+  tests.
+
 ### Placeholder key validation
 
 `ReadManifest` and `ReadManifestFromZip` both call `validatePlaceholderKeys`
@@ -222,6 +271,11 @@ Unit tests in `categories_test.go` and `manifest_test.go`:
   rejecting a placeholder key that is not `"{{...}}"`-shaped (no braces,
   a missing closing brace, and an empty inner segment).
 - `ReadManifestFromZip`'s nil-source refusal.
+- `ReadManifestFromZip` refusing an archive whose declared entry count
+  exceeds `maxEntries`, including a trailer-only archive with no parseable
+  central directory (proving the refusal fires before `zip.NewReader`, not
+  after) and a zip64-sentinel trailer declaring a count in the hundreds of
+  thousands (proving the sentinel is resolved, not skipped).
 
 ## References
 

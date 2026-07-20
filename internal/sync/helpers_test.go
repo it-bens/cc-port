@@ -3,6 +3,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -148,6 +149,32 @@ func buildArchiveBytes(
 		t.Fatalf("close pipeline: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// buildBareZip64EOCDArchive returns a synthetic ZIP trailer -- a zip64 End
+// Of Central Directory record, the zip64 locator pointing at it, and a
+// plain EOCD record carrying the zip64 sentinel -- declaring entryCount
+// entries. It is not a parseable ZIP; it exists only to prove PlanPull
+// refuses an archive whose trailer alone declares more entries than
+// archive.DefaultCaps allows, without constructing that many real entries.
+// A plain (non-zip64) EOCD's 16-bit count field tops out at 65,535, well
+// under DefaultCaps' 200,000-entry MaxEntries, so only a zip64 trailer can
+// exercise this refusal at production scale.
+func buildBareZip64EOCDArchive(t *testing.T, entryCount uint64) []byte {
+	t.Helper()
+	zip64End := make([]byte, 56)
+	binary.LittleEndian.PutUint32(zip64End[0:4], 0x06064b50)   // zip64 EOCD signature
+	binary.LittleEndian.PutUint64(zip64End[32:40], entryCount) // total entries
+
+	locator := make([]byte, 20)
+	binary.LittleEndian.PutUint32(locator[0:4], 0x07064b50) // zip64 locator signature
+	binary.LittleEndian.PutUint64(locator[8:16], 0)         // zip64 EOCD record starts at offset 0
+
+	eocd := make([]byte, 22)
+	binary.LittleEndian.PutUint32(eocd[0:4], 0x06054b50) // EOCD signature
+	binary.LittleEndian.PutUint16(eocd[10:12], 0xffff)   // zip64 sentinel
+
+	return append(append(zip64End, locator...), eocd...)
 }
 
 func uploadBytes(t *testing.T, r *remote.Remote, name string, body []byte) {

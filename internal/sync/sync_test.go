@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/testutil"
@@ -221,7 +222,7 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
-	metadata, err := manifest.ReadManifestFromZip(bytes.NewReader(body), int64(len(body)))
+	metadata, err := manifest.ReadManifestFromZip(bytes.NewReader(body), int64(len(body)), archive.DefaultCaps().MaxEntries)
 	if err != nil {
 		t.Fatalf("ReadManifestFromZip: %v", err)
 	}
@@ -231,6 +232,26 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	if want := fixed.Format(time.RFC3339); metadata.SyncPushedAt != want {
 		t.Fatalf("SyncPushedAt = %q, want %q", metadata.SyncPushedAt, want)
 	}
+}
+
+// TestPlanPull_RefusesArchiveDeclaringTooManyEntries proves PlanPull enforces
+// MaxEntries on the manifest read that runs before archive.OpenReader, using
+// a trailer-only archive that declares far more entries than
+// archive.DefaultCaps allows without constructing that many real entries.
+func TestPlanPull_RefusesArchiveDeclaringTooManyEntries(t *testing.T) {
+	r := newFileRemote(t)
+	declaredEntries := uint64(archive.DefaultCaps().MaxEntries) + 1 //nolint:gosec // G115: DefaultCaps().MaxEntries is a positive constant
+	uploadBytes(t, r, "k", buildBareZip64EOCDArchive(t, declaredEntries))
+	targets, _ := buildTestTargets(t)
+
+	source := openSourceForTest(t, r, "k", "")
+	_, err := PlanPull(context.Background(), PullOptions{
+		AllTools: toolSetForTest(), Targets: targets, Name: "k", TargetPath: t.TempDir(),
+	}, source)
+
+	var countErr *manifest.EntryCountCapError
+	require.ErrorAs(t, err, &countErr, "PlanPull must refuse via the manifest read, before archive.OpenReader runs")
+	assert.Equal(t, archive.DefaultCaps().MaxEntries, countErr.Limit)
 }
 
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {

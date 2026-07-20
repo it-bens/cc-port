@@ -211,7 +211,7 @@ func runImportManifest(cmd *cobra.Command, args []string) (err error) {
 		}
 	}()
 
-	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size)
+	metadata, err := manifest.ReadManifestFromZip(source.ReaderAt, source.Size, archive.DefaultCaps().MaxEntries)
 	if err != nil {
 		return fmt.Errorf("read manifest from zip: %w", err)
 	}
