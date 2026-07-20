@@ -1,4 +1,4 @@
-# internal/logo — agent notes
+# internal/logo: agent notes
 
 ## Before editing
 

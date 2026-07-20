@@ -64,7 +64,7 @@ approximation.
 - What counts as a "reference" or a "disk category" for any given tool. That
   is each adapter's `Auditor` implementation; see
   [`internal/tool/claude/README.md`](../tool/claude/README.md) §Reference and
-  disk accounting for the Claude instance.
+  disk accounting (stats) for the Claude instance.
 
 ## Tests
 

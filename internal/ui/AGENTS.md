@@ -1,4 +1,4 @@
-# internal/ui — agent notes
+# internal/ui: agent notes
 
 ## Before editing
 

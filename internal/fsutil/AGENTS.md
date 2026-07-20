@@ -1,4 +1,4 @@
-# internal/fsutil — agent notes
+# internal/fsutil: agent notes
 
 ## Before editing
 

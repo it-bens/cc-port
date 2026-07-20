@@ -156,7 +156,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Layered AWS credential resolution (file > env > prompt) | [`internal/credentials/README.md`](../internal/credentials/README.md) §Source layering and precedence |
 | Banner is consumer-defined; `internal/logo` is opt-in via `-tags logo` | `cmd/cc-port/banner_default.go`, `cmd/cc-port/banner_logo.go` |
 | Reporter injected through Options, never package-global | [`internal/progress/README.md`](../internal/progress/README.md) §Reporter injection |
-| Footprint reference counts match each surface's apply-rewrite variant | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §Reference and disk accounting |
+| Footprint reference counts match each surface's apply-rewrite variant | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §Reference and disk accounting (stats) |
 
 ### TTY-prompt ownership split
 

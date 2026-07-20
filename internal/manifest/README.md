@@ -134,11 +134,10 @@ Both `ReadManifest` and `ReadManifestFromZip` enforce the same 4 MiB cap.
 
 #### Handled
 
-- `ReadManifest` calls `os.Stat` before allocating and rejects files whose
-  size exceeds 4 MiB.
-- `ReadManifestFromZip` reads at most 4 MiB + 1 byte via `io.LimitReader` so
-  it can distinguish an exactly-at-limit file from an over-limit one. Both
-  variants return an error naming the source when the cap triggers.
+- Both `ReadManifest` and `ReadManifestFromZip` read at most 4 MiB + 1 byte
+  via `io.LimitReader`, so each can distinguish an exactly-at-limit file from
+  an over-limit one without allocating past the cap. Both return an error
+  naming the source when the cap triggers.
 
 #### Refused
 

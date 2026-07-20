@@ -94,8 +94,9 @@ type ProjectFootprint struct {
 	tool.ProjectInfo
 }
 
-// ComputeAllFootprints reports every target's known projects, ranked by
-// total bytes descending within each tool's contribution.
+// ComputeAllFootprints reports every target's known projects, flattened into
+// one list and ranked by total bytes descending across every tool combined
+// (ties broken by label).
 func ComputeAllFootprints(ctx context.Context, targets []tool.Target) ([]ProjectFootprint, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

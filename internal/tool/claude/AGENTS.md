@@ -1,3 +1,5 @@
+# internal/tool/claude: agent notes
+
 ## Before editing
 
 - Do not normalise unicode or casefold in `EncodePath` (README §Path encoding).

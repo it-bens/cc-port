@@ -1,4 +1,4 @@
-# internal/scan — agent notes
+# internal/scan: agent notes
 
 ## Before editing
 

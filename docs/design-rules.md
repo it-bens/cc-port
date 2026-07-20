@@ -24,7 +24,7 @@ Extend the registry. New export category → `manifest.AllCategories`, reference
 
 **Don't** hard-code a category slice in `cmd/cc-port/`. Don't enumerate the directory in callers (move, export, importer, ui). Don't maintain a parallel list of user-wide rewrite files in move's logic. Don't defer the parity test — drift that lands in the original change is invisible to a test added later.
 
-**See** `internal/manifest/README.md` and `internal/claude/README.md` §Session-keyed registry.
+**See** `internal/manifest/README.md` and `internal/tool/claude/README.md` §Session-keyed registry.
 
 ## Write a command body that mutates user state
 

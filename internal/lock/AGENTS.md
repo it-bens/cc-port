@@ -1,4 +1,4 @@
-# internal/lock — agent notes
+# internal/lock: agent notes
 
 ## Before editing
 

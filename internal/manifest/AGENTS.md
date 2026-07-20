@@ -1,4 +1,4 @@
-# internal/manifest — agent notes
+# internal/manifest: agent notes
 
 ## Before editing
 
