@@ -499,13 +499,14 @@ func verifyProjectIdentity(ctx context.Context, claudeHome *Home, projectPath st
 // THIRD path. No witness at all is the same skip-with-warning case
 // LocateProject already tolerates for a project with no attributable
 // sessions; the caller resolves the fresh-vs-resumed distinction itself
-// from other evidence (see resolveMoveIdentity).
-func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessionUUIDs []string) error {
+// from other evidence (see resolveMoveIdentity). It returns corroborated false
+// for that skip so the destructive fresh promotion can refuse it.
+func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessionUUIDs []string) (corroborated bool, err error) {
 	encodedDir := claudeHome.ProjectDir(oldPath)
 
 	if len(sessionUUIDs) == 0 {
 		warnIdentityCheckSkipped(encodedDir, oldPath)
-		return nil
+		return false, nil
 	}
 
 	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
@@ -515,22 +516,22 @@ func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessio
 
 	cwds, err := walkSessionWitnesses(context.Background(), claudeHome.SessionsDir(), uuidSet)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(cwds) == 0 {
 		warnIdentityCheckSkipped(encodedDir, oldPath)
-		return nil
+		return false, nil
 	}
 
 	for _, cwd := range cwds {
 		if cwd != oldPath && cwd != newPath {
-			return fmt.Errorf(
+			return false, fmt.Errorf(
 				"encoded directory %s: sessions/*.json attributes it to %s, neither %q nor %q; refusing to rewrite",
 				encodedDir, formatCwdList(cwds), oldPath, newPath,
 			)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // walkSessionWitnesses inspects every sessions/*.json and returns the distinct
@@ -709,8 +710,8 @@ func checkConfigBlock(locations *ProjectLocations, claudeHome *Home, projectPath
 	return nil
 }
 
-// appendFilesRecursive appends every non-directory entry under dir to *dst.
-// Filtering (e.g. sidecars) is the caller's responsibility.
+// appendFilesRecursive appends every non-directory, non-cc-port-artifact entry
+// under dir to *dst. Callers remain responsible for domain-specific filters.
 func appendFilesRecursive(ctx context.Context, dst *[]string, dir string) error {
 	// The callback below already checks ctx.Err() per visited entry; this
 	// entry check additionally catches an already-canceled context before
@@ -726,6 +727,9 @@ func appendFilesRecursive(ctx context.Context, dst *[]string, dir string) error 
 			return ctxErr
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		if rewrite.IsArtifactPath(entry.Name()) {
 			return nil
 		}
 		*dst = append(*dst, path)

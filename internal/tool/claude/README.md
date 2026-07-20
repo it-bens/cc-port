@@ -189,6 +189,9 @@ every file and directory tied to the project:
 - Each session-keyed collector returns empty when its parent directory is
   absent, matching the behaviour of `collectMemoryFiles`. The directory may
   not exist if the feature has never been used.
+- Recursive plugins-data and tasks collection excludes paths recognized by
+  `rewrite.IsArtifactPath`, so stranded cc-port temps, rollback copies, and
+  import staging files never reach enumeration, export, or stats.
 - After the project directory is confirmed to exist, `verifyProjectIdentity`
   walks `~/.claude/sessions/*.json` and collects the distinct `cwd` values
   reported by sessions whose `sessionId` matches a UUID inside the encoded
@@ -463,7 +466,9 @@ state.
 - If removing the physical source directory fails, Apply completes with an
   `ErrResidualSourceDir`-prefixed warning; if removing the old encoded project
   data directory fails, it completes with an `old encoded project data
-  directory still present` warning.
+  directory still present` warning. A physical-source residual retains the
+  encoded destination's promotion marker, so the next run can resolve the
+  resume state and retry cleanup; a fully converged move removes that marker.
 
 #### Refused
 
@@ -476,6 +481,11 @@ state.
   `verifyProjectIdentity` applies to a single expected path. Two distinct
   real paths can encode to the same directory name, so a witness reporting
   a third path is never accepted as a resume, only as a collision.
+- A fresh move whose encoded source directory has no readable session witness:
+  the project-directory surface refuses promotion and removal because there is
+  no ownership corroboration for that destructive operation. Read-only
+  enumeration retains its documented warning-and-proceed behavior, and a
+  marked resume remains valid without a witness.
 - A promotion marker at `NewPath`'s encoded directory naming a path other
   than `OldPath`'s encoded directory: `resolveMoveIdentity` hard-refuses,
   naming both the recorded and the expected source.

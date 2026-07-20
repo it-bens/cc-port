@@ -1,6 +1,7 @@
 package claude_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
@@ -144,6 +146,78 @@ func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
 		"memory discovery must ignore cc-port's own rollback artifacts")
 	assert.True(t, containsBaseName(projectLocations.MemoryFiles, "MEMORY.md"),
 		"the real memory file must still be located")
+}
+
+func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
+	claudeHome := testutil.SetupFixture(t)
+	workspace := claude.NewWorkspace(claudeHome)
+	locations, err := claude.LocateProject(claudeHome, testProjectPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, locations.PluginsDataFiles)
+	require.NotEmpty(t, locations.TaskFiles)
+	beforeCounts, err := workspace.ReferenceSurfaces(t.Context(), testProjectPath)
+	require.NoError(t, err)
+
+	// artifactBaseNames covers all four IsArtifactPath classes: the three
+	// whole-name suffixes, plus SafeWriteTempPrefix's leading prefix. The
+	// prefix class is the one that a full-path (rather than base-name) match
+	// against IsArtifactPath fails to filter, since strings.HasPrefix never
+	// matches past a leading directory component.
+	artifactBaseNames := []string{
+		"stale.json" + rewrite.RollbackSuffix,
+		"stale.json" + rewrite.ImportStagingSuffix,
+		"stale.json" + rewrite.StagingSuffix,
+		rewrite.SafeWriteTempPrefix + "stale123",
+	}
+	pluginDir := filepath.Dir(locations.PluginsDataFiles[0])
+	taskDir := filepath.Dir(locations.TaskFiles[0])
+	var pluginArtifacts, taskArtifacts []string
+	for _, baseName := range artifactBaseNames {
+		pluginArtifact := filepath.Join(pluginDir, baseName)
+		taskArtifact := filepath.Join(taskDir, baseName)
+		require.NoError(t, os.WriteFile(pluginArtifact, []byte(testProjectPath), 0o600))
+		require.NoError(t, os.WriteFile(taskArtifact, []byte(testProjectPath), 0o600))
+		pluginArtifacts = append(pluginArtifacts, pluginArtifact)
+		taskArtifacts = append(taskArtifacts, taskArtifact)
+	}
+
+	locations, err = claude.LocateProject(claudeHome, testProjectPath)
+	require.NoError(t, err)
+	for _, artifact := range pluginArtifacts {
+		baseName := filepath.Base(artifact)
+		assert.False(t, containsBaseName(locations.PluginsDataFiles, baseName), "plugins-data artifact %s must be excluded", baseName)
+	}
+	for _, artifact := range taskArtifacts {
+		baseName := filepath.Base(artifact)
+		assert.False(t, containsBaseName(locations.TaskFiles, baseName), "tasks artifact %s must be excluded", baseName)
+	}
+	assert.True(t, containsBaseName(locations.PluginsDataFiles, "tracker-main.json"))
+	assert.True(t, containsBaseName(locations.TaskFiles, "1.json"))
+
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	selected := map[string]bool{"plugins-data": true, "tasks": true}
+	result, err := workspace.Export(t.Context(), testProjectPath, selected, archive.NewSink(writer, "claude", nil))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	allArtifacts := append(append([]string{}, pluginArtifacts...), taskArtifacts...)
+	for _, entry := range append(result.Categories["plugins-data"], result.Categories["tasks"]...) {
+		for _, artifact := range allArtifacts {
+			assert.NotContains(t, entry.ArchivePath, filepath.Base(artifact))
+		}
+	}
+
+	counts, err := workspace.ReferenceSurfaces(t.Context(), testProjectPath)
+	require.NoError(t, err)
+	beforeByName := make(map[string]int, len(beforeCounts))
+	for _, count := range beforeCounts {
+		beforeByName[count.Name] = count.Count
+	}
+	for _, count := range counts {
+		if count.Name == "plugins-data" || count.Name == "tasks" {
+			assert.Equal(t, beforeByName[count.Name], count.Count, "artifact-only path references must not contribute to stats")
+		}
+	}
 }
 
 func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {

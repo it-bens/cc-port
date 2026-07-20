@@ -51,10 +51,11 @@ var removeAll = os.RemoveAll
 // and must run last so every reference surface has already been rewritten
 // against the still-present old data.
 func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, error) {
-	locatePath, err := workspace.resolveMoveIdentity(req)
+	identity, err := workspace.resolveMoveIdentityState(req)
 	if err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
 	}
+	locatePath := identity.locatePath
 	if err := checkEncodedDirCollision(workspace.home, req.OldPath, req.NewPath); err != nil {
 		return nil, err
 	}
@@ -101,7 +102,9 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 		surfaces = append(surfaces, workspace.transcriptsSurface(req, locatePath))
 	}
 	surfaces = append(surfaces,
-		workspace.memorySurface(req, locatePath), workspace.sessionsSurface(req, locatePath), workspace.projectDirectorySurface(req),
+		workspace.memorySurface(req, locatePath),
+		workspace.sessionsSurface(req, locatePath),
+		workspace.projectDirectorySurface(req, identity.freshUncorroborated),
 	)
 	return surfaces, nil
 }
@@ -132,7 +135,20 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 // evidence at all would also produce; a marker naming a THIRD path is
 // positive evidence of a foreign promotion and hard-refuses, naming both
 // the recorded and the expected source.
+type moveIdentity struct {
+	locatePath          string
+	freshUncorroborated bool
+}
+
 func (workspace *Workspace) resolveMoveIdentity(req tool.MoveRequest) (string, error) {
+	identity, err := workspace.resolveMoveIdentityState(req)
+	if err != nil {
+		return "", err
+	}
+	return identity.locatePath, nil
+}
+
+func (workspace *Workspace) resolveMoveIdentityState(req tool.MoveRequest) (moveIdentity, error) {
 	claudeHome := workspace.home
 	ctx := context.Background()
 
@@ -140,38 +156,39 @@ func (workspace *Workspace) resolveMoveIdentity(req tool.MoveRequest) (string, e
 	sessionUUIDs, err := collectProjectDirEntries(ctx, &ProjectLocations{}, oldDir)
 	switch {
 	case err == nil:
-		if err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs); err != nil {
-			return "", err
+		corroborated, err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs)
+		if err != nil {
+			return moveIdentity{}, err
 		}
-		return req.OldPath, nil
+		return moveIdentity{locatePath: req.OldPath, freshUncorroborated: !corroborated}, nil
 	case !errors.Is(err, os.ErrNotExist):
-		return "", err
+		return moveIdentity{}, err
 	}
 
 	newDir := claudeHome.ProjectDir(req.NewPath)
 	sessionUUIDs, err = collectProjectDirEntries(ctx, &ProjectLocations{}, newDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, oldDir)
+			return moveIdentity{}, fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, oldDir)
 		}
-		return "", err
+		return moveIdentity{}, err
 	}
-	if err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs); err != nil {
-		return "", err
+	if _, err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs); err != nil {
+		return moveIdentity{}, err
 	}
 	recordedSource, present, err := rewrite.PromotedFrom(newDir)
 	if err != nil {
-		return "", err
+		return moveIdentity{}, err
 	}
 	if !present {
-		return "", fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, oldDir)
+		return moveIdentity{}, fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, oldDir)
 	}
 	if recordedSource != oldDir {
-		return "", fmt.Errorf(
+		return moveIdentity{}, fmt.Errorf(
 			"encoded directory %s: promotion marker names %s, not %s; refusing to rewrite", newDir, recordedSource, oldDir,
 		)
 	}
-	return req.NewPath, nil
+	return moveIdentity{locatePath: req.NewPath}, nil
 }
 
 // ResidualWarnings implements tool.Mover: content a move preserves verbatim
@@ -897,10 +914,22 @@ func rewriteTwicePreservingMtime(
 // to the new path and removing the originals. Its Plan reports one because
 // Claude always relocates its encoded project directory; RefsOnly suppresses
 // only the physical project-directory copy.
-func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest) tool.Surface {
+func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest, freshUncorroborated bool) tool.Surface {
+	uncorroboratedErr := func() error {
+		if !freshUncorroborated {
+			return nil
+		}
+		return fmt.Errorf(
+			"encoded directory %s: no sessions/*.json witness corroborates fresh move from %q to %q; refusing to promote or remove uncorroborated directory",
+			workspace.home.ProjectDir(req.OldPath), req.OldPath, req.NewPath,
+		)
+	}
 	return tool.Surface{
 		Name: tool.SurfaceProjectDirectory,
 		Plan: func(_ context.Context) (tool.SurfaceResult, error) {
+			if err := uncorroboratedErr(); err != nil {
+				return tool.SurfaceResult{}, err
+			}
 			destinations := []string{workspace.home.ProjectDir(req.NewPath)}
 			if !req.RefsOnly {
 				destinations = append(destinations, req.NewPath)
@@ -912,6 +941,9 @@ func (workspace *Workspace) projectDirectorySurface(req tool.MoveRequest) tool.S
 			return tool.SurfaceResult{Count: 1, Warnings: warnings}, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
+			if err := uncorroboratedErr(); err != nil {
+				return tool.SurfaceResult{}, err
+			}
 			err := workspace.applyProjectDirectoryMove(ctx, req, undo)
 			return tool.SurfaceResult{Count: 1}, err
 		},
@@ -962,17 +994,23 @@ func (workspace *Workspace) applyProjectDirectoryMove(ctx context.Context, req t
 		}
 	}
 
+	physicalSourceRemoved := req.RefsOnly
 	if !req.RefsOnly {
 		if err := removeAll(req.OldPath); err != nil {
 			workspace.addMoveWarning(fmt.Sprintf("%v: %s: %v", ErrResidualSourceDir, req.OldPath, err))
 		} else if err := rewrite.RemoveMarker(req.NewPath); err != nil {
+			physicalSourceRemoved = true
 			workspace.addMoveWarning(fmt.Sprintf("could not remove promotion marker: %v", err))
+		} else {
+			physicalSourceRemoved = true
 		}
 	}
 	if err := removeAll(oldProjectDir); err != nil {
 		workspace.addMoveWarning(fmt.Sprintf("old encoded project data directory still present: %s: %v", oldProjectDir, err))
-	} else if err := rewrite.RemoveMarker(newProjectDir); err != nil {
-		workspace.addMoveWarning(fmt.Sprintf("could not remove promotion marker: %v", err))
+	} else if physicalSourceRemoved {
+		if err := rewrite.RemoveMarker(newProjectDir); err != nil {
+			workspace.addMoveWarning(fmt.Sprintf("could not remove promotion marker: %v", err))
+		}
 	}
 	return nil
 }

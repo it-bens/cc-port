@@ -202,7 +202,7 @@ func TestApplyProjectDirectoryMove_ReportsResidualRemovalWithoutRollback(t *test
 	assert.Contains(t, workspace.moveWarningSnapshot()[0], "on-disk source directory still present")
 }
 
-// TestApplyProjectDirectoryMove_RerunAfterPhysicalResidualFailureConverges proves
+// TestMoveSurfaces_RerunAfterPhysicalResidualFailureConverges proves
 // the crash-then-resume contract end to end for the asymmetric case: a first
 // Apply whose physical removeAll(OldPath) fails, while the encoded
 // directory's own removal still succeeds, completes with a residual warning
@@ -212,7 +212,7 @@ func TestApplyProjectDirectoryMove_ReportsResidualRemovalWithoutRollback(t *test
 // A second Apply against the identical paths (with removeAll restored)
 // converges, removing the leftover physical directory and completing
 // warning-free.
-func TestApplyProjectDirectoryMove_RerunAfterPhysicalResidualFailureConverges(t *testing.T) {
+func TestMoveSurfaces_RerunAfterPhysicalResidualFailureConverges(t *testing.T) {
 	root := t.TempDir()
 	oldPath := filepath.Join(root, "old-project")
 	newPath := filepath.Join(root, "new-project")
@@ -222,7 +222,11 @@ func TestApplyProjectDirectoryMove_RerunAfterPhysicalResidualFailureConverges(t 
 	require.NoError(t, os.MkdirAll(oldPath, 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(oldPath, "source.txt"), []byte("source"), 0o600))
 	require.NoError(t, os.MkdirAll(oldEncodedDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(oldEncodedDir, "state.json"), []byte("state"), 0o600))
+	const sessionUUID = "aaaaaaaa-0000-4000-8000-000000000004"
+	require.NoError(t, os.WriteFile(filepath.Join(oldEncodedDir, sessionUUID+".jsonl"), []byte("{}"), 0o600))
+	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
+	sessionFile := fmt.Sprintf(`{"sessionId":%q,"cwd":%q}`, sessionUUID, oldPath)
+	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "1.json"), []byte(sessionFile), 0o600))
 
 	originalRemoveAll := removeAll
 	t.Cleanup(func() { removeAll = originalRemoveAll })
@@ -235,22 +239,69 @@ func TestApplyProjectDirectoryMove_RerunAfterPhysicalResidualFailureConverges(t 
 	workspace := NewWorkspace(home)
 	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
 
-	firstErr := workspace.applyProjectDirectoryMove(t.Context(), req, tool.NewRestorer())
+	firstSurfaces, err := workspace.MoveSurfaces(req)
+	require.NoError(t, err)
+	firstUndo := tool.NewRestorer()
+	for _, surface := range firstSurfaces {
+		_, err := surface.Apply(t.Context(), firstUndo)
+		require.NoError(t, err, "apply %s", surface.Name)
+	}
+	firstUndo.Cleanup()
 
-	require.NoError(t, firstErr, "warn-and-complete must not fail the apply")
 	assert.NotEmpty(t, workspace.moveWarningSnapshot(), "a failed residual removal must surface as a warning")
 	assert.DirExists(t, oldPath, "old physical directory must remain after its removal fails")
 	assert.NoDirExists(t, oldEncodedDir, "old encoded directory's own removal must still succeed")
 	assert.DirExists(t, newPath)
 	assert.DirExists(t, newEncodedDir)
+	assert.FileExists(t, filepath.Join(newEncodedDir, rewrite.MarkerFilename), "residual cleanup needs the encoded promotion marker to resume")
 
 	removeAll = originalRemoveAll
 	workspace.clearMoveWarnings()
-	secondErr := workspace.applyProjectDirectoryMove(t.Context(), req, tool.NewRestorer())
+	secondSurfaces, err := workspace.MoveSurfaces(req)
+	require.NoError(t, err, "the actual re-entry path must resolve the retained marker")
+	secondUndo := tool.NewRestorer()
+	for _, surface := range secondSurfaces {
+		_, err := surface.Apply(t.Context(), secondUndo)
+		require.NoError(t, err, "apply %s", surface.Name)
+	}
+	secondUndo.Cleanup()
 
-	require.NoError(t, secondErr, "the resumed apply must complete cleanly")
 	assert.NoDirExists(t, oldPath, "re-run must finish removing the leftover physical directory")
 	assert.Empty(t, workspace.moveWarningSnapshot(), "a clean re-run must not carry forward a residual warning")
+	assert.NoFileExists(t, filepath.Join(newEncodedDir, rewrite.MarkerFilename), "full convergence removes the marker")
+	_, err = workspace.MoveSurfaces(req)
+	require.ErrorIs(t, err, tool.ErrProjectAbsent, "a third run after convergence must report absent")
+}
+
+func TestMoveSurfaces_RefusesFreshWitnesslessProjectDirectoryPromotion(t *testing.T) {
+	root := t.TempDir()
+	home := &Home{Dir: filepath.Join(root, "dotclaude")}
+	oldPath := filepath.Join(root, "old-project")
+	newPath := filepath.Join(root, "new-project")
+	oldEncodedDir := home.ProjectDir(oldPath)
+	require.NoError(t, os.MkdirAll(oldEncodedDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(oldEncodedDir, "foreign.jsonl"), []byte("foreign"), 0o600))
+	workspace := NewWorkspace(home)
+
+	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+
+	require.NoError(t, err, "read-only identity resolution remains deliberately permissive")
+	foundProjectDirectory := false
+	for _, surface := range surfaces {
+		if surface.Name != tool.SurfaceProjectDirectory {
+			continue
+		}
+		foundProjectDirectory = true
+		_, err = surface.Apply(t.Context(), tool.NewRestorer())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), oldEncodedDir)
+		assert.Contains(t, err.Error(), oldPath)
+		assert.Contains(t, err.Error(), newPath)
+		break
+	}
+	require.True(t, foundProjectDirectory, "MoveSurfaces must include the destructive project-directory surface")
+	assert.DirExists(t, oldEncodedDir, "an uncorroborated directory must never be removed")
+	assert.NoDirExists(t, home.ProjectDir(newPath), "an uncorroborated directory must never be promoted")
 }
 
 // TestResolveMoveIdentity_ResumesViaNewPathAfterEncodedDirPromoted guards
