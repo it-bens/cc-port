@@ -55,7 +55,7 @@ snapshot: ## Run the full release pipeline locally (no publish, no brew, no sign
 snapshot-sign: ## Same as snapshot but exercises cosign sign-blob (opens browser for OIDC)
 	$(GORELEASER) release --snapshot --clean --skip=publish,homebrew
 
-ci: vet test-race test-integration lint release-check snapshot ## Run the same checks CI runs
+ci: vet test-race test-large test-integration lint release-check snapshot ## Run the same checks CI runs
 
 clean: ## Remove the binary and build artifacts
 	rm -f $(BINARY) coverage.txt
