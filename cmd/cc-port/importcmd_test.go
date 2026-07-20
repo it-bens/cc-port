@@ -16,8 +16,21 @@ import (
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/codex"
 )
+
+// newTestToolSet mirrors newToolSet's registration but wires Codex through
+// NewAdapter with a no-op ProcessLister, so a cmd-level test that opens the
+// real default Codex home does not depend on whether a codex process
+// happens to be running on the host executing the test: the process-table
+// witness is the one evidence source that reads live machine state instead
+// of the (already hermetic, temp-dir-scoped) Codex home a test controls.
+func newTestToolSet() *tool.Set {
+	return tool.NewSet(claude.New(), codex.NewAdapter(os.Getenv, noopProcessLister, time.Now, codex.DefaultTranscodeCaps()))
+}
+
+func noopProcessLister() ([]codex.ProcessInfo, error) { return nil, nil }
 
 func TestImportManifestCmd_HasOutputFlag(t *testing.T) {
 	cmd := newImportManifestCmd()
@@ -67,7 +80,7 @@ func TestImportWarningsNameTheirToolDuringMultiToolImport(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "codex-only.zip")
 	require.NoError(t, os.WriteFile(archivePath, buildCodexOnlyArchive(t), 0o600))
 
-	toolSet := newToolSet()
+	toolSet := newTestToolSet()
 	flags := registerToolFlags(&cobra.Command{}, toolSet)
 	flags.selected = []string{"claude", "codex"}
 	*flags.homeOverrides["claude"] = filepath.Join(t.TempDir(), "unused-claude-home")
