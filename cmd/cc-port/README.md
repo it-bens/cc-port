@@ -123,7 +123,8 @@ export, residual-content notices from a move or import) travel as plain
 (`tool.ExportResult.Warnings`, `move.ToolResult.Warnings`,
 `importer.Result.Warnings`) rather than a dedicated report type. Each command
 renders its own warnings after the run: `export.go:renderToolWarnings`,
-`move.go:renderApplyResult`, `importcmd.go:renderImportWarnings`. Every
+`move.go:renderApplyResult`, `importcmd.go:renderImportWarnings` (which
+`pullcmd.go` reuses for pull's apply path). Every
 renderer prefixes a warning with the tool's `DisplayName` only when more
 than one target ran this invocation.
 
@@ -155,10 +156,9 @@ with `cmd.SetOut` / `cmd.SetErr` per invocation. Bare `fmt.Printf`,
 
 #### Not covered
 
-- `newStatsCmd` and `newExportManifestCmd` are not in
-  `TestCommandConstructorsAreIsolated`'s case table, so the isolation
-  guarantee for those two constructors rests on the same closure-variable
-  pattern, not a dedicated regression test.
+- `newVersionCmd` is not in `TestCommandConstructorsAreIsolated`'s case
+  table; it registers no data-bearing flags, so its isolation rests on the
+  same closure-variable pattern, not a dedicated regression test.
 
 ## Tests
 

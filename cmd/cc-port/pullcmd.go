@@ -162,6 +162,9 @@ func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 		if len(result.SkippedTools) > 0 {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "))
 		}
+		if werr := renderImportWarnings(cmd.ErrOrStderr(), opts.Targets, result.Warnings); werr != nil {
+			progErr = errors.Join(progErr, werr)
+		}
 		if _, werr := fmt.Fprintf(cmd.OutOrStdout(), "Pulled: %s\n", opts.TargetPath); werr != nil {
 			progErr = errors.Join(progErr, fmt.Errorf("write pull confirmation: %w", werr))
 		}

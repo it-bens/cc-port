@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,22 @@ func newMergeTestWorkspace(t *testing.T) *Workspace {
 	dir := t.TempDir()
 	home := &Home{Dir: filepath.Join(dir, "dotclaude"), ConfigFile: filepath.Join(dir, "dotclaude.json")}
 	return NewWorkspace(home)
+}
+
+func TestFinalize_ReportsRulesFileReferences(t *testing.T) {
+	projectPath := "/Users/test/Projects/myproject"
+	workspace := newMergeTestWorkspace(t)
+	require.NoError(t, os.MkdirAll(workspace.home.RulesDir(), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(workspace.home.RulesDir(), "import-rule.md"),
+		[]byte("Applies to /Users/test/Projects/myproject only.\n"),
+		0o600,
+	))
+
+	warnings, err := workspace.Finalize(context.Background(), projectPath, nil)
+
+	require.NoError(t, err)
+	assert.Contains(t, warnings, "rules file import-rule.md (line 1) references this project")
 }
 
 func TestFinalizeHistory_EmptyExistingPrependsNothing(t *testing.T) {

@@ -184,7 +184,8 @@ func matchSessionKeyedPrefix(name string) (RegistryEntry, string, bool) {
 // Finalize implements tool.Importer: it merges the accumulated history
 // append and config block, each idempotently, so a re-run of the same
 // import never duplicates a history line or re-splices an identical config
-// block differently.
+// block differently. It also reports rules files that already reference the
+// imported project path.
 func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archive.StagedSet) ([]string, error) {
 	if len(workspace.historyAppends) > 0 {
 		if err := workspace.finalizeHistory(); err != nil {
@@ -196,7 +197,7 @@ func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archi
 			return nil, err
 		}
 	}
-	return nil, nil
+	return workspace.rulesWarningsDiagnostic(project), nil
 }
 
 // finalizeHistory appends every new line from workspace.historyAppends to

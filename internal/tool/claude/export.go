@@ -142,13 +142,7 @@ func (workspace *Workspace) Export(
 		}
 	}
 
-	report := scan.ScanReport(workspace.home.RulesDir(), project)
-	if report.Err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("could not scan rules files: %v", report.Err))
-	}
-	for _, warning := range report.Warnings {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("rules file %s (line %d) references this project", warning.File, warning.Line))
-	}
+	result.Warnings = append(result.Warnings, workspace.rulesWarningsDiagnostic(project)...)
 	if snapshotCount := len(result.Categories["file-history"]); snapshotCount > 0 {
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"%d file-history snapshot(s) archived as-is; contents may still reference the original project path "+
@@ -157,6 +151,31 @@ func (workspace *Workspace) Export(
 		))
 	}
 	return result, nil
+}
+
+// rulesWarnings reports rules files whose lines reference project. Rules
+// files are preserved verbatim on every surface, so export, import, and
+// move warn about lingering references instead of rewriting them.
+func (workspace *Workspace) rulesWarnings(project string) ([]string, error) {
+	matches, err := scan.Rules(workspace.home.RulesDir(), project)
+	if err != nil {
+		return nil, err
+	}
+	warnings := make([]string, 0, len(matches))
+	for _, match := range matches {
+		warnings = append(warnings, fmt.Sprintf("rules file %s (line %d) references this project", match.File, match.Line))
+	}
+	return warnings, nil
+}
+
+// rulesWarningsDiagnostic folds a scan failure into the warning list, for
+// surfaces that treat the scan as diagnostic rather than fatal.
+func (workspace *Workspace) rulesWarningsDiagnostic(project string) []string {
+	warnings, err := workspace.rulesWarnings(project)
+	if err != nil {
+		return []string{fmt.Sprintf("could not scan rules files: %v", err)}
+	}
+	return warnings
 }
 
 func recordEntry(result *tool.ExportResult, category string, written archive.WrittenEntry) {

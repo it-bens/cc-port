@@ -15,6 +15,27 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
+func TestResidualWarnings_ReportRulesFileReferences(t *testing.T) {
+	projectPath := "/Users/test/Projects/myproject"
+	home := &Home{Dir: t.TempDir()}
+	require.NoError(t, os.MkdirAll(home.ProjectDir(projectPath), 0o750))
+	require.NoError(t, os.MkdirAll(home.RulesDir(), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home.RulesDir(), "move-rule.md"),
+		[]byte("Applies to /Users/test/Projects/myproject only.\n"),
+		0o600,
+	))
+	workspace := NewWorkspace(home)
+
+	warnings, err := workspace.ResidualWarnings(tool.MoveRequest{
+		OldPath: projectPath,
+		NewPath: "/Users/test/Projects/renamed",
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, warnings, "rules file move-rule.md (line 1) references this project")
+}
+
 func TestConfigSurfacePlan_PropagatesUnreadableConfigFile(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root; chmod cannot make the config unreadable")

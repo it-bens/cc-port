@@ -137,6 +137,13 @@ func (workspace *Workspace) resolveMoveIdentityState(req tool.MoveRequest) (move
 // and cannot fully rewrite.
 func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, error) {
 	warnings := workspace.moveWarningSnapshot()
+	ruleWarnings, err := workspace.rulesWarnings(req.OldPath)
+	if err != nil {
+		return warnings, fmt.Errorf("scan rules files: %w", err)
+	}
+	for _, warning := range ruleWarnings {
+		warnings = appendUniqueMoveWarnings(warnings, warning)
+	}
 	ctx := context.Background()
 	locatePath, err := workspace.resolveMoveIdentity(req)
 	if err != nil {

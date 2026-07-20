@@ -107,6 +107,37 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	}
 }
 
+func TestPull_ApplyRendersToolWarnings(t *testing.T) {
+	tmpHome, _ := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	resolved, err := tool.ResolveProjectPath(targetPath)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(claudeFixtureDir, "rules"), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(claudeFixtureDir, "rules", "pull-rule.md"),
+		[]byte("Applies to "+resolved+" only.\n"),
+		0o600,
+	))
+
+	rootCmd := newRootCmd(noopBanner{})
+	var stderr bytes.Buffer
+	rootCmd.SetErr(&stderr)
+	rootCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-home", claudeFixtureDir,
+		"--to", targetPath,
+		"--remote", url,
+		"--apply",
+	})
+
+	require.NoError(t, rootCmd.Execute())
+
+	assert.Contains(t, stderr.String(), "Warning: rules file pull-rule.md (line 1) references this project")
+}
+
 func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	tmpHome, projectPath := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
