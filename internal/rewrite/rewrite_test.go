@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
@@ -93,20 +94,194 @@ func TestPromoteDir_InterruptedBeforeRenameLeavesMarkedStaging(t *testing.T) {
 	assert.NoDirExists(t, destination)
 	assert.FileExists(t, filepath.Join(staging, rewrite.MarkerFilename))
 
+	// PromoteDir itself does not resume over a staging directory it already
+	// marked: reconciling a stranded staging directory (verify ownership,
+	// then remove it so the next PromoteDir call starts fresh) is the
+	// caller's job — internal/tool/claude/move.go's removeStagingDir, which
+	// always runs immediately before PromoteDir on the one production call
+	// path. A direct re-invocation that skips that reconciliation step must
+	// refuse rather than silently overwrite whatever the existing marker
+	// protects; copyDir must never even run.
 	err = rewrite.PromoteDir(t.Context(), source, destination, tool.NewRestorer(),
-		func(_ context.Context, from, to string, _ func()) error {
-			assert.FileExists(t, filepath.Join(to, rewrite.MarkerFilename))
-			data, readErr := os.ReadFile(filepath.Join(from, "source.txt")) //nolint:gosec // G304: test-controlled path
-			require.NoError(t, readErr)
-			return os.WriteFile(filepath.Join(to, "source.txt"), data, 0o600) //nolint:gosec // G304: test-controlled path
+		func(context.Context, string, string, func()) error {
+			t.Fatal("copyDir must not run when the marker write is refused")
+			return nil
 		})
 
+	require.Error(t, err, "a direct re-invocation over an already-marked staging directory must refuse, not resume")
+	assert.DirExists(t, staging, "the refusal must leave the stranded staging directory for the caller to reconcile")
+}
+
+// TestPromoteDir_MarkerDoesNotFollowSymlink uses a copyDir stub that fails
+// the test if invoked at all: fsutil.CopyDir's own symlink creation would
+// independently error on this same collision (symlink over an existing
+// regular file, "file exists"), which would make this test pass even
+// without the pre-copy check it is meant to prove — the stub rules that
+// confound out, isolating refuseSourceMarkerCollision specifically.
+func TestPromoteDir_MarkerDoesNotFollowSymlink(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	external := filepath.Join(root, "external.txt")
+	externalContent := []byte("do not touch me")
+	require.NoError(t, os.WriteFile(external, externalContent, 0o600))
+	require.NoError(t, os.Mkdir(source, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "real.txt"), []byte("real project file"), 0o600))
+	require.NoError(t, os.Symlink(external, filepath.Join(source, rewrite.MarkerFilename)))
+
+	err := rewrite.PromoteDir(context.Background(), source, destination, tool.NewRestorer(),
+		func(context.Context, string, string, func()) error {
+			t.Fatal("copyDir must not run when the source-side collision check refuses")
+			return nil
+		})
+
+	require.Error(t, err, "a source carrying cc-port's own marker filename as a symlink must refuse promotion before any copy is attempted")
+	assert.NoDirExists(t, destination, "no marker write must escape the staging tree onto a real destination")
+	externalAfter, readErr := os.ReadFile(external) //nolint:gosec // G304: test-controlled path
+	require.NoError(t, readErr)
+	assert.Equal(t, externalContent, externalAfter, "the symlink target's content must be untouched")
+	infoAfter, statErr := os.Stat(external)
+	require.NoError(t, statErr)
+	assert.EqualValues(t, len(externalContent), infoAfter.Size(), "the symlink target's size must be untouched")
+}
+
+// TestPromoteDir_MarkerCollidesWithRegularFileInSourceRefusesPromotion uses
+// the real fsutil.CopyDir rather than a stub, so unlike its sibling cases it
+// does not isolate one specific guard: the pre-copy source-side check
+// refuses this before any copy runs, and if that check were ever absent the
+// post-copy content comparison would independently refuse it too (the
+// content here does not equal source). Kept as a real-CopyDir integration
+// check on top of the isolated cases below.
+func TestPromoteDir_MarkerCollidesWithRegularFileInSourceRefusesPromotion(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	require.NoError(t, os.Mkdir(source, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "real.txt"), []byte("real project file"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(source, rewrite.MarkerFilename), []byte("attacker content"), 0o600))
+
+	err := rewrite.PromoteDir(context.Background(), source, destination, tool.NewRestorer(), fsutil.CopyDir)
+
+	require.Error(t, err, "a source carrying a regular file named cc-port's own marker must refuse promotion")
+	assert.Contains(t, err.Error(), rewrite.MarkerFilename)
+	assert.NoDirExists(t, destination, "the clobbered marker must never be promoted to the real destination")
+}
+
+// TestPromoteDir_MarkerCollidesWithMatchingContentRegularFileRefusesPromotion
+// covers the case a content-only check misses: a colliding regular file
+// whose bytes happen to equal source. Comparing the post-copy marker's
+// bytes against source alone would pass this case, letting the promotion
+// succeed over a collision it must refuse. The pre-copy source-side check
+// (refuseSourceMarkerCollision) catches it regardless of content.
+func TestPromoteDir_MarkerCollidesWithMatchingContentRegularFileRefusesPromotion(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	require.NoError(t, os.Mkdir(source, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "real.txt"), []byte("real project file"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(source, rewrite.MarkerFilename), []byte(source), 0o600))
+
+	err := rewrite.PromoteDir(context.Background(), source, destination, tool.NewRestorer(), fsutil.CopyDir)
+
+	require.Error(t, err, "a colliding regular file must refuse promotion even when its bytes equal source")
+	assert.Contains(t, err.Error(), rewrite.MarkerFilename)
+	assert.NoDirExists(t, destination)
+}
+
+// TestPromoteDir_MarkerCollidesWithDirectoryInSourceRefusesPromotion confirms
+// the source-side collision check is type-agnostic: a directory named
+// MarkerFilename is refused exactly like a regular file or symlink would be.
+// copyDir is a stub that fails the test if invoked at all: fsutil.CopyDir's
+// own MkdirAll would independently error on this same collision ("mkdirat
+// .cc-port-promoted-from: file exists"), which would make this test pass
+// even without the pre-copy check it is meant to prove — the stub rules
+// that confound out.
+func TestPromoteDir_MarkerCollidesWithDirectoryInSourceRefusesPromotion(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	require.NoError(t, os.Mkdir(source, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "real.txt"), []byte("real project file"), 0o600))
+	require.NoError(t, os.Mkdir(filepath.Join(source, rewrite.MarkerFilename), 0o750))
+
+	err := rewrite.PromoteDir(context.Background(), source, destination, tool.NewRestorer(),
+		func(context.Context, string, string, func()) error {
+			t.Fatal("copyDir must not run when the source-side collision check refuses")
+			return nil
+		})
+
+	require.Error(t, err, "a colliding directory must refuse promotion before any copy is attempted")
+	assert.Contains(t, err.Error(), rewrite.MarkerFilename)
+	assert.NoDirExists(t, destination)
+}
+
+// TestPromoteDir_PostCopyMarkerReplacementRefusesEvenWithMatchingContent
+// exercises the post-copy verification's identity check in isolation, via a
+// synthetic copyDir the source-side check cannot see (it inspects source's
+// top level, not what an injected copyDir does to staging). The replacement
+// marker's bytes still equal source — content matches — so only os.SameFile
+// distinguishes "the file cc-port wrote" from "a different file with the
+// same bytes."
+func TestPromoteDir_PostCopyMarkerReplacementRefusesEvenWithMatchingContent(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	require.NoError(t, os.Mkdir(source, 0o750))
+
+	err := rewrite.PromoteDir(context.Background(), source, destination, tool.NewRestorer(),
+		func(_ context.Context, _, staging string, _ func()) error {
+			markerPath := filepath.Join(staging, rewrite.MarkerFilename)
+			data, readErr := os.ReadFile(markerPath) //nolint:gosec // G304: test-controlled path
+			require.NoError(t, readErr)
+			require.NoError(t, os.Remove(markerPath))
+			return os.WriteFile(markerPath, data, 0o600) //nolint:gosec // G304: test-controlled path
+		})
+
+	require.Error(t, err, "a replaced marker must refuse promotion even when its content still equals source")
+	assert.NoDirExists(t, destination)
+}
+
+// TestPromoteDir_PostCopyMarkerRewrittenInPlaceWithDifferentContentRefuses
+// isolates the content half of the post-copy verification: a synthetic
+// copyDir opens the existing marker and truncates it in place (the same
+// open-existing-file-and-overwrite operation fsutil.CopyDir's own O_TRUNC
+// write performs on a colliding regular file), so the underlying file — and
+// os.SameFile identity — is unchanged. Only content differs from source, so
+// only the content check, not identity, can catch this.
+func TestPromoteDir_PostCopyMarkerRewrittenInPlaceWithDifferentContentRefuses(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	require.NoError(t, os.Mkdir(source, 0o750))
+
+	err := rewrite.PromoteDir(context.Background(), source, destination, tool.NewRestorer(),
+		func(_ context.Context, _, staging string, _ func()) error {
+			markerPath := filepath.Join(staging, rewrite.MarkerFilename)
+			file, openErr := os.OpenFile(markerPath, os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // G304: test-controlled path
+			require.NoError(t, openErr)
+			defer func() { require.NoError(t, file.Close()) }()
+			_, writeErr := file.WriteString("attacker content")
+			return writeErr
+		})
+
+	require.Error(t, err, "an in-place rewrite of the marker's content must refuse promotion even with identity unchanged")
+	assert.NoDirExists(t, destination)
+}
+
+func TestPromoteDir_NonCollidingSourceStillPromotesWithMarker(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	require.NoError(t, os.Mkdir(source, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "real.txt"), []byte("real project file"), 0o600))
+
+	err := rewrite.PromoteDir(context.Background(), source, destination, tool.NewRestorer(), fsutil.CopyDir)
+
 	require.NoError(t, err)
-	assert.NoDirExists(t, staging)
-	assert.FileExists(t, filepath.Join(destination, rewrite.MarkerFilename))
+	assert.FileExists(t, filepath.Join(destination, "real.txt"))
 	verified, verifyErr := rewrite.VerifyPromotedFrom(source, destination)
 	require.NoError(t, verifyErr)
-	assert.True(t, verified)
+	assert.True(t, verified, "the destination must carry a marker recording source")
 }
 
 func TestPromotionMarker(t *testing.T) {
@@ -193,6 +368,30 @@ func TestIsBoundaryDescendant(t *testing.T) {
 		{name: "extension dot", parent: "/a/proj", candidate: "/a/proj.bak", want: false},
 		{name: "no prefix", parent: "/a/proj", candidate: "/a/other", want: false},
 		{name: "empty parent", parent: "", candidate: "/a/proj", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, rewrite.IsBoundaryDescendant(test.parent, test.candidate))
+		})
+	}
+}
+
+func TestIsBoundaryDescendant_RootParent(t *testing.T) {
+	tests := []struct {
+		name      string
+		parent    string
+		candidate string
+		want      bool
+	}{
+		{name: "root parent, any child", parent: "/", candidate: "/x", want: true},
+		{name: "separator-terminated parent, nested child", parent: "/a/", candidate: "/a/b", want: true},
+		{
+			name: "non-separator-terminated parent, continuation byte", parent: "/a", candidate: "/a-b", want: false,
+			// Guards against widening the [A-Za-z0-9_-] boundary set: "/a-b"
+			// must still be refused as a descendant of "/a" (README §Boundary
+			// rules, internal/rewrite/AGENTS.md).
+		},
 	}
 
 	for _, test := range tests {

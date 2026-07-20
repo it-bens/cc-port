@@ -147,17 +147,37 @@ any other way fails the check.
 
 ### Directory promotion
 
-`PromoteDir` creates a sibling `<destination>.cc-port-staging.tmp` directory,
-writes `.cc-port-promoted-from` inside it, copies `source` into it, then
-renames the staging directory onto `destination`. Writing the marker before
-the copy means a crash mid-copy still strands a staging directory
-attributable to this promotion, whether or not the copy itself finished. The
-rename still publishes a fully marked destination in one operation, and a
-mid-copy failure never leaves a partial directory at the real destination
-path. `move`'s project-directory surface is its only caller
-([`internal/tool/claude/README.md`](../tool/claude/README.md) §Apply
-contract (move)); `import` still promotes through `SafeRenamePromoter`, not
-this primitive.
+`PromoteDir` refuses upfront when `source`'s top level contains an entry
+named `.cc-port-promoted-from` (a regular file, a symlink, or a directory),
+checked via `os.Lstat` before any staging state exists. It then creates a
+sibling `<destination>.cc-port-staging.tmp` directory, writes
+`.cc-port-promoted-from` inside it through an `os.Root` opened on the
+staging directory, copies `source` into it, re-verifies the marker through a
+second contained root, then renames the staging directory onto
+`destination`. Writing the marker before the copy means a crash mid-copy
+still strands a staging directory attributable to this promotion, whether or
+not the copy itself finished. The rename still publishes a fully marked
+destination in one operation, and a mid-copy failure never leaves a partial
+directory at the real destination path. `move`'s project-directory surface
+is its only caller ([`internal/tool/claude/README.md`](../tool/claude/README.md)
+§Apply contract (move)); `import` still promotes through
+`SafeRenamePromoter`, not this primitive.
+
+The marker write uses `O_CREATE|O_EXCL` and fails hard on any pre-existing
+entry at that name. The upfront source-side check above already refuses
+every case where `source` itself would collide. The one production caller,
+`internal/tool/claude/move.go`'s `applyProjectDirectoryMove`, also always
+reconciles a stranded staging directory via `removeStagingDir` immediately
+before calling in. So staging is always absent or freshly created at this
+point, and any `O_EXCL` failure here is a genuinely foreign collision.
+
+The post-copy re-verification opens a separate contained root and checks two
+things. `os.SameFile` confirms the entry at the marker path is still the
+exact file the write step created. Its content must also still match
+`source` exactly. Content alone would miss a same-bytes replacement;
+identity alone would miss an in-place rewrite of the same file's bytes.
+`PromoteDir` refuses on either mismatch, naming the collision, without
+repairing or trusting what it finds.
 
 The promoted marker records `source` at
 `<destination>/.cc-port-promoted-from`. `VerifyPromotedFrom` resumes only
@@ -177,6 +197,10 @@ when that content exactly matches `source`, regardless of the marker's mtime.
 
 - A marker that names a different source: `VerifyPromotedFrom` returns false
   rather than treating it as valid.
+- A `source` whose top level contains any entry named
+  `.cc-port-promoted-from`, regardless of type: `PromoteDir` fails hard
+  before the copy starts, naming the collision, rather than promoting a
+  destination whose marker could no longer attest the copy it claims to.
 
 #### Not covered
 
@@ -188,9 +212,16 @@ when that content exactly matches `source`, regardless of the marker's mtime.
 
 ## Tests
 
-Unit tests in `rewrite_test.go` cover `PromoteDir` and promotion markers
-(inside-destination placement, content verification, arbitrarily old markers,
-and rollback), `ReplacePathInBytes` (including dot-boundary lookahead),
+Unit tests in `rewrite_test.go` cover `PromoteDir` and promotion markers:
+inside-destination placement, rollback, arbitrarily old markers, and the
+source-side and post-copy collision refusals. The source-side refusal is
+isolated per entry type (regular file, symlink, directory) via a `copyDir`
+stub that fails the test if it runs at all; the post-copy identity and
+content checks are isolated from each other (a same-bytes replacement is
+caught only by identity, an in-place content rewrite only by content). One
+further case runs the collision refusal through the real `fsutil.CopyDir` as
+an integration check rather than an isolated one. Tests also cover
+`ReplacePathInBytes` (including dot-boundary lookahead),
 `SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
 `ContainsBoundedPath`, the `Count*` primitives (boundary cases, the
 JSON-escaped form, and parity with their `Replace*` counterparts), and

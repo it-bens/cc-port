@@ -112,6 +112,19 @@ func TestMove_RefusesStagingCollision(t *testing.T) {
 	assert.DirExists(t, oldPath, "a refused apply must not delete the source directory")
 }
 
+// TestMove_RefusesRootNestedMove covers the root-parent boundary case:
+// IsBoundaryDescendant("/", "/anything") must report true, so a move whose
+// old path is "/" refuses a new path nested under it exactly like any other
+// nested move — no tool.Target is needed since the precondition check runs
+// before target enumeration.
+func TestMove_RefusesRootNestedMove(t *testing.T) {
+	_, dryRunErr := move.DryRun(t.Context(), nil, move.Options{OldPath: "/", NewPath: "/.cc-port-new"})
+	require.ErrorIs(t, dryRunErr, move.ErrNestedMove)
+
+	_, applyErr := move.Apply(t.Context(), nil, move.Options{OldPath: "/", NewPath: "/.cc-port-new"})
+	require.ErrorIs(t, applyErr, move.ErrNestedMove)
+}
+
 func TestApply_RejectedNestedMoveLeavesClaudeStateUnchangedAcrossRetries(t *testing.T) {
 	home := testutil.SetupFixture(t)
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}

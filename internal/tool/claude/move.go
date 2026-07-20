@@ -252,12 +252,11 @@ func classifyDestination(source, destination string) (destinationState, error) {
 // precondition should already have refused this before any surface ran;
 // checked again here as a second, independent line of defense).
 //
-// Accepted residual: if the copied source itself contains a top-level
-// regular file literally named rewrite.MarkerFilename, fsutil.CopyDir's
-// truncating write overwrites the pre-written marker with that file's
-// content, so the staging then fails VerifyPromotedFrom and is refused —
-// never wrongly deleted, the fail-safe direction. Hardening the marker
-// write against a same-named source entry is out of scope here.
+// A source-side marker collision — source's top level containing an entry
+// named rewrite.MarkerFilename, of any type — is refused by
+// rewrite.PromoteDir itself, before it creates or marks a staging
+// directory, so removeStagingDir never sees a staging directory stranded by
+// that cause (see internal/rewrite/README.md §Directory promotion).
 //
 // The removal is deliberately not made undoable through the Restorer:
 // backing up an arbitrarily large directory to make this reversible is

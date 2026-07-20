@@ -89,6 +89,16 @@ func PromoteDir(
 	undo undoRegistrar,
 	copyDir func(context.Context, string, string, func()) error,
 ) error {
+	// A source that itself carries a top-level entry named MarkerFilename can
+	// never be promoted safely: fsutil.CopyDir would silently O_TRUNC it if
+	// it is a regular file, error on it if it is a symlink, and collide with
+	// MkdirAll if it is a directory. Checking source directly, before any
+	// staging state exists, refuses every case uniformly rather than
+	// inferring a collision from whatever happens to survive the copy.
+	if err := refuseSourceMarkerCollision(source); err != nil {
+		return fmt.Errorf("promote %s to %s: %w", source, destination, err)
+	}
+
 	staging := destination + StagingSuffix
 	promoted := false
 	undo.RegisterUndo(func() error {
@@ -105,11 +115,20 @@ func PromoteDir(
 	if err := os.MkdirAll(staging, 0o755); err != nil { //nolint:gosec // G301: matches fsutil.CopyDir's own destination-root permission
 		return fmt.Errorf("create staging directory %s: %w", staging, err)
 	}
-	if err := os.WriteFile(filepath.Join(staging, MarkerFilename), []byte(source), 0o600); err != nil {
+	markerInfo, err := writeMarkerContained(staging, source)
+	if err != nil {
 		return fmt.Errorf("write promotion marker for %s: %w", destination, err)
 	}
 	if err := copyDir(ctx, source, staging, nil); err != nil {
 		return fmt.Errorf("stage copy to %s: %w", staging, err)
+	}
+	// Re-verify through a contained root before trusting the marker.
+	// Byte content alone is not proof the copy left it alone — a
+	// replacement file can carry identical bytes — so this also confirms
+	// the entry at the marker path is still the exact file
+	// writeMarkerContained created, via os.SameFile.
+	if err := verifyMarkerContained(staging, source, markerInfo); err != nil {
+		return fmt.Errorf("promotion marker for %s: %w", destination, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("promote %s to %s: %w", staging, destination, err)
@@ -118,5 +137,99 @@ func PromoteDir(
 		return fmt.Errorf("promote %s to %s: %w", staging, destination, err)
 	}
 	promoted = true
+	return nil
+}
+
+// refuseSourceMarkerCollision reports an error if source's top level
+// contains an entry named MarkerFilename, of any type. os.Lstat, not
+// os.Stat, so a symlink is detected by its own name rather than resolved:
+// a symlink collision must refuse exactly like a regular-file or directory
+// one, not silently disappear into whatever it points at.
+func refuseSourceMarkerCollision(source string) error {
+	markerPath := filepath.Join(source, MarkerFilename)
+	if _, err := os.Lstat(markerPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat %s: %w", markerPath, err)
+	}
+	return fmt.Errorf(
+		"source directory contains a top-level entry named %s, colliding with cc-port's promotion marker", MarkerFilename,
+	)
+}
+
+// writeMarkerContained creates MarkerFilename inside staging through an
+// os.Root opened on staging, mirroring fsutil.CopyDir's own
+// destination-root pattern: the write can never traverse a symlink out of
+// the staging tree. O_EXCL fails hard on any pre-existing entry of that
+// name. staging is always either absent or freshly created at this point:
+// the one production caller (internal/tool/claude/move.go's
+// applyProjectDirectoryMove) always reconciles a stranded staging
+// directory via removeStagingDir immediately before calling in, so an
+// EEXIST here is never PromoteDir's own prior write — it is foreign, and
+// this makes no attempt to distinguish the two.
+func writeMarkerContained(staging, source string) (info os.FileInfo, err error) {
+	root, err := os.OpenRoot(staging)
+	if err != nil {
+		return nil, fmt.Errorf("open staging root %s: %w", staging, err)
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close staging root %s: %w", staging, closeErr))
+		}
+	}()
+
+	file, openErr := root.OpenFile(MarkerFilename, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if openErr != nil {
+		return nil, fmt.Errorf("create marker: %w", openErr)
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close marker: %w", closeErr))
+		}
+	}()
+	if _, err := file.WriteString(source); err != nil {
+		return nil, fmt.Errorf("write marker: %w", err)
+	}
+	info, statErr := file.Stat()
+	if statErr != nil {
+		return nil, fmt.Errorf("stat marker: %w", statErr)
+	}
+	return info, nil
+}
+
+// verifyMarkerContained re-reads MarkerFilename through an os.Root opened on
+// staging and fails hard unless both hold: os.SameFile(created, current)
+// confirms the marker path still names the exact file writeMarkerContained
+// created, and the marker's content still records exactly source. Content
+// alone is the weaker check: a replacement file can carry byte-identical
+// content, so identity is checked in addition to, not instead of, content.
+func verifyMarkerContained(staging, source string, created os.FileInfo) (err error) {
+	root, err := os.OpenRoot(staging)
+	if err != nil {
+		return fmt.Errorf("open staging root %s: %w", staging, err)
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close staging root %s: %w", staging, closeErr))
+		}
+	}()
+
+	current, statErr := root.Stat(MarkerFilename)
+	if statErr != nil {
+		return fmt.Errorf("stat marker: %w", statErr)
+	}
+	if !os.SameFile(created, current) {
+		return fmt.Errorf("marker %s is no longer the file cc-port created; the copy replaced it", MarkerFilename)
+	}
+	data, err := root.ReadFile(MarkerFilename)
+	if err != nil {
+		return fmt.Errorf("re-read marker: %w", err)
+	}
+	if string(data) != source {
+		return fmt.Errorf(
+			"source directory contains a top-level entry named %s that clobbered the promotion marker", MarkerFilename,
+		)
+	}
 	return nil
 }

@@ -276,6 +276,15 @@ func IsBoundaryDescendant(parent, candidate string) bool {
 	if !strings.HasPrefix(candidate, parent) {
 		return false
 	}
+	if parent[len(parent)-1] == filepath.Separator {
+		// parent already ends at a boundary (e.g. "/" or "/a/"), so any
+		// strictly longer candidate sharing that prefix is a descendant
+		// with no continuation byte to inspect. Without this branch,
+		// IsBoundaryDescendant("/", "/anything") falls through to the
+		// general case below, where remainder's first byte is an ordinary
+		// path byte rather than a boundary, and the check wrongly refuses.
+		return len(candidate) > len(parent)
+	}
 	remainder := candidate[len(parent):]
 	next := remainder[0]
 	if next == '.' {
