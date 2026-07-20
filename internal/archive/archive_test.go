@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,16 @@ func TestRawEntries_RejectsMissingToolPrefix(t *testing.T) {
 	require.ErrorIs(t, err, archive.ErrMalformedEntryName)
 }
 
+func TestRawEntries_RejectsUncleanName(t *testing.T) {
+	body := buildZip(t, map[string]string{"claude/memory/../secret.jsonl": "payload"})
+	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.DefaultCaps())
+	require.NoError(t, err)
+
+	_, err = reader.RawEntries()
+
+	require.ErrorIs(t, err, archive.ErrZipSlip)
+}
+
 func TestEntry_ReadAll_RejectsOverEntryCap(t *testing.T) {
 	body := buildZip(t, map[string]string{"claude/big.txt": "way too many bytes"})
 	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{MaxEntryBytes: 4, MaxAggregateBytes: 1 << 20})
@@ -71,6 +82,24 @@ func TestEntry_ReadAll_RejectsOverEntryCap(t *testing.T) {
 
 	_, err = entries[0].Entry.ReadAll()
 	require.ErrorIs(t, err, archive.ErrEntryCapExceeded)
+}
+
+func TestOpenReader_RefusesTooManyEntries(t *testing.T) {
+	const maxEntries = 5
+	entries := make(map[string]string, maxEntries+1)
+	for i := 0; i <= maxEntries; i++ {
+		entries[fmt.Sprintf("claude/entry-%d", i)] = ""
+	}
+	body := buildZip(t, entries)
+
+	_, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{
+		MaxEntryBytes: 1 << 20, MaxAggregateBytes: 1 << 20, MaxEntries: maxEntries,
+	})
+
+	var countErr *archive.EntryCountCapError
+	require.ErrorAs(t, err, &countErr)
+	assert.Equal(t, maxEntries+1, countErr.Count)
+	assert.Equal(t, maxEntries, countErr.Limit)
 }
 
 func TestClassifyPresentKeys_FindsOnlyReferencedKeys(t *testing.T) {
@@ -132,7 +161,7 @@ func TestStageSibling_RejectsZipSlip(t *testing.T) {
 	entries, err := reader.RawEntries()
 	require.NoError(t, err)
 
-	for _, relativePath := range []string{"..", "x/..", ".", "../../escaped.txt"} {
+	for _, relativePath := range []string{"..", "x/..", ".", "../../escaped.txt", "/abs/path", "x//y"} {
 		t.Run(relativePath, func(t *testing.T) {
 			_, _, stageErr := archive.StageSibling(
 				t.TempDir(), relativePath, entries[0].Entry, nil, 0o600, entries[0].Entry.Modified,

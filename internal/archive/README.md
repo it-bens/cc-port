@@ -15,16 +15,17 @@ neither.
     opens `src` as a ZIP archive exposed as random-access bytes.
   - `(*Reader).RawEntries() ([]RawEntry, error)`: every entry except
     `metadata.xml`, split into its leading tool-name path segment and the
-    tool-relative remainder.
+    tool-relative remainder. Rejects a tool-relative remainder that carries a
+    dot segment, an empty segment, or resolves absolute.
   - `RawEntry`: `ToolName`, `Entry`.
   - `Entry`: `Name` (tool-relative), `Modified`;
     `(Entry).ReadAll() ([]byte, error)`, `(Entry).WithAggregateCounter(*AggregateCounter) Entry`.
 - **Caps**
-  - `Caps`: `MaxEntryBytes`, `MaxAggregateBytes`.
+  - `Caps`: `MaxEntryBytes`, `MaxAggregateBytes`, `MaxEntries`.
   - `AggregateCounter`, `(*AggregateCounter).Add(n int64) error`,
     `(*AggregateCounter).AddEntry(name string, n int64) error`.
-  - `ErrEntryCapExceeded`, `ErrAggregateCapExceeded`, `EntryCapError`,
-    `AggregateCapError`.
+  - `ErrEntryCapExceeded`, `ErrAggregateCapExceeded`, `ErrEntryCountCapExceeded`,
+    `EntryCapError`, `AggregateCapError`, `EntryCountCapError`.
 - **Classification**
   - `ClassifyPresentKeys(entries []RawEntry, candidateKeys []string, maxAggregateBytes int64) (map[string]struct{}, error)`:
     finds which candidate placeholder keys appear as a literal substring in
@@ -33,9 +34,10 @@ neither.
   - `ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error`:
     stream-level token substitution bounded by the longest declared key, not
     by source size.
-  - `ApplyResolutions(content []byte, resolutions map[string]string, maxEntryBytes int64) ([]byte, error)`:
-    in-memory substitution via `bytes.ReplaceAll`, refusing output over the
-    active per-entry cap.
+  - `ResolveEntryBytes(entry Entry, resolutions map[string]string) ([]byte, error)`:
+    in-memory substitution, routed through `ResolvePlaceholdersStream` into a
+    cap-bounded buffer so expansion is capped incrementally, the same as the
+    streaming staging path.
   - `ValidateResolutions(resolutions map[string]string) error`: every
     resolution must be a non-empty absolute path.
 - **Writing**
@@ -71,13 +73,24 @@ neither.
 - The post-decode byte count is checked again after streaming, so an entry
   that misdeclares its size in the central directory cannot slip through the
   declared-size check.
-- Placeholder expansion is also capped at `Caps.MaxEntryBytes`. The aggregate
-  never includes expanded output bytes.
+- Placeholder expansion is also capped at `Caps.MaxEntryBytes`, enforced
+  incrementally by a shared `countingWriter` as substituted bytes are
+  written, not after the whole resolved body is allocated. `ResolveEntryBytes`
+  (in-memory) and `StageSibling` (streaming) both route through this writer,
+  so a small archive whose resolution value is repeated many times cannot
+  pre-allocate an oversized buffer before the cap fires. The aggregate never
+  includes expanded output bytes.
 - The capped reader feeds `AggregateCounter` incrementally with decompressed
   input at the decompression point. `ReadAll`, streaming staging, and
   classification use that same reader, so the cap can reject an entry before
   its whole body decodes. The counter includes classification reads and refuses
   once its total passes `Caps.MaxAggregateBytes` (4 GiB by default).
+- `OpenReader` checks the central directory's entry count against
+  `Caps.MaxEntries` (200,000 by default) before any staging begins, closing
+  an axis neither byte cap reaches: an archive of hundreds of thousands of
+  zero-byte entries, each still allocating a `RawEntry`, a `Staged` record,
+  and a temp inode, can stay far under both byte caps. `MaxEntries` set to
+  zero disables the check.
 
 **Refused.**
 
@@ -85,6 +98,9 @@ neither.
   `EntryCapError` names the entry, its size, and the limit.
 - An archive whose running aggregate exceeds the active cap: `AggregateCapError`
   names the entry that tipped the total over.
+- An archive whose central directory carries more entries than the active
+  `MaxEntries` cap: `EntryCountCapError` names the observed count and the
+  limit.
 
 **Not covered.**
 
@@ -96,8 +112,16 @@ neither.
 
 **Handled.**
 
-- `StageSibling` runs one shared entry-name guard for every tool before any
-  staged write. It rejects empty, dot, dot-dot, and traversal entry names.
+- `RawEntries` rejects any tool-relative remainder that fails
+  `validArchiveEntryName` (a dot segment, an empty segment, or an absolute
+  path), checked on the raw, uncleaned path before any consumer routes on
+  the entry name. This closes a gap where `filepath.Clean` would collapse a
+  traversal like `memory/../secret.jsonl` down to `secret.jsonl` before the
+  old check ever saw the `..` segment, so the tool-prefix routing decision
+  (made on the raw path) and the staged location (computed after cleaning)
+  could disagree.
+- `StageSibling` runs the same entry-name guard again immediately before any
+  staged write, as defense in depth.
 - `assertWithinRoot` validates the complete cleaned final relative path, not
   only its parent. It rejects `.`, `..`, leading `../`, and absolute paths
   before writing, then creates non-root parents through an `os.Root` handle.
@@ -107,8 +131,10 @@ neither.
 
 **Refused.**
 
-- Any archive entry whose resolved relative path would escape the staging
-  base: `ErrZipSlip`, named with the offending path and base.
+- Any archive entry whose tool-relative name would escape the staging base:
+  `ErrZipSlip`, raised at `RawEntries` before any routing runs, and again at
+  `StageSibling` as defense in depth. Named with the offending path (and,
+  at `StageSibling`, the base).
 - A staging base that cannot be created or opened as an `os.Root`:
   `ErrStagingFailed`, distinct from `ErrZipSlip` because it signals
   destination-side I/O failure, not a containment violation.
@@ -151,6 +177,14 @@ neither.
   check is needed the way `internal/rewrite`'s raw substring rewriter needs
   one. Peak memory is bounded by the longest declared key, not by body size,
   and a token is never split across a read boundary.
+- The reader peeks up to the longest declared key inside a fixed 64 KiB
+  buffered window, and only ever attempts a match after reading a leading
+  `{` byte. `internal/manifest` bounds every declared key to 4 KiB and to
+  the `"{{" + non-empty inner segment + "}}"` grammar at manifest
+  validation, before a manifest-declared key ever reaches this package
+  (see [`internal/manifest/README.md`](../manifest/README.md) §Placeholder
+  key validation), so a declared key can never exceed the peek window or
+  land outside the shape this package's matching is anchored on.
 - Match order is deterministic: resolutions are visited longest-key-first so
   a key that is a textual prefix of another still resolves to the longest
   match.
@@ -165,17 +199,29 @@ neither.
 
 **Not covered.**
 
-- Parsing or validating the `{{KEY}}` grammar itself against a schema.
-  `ApplyResolutions` and `ResolvePlaceholdersStream` substitute exactly the
-  keys they are given; whether a key is one the caller's manifest actually
-  declared is the caller's responsibility.
+- Whether a key is one the caller's manifest actually declared for this
+  tool; provenance is the caller's responsibility.
+- Rejecting a malformed key. Matching is anchored on a leading `{` byte
+  and compares by exact byte prefix (see the peek-window bullet above). A
+  key that does not begin with `{` is never attempted. A key that does
+  begin with `{` but is not `{{NAME}}`-shaped can still match if its
+  exact bytes appear in the body. Neither function raises an error for a
+  non-matching or malformed key. A key declared in a manifest is always
+  `{{NAME}}`-shaped: `internal/manifest` already refused any other shape
+  at read time (see [`internal/manifest/README.md`](../manifest/README.md)
+  §Placeholder key validation). A caller that hands either function a
+  hand-built resolutions map directly bypasses that gate.
 
 ## Tests
 
 Unit tests in `archive_test.go`, `resolve_test.go`, `mtime_test.go`, and the
-internal `applymtime_internal_test.go`. Coverage: tool-prefix split and the
-malformed-prefix refusal, per-entry cap rejection, `ClassifyPresentKeys`
-finding only referenced keys, the placeholder stream's start/middle/end and
-read-boundary-straddling cases, zip-slip rejection at `StageSibling`, and
-`Sink`'s three write shapes each preserving (or, for a zero timestamp,
-omitting) the source `Modified` time.
+internal `applymtime_internal_test.go` and `validarchiveentryname_internal_test.go`.
+Coverage: tool-prefix split and the malformed-prefix refusal, per-entry and
+entry-count cap rejection, `ClassifyPresentKeys` finding only referenced
+keys, the placeholder stream's start/middle/end and read-boundary-straddling
+cases, `ResolveEntryBytes` bounding expansion incrementally before the
+resolved body is fully allocated, zip-slip rejection at both `RawEntries`
+and `StageSibling` (including the absolute-path and empty-segment
+branches), `validArchiveEntryName`'s raw-segment table, and `Sink`'s three
+write shapes each preserving (or, for a zero timestamp, omitting) the
+source `Modified` time.

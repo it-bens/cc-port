@@ -86,38 +86,29 @@ func ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[str
 	}
 }
 
-// ApplyResolutions replaces each placeholder token in content with its
-// resolved value. Tokens without a mapping are left verbatim — callers
-// refuse archives with unresolved declared keys before reaching this point.
-//
-// Substitution uses plain bytes.ReplaceAll rather than boundary-aware
-// replacement. The token shape `{{KEY}}` is self-delimiting — the `}}`
-// suffix is the terminator, and no cc-port token can appear as a substring
-// of another under the upper-snake key grammar — so a boundary check would
-// incorrectly refuse to substitute when the byte after `}}` happens to be a
-// path component (e.g. `{{PROJECT_PATH}}.` in prose).
-func ApplyResolutions(content []byte, resolutions map[string]string, maxEntryBytes int64) ([]byte, error) {
-	for placeholder, value := range resolutions {
-		content = bytes.ReplaceAll(content, []byte(placeholder), []byte(value))
-	}
-	if err := enforcePostDecodeCap("resolved archive entry", int64(len(content)), maxEntryBytes); err != nil {
-		return nil, err
-	}
-	return content, nil
-}
-
-// ResolveEntryBytes reads and resolves an entry retained in memory. ReadAll
-// accounts the decompressed input before substitution.
+// ResolveEntryBytes reads and resolves an entry retained in memory, routed
+// through the same ResolvePlaceholdersStream + countingWriter primitive the
+// streaming staging path uses. Expansion is bounded at Caps.MaxEntryBytes as
+// it is written, before the resolved body is fully allocated — a small
+// archive whose resolution value is repeated many times cannot pre-allocate
+// gigabytes before the cap fires.
 func ResolveEntryBytes(entry Entry, resolutions map[string]string) ([]byte, error) {
-	content, err := entry.ReadAll()
+	readCloser, capped, err := entry.openCapped()
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := ApplyResolutions(content, resolutions, entry.caps.MaxEntryBytes)
-	if err != nil {
+	defer func() { _ = readCloser.Close() }()
+
+	counted := &countingReader{inner: capped}
+	var out bytes.Buffer
+	bounded := &countingWriter{inner: &out, name: entry.file.Name, limit: entry.caps.MaxEntryBytes}
+	if err := ResolvePlaceholdersStream(counted, bounded, resolutions); err != nil {
+		return nil, fmt.Errorf("resolve zip entry %q: %w", entry.file.Name, err)
+	}
+	if err := enforcePostDecodeCap(entry.file.Name, counted.read, entry.caps.MaxEntryBytes); err != nil {
 		return nil, err
 	}
-	return resolved, nil
+	return out.Bytes(), nil
 }
 
 // ValidateResolutions checks that every resolution is a non-empty absolute

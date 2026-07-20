@@ -147,10 +147,10 @@ embeds is also written into that tool's `metadata.xml` block as a
 candidate key.
 
 No body grammar is parsed. The classify / stage flow records which declared
-keys appear in any body of a tool's entries, then resolves them in-stream
-during staging via `archive.ResolvePlaceholdersStream` or
-`archive.ApplyResolutions`. `{{UPPER_SNAKE}}` substrings a tool's manifest
-does not declare are content and round-trip verbatim.
+keys appear in any body of a tool's entries, then resolves them via
+`archive.ResolvePlaceholdersStream` (streamed) or `archive.ResolveEntryBytes`
+(in-memory, routed through the same primitive). `{{UPPER_SNAKE}}` substrings
+a tool's manifest does not declare are content and round-trip verbatim.
 
 `mergeResolutions` composes, per tool, three resolution sources in strength
 order: the sender's own pre-filled `Resolve` values (weakest), an optional

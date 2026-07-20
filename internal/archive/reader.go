@@ -14,13 +14,16 @@ const metadataEntryName = "metadata.xml"
 
 // Entry is one archive entry exposed to a tool's Stage method, with the
 // leading "<tool>/" path segment already split off by Reader.RawEntries.
+// caps is a pointer to the owning Reader's caps (read-only after
+// construction) so Entry stays small to copy by value across the package's
+// value-receiver methods and call chains.
 type Entry struct {
 	// Name is the entry's path within its tool's namespace.
 	Name      string
 	Modified  time.Time
 	file      *zip.File
 	aggregate *AggregateCounter
-	caps      Caps
+	caps      *Caps
 }
 
 // RawEntry pairs an Entry with the tool name its archive path declared.
@@ -48,13 +51,20 @@ func OpenReader(src io.ReaderAt, size int64, caps Caps) (*Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open archive: %w", err)
 	}
+	if caps.MaxEntries > 0 && len(zipReader.File) > caps.MaxEntries {
+		return nil, &EntryCountCapError{Count: len(zipReader.File), Limit: caps.MaxEntries}
+	}
 	return &Reader{zipReader: zipReader, caps: caps}, nil
 }
 
 // RawEntries returns every entry except metadata.xml, split into its
 // leading tool-name path segment and the tool-relative remainder. An entry
 // whose name carries no '/' separator, or an empty leading segment,
-// produces ErrMalformedEntryName naming the raw archive path.
+// produces ErrMalformedEntryName naming the raw archive path. A
+// tool-relative remainder that fails validArchiveEntryName (a dot segment,
+// an empty segment, or an absolute path) produces ErrZipSlip here, before
+// any consumer routes on the unclean name — the same containment check
+// StageSibling repeats as defense in depth once relativePath is known.
 func (r *Reader) RawEntries() ([]RawEntry, error) {
 	entries := make([]RawEntry, 0, len(r.zipReader.File))
 	for _, file := range r.zipReader.File {
@@ -65,9 +75,12 @@ func (r *Reader) RawEntries() ([]RawEntry, error) {
 		if !ok {
 			return nil, fmt.Errorf("%w: %q", ErrMalformedEntryName, file.Name)
 		}
+		if !validArchiveEntryName(rest) {
+			return nil, fmt.Errorf("%w: invalid archive entry name %q", ErrZipSlip, file.Name)
+		}
 		entries = append(entries, RawEntry{
 			ToolName: toolName,
-			Entry:    Entry{Name: rest, Modified: file.Modified, file: file, caps: r.caps},
+			Entry:    Entry{Name: rest, Modified: file.Modified, file: file, caps: &r.caps},
 		})
 	}
 	return entries, nil

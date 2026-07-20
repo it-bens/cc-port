@@ -87,9 +87,16 @@ func assertWithinRoot(baseDir, relativePath string) error {
 	return nil
 }
 
+// validArchiveEntryName inspects relativePath's raw, uncleaned segments.
+// filepath.Clean would collapse a traversal like "memory/../secret" down to
+// "secret" before this check ever sees the ".." segment, letting an entry
+// name that reads as one category on its raw path clean down to a name that
+// disagrees with the routing decision made on that raw path.
 func validArchiveEntryName(relativePath string) bool {
-	cleaned := filepath.ToSlash(filepath.Clean(relativePath))
-	for _, segment := range strings.Split(cleaned, "/") {
+	if filepath.IsAbs(relativePath) {
+		return false
+	}
+	for _, segment := range strings.Split(filepath.ToSlash(relativePath), "/") {
 		if segment == "" || segment == "." || segment == ".." {
 			return false
 		}

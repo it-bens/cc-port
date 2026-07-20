@@ -48,8 +48,8 @@ cannot extend a path component.
 Import placeholder resolution is a different mechanism and does not go
 through this function: it substitutes self-delimiting `{{UPPER_SNAKE}}`
 tokens via `archive.ResolvePlaceholdersStream` (streaming) or
-`archive.ApplyResolutions` (in-memory), where the token's own `}}` suffix
-makes a boundary check unnecessary (see
+`archive.ResolveEntryBytes` (in-memory, routed through the same primitive),
+where the token's own `}}` suffix makes a boundary check unnecessary (see
 [`internal/archive/README.md`](../archive/README.md) §Placeholder machinery).
 
 Path-component bytes are `[A-Za-z0-9_-]`. The `.` byte uses a two-byte
