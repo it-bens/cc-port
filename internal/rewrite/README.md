@@ -170,7 +170,7 @@ path. `move`'s project-directory surface is its only caller
 Unit tests in `rewrite_test.go` cover `PromoteDir`'s staging, copy, atomic
 rename, and rollback behavior. Tests also cover
 `ReplacePathInBytes` (including dot-boundary lookahead),
-`SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
+`SafeRenamePromoter` (files, rollback path), `EscapeSJSONKey`,
 `ContainsBoundedPath`, the `Count*` primitives (boundary cases, the
 JSON-escaped form, and parity with their `Replace*` counterparts), and
 `SafeWriteFile`.
