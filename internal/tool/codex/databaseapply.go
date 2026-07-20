@@ -33,8 +33,13 @@ type pendingMoveDatabases struct {
 	reportWarning func(string)
 }
 
-func startStateDBRewrites(ctx context.Context, sqliteDir, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
-	return startDatabaseRewrites(ctx, sqliteDir, stateDBGlob, oldPath, newPath, rewriteThreadsAndAgentJobs, undo)
+func startStateDBRewritesWithPlan(
+	ctx context.Context, sqliteDir, oldPath, newPath string, plans stateDBRewritePlans, undo *tool.Restorer,
+) (databaseRewrites, int, error) {
+	return startDatabaseRewrites(ctx, sqliteDir, stateDBGlob, oldPath, newPath,
+		func(ctx context.Context, path string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string) (int, error) {
+			return rewriteThreadsAndAgentJobsWithPlan(ctx, database, transaction, plans[path], oldPath, newPath)
+		}, undo)
 }
 
 func startMemoriesDBRewrites(ctx context.Context, sqliteDir, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {

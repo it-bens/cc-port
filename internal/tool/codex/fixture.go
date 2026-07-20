@@ -46,6 +46,47 @@ func SetupFixture(t *testing.T) *Home {
 	return &Home{Dir: codexDir, SQLiteDir: codexDir}
 }
 
+// InsertThreadRow inserts a threads row with id and cwd directly into
+// home's fixture state database, for tests exercising a project
+// SetupFixture's canned fixture does not cover, such as a symlink-aliased
+// cwd built under t.TempDir() by a cross-package end-to-end move test.
+func InsertThreadRow(t *testing.T, home *Home, id, cwd string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	if err != nil {
+		t.Fatalf("open fixture state db: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	now := time.Now().Unix()
+	_, err = database.ExecContext(context.Background(),
+		`INSERT INTO threads
+			(id, rollout_path, created_at, updated_at, source, model_provider, cwd, title, sandbox_policy, approval_mode)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, "archived_sessions/rollout-"+id+".jsonl", now, now, "cli", "openai", cwd, "fixture thread", "workspace-write", "on-request",
+	)
+	if err != nil {
+		t.Fatalf("insert fixture thread row for %s: %v", cwd, err)
+	}
+}
+
+// ThreadCWD reads back threads.cwd for id from home's fixture state
+// database, for tests asserting a move rewrote it.
+func ThreadCWD(t *testing.T, home *Home, id string) string {
+	t.Helper()
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	if err != nil {
+		t.Fatalf("open fixture state db: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	var cwd string
+	if err := database.QueryRowContext(context.Background(), `SELECT cwd FROM threads WHERE id = ?`, id).Scan(&cwd); err != nil {
+		t.Fatalf("read threads.cwd for %s: %v", id, err)
+	}
+	return cwd
+}
+
 // FixtureAgentsDir stages a minimal ~/.agents/plugins/marketplace.json
 // fixture under t.TempDir() and returns the ~/.agents path, for tests
 // exercising the optional agents-marketplace surface.

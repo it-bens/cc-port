@@ -89,32 +89,45 @@ func configTOMLProjectKeys(path string) ([]string, error) {
 // as a third, independent association alongside state-database and rollout
 // evidence.
 func configTOMLKnowsProject(home *Home, project string) (bool, error) {
+	matches, err := configTOMLProjectMatches(home, project)
+	return len(matches) > 0, err
+}
+
+// configTOMLProjectMatches returns the literal [projects] keys which
+// canonically match project, grouped by config file.  The stored key, rather
+// than project, is the only safe source for TOML's literal rewrite primitive.
+func configTOMLProjectMatches(home *Home, project string) (map[string][]string, error) {
 	files, err := discoverConfigTOMLFiles(home)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
+	matches := make(map[string][]string)
 	for _, path := range files {
 		keys, err := configTOMLProjectKeys(path)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		for _, key := range keys {
 			matched, err := pathMatchesProject(key, project)
 			if err != nil {
-				return false, err
+				return nil, err
 			}
 			if matched {
-				return true, nil
+				matches[path] = append(matches[path], key)
 			}
 		}
 	}
-	return false, nil
+	return matches, nil
 }
 
 // applyConfigTOMLFile rewrites path in place via rewrite.TOMLPathRewrite,
 // wrapping the primitive's validation errors (which report bytes only)
 // with the file path.
 func applyConfigTOMLFile(path, oldPath, newPath string, undo *tool.Restorer) (int, error) {
+	return applyConfigTOMLKeys(path, []string{oldPath}, newPath, undo)
+}
+
+func applyConfigTOMLKeys(path string, keys []string, newPath string, undo *tool.Restorer) (int, error) {
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return 0, nil
@@ -128,9 +141,18 @@ func applyConfigTOMLFile(path, oldPath, newPath string, undo *tool.Restorer) (in
 	if err != nil {
 		return 0, fmt.Errorf("read %s: %w", path, err)
 	}
-	rewritten, count, err := rewrite.TOMLPathRewrite(data, oldPath, newPath)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", path, err)
+	rewritten := data
+	total := 0
+	for _, key := range keys {
+		var count int
+		rewritten, count, err = rewrite.TOMLPathRewrite(rewritten, key, newPath)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", path, err)
+		}
+		if count == 0 {
+			return 0, fmt.Errorf("rewrite matched config trust key %q in %s: zero keys rewritten", key, path)
+		}
+		total += count
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -139,5 +161,5 @@ func applyConfigTOMLFile(path, oldPath, newPath string, undo *tool.Restorer) (in
 	if err := rewrite.SafeWriteFile(path, rewritten, info.Mode()); err != nil {
 		return 0, fmt.Errorf("write %s: %w", path, err)
 	}
-	return count, nil
+	return total, nil
 }

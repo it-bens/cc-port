@@ -37,15 +37,59 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	if state == identityAbsent {
 		return surfaces, nil
 	}
+	preflight, err := workspace.captureMovePreflight(req)
+	if err != nil {
+		return nil, fmt.Errorf("capture move rewrite set: %w", err)
+	}
 	return append(surfaces,
-		workspace.stateDBSurface(req, pending),
+		workspace.stateDBSurfaceWithPlans(req, pending, preflight.state),
 		workspace.memoriesDBSurface(req, pending),
-		workspace.configSurface(req),
-		workspace.rolloutsSurface(req),
+		workspace.configSurface(req, preflight.config),
+		workspace.rolloutsSurfaceWithPlans(req, preflight.rollouts),
 		workspace.memoriesWorktreeSurface(req, pending),
 		workspace.agentsMarketplaceSurface(req),
 		pending.commitSurface(),
 	), nil
+}
+
+type rolloutRewritePlan struct {
+	lines         [][]byte
+	substitutions []pathSubstitution
+	eraA          bool
+}
+
+type moveRewritePreflight struct {
+	state    stateDBRewritePlans
+	config   map[string][]string
+	rollouts map[string]rolloutRewritePlan
+}
+
+// captureMovePreflight resolves every canonical identity-dependent source
+// before Apply starts. The captured literal values are intentionally closed
+// over by surfaces: Apply must not depend on oldPath still existing after a
+// preceding tool has applied its own directory move.
+func (workspace *Workspace) captureMovePreflight(req tool.MoveRequest) (moveRewritePreflight, error) {
+	state, err := stateDBRewritePlansForProject(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
+	if err != nil {
+		return moveRewritePreflight{}, err
+	}
+	config, err := configTOMLProjectMatches(workspace.home, req.OldPath)
+	if err != nil {
+		return moveRewritePreflight{}, err
+	}
+	files, err := discoverRolloutFiles(workspace.home)
+	if err != nil {
+		return moveRewritePreflight{}, err
+	}
+	rollouts := make(map[string]rolloutRewritePlan, len(files))
+	for _, path := range files {
+		lines, substitutions, eraA, err := rolloutFileSubstitutions(path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
+		if err != nil {
+			return moveRewritePreflight{}, fmt.Errorf("%s: %w", path, err)
+		}
+		rollouts[path] = rolloutRewritePlan{lines: lines, substitutions: substitutions, eraA: eraA}
+	}
+	return moveRewritePreflight{state: state, config: config, rollouts: rollouts}, nil
 }
 
 // identityState classifies which of a move request's two paths Codex's
@@ -99,8 +143,8 @@ func (workspace *Workspace) moveIdentity(req tool.MoveRequest) (identityState, e
 // No identity witness is needed (spec §6.1): Codex stores cwd verbatim,
 // so equality-or-prefix matching against any one source is sufficient.
 // newPath is only needed to run planRolloutFile's rewrite-pipeline count
-// identically to how MoveSurfaces' own rolloutsSurface will count and
-// apply; this call only inspects whether that count is positive.
+// identically to how MoveSurfaces' own rolloutsSurfaceWithPlans will count
+// and apply; this call only inspects whether that count is positive.
 // moveIdentity also calls this with the two arguments swapped to probe
 // whether newPath itself is already known, for the resume fallback above.
 func (workspace *Workspace) projectKnown(oldPath, newPath string) (bool, error) {
@@ -167,13 +211,13 @@ func sqlDatabaseSurface(
 	}
 }
 
-func (workspace *Workspace) stateDBSurface(req tool.MoveRequest, pending *pendingMoveDatabases) tool.Surface {
+func (workspace *Workspace) stateDBSurfaceWithPlans(req tool.MoveRequest, pending *pendingMoveDatabases, plans stateDBRewritePlans) tool.Surface {
 	return sqlDatabaseSurface("state-db", req,
 		func(ctx context.Context, oldPath, newPath string) (int, error) {
 			return countStateDB(ctx, workspace.home.SQLiteDir, oldPath, newPath)
 		},
 		func(ctx context.Context, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
-			return startStateDBRewrites(ctx, workspace.home.SQLiteDir, oldPath, newPath, undo)
+			return startStateDBRewritesWithPlan(ctx, workspace.home.SQLiteDir, oldPath, newPath, plans, undo)
 		},
 		func(rewrites databaseRewrites) { pending.state = rewrites },
 	)
@@ -191,38 +235,32 @@ func (workspace *Workspace) memoriesDBSurface(req tool.MoveRequest, pending *pen
 	)
 }
 
-func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
+func (workspace *Workspace) configSurface(req tool.MoveRequest, matches map[string][]string) tool.Surface {
 	return tool.Surface{
 		Name: "config",
 		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
 				return tool.SurfaceResult{}, err
 			}
-			files, err := discoverConfigTOMLFiles(workspace.home)
-			if err != nil {
-				return tool.SurfaceResult{}, err
-			}
 			total := 0
-			for _, path := range files {
-				count, err := planConfigTOMLFile(path, req.OldPath, req.NewPath)
-				if err != nil {
-					return tool.SurfaceResult{}, err
+			for path, keys := range matches {
+				for _, key := range keys {
+					count, err := planConfigTOMLFile(path, key, req.NewPath)
+					if err != nil {
+						return tool.SurfaceResult{}, err
+					}
+					total += count
 				}
-				total += count
 			}
 			return tool.SurfaceResult{Count: total}, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
-			files, err := discoverConfigTOMLFiles(workspace.home)
-			if err != nil {
-				return tool.SurfaceResult{}, err
-			}
 			total := 0
-			for _, path := range files {
+			for path, keys := range matches {
 				if err := ctx.Err(); err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				count, err := applyConfigTOMLFile(path, req.OldPath, req.NewPath, undo)
+				count, err := applyConfigTOMLKeys(path, keys, req.NewPath, undo)
 				if err != nil {
 					return tool.SurfaceResult{}, err
 				}
@@ -233,57 +271,48 @@ func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
 	}
 }
 
-func (workspace *Workspace) rolloutsSurface(req tool.MoveRequest) tool.Surface {
+func (workspace *Workspace) rolloutsSurfaceWithPlans(req tool.MoveRequest, plans map[string]rolloutRewritePlan) tool.Surface {
 	return tool.Surface{
 		Name: categorySessions,
 		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
-			files, err := discoverRolloutFiles(workspace.home)
-			if err != nil {
-				return tool.SurfaceResult{}, err
-			}
 			total := 0
-			for _, path := range files {
+			var warnings []string
+			for path, plan := range plans {
 				if err := ctx.Err(); err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				count, eraA, err := planRolloutFile(path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
-				if err != nil {
-					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
-				}
-				if eraA {
+				warnings = append(warnings, rolloutMalformedWarnings(path, plan.lines)...)
+				if plan.eraA {
 					continue
 				}
-				total += count
+				for _, line := range plan.lines {
+					_, count := rewriteRolloutLine(line, plan.substitutions, req.DeepRewrite)
+					total += count
+				}
 			}
-			return tool.SurfaceResult{Count: total}, nil
+			return tool.SurfaceResult{Count: total, Warnings: warnings}, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
-			files, err := discoverRolloutFiles(workspace.home)
-			if err != nil {
-				return tool.SurfaceResult{}, err
-			}
 			total := 0
-			for _, path := range files {
+			var warnings []string
+			for path, plan := range plans {
 				if err := ctx.Err(); err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				planCount, eraA, err := planRolloutFile(path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
-				if err != nil {
-					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
-				}
-				if eraA || planCount == 0 {
+				warnings = append(warnings, rolloutMalformedWarnings(path, plan.lines)...)
+				if plan.eraA || len(plan.substitutions) == 0 {
 					continue
 				}
 				if err := undo.RegisterFile(path); err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("back up %s: %w", path, err)
 				}
-				changed, _, err := applyRolloutFile(ctx, path, req.OldPath, req.NewPath, req.DeepRewrite, workspace.transcodeCaps)
+				changed, err := applyRolloutSubstitutions(path, plan.substitutions, req.DeepRewrite, workspace.transcodeCaps)
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
 				}
 				total += changed
 			}
-			return tool.SurfaceResult{Count: total}, nil
+			return tool.SurfaceResult{Count: total, Warnings: warnings}, nil
 		},
 	}
 }

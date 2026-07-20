@@ -74,7 +74,7 @@ func TestMoveSurfacesDryRunApplyCountParity(t *testing.T) {
 // thread row recorded through a symlink-aliased cwd (Codex stores
 // config.cwd() verbatim, uncanonicalized) must still be matched and rewritten
 // by move, and the dry-run count must equal the number of rows apply
-// actually rewrites, since countStateDB and rewriteThreadsAndAgentJobs now
+// actually rewrites, since countStateDB and matchingThreadRewrites now
 // both derive their row set from the same canonical-match computation.
 func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
@@ -103,6 +103,65 @@ func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
 		context.Background(), `SELECT cwd FROM threads WHERE id = ?`, aliasedThreadID,
 	).Scan(&storedCWD))
 	assert.Equal(t, newPath, storedCWD, "the stored cwd must be rewritten to the literal new path, not left as the symlink alias")
+}
+
+func TestMoveSurfaces_UsesPreflightThreadMatchesAfterSourceRemoved(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	tempRoot := t.TempDir()
+	realProject := filepath.Join(tempRoot, "real", "project")
+	require.NoError(t, os.MkdirAll(realProject, 0o750))
+	require.NoError(t, os.Symlink(filepath.Join(tempRoot, "real"), filepath.Join(tempRoot, "link")))
+	aliasedCWD := filepath.Join(tempRoot, "link", "project")
+	newPath := filepath.Join(tempRoot, "renamed-project")
+	const threadID = "00000000-0000-4000-8000-0000000000dd"
+	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, stateDBFileName), threadID, aliasedCWD, threadRowMetadata{})
+
+	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: realProject, NewPath: newPath})
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(realProject), "simulate Claude's earlier apply removing the source")
+	undo := tool.NewRestorer()
+	for _, surface := range surfaces {
+		_, err := surface.Apply(context.Background(), undo)
+		require.NoError(t, err, "apply %s", surface.Name)
+	}
+	undo.Cleanup()
+
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	var cwd string
+	require.NoError(t, database.QueryRowContext(context.Background(), `SELECT cwd FROM threads WHERE id = ?`, threadID).Scan(&cwd))
+	assert.Equal(t, newPath, cwd)
+}
+
+func TestMove_ConfigSymlinkAliasRewritesStoredTrustKey(t *testing.T) {
+	homeDir := t.TempDir()
+	realProject := filepath.Join(homeDir, "real", "project")
+	require.NoError(t, os.MkdirAll(realProject, 0o750))
+	require.NoError(t, os.Symlink(filepath.Join(homeDir, "real"), filepath.Join(homeDir, "link")))
+	alias := filepath.Join(homeDir, "link", "project")
+	newPath := filepath.Join(homeDir, "renamed-project")
+	config := "# retain\n[projects.\"" + alias + "\"]\ntrust_level = \"trusted\"\n[projects.\"/other\"]\ntrust_level = \"trusted\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(homeDir, configTOMLFileName), []byte(config), 0o600))
+	workspace := NewWorkspace(
+		&Home{Dir: homeDir, SQLiteDir: filepath.Join(homeDir, "sqlite")}, fakeGetenv(nil), noProcesses, time.Now, DefaultTranscodeCaps(),
+	)
+
+	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: realProject, NewPath: newPath})
+	require.NoError(t, err)
+	undo := tool.NewRestorer()
+	for _, surface := range surfaces {
+		if surface.Name == "config" {
+			_, err = surface.Apply(context.Background(), undo)
+			require.NoError(t, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(homeDir, configTOMLFileName)) //nolint:gosec // G304: path under t.TempDir()
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "# retain")
+	assert.Contains(t, string(data), newPath)
+	assert.Contains(t, string(data), "/other")
+	assert.NotContains(t, string(data), alias)
 }
 
 // TestMoveSurfacesIdempotentSecondApplyFindsNothing guards the "SIGKILL and
@@ -212,8 +271,10 @@ func TestMove_SucceedsThenFreshnessWitnessQuiet(t *testing.T) {
 		require.NoError(t, os.Chtimes(path, past, past))
 	}
 
+	preflight, err := workspace.captureMovePreflight(req)
+	require.NoError(t, err)
 	undo := tool.NewRestorer()
-	count, err := workspace.rolloutsSurface(req).Apply(context.Background(), undo)
+	count, err := workspace.rolloutsSurfaceWithPlans(req, preflight.rollouts).Apply(context.Background(), undo)
 	require.NoError(t, err)
 	require.Positive(t, count.Count, "sanity: the apply must actually have rewritten a rollout")
 	undo.Cleanup()
@@ -677,7 +738,9 @@ func TestFinalDatabaseSurfaceReportsSecondCommitPartialStateAndRerunConverges(t 
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	pending := &pendingMoveDatabases{removeAll: os.RemoveAll}
 	undo := tool.NewRestorer()
-	_, err := workspace.stateDBSurface(req, pending).Apply(context.Background(), undo)
+	plans, err := stateDBRewritePlansForProject(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
+	require.NoError(t, err)
+	_, err = workspace.stateDBSurfaceWithPlans(req, pending, plans).Apply(context.Background(), undo)
 	require.NoError(t, err)
 	_, err = workspace.memoriesDBSurface(req, pending).Apply(context.Background(), undo)
 	require.NoError(t, err)
@@ -704,7 +767,9 @@ func TestFinalDatabaseSurfaceReportsCheckpointFailureAsWarningAfterCommits(t *te
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	pending := &pendingMoveDatabases{removeAll: os.RemoveAll, reportWarning: workspace.addApplyWarning}
 	undo := tool.NewRestorer()
-	_, err := workspace.stateDBSurface(req, pending).Apply(context.Background(), undo)
+	plans, err := stateDBRewritePlansForProject(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
+	require.NoError(t, err)
+	_, err = workspace.stateDBSurfaceWithPlans(req, pending, plans).Apply(context.Background(), undo)
 	require.NoError(t, err)
 	_, err = workspace.memoriesDBSurface(req, pending).Apply(context.Background(), undo)
 	require.NoError(t, err)
@@ -878,7 +943,13 @@ func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupWithoutWorktreeChanges(
 func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	undo := tool.NewRestorer()
-	state, _, err := startStateDBRewrites(context.Background(), workspace.home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project", undo)
+	plans, err := stateDBRewritePlansForProject(
+		context.Background(), workspace.home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project",
+	)
+	require.NoError(t, err)
+	state, _, err := startStateDBRewritesWithPlan(
+		context.Background(), workspace.home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project", plans, undo,
+	)
 	require.NoError(t, err)
 	_, _, err = startDatabaseRewrites(
 		context.Background(), workspace.home.SQLiteDir, memoriesDBGlob, FixtureProjectPath(), "/Users/fixture/renamed-project",

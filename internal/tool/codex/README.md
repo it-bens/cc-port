@@ -393,9 +393,10 @@ shapes themselves.
   every stored value that canonically matches the project; `rolloutSubstitutions`
   pairs each with the value it rewrites to (`newPath`, or `newPath` plus
   whatever suffix a symlink-aliased value's canonical form carried past the
-  project boundary). `planRolloutFile` and `applyRolloutFile` derive their
-  source list from the same function on their own read of the rollout, so a
-  symlink-aliased rollout is rewritten by move instead of left stale.
+  project boundary). `planRolloutFile` and `MoveSurfaces`' own preflight
+  (`captureMovePreflight`) derive their source list from the same function on
+  their own read of the rollout, so a symlink-aliased rollout is rewritten by
+  move instead of left stale.
 - `matchingColumnValues` (and `threadIDsForCWD`) bound their SQL scans
   instead of materializing an unbounded result set: `guardColumnByteCap`
   refuses before reading any single value larger than
@@ -429,10 +430,14 @@ shapes themselves.
   membership-then-cap check against `maxAggregateMatchedThreadRows`,
   before the union ever sees the set.
   Two call sites carry a real request context, not `context.Background()`:
-  the `stateDBSurface` Plan/Apply path (`countStateDB`, `matchingThreadRewrites`)
-  and the export/stats path (`countThreadRows`, `projectThreadIDs`,
+  the `stateDBSurfaceWithPlans` Plan path (`countStateDB`) and the
+  export/stats path (`countThreadRows`, `projectThreadIDs`,
   `projectThreadIDSet`). On both, the scan also checks `ctx.Err()` per row
-  and is cancellable.
+  and is cancellable. `matchingThreadRewrites` checks `ctx.Err()` per row
+  too, but its sole caller, `stateDBRewritePlansForProject`, runs from
+  `MoveSurfaces`' own preflight with `context.Background()` (`MoveSurfaces`
+  itself takes no context), so it is bounded but never cancellable from a
+  caller.
 
 **Refused.**
 

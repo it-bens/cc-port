@@ -23,12 +23,16 @@ func TestCountStateDBReadOnlyUsesByteExactThreadPredicate(t *testing.T) {
 	planned, err := countStateDBReadOnly(context.Background(), database, FixtureProjectPath())
 	require.NoError(t, err)
 
+	rewrites, err := matchingThreadRewrites(context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project")
+	require.NoError(t, err)
 	rewriter, err := sqlrewrite.Open(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
 	transaction, err := rewriter.Begin()
 	require.NoError(t, err)
-	applied, err := rewriteThreadsAndAgentJobs(context.Background(), path, rewriter, transaction, FixtureProjectPath(), "/Users/fixture/renamed-project")
+	applied, err := rewriteThreadsAndAgentJobsWithPlan(
+		context.Background(), rewriter, transaction, rewrites, FixtureProjectPath(), "/Users/fixture/renamed-project",
+	)
 	require.NoError(t, err)
 	require.NoError(t, transaction.Commit())
 
@@ -63,8 +67,8 @@ func TestMatchingThreadCWDsRefusesOversizedCWD(t *testing.T) {
 // row alongside a byte-different, collation-equal upper-case row, so a
 // predicate that trusted the column's declared collation instead of forcing
 // COLLATE BINARY would wrongly count or rewrite both. id is a declared
-// primary key because rewriteThreadsAndAgentJobs now rewrites matched rows
-// by primary key (spec §5.1), matching the real threads schema
+// primary key because rewriteThreadsAndAgentJobsWithPlan now rewrites
+// matched rows by primary key (spec §5.1), matching the real threads schema
 // (buildFixtureStateDB), which always declares one.
 func createStateDBNoCaseFixture(database *sql.DB, oldPath string) error {
 	if _, err := database.ExecContext(context.Background(), `

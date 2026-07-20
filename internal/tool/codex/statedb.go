@@ -119,8 +119,8 @@ func stateDBFileKnowsProject(path, oldPath string) (bool, error) {
 // through the same matchingThreadCWDs computation Apply's rewrite uses, so
 // the two can never disagree; the free-text agent_jobs columns are streamed
 // through sqlrewrite.CountTextColumnRO so their boundary-aware path matches
-// agree with Apply's rewrite logic. ctx comes from the stateDBSurface Plan
-// closure (move.go), so this path is both bounded and cancellable.
+// agree with Apply's rewrite logic. ctx comes from the stateDBSurfaceWithPlans
+// Plan closure (move.go), so this path is both bounded and cancellable.
 func countStateDB(ctx context.Context, sqliteDir, oldPath, newPath string) (int, error) {
 	databases, err := discoverDatabases(sqliteDir, stateDBGlob)
 	if err != nil {
@@ -352,6 +352,30 @@ type threadCWDRewrite struct {
 	newCWD string
 }
 
+// stateDBRewritePlans records the primary-key updates selected while the
+// source path still exists. Apply must use this snapshot rather than repeat
+// canonicalization after another selected tool may have moved the project.
+type stateDBRewritePlans map[string][]threadCWDRewrite
+
+func stateDBRewritePlansForProject(ctx context.Context, sqliteDir, oldPath, newPath string) (stateDBRewritePlans, error) {
+	paths, err := discoverDatabases(sqliteDir, stateDBGlob)
+	if err != nil {
+		return nil, err
+	}
+	plans := make(stateDBRewritePlans, len(paths))
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rewrites, err := matchingThreadRewrites(ctx, path, oldPath, newPath)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		plans[path] = rewrites
+	}
+	return plans, nil
+}
+
 // matchingThreadRewrites returns, for every threads row at path whose cwd
 // canonically matches oldPath, its primary key and the value Apply must
 // write: newPath with whatever suffix the row's canonicalized cwd carried
@@ -362,8 +386,12 @@ type threadCWDRewrite struct {
 // connection to path — not the caller's write transaction, since
 // sqlrewrite.Tx exposes no ad-hoc SELECT —
 // and closes it before returning, so the write transaction never overlaps a
-// read past this point. ctx comes from the stateDBSurface Apply closure
-// (move.go) via startDatabaseRewrites, so this path is cancellable.
+// read past this point. Its sole caller, stateDBRewritePlansForProject, runs
+// during MoveSurfaces' preflight (captureMovePreflight, move.go) with
+// context.Background() — MoveSurfaces takes no context of its own — so the
+// canonicalization always happens while oldPath still exists, before any
+// selected tool's apply could have removed it; it is bounded but not
+// cancellable from a caller's context.
 // threadIDsForCWD already bounds each matched cwd's own id count; this loop
 // additionally bounds the running TOTAL across every matched cwd, since up
 // to maxMatchedThreadRows matched values could each independently
@@ -412,20 +440,14 @@ func matchingThreadRewrites(ctx context.Context, path, oldPath, newPath string) 
 	return rewrites, nil
 }
 
-// rewriteThreadsAndAgentJobs rewrites threads.cwd for every row whose cwd
-// canonically matches oldPath (spec §5.1) and agent_jobs' free-text path
-// columns. threads.cwd can no longer rely solely on a COLLATE BINARY
-// equality/prefix SQL predicate: a symlink-aliased cwd (Codex records it
-// verbatim) fails byte equality even when it resolves to the same directory,
-// so matchingThreadRewrites computes the canonical match in Go and each
-// matched row is rewritten by primary key through UpdateColumnsByKey.
-func rewriteThreadsAndAgentJobs(
-	ctx context.Context, path string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string,
+// rewriteThreadsAndAgentJobsWithPlan rewrites threads.cwd for every row in
+// rewrites — a canonical-match plan stateDBRewritePlansForProject captured
+// during preflight, before any selected tool's apply could have removed
+// oldPath from disk (spec §5.1) — by primary key through UpdateColumnsByKey,
+// plus agent_jobs' free-text path columns.
+func rewriteThreadsAndAgentJobsWithPlan(
+	ctx context.Context, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, rewrites []threadCWDRewrite, oldPath, newPath string,
 ) (int, error) {
-	rewrites, err := matchingThreadRewrites(ctx, path, oldPath, newPath)
-	if err != nil {
-		return 0, fmt.Errorf("match %s.%s for rewrite: %w", threadsTable, threadsCwdColumn, err)
-	}
 	count := 0
 	for _, threadRewrite := range rewrites {
 		if err := ctx.Err(); err != nil {
@@ -438,7 +460,6 @@ func rewriteThreadsAndAgentJobs(
 		}
 		count += updated
 	}
-
 	for _, column := range []string{agentJobsInputCSVColumn, agentJobsOutputCSVColumn} {
 		rewritten, err := database.RewriteTextColumn(transaction, agentJobsTable, agentJobsIDColumn, column, oldPath, newPath)
 		if err != nil {

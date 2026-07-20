@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -158,9 +157,10 @@ type pathSubstitution struct {
 // payload.cwd verbatim and uncanonicalized, so a rollout recorded through a
 // symlink-aliased cwd never contains oldPath's literal bytes for the
 // existing boundary-aware substring rewrite to find (spec §5.1, finding
-// H1). planRolloutFile and applyRolloutFile both derive their source list
-// from this one function on their own read of lines, so a dry-run count and
-// an apply can never disagree about which bytes belong to the project.
+// H1). rolloutFileSubstitutions is the sole caller, shared by
+// planRolloutFile and captureMovePreflight (move.go), so a dry-run count and
+// the plan rolloutsSurfaceWithPlans later applies always come from the same
+// read of a rollout's bytes.
 //
 // The result is ordered longest-source-first (ties broken by source bytes,
 // so the order never depends on map iteration), because callers apply
@@ -317,9 +317,9 @@ func rolloutSubstitutions(sources []string, oldPath, newPath string) ([]pathSubs
 // independently against the original line, so a dry-run count can never
 // diverge from what an apply actually replaces — a source-order-dependent
 // outcome is not something two different code paths could disagree about,
-// since only one path exists. A malformed or non-JSON line is left
-// verbatim, matching the claude adapter's malformed-line-preserved-verbatim
-// convention.
+// since only one path exists. A malformed or non-JSON line is left verbatim;
+// rolloutMalformedWarnings reports that preservation to the operator, matching
+// the Claude adapter's preserve-verbatim-and-warn convention.
 func rewriteRolloutLine(line []byte, substitutions []pathSubstitution, deep bool) (rewritten []byte, count int) {
 	var probe rolloutLineProbe
 	if err := json.Unmarshal(line, &probe); err != nil {
@@ -389,9 +389,10 @@ func structuredRolloutFieldPaths(line []byte, rolloutType string) []string {
 }
 
 // rolloutFileSubstitutions reads path and computes its ordered substitution
-// list, shared by planRolloutFile and applyRolloutFile so the two can never
-// derive a different source order or a different set of replacement values
-// from the same on-disk bytes.
+// list. planRolloutFile and captureMovePreflight (move.go) are its only
+// callers, so a dry-run count and the plan rolloutsSurfaceWithPlans later
+// applies can never derive a different source order or a different set of
+// replacement values from the same on-disk bytes.
 func rolloutFileSubstitutions(
 	path, oldPath, newPath string, deep bool, caps TranscodeCaps,
 ) (lines [][]byte, substitutions []pathSubstitution, eraA bool, err error) {
@@ -421,8 +422,8 @@ func rolloutFileSubstitutions(
 // planRolloutFile reports how many occurrences a move would rewrite in
 // path, and whether path is era-A (no structured cwd, therefore skipped
 // entirely regardless of deep). It counts by running rewriteRolloutLine —
-// the identical sequential substitution pipeline applyRolloutFile uses —
-// over a throwaway copy of each line and summing the reported counts,
+// the identical sequential substitution pipeline applyRolloutSubstitutions
+// uses — over a throwaway copy of each line and summing the reported counts,
 // rather than counting each substitution source independently against the
 // original bytes: sources can overlap (a symlink alias recorded as
 // oldPath+"/alias" is a boundary-prefix of oldPath itself), and independent
@@ -443,29 +444,26 @@ func planRolloutFile(path, oldPath, newPath string, deep bool, caps TranscodeCap
 	return count, false, nil
 }
 
-// applyRolloutFile rewrites path in place via TranscodeLines, unless path
-// is era-A, in which case it is left untouched and eraA reports that. A
-// rollout recorded through a symlink-aliased cwd is rewritten to newPath
-// (with any preserved subdirectory suffix) even though its stored bytes
-// never literally contained oldPath (spec §5.1, finding H1): substitutions
-// come from rolloutFileSubstitutions on this same read of the file, the
-// identical computation planRolloutFile uses, so the two cannot disagree.
-func applyRolloutFile(ctx context.Context, path, oldPath, newPath string, deep bool, caps TranscodeCaps) (count int, eraA bool, err error) {
-	if err := ctx.Err(); err != nil {
-		return 0, false, err
-	}
-	_, substitutions, eraA, err := rolloutFileSubstitutions(path, oldPath, newPath, deep, caps)
-	if err != nil {
-		return 0, false, err
-	}
-	if eraA {
-		return 0, true, nil
-	}
+// applyRolloutSubstitutions applies substitutions captured during preflight.
+// It deliberately performs no path canonicalization, so another tool's apply
+// cannot make a previously canonical match disappear by removing oldPath.
+func applyRolloutSubstitutions(path string, substitutions []pathSubstitution, deep bool, caps TranscodeCaps) (int, error) {
 	changedCount, err := TranscodeLines(path, caps, func(line []byte) ([]byte, int) {
 		return rewriteRolloutLine(line, substitutions, deep)
 	})
 	if err != nil {
-		return 0, false, fmt.Errorf("transcode %s: %w", path, err)
+		return 0, fmt.Errorf("transcode %s: %w", path, err)
 	}
-	return changedCount, false, nil
+	return changedCount, nil
+}
+
+func rolloutMalformedWarnings(path string, lines [][]byte) []string {
+	warnings := make([]string, 0)
+	for number, line := range lines {
+		var probe rolloutLineProbe
+		if json.Unmarshal(line, &probe) != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: malformed JSON line %d preserved unchanged", path, number+1))
+		}
+	}
+	return warnings
 }

@@ -14,6 +14,30 @@ func rolloutFixturePath(home *Home, relative string) string {
 	return filepath.Join(home.Dir, filepath.FromSlash(relative))
 }
 
+// applyRolloutFileViaPlan exercises the same two-step sequence
+// rolloutsSurfaceWithPlans.Apply uses in production — rolloutFileSubstitutions
+// capturing the plan, then applyRolloutSubstitutions applying it — rather
+// than recomputing substitutions at apply time (the shape the now-deleted
+// applyRolloutFile had, and that FIX-D moved off of: see move.go's
+// captureMovePreflight).
+func applyRolloutFileViaPlan(ctx context.Context, path, oldPath, newPath string, deep bool, caps TranscodeCaps) (count int, eraA bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	_, substitutions, eraA, err := rolloutFileSubstitutions(path, oldPath, newPath, deep, caps)
+	if err != nil {
+		return 0, false, err
+	}
+	if eraA {
+		return 0, true, nil
+	}
+	changedCount, err := applyRolloutSubstitutions(path, substitutions, deep, caps)
+	if err != nil {
+		return 0, false, err
+	}
+	return changedCount, false, nil
+}
+
 const (
 	eraCPath = "sessions/2026/07/17/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl"
 	eraBPath = "sessions/2026/07/16/rollout-2026-07-16T08-00-00-00000000-0000-4000-8000-000000000003.jsonl"
@@ -101,7 +125,7 @@ func TestApplyRolloutFileRewritesStructuredFieldsAlways(t *testing.T) {
 	path := rolloutFixturePath(home, eraCPath)
 	newPath := "/Users/fixture/renamed-project"
 
-	changed, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), newPath, false, DefaultTranscodeCaps())
+	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, FixtureProjectPath(), newPath, false, DefaultTranscodeCaps())
 
 	require.NoError(t, err)
 	assert.False(t, eraA)
@@ -120,7 +144,7 @@ func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
 	path := rolloutFixturePath(home, eraCPath)
 	newPath := "/Users/fixture/renamed-project"
 
-	changed, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), newPath, true, DefaultTranscodeCaps())
+	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, FixtureProjectPath(), newPath, true, DefaultTranscodeCaps())
 
 	require.NoError(t, err)
 	assert.False(t, eraA)
@@ -146,11 +170,16 @@ func TestRewriteRolloutLineScopesShallowModeToStructuredFields(t *testing.T) {
 	assert.NotContains(t, string(deep), FixtureProjectPath())
 }
 
+func TestRolloutMalformedWarningsPreserveUnparseableLines(t *testing.T) {
+	warnings := rolloutMalformedWarnings("sessions/test.jsonl", [][]byte{[]byte(`{"type":"session_meta"}`), []byte("not json")})
+	assert.Equal(t, []string{"sessions/test.jsonl: malformed JSON line 2 preserved unchanged"}, warnings)
+}
+
 // TestApplyRolloutFileRewritesSymlinkAliasedCWD guards finding H1 (spec
 // §5.1): Codex stores payload.cwd verbatim and uncanonicalized, so a
 // rollout recorded through a symlink-aliased cwd never literally contains
 // the resolved oldPath bytes the plain substring rewrite searches for.
-// rolloutSubstitutionSources must still identify it and applyRolloutFile
+// rolloutSubstitutionSources must still identify it and applyRolloutFileViaPlan
 // must rewrite the stored value to the new path, not silently leave it
 // stale (a real move rename would leave it dangling).
 func TestApplyRolloutFileRewritesSymlinkAliasedCWD(t *testing.T) {
@@ -170,7 +199,7 @@ func TestApplyRolloutFileRewritesSymlinkAliasedCWD(t *testing.T) {
 	require.False(t, eraA)
 	require.Positive(t, planCount, "sanity: the symlink-aliased rollout must be counted")
 
-	applyCount, eraA, err := applyRolloutFile(context.Background(), path, realProject, newPath, false, DefaultTranscodeCaps())
+	applyCount, eraA, err := applyRolloutFileViaPlan(context.Background(), path, realProject, newPath, false, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	require.False(t, eraA)
 	assert.Equal(t, planCount, applyCount, "dry-run count and apply must consume the same substitution sources (spec §5.1)")
@@ -212,7 +241,7 @@ func TestApplyRolloutFileRewritesOverlappingSubstitutionSourcesInOrder(t *testin
 	require.False(t, eraA)
 	require.Positive(t, planCount, "sanity: the overlapping-source rollout must be counted")
 
-	applyCount, eraA, err := applyRolloutFile(context.Background(), path, realProject, newPath, false, DefaultTranscodeCaps())
+	applyCount, eraA, err := applyRolloutFileViaPlan(context.Background(), path, realProject, newPath, false, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	require.False(t, eraA)
 	assert.Equal(t, planCount, applyCount, "dry-run count and apply must agree even when substitution sources overlap")
@@ -261,7 +290,7 @@ func TestPlanAndApplyRolloutFileRefuseWhenNewPathContainsASubstitutionSource(t *
 	_, _, err := planRolloutFile(path, realProject, newPath, false, DefaultTranscodeCaps())
 	require.ErrorIs(t, err, ErrSubstitutionWouldReintroduceSource, "plan must refuse for the same reason apply would")
 
-	_, _, err = applyRolloutFile(context.Background(), path, realProject, newPath, false, DefaultTranscodeCaps())
+	_, _, err = applyRolloutFileViaPlan(context.Background(), path, realProject, newPath, false, DefaultTranscodeCaps())
 	require.ErrorIs(t, err, ErrSubstitutionWouldReintroduceSource, "apply must refuse rather than silently corrupt the stored value")
 }
 
@@ -304,7 +333,7 @@ func TestPlanAndApplyRolloutFileRefuseWhenSuffixReintroducesSource(t *testing.T)
 	_, _, err := planRolloutFile(path, realProject, newPath, false, DefaultTranscodeCaps())
 	require.ErrorIs(t, err, ErrSubstitutionWouldReintroduceSource, "plan must refuse for the same reason apply would")
 
-	_, _, err = applyRolloutFile(context.Background(), path, realProject, newPath, false, DefaultTranscodeCaps())
+	_, _, err = applyRolloutFileViaPlan(context.Background(), path, realProject, newPath, false, DefaultTranscodeCaps())
 	require.ErrorIs(t, err, ErrSubstitutionWouldReintroduceSource, "apply must refuse rather than silently corrupt the stored value")
 }
 
@@ -352,7 +381,7 @@ func TestPlanAndApplyRolloutFileRefuseWhenReplacementAndUnchangedTextStraddleASo
 	_, _, err := planRolloutFile(path, realProject, newPath, true, DefaultTranscodeCaps())
 	require.ErrorIs(t, err, ErrSubstitutionWouldReintroduceSource, "plan must refuse for the same reason apply would")
 
-	_, _, err = applyRolloutFile(context.Background(), path, realProject, newPath, true, DefaultTranscodeCaps())
+	_, _, err = applyRolloutFileViaPlan(context.Background(), path, realProject, newPath, true, DefaultTranscodeCaps())
 	require.ErrorIs(t, err, ErrSubstitutionWouldReintroduceSource, "apply must refuse rather than silently corrupt the stored value")
 }
 
@@ -376,7 +405,7 @@ func TestApplyRolloutFileSingleSourceSucceedsWhenNewPathContainsOldPath(t *testi
 	require.False(t, eraA)
 	require.Positive(t, planCount, "sanity: the recorded cwd must be counted")
 
-	applyCount, eraA, err := applyRolloutFile(context.Background(), path, project, newPath, false, DefaultTranscodeCaps())
+	applyCount, eraA, err := applyRolloutFileViaPlan(context.Background(), path, project, newPath, false, DefaultTranscodeCaps())
 	require.NoError(t, err)
 	require.False(t, eraA)
 	assert.Equal(t, planCount, applyCount)
@@ -393,7 +422,9 @@ func TestApplyRolloutFileLeavesEraAFileByteIdentical(t *testing.T) {
 	before, _, err := readRolloutLines(path, DefaultTranscodeCaps())
 	require.NoError(t, err)
 
-	_, eraA, err := applyRolloutFile(context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project", true, DefaultTranscodeCaps())
+	_, eraA, err := applyRolloutFileViaPlan(
+		context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project", true, DefaultTranscodeCaps(),
+	)
 	require.NoError(t, err)
 	require.True(t, eraA)
 
