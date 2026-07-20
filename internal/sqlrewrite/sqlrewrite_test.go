@@ -12,8 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
 func TestBundledSQLiteVersionMeetsRequiredFloor(t *testing.T) {
@@ -244,110 +242,6 @@ func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
 	var rows int
 	require.NoError(t, check.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM threads").Scan(&rows))
 	assert.Equal(t, 1, rows)
-}
-
-func TestPathPredicateAgreesWithByteRewriter(t *testing.T) {
-	cases := []struct {
-		name    string
-		oldPath string
-		value   string
-		want    bool
-	}{
-		{"exact path", "/a/my_app", "/a/my_app", true},
-		{"nested project", "/a/erstizeitung", "/a/erstizeitung/pwa", true},
-		{"underscore nested path", "/a/my_app", "/a/my_app/notes", true},
-		{"underscore wildcard nested sibling", "/a/my_app", "/a/myXapp/notes", false},
-		{"underscore sibling", "/a/my_app", "/a/myXapp", false},
-		{"percent nested path", "/a/100%project", "/a/100%project/notes", true},
-		{"percent wildcard nested sibling", "/a/100%project", "/a/100Xproject/notes", false},
-		{"percent sibling", "/a/100%project", "/a/100Xproject", false},
-		{"case variant", "/a/my_app", "/a/MY_APP", false},
-		{"component suffix", "/a/my_app", "/a/my_app-notes", false},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "parity.sqlite")
-			database := openSQLite(t, path)
-			require.NoError(t, execute(database, "CREATE TABLE entries (id INTEGER PRIMARY KEY, project_path TEXT)"))
-			require.NoError(t, execute(database, "INSERT INTO entries (id, project_path) VALUES (1, ?)", testCase.value))
-			require.NoError(t, database.Close())
-
-			countDatabase := openSQLite(t, path)
-			count, err := CountPathColumnRO(countDatabase, "entries", "project_path", testCase.oldPath)
-			require.NoError(t, err)
-			rewriter, err := Open(path)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-			transaction, err := rewriter.Begin()
-			require.NoError(t, err)
-			changed, err := rewriter.RewritePathColumn(transaction, "entries", "project_path", testCase.oldPath, "/a/renamed")
-			require.NoError(t, err)
-			require.NoError(t, transaction.Commit())
-
-			expected, replacements := rewrite.ReplacePathInBytes([]byte(testCase.value), testCase.oldPath, "/a/renamed")
-			assert.Equal(t, testCase.want, replacements == 1)
-			assert.Equal(t, replacements, count)
-			assert.Equal(t, replacements, changed)
-
-			verification := openSQLite(t, path)
-			var actual string
-			require.NoError(t, verification.QueryRowContext(context.Background(), "SELECT project_path FROM entries WHERE id = 1").Scan(&actual))
-			assert.Equal(t, string(expected), actual)
-		})
-	}
-}
-
-func TestPathPredicateUsesBinaryCollation(t *testing.T) {
-	cases := []struct {
-		name  string
-		value string
-	}{
-		{name: "case-variant does not match", value: "/a/MY_APP"},
-		{name: "exact bytes match", value: "/a/my_app/notes"},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "nocase.sqlite")
-			database := openSQLite(t, path)
-			require.NoError(t, execute(database, "CREATE TABLE entries (id INTEGER PRIMARY KEY, project_path TEXT COLLATE NOCASE)"))
-			require.NoError(t, execute(database, "INSERT INTO entries (id, project_path) VALUES (1, ?)", testCase.value))
-			require.NoError(t, database.Close())
-
-			countDatabase := openSQLite(t, path)
-			count, err := CountPathColumnRO(countDatabase, "entries", "project_path", "/a/my_app")
-			require.NoError(t, err)
-			rewriter, err := Open(path)
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-			transaction, err := rewriter.Begin()
-			require.NoError(t, err)
-			changed, err := rewriter.RewritePathColumn(transaction, "entries", "project_path", "/a/my_app", "/a/renamed")
-			require.NoError(t, err)
-			require.NoError(t, transaction.Commit())
-
-			expected, replacements := rewrite.ReplacePathInBytes([]byte(testCase.value), "/a/my_app", "/a/renamed")
-			assert.Equal(t, replacements, count)
-			assert.Equal(t, replacements, changed)
-
-			verification := openSQLite(t, path)
-			var actual string
-			require.NoError(t, verification.QueryRowContext(context.Background(), "SELECT project_path FROM entries WHERE id = 1").Scan(&actual))
-			assert.Equal(t, string(expected), actual)
-		})
-	}
-}
-
-func TestRewriteOperationsRejectUnexpectedSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "schema.sqlite")
-	database := openSQLite(t, path)
-	require.NoError(t, execute(database, "CREATE TABLE entries (identifier INTEGER PRIMARY KEY, actual_path TEXT)"))
-	require.NoError(t, database.Close())
-
-	countDatabase := openSQLite(t, path)
-	_, err := CountPathColumnRO(countDatabase, "entries", "missing_path", "/a/old")
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "actual_path TEXT")
 }
 
 func TestVersionMeetsFloor(t *testing.T) {

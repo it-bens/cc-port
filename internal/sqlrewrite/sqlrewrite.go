@@ -152,60 +152,6 @@ func (database *DB) CheckpointTruncate() error {
 	return nil
 }
 
-// CountPathColumnRO counts values equal to oldPath or nested below it at a
-// slash boundary using the caller's read-only connection.
-func CountPathColumnRO(database *sql.DB, table, column, oldPath string) (int, error) {
-	if err := validatePathArguments(oldPath, oldPath); err != nil {
-		return 0, err
-	}
-	if database == nil {
-		return 0, fmt.Errorf("count SQLite path column: database is nil")
-	}
-	if err := requireColumns(database, table, column); err != nil {
-		return 0, err
-	}
-
-	predicate, arguments := pathColumnPredicate(column, oldPath)
-	// #nosec G201 -- table and column names are quoted identifiers, never values.
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s", quoteIdentifier(table), predicate)
-	var count int
-	if err := database.QueryRowContext(context.Background(), query, arguments...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("count path values in %s.%s: %w", table, column, err)
-	}
-	return count, nil
-}
-
-// RewritePathColumn rewrites exact and slash-boundary-prefixed path values in
-// the caller's transaction.
-func (database *DB) RewritePathColumn(transaction *Tx, table, column, oldPath, newPath string) (int, error) {
-	if err := validatePathArguments(oldPath, newPath); err != nil {
-		return 0, err
-	}
-	if transaction == nil || transaction.transaction == nil {
-		return 0, fmt.Errorf("rewrite SQLite path column: transaction is nil")
-	}
-	if err := requireColumns(transaction.transaction, table, column); err != nil {
-		return 0, err
-	}
-
-	predicate, predicateArguments := pathColumnPredicate(column, oldPath)
-	// #nosec G201 -- table and column names are quoted identifiers, never values.
-	query := fmt.Sprintf(
-		"UPDATE %s SET %s = ? || substr(%s, length(?)+1) WHERE %s",
-		quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(column), predicate,
-	)
-	arguments := append([]any{newPath, oldPath}, predicateArguments...)
-	result, err := transaction.transaction.ExecContext(context.Background(), query, arguments...)
-	if err != nil {
-		return 0, fmt.Errorf("rewrite path values in %s.%s: %w", table, column, err)
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("count rewritten path values in %s.%s: %w", table, column, err)
-	}
-	return int(count), nil
-}
-
 // CountTextColumnRO counts rows whose TEXT/BLOB column contains a bounded
 // reference to oldPath, refusing any candidate value larger than the shared
 // per-value cap before materializing it.
@@ -460,15 +406,6 @@ func validatePathArguments(oldPath, newPath string) error {
 		return fmt.Errorf("SQLite path rewrite new path is empty")
 	}
 	return nil
-}
-
-func pathColumnPredicate(column, oldPath string) (predicate string, arguments []any) {
-	quotedColumn := quoteIdentifier(column)
-	predicate = fmt.Sprintf(
-		"%s COLLATE BINARY = ? OR substr(%s, 1, length(?)+1) COLLATE BINARY = ? || '/'",
-		quotedColumn, quotedColumn,
-	)
-	return predicate, []any{oldPath, oldPath, oldPath}
 }
 
 type schemaQuerier interface {

@@ -379,8 +379,8 @@ shapes themselves.
   separate connections at separate times, so a concurrent writer to the
   database, or a symlink target changing between the two calls, can still
   move the matched set between a dry-run and the apply that follows it.
-- The move rewrite can no longer rely solely on `RewritePathColumn`'s
-  exact/prefix SQL predicate for `threads.cwd`. `matchingThreadRewrites`
+- The move rewrite can no longer rely solely on a `COLLATE BINARY`
+  equality/prefix SQL predicate for `threads.cwd`. `matchingThreadRewrites`
   computes the canonical match in Go, then each matched row is rewritten by
   primary key through `sqlrewrite.UpdateColumnsByKey`, preserving the
   original suffix (any path past the matched project boundary) computed from

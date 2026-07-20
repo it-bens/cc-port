@@ -355,11 +355,12 @@ type threadCWDRewrite struct {
 // matchingThreadRewrites returns, for every threads row at path whose cwd
 // canonically matches oldPath, its primary key and the value Apply must
 // write: newPath with whatever suffix the row's canonicalized cwd carried
-// past oldPath's canonical form. This preserves RewritePathColumn's old
-// suffix-preservation semantics (newPath + substr(cwd, len(oldPath)+1)) for
-// the boundary-prefix case, now computed from canonical rather than literal
-// paths. It opens its own short-lived read-only connection to path — not the
-// caller's write transaction, since sqlrewrite.Tx exposes no ad-hoc SELECT —
+// past oldPath's canonical form. This preserves the byte-exact SQL path
+// predicate's old suffix-preservation semantics (newPath + substr(cwd,
+// len(oldPath)+1)) for the boundary-prefix case, now computed from canonical
+// rather than literal paths. It opens its own short-lived read-only
+// connection to path — not the caller's write transaction, since
+// sqlrewrite.Tx exposes no ad-hoc SELECT —
 // and closes it before returning, so the write transaction never overlaps a
 // read past this point. ctx comes from the stateDBSurface Apply closure
 // (move.go) via startDatabaseRewrites, so this path is cancellable.
@@ -413,8 +414,8 @@ func matchingThreadRewrites(ctx context.Context, path, oldPath, newPath string) 
 
 // rewriteThreadsAndAgentJobs rewrites threads.cwd for every row whose cwd
 // canonically matches oldPath (spec §5.1) and agent_jobs' free-text path
-// columns. threads.cwd can no longer rely solely on RewritePathColumn's
-// exact/prefix SQL predicate: a symlink-aliased cwd (Codex records it
+// columns. threads.cwd can no longer rely solely on a COLLATE BINARY
+// equality/prefix SQL predicate: a symlink-aliased cwd (Codex records it
 // verbatim) fails byte equality even when it resolves to the same directory,
 // so matchingThreadRewrites computes the canonical match in Go and each
 // matched row is rewritten by primary key through UpdateColumnsByKey.

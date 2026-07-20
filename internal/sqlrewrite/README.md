@@ -20,11 +20,6 @@ opens and guards.
 - `(*DB).Begin() (*Tx, error)`, `Tx`, `(*Tx).Commit() error`, `(*Tx).Rollback() error`.
 - `(*DB).CheckpointTruncate() error`: folds the WAL into the main database
   and truncates it. Called once more after a rewrite transaction commits.
-- `CountPathColumnRO(db *sql.DB, table, column, oldPath string) (int, error)`:
-  counts values equal to `oldPath` or nested below it at a `/` boundary on the
-  caller's read-only connection.
-- `(*DB).RewritePathColumn(tx *Tx, table, column, oldPath, newPath string) (int, error)`:
-  rewrites exact and slash-boundary-prefixed path values.
 - `CountTextColumnRO(db *sql.DB, table, column, oldPath string) (int, error)`:
   counts TEXT or BLOB rows containing a bounded reference to `oldPath` on the
   caller's read-only connection, sharing `RewriteTextColumn`'s per-value byte
@@ -150,48 +145,18 @@ opens and guards.
 - Automatic periodic checkpointing during a long-running transaction.
   Checkpoints run only at `Open` and after a rewrite commits.
 
-### LIKE ban
-
-**Handled.**
-
-- The path-column predicate is defined once and drives both
-  `CountPathColumnRO` and `RewritePathColumn`: `col COLLATE BINARY = :old OR
-  substr(col, 1, length(:old)+1) COLLATE BINARY = :old || '/'`. `_` and `%` are SQL
-  `LIKE` wildcards and ASCII `LIKE` comparison is case-insensitive by
-  default, so `LIKE old || '/%'` would match a sibling project whose name
-  merely resembles the target: `/a/my_app` would match `/a/myXapp`, and
-  nested real-world working directories such as `erstizeitung` and
-  `erstizeitung/pwa` turn this from a theoretical risk into a concrete
-  prefix-collision bug.
-- `TestPathPredicateAgreesWithByteRewriter` is the boundary-parity table:
-  underscores, percent signs, nested sibling projects, and case variants, all
-  asserting the SQL predicate agrees with `rewrite.ReplacePathInBytes` on the
-  same case.
-
-**Refused.**
-
-- `LIKE` anywhere in this package's SQL. There is no override; a new
-  predicate follows the exact/prefix form above.
-
-**Not covered.**
-
-- Nothing outside this package. `CountTextColumnRO` and `RewriteTextColumn`
-  both use `instr()`, not `LIKE`, for free-text columns like `agent_jobs`'s
-  CSV paths, and both live here so the count and the rewrite share one
-  predicate and one schema check.
-
 ### Byte-exact predicates and schema validation
 
 **Handled.**
 
-- `CountPathColumnRO`, `RewritePathColumn`, `CountTextColumnRO`,
-  `RewriteTextColumn`, and the generic keyed update (`UpdateColumnsByKey`)
-  call `PRAGMA table_info` first and refuse with the observed schema in the
-  error message when a declared column or primary key is missing, so a
-  schema surprise fails loudly naming what was actually found rather than
-  producing a confusing SQL error deeper in the call. `Open`, `Begin`,
-  `Commit`, `Rollback`, and `CheckpointTruncate` do not validate schema; they
-  operate on the connection or transaction itself, not a named table.
+- `CountTextColumnRO`, `RewriteTextColumn`, and the generic keyed update
+  (`UpdateColumnsByKey`) call `PRAGMA table_info` first and refuse with the
+  observed schema in the error message when a declared column or primary key
+  is missing, so a schema surprise fails loudly naming what was actually
+  found rather than producing a confusing SQL error deeper in the call.
+  `Open`, `Begin`, `Commit`, `Rollback`, and `CheckpointTruncate` do not
+  validate schema; they operate on the connection or transaction itself, not
+  a named table.
 - `RewriteTextColumn` and `UpdateColumnsByKey` additionally require the
   declared primary key column to actually be the table's primary key and
   refuse a composite primary key, since both operations key their per-row
@@ -212,7 +177,7 @@ opens and guards.
   observed Go type. This check applies only to the two operations that read
   a row's value back into Go; `UpdateColumnsByKey` writes caller-supplied
   values straight through as SQL parameters and does not type-check them.
-- Any of the four read-or-rewrite operations above, or `UpdateColumnsByKey`,
+- Either of the two read-or-rewrite operations above, or `UpdateColumnsByKey`,
   against a table or column the schema query does not find, or (for
   `RewriteTextColumn`/`UpdateColumnsByKey`) a primary key column that either
   does not exist or is not actually the table's primary key.
@@ -286,7 +251,5 @@ busy-refusal timing test, the checkpoint-on-open test against a fixture
 database with a synthetic `-wal`, `FileDSN` round-tripping a table through a
 path whose directory segment contains `?`, `RewriteTextColumn` fixtures
 covering a TEXT and a BLOB column, the shared `ErrTextValueTooLarge` refusal
-asserted from both `RewriteTextColumn` and `CountTextColumnRO`,
-`UpdateColumnsByKey`'s update-without-insert behavior, the path-predicate
-boundary-parity table shared with `rewrite.ReplacePathInBytes`, and the
-schema-validation refusal naming the observed columns.
+asserted from both `RewriteTextColumn` and `CountTextColumnRO`, and
+`UpdateColumnsByKey`'s update-without-insert behavior.
