@@ -238,7 +238,7 @@ staging-path construction lives in each adapter, driven by
 ## Tests
 
 Unit tests in `importer_test.go`, `merge_resolutions_test.go`, and the
-internal `checkmissing_internal_test.go`. Coverage:
+internal `checkmissing_internal_test.go` and `filehistory_drift_internal_test.go`. Coverage:
 
 - Basic round-trip, including a multi-tool archive importing into Claude and
   Codex targets in the same run.
@@ -258,6 +258,9 @@ internal `checkmissing_internal_test.go`. Coverage:
 - Incoming history line at/over the scanner cap.
 - Progress-phase sequencing (preflight, extract, promote, finalize) and the
   extract phase counting every staged entry.
+- The drift guard pins `fileHistoryTool` and `fileHistoryEntryPrefix` to the
+  Claude adapter's exported `Name()` and `file-history` category, so an adapter
+  rename fails loudly instead of silently refusing imports.
 
 ## References
 
