@@ -610,6 +610,23 @@ func TestCodexImportWithoutRolloutsDoesNotRearmBackfillState(t *testing.T) {
 	assertBackfillState(t, filepath.Join(destinationHome.SQLiteDir, stateDBFileName), "complete", &watermark)
 }
 
+// TestCodexFinalizeWithoutSidecarsOrRolloutsSkipsStateDBDiscovery guards the
+// behavior-neutrality of the discovery hoist: an import that stages neither
+// sidecar rows nor rollouts has no consumer for the state-DB list, so Finalize
+// must not read the state-DB directory and must not fail when it is absent, a
+// regular file, or unreadable.
+func TestCodexFinalizeWithoutSidecarsOrRolloutsSkipsStateDBDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	sqliteHome := filepath.Join(dir, "sqlite-home-is-a-file")
+	require.NoError(t, os.WriteFile(sqliteHome, []byte("not a directory"), 0o600))
+	workspace := quietTestWorkspace(&Home{Dir: dir, SQLiteDir: sqliteHome})
+
+	warnings, err := workspace.Finalize(t.Context(), FixtureProjectPath(), nil)
+
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+}
+
 func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
 	home := SetupFixture(t)
 	workspace := quietTestWorkspace(home)
@@ -617,7 +634,7 @@ func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
 		`"title":null,"git":{"sha":null,"branch":null,"origin_url":null}}` + "\n"
 	workspace.sidecarAppends = [][]byte{[]byte(sidecar)}
 
-	_, err := workspace.applyThreadSidecars(nil)
+	_, err := workspace.parseThreadSidecars()
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "line 1")

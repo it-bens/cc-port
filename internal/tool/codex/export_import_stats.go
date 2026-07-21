@@ -631,11 +631,21 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 	if err := appendUniqueExact(ctx, filepath.Join(workspace.home.Dir, sessionIndexFile), workspace.indexAppends); err != nil {
 		return nil, err
 	}
-	databases, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
+	sidecars, err := workspace.parseThreadSidecars()
 	if err != nil {
 		return nil, err
 	}
-	unapplied, err := workspace.applyThreadSidecars(databases)
+	// Discover only when a consumer needs the list. An import with neither
+	// sidecar rows to apply nor staged rollouts to re-arm must not start
+	// depending on the state-DB directory being readable.
+	var databases []string
+	if len(sidecars) > 0 || workspace.rolloutsStaged {
+		databases, err = discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
+		if err != nil {
+			return nil, err
+		}
+	}
+	unapplied, err := applyThreadSidecars(sidecars, databases)
 	if err != nil {
 		return nil, err
 	}
@@ -841,24 +851,25 @@ func appendLinesToFile(path string, lines [][]byte) (err error) {
 	return nil
 }
 
-func (workspace *Workspace) applyThreadSidecars(databases []string) (int, error) {
+func (workspace *Workspace) parseThreadSidecars() ([]threadSidecar, error) {
 	var sidecars []threadSidecar
 	for _, chunk := range workspace.sidecarAppends {
 		lines, err := boundedChunkLines(chunk)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		for lineNumber, line := range lines {
 			sidecar, err := parseThreadSidecar(line)
 			if err != nil {
-				return 0, fmt.Errorf("parse threads sidecar line %d: %w", lineNumber+1, err)
+				return nil, fmt.Errorf("parse threads sidecar line %d: %w", lineNumber+1, err)
 			}
 			sidecars = append(sidecars, sidecar)
 		}
 	}
-	if len(sidecars) == 0 {
-		return 0, nil
-	}
+	return sidecars, nil
+}
+
+func applyThreadSidecars(sidecars []threadSidecar, databases []string) (int, error) {
 	unapplied := 0
 	for _, sidecar := range sidecars {
 		applied := false
