@@ -141,6 +141,7 @@ type Workspace struct {
 	historyAppends [][]byte
 	indexAppends   [][]byte
 	sidecarAppends [][]byte
+	rolloutsStaged bool
 }
 
 // Root implements tool.Workspace.

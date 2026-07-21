@@ -101,7 +101,7 @@ func TestImportWarningsNameTheirToolDuringMultiToolImport(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 
 	assert.Contains(t, stderr.String(), "Warning (OpenAI Codex): 1 threads sidecar row(s) could not be applied "+
-		"because Codex has not created their thread rows yet; rerun import after opening the project\n")
+		"because no Codex state database exists yet; start Codex once (any directory), then rerun import\n")
 }
 
 // redirectProgressSink swaps the package-level progress output sink to a

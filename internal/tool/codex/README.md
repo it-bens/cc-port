@@ -298,11 +298,14 @@ shapes themselves.
   scoped to foreign self-healing caches specifically; an adapter
   reconstituting its own primary SQL store performs `INSERT`s as expected new
   work on a connection that reuses `sqlrewrite.Open`'s safety envelope.
-- Rows for imported rollouts become applicable only after a cwd-filtered
-  listing touches them (for example, `codex resume` inside the project,
-  which is how Codex populates `threads` from the rollout file in the first
-  place); re-running the import afterward applies the remainder, and the
-  import warning says exactly that.
+- Codex's startup session backfill is a one-shot gate: `status='complete'`
+  skips it, and a resumed run only considers paths sorting above
+  `last_watermark`. Imported `sessions/...` paths do not satisfy that
+  filter. When an import stages rollouts, cc-port updates each discovered
+  state database's `backfill_state` row by primary key, setting
+  `status='pending'` and `last_watermark=NULL`. The warning distinguishes no
+  state database, missing rows with backfill re-armed, and missing rows with
+  no rollout files to rebuild from.
 
 **Refused.**
 
@@ -313,8 +316,8 @@ shapes themselves.
 
 **Not covered.**
 
-- Guaranteeing every sidecar row applies on the first import. A thread whose
-  row Codex has not yet created is expected to need the documented re-run.
+- Guaranteeing every sidecar row applies on the first import. The convergent
+  workflow is import, start Codex once in any directory, then rerun import.
 
 ### cwd matching
 

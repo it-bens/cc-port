@@ -32,6 +32,7 @@ const (
 	importFilePerm      = os.FileMode(0o600)
 	archiveSessionRoot  = "sessions/"
 	archiveArchivedRoot = "archived-sessions/"
+	backfillStateTable  = "backfill_state"
 )
 
 // UnknownArchiveEntryError identifies a Codex-relative entry that the adapter
@@ -589,6 +590,7 @@ func (workspace *Workspace) stageRollout(entry archive.Entry, relative, root str
 		}
 		return nil, err
 	}
+	workspace.rolloutsStaged = true
 	return []archive.Staged{staged}, nil
 }
 
@@ -629,18 +631,51 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 	if err := appendUniqueExact(ctx, filepath.Join(workspace.home.Dir, sessionIndexFile), workspace.indexAppends); err != nil {
 		return nil, err
 	}
-	unapplied, err := workspace.applyThreadSidecars()
+	sidecars, err := workspace.parseThreadSidecars()
 	if err != nil {
 		return nil, err
 	}
+	// Discover only when a consumer needs the list. An import with neither
+	// sidecar rows to apply nor staged rollouts to re-arm must not start
+	// depending on the state-DB directory being readable.
+	var databases []string
+	if len(sidecars) > 0 || workspace.rolloutsStaged {
+		databases, err = discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
+		if err != nil {
+			return nil, err
+		}
+	}
+	unapplied, err := applyThreadSidecars(sidecars, databases)
+	if err != nil {
+		return nil, err
+	}
+	if workspace.rolloutsStaged && len(databases) > 0 {
+		if err := rearmBackfillState(databases); err != nil {
+			return nil, err
+		}
+	}
 	var warnings []string
-	if unapplied > 0 {
+	switch {
+	case unapplied == 0:
+	case len(databases) == 0:
 		warnings = append(warnings, fmt.Sprintf(
-			"%d threads sidecar row(s) could not be applied because Codex has not created their thread rows yet; rerun import after opening the project",
+			"%d threads sidecar row(s) could not be applied because no Codex state database exists yet; start Codex once (any directory), then rerun import",
+			unapplied,
+		))
+	case workspace.rolloutsStaged:
+		warnings = append(warnings, fmt.Sprintf(
+			"%d threads sidecar row(s) could not be applied because Codex has not created their thread rows yet; "+
+				"the session backfill was re-armed — start Codex once (any directory), then rerun import",
+			unapplied,
+		))
+	default:
+		warnings = append(warnings, fmt.Sprintf(
+			"%d threads sidecar row(s) could not be applied because their thread rows do not exist and this "+
+				"archive carries no rollout files to rebuild them from",
 			unapplied,
 		))
 	}
-	workspace.historyAppends, workspace.indexAppends, workspace.sidecarAppends = nil, nil, nil
+	workspace.historyAppends, workspace.indexAppends, workspace.sidecarAppends, workspace.rolloutsStaged = nil, nil, nil, false
 	return warnings, nil
 }
 
@@ -816,28 +851,25 @@ func appendLinesToFile(path string, lines [][]byte) (err error) {
 	return nil
 }
 
-func (workspace *Workspace) applyThreadSidecars() (int, error) {
+func (workspace *Workspace) parseThreadSidecars() ([]threadSidecar, error) {
 	var sidecars []threadSidecar
 	for _, chunk := range workspace.sidecarAppends {
 		lines, err := boundedChunkLines(chunk)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		for lineNumber, line := range lines {
 			sidecar, err := parseThreadSidecar(line)
 			if err != nil {
-				return 0, fmt.Errorf("parse threads sidecar line %d: %w", lineNumber+1, err)
+				return nil, fmt.Errorf("parse threads sidecar line %d: %w", lineNumber+1, err)
 			}
 			sidecars = append(sidecars, sidecar)
 		}
 	}
-	if len(sidecars) == 0 {
-		return 0, nil
-	}
-	databases, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
-	if err != nil {
-		return 0, err
-	}
+	return sidecars, nil
+}
+
+func applyThreadSidecars(sidecars []threadSidecar, databases []string) (int, error) {
 	unapplied := 0
 	for _, sidecar := range sidecars {
 		applied := false
@@ -875,6 +907,39 @@ func (workspace *Workspace) applyThreadSidecars() (int, error) {
 		}
 	}
 	return unapplied, nil
+}
+
+func rearmBackfillState(databases []string) error {
+	for _, path := range databases {
+		database, err := sqlrewrite.Open(path)
+		if err != nil {
+			return fmt.Errorf("open state database %s: %w", path, err)
+		}
+		transaction, err := database.Begin()
+		if err != nil {
+			_ = database.Close()
+			return fmt.Errorf("re-arm backfill state for %s: %w", path, err)
+		}
+		_, err = database.UpdateColumnsByKey(transaction, backfillStateTable, "id", 1, map[string]any{
+			"status": "pending", "last_watermark": nil,
+		})
+		if err == nil {
+			err = transaction.Commit()
+		} else {
+			_ = transaction.Rollback()
+		}
+		if err == nil {
+			err = database.CheckpointTruncate()
+		}
+		closeErr := database.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return fmt.Errorf("re-arm backfill state for %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func sidecarColumns(sidecar threadSidecar) map[string]any {
