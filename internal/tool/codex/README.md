@@ -512,6 +512,11 @@ shapes themselves.
 - Any export or import surface for `config.toml`. Trust is a per-machine
   decision cc-port does not port; a re-import can never overwrite trust the
   user has re-established on the destination machine.
+- Codex refuses the whole config file because trust is `config.toml`'s only
+  project-keyed payload, whereas the Claude adapter ports its `.claude.json`
+  project block minus destination-owned approval gates because that block
+  carries working configuration beyond trust. See `internal/tool/claude/README.md`
+  §Stage and Finalize (import).
 
 **Not covered.**
 

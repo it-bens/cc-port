@@ -8,6 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
+
+	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
 // newMergeTestWorkspace returns a Workspace rooted at a fresh temp home, with
@@ -108,4 +111,70 @@ func TestMergeProjectConfigBytes_RejectsInvalidJSON(t *testing.T) {
 	var configErr *InvalidConfigJSONError
 	require.ErrorAs(t, err, &configErr)
 	assert.Equal(t, "/fake/config", configErr.Path)
+}
+
+func TestMergeProjectConfigBytes_DropsIncomingApprovalGatesOnFreshDestination(t *testing.T) {
+	projectPath := "/fresh/project"
+	block := []byte(`{"hasTrustDialogAccepted":true,` +
+		`"hasClaudeMdExternalIncludesApproved":false,` +
+		`"hasClaudeMdExternalIncludesWarningShown":true,` +
+		`"allowedTools":["Bash(ls)"],"setting":"enabled"}`)
+
+	merged, err := mergeProjectConfigBytes(nil, "/fake/config", projectPath, block)
+
+	require.NoError(t, err)
+	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	for _, key := range destinationOwnedProjectKeys {
+		assert.False(t, gjson.GetBytes(merged, path+"."+key).Exists())
+	}
+	assert.Equal(t, []interface{}{"Bash(ls)"}, gjson.GetBytes(merged, path+".allowedTools").Value())
+	assert.Equal(t, "enabled", gjson.GetBytes(merged, path+".setting").String())
+}
+
+func TestMergeProjectConfigBytes_PreservesDestinationApprovalGateValues(t *testing.T) {
+	projectPath := "/conflict/project"
+	existing := []byte(`{"projects":{"/conflict/project":{"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":false}}}`)
+	block := []byte(`{"hasTrustDialogAccepted":false,"hasClaudeMdExternalIncludesApproved":true,"setting":"ported"}`)
+
+	merged, err := mergeProjectConfigBytes(existing, "/fake/config", projectPath, block)
+
+	require.NoError(t, err)
+	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	assert.True(t, gjson.GetBytes(merged, path+".hasTrustDialogAccepted").Bool())
+	assert.False(t, gjson.GetBytes(merged, path+".hasClaudeMdExternalIncludesApproved").Bool())
+	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())
+}
+
+func TestMergeProjectConfigBytes_DropsIncomingApprovalGatesWhenDestinationProjectAbsent(t *testing.T) {
+	projectPath := "/absent/project"
+	existing := []byte(`{"projects":{"/different/project":{"setting":"existing"}}}`)
+	block := []byte(`{"hasTrustDialogAccepted":true,` +
+		`"hasClaudeMdExternalIncludesApproved":false,` +
+		`"hasClaudeMdExternalIncludesWarningShown":true,"setting":"ported"}`)
+
+	merged, err := mergeProjectConfigBytes(existing, "/fake/config", projectPath, block)
+
+	require.NoError(t, err)
+	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	for _, key := range destinationOwnedProjectKeys {
+		assert.False(t, gjson.GetBytes(merged, path+"."+key).Exists())
+	}
+	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())
+}
+
+func TestMergeProjectConfigBytes_IsFixedPointAgainstUnchangedDestination(t *testing.T) {
+	projectPath := "/fixed/project"
+	existing := []byte(`{"projects":{"/fixed/project":{"hasTrustDialogAccepted":true,` +
+		`"hasClaudeMdExternalIncludesApproved":false,` +
+		`"hasClaudeMdExternalIncludesWarningShown":true}}}`)
+	block := []byte(`{"hasTrustDialogAccepted":false,` +
+		`"hasClaudeMdExternalIncludesApproved":true,` +
+		`"hasClaudeMdExternalIncludesWarningShown":false,"setting":"ported"}`)
+
+	result1, err := mergeProjectConfigBytes(existing, "/fake/config", projectPath, block)
+	require.NoError(t, err)
+	result2, err := mergeProjectConfigBytes(result1, "/fake/config", projectPath, block)
+
+	require.NoError(t, err)
+	assert.Equal(t, result1, result2)
 }
