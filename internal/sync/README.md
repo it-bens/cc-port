@@ -22,9 +22,10 @@ This package has no tool-specific knowledge; it drives `internal/export` and
 - `ExecutePush(ctx, opts, plan, output io.Writer) (*export.Result, error)`: runs
   `export.Run(ctx, opts.Targets, ...)` against the writer cmd opened.
 - `PlanPull(ctx, opts, source) (*PullPlan, error)`: reads the remote
-  archive's manifest from the pre-opened source, and for every target
-  present in both the manifest and `opts.Targets`, computes that tool's
-  unresolved declared placeholders via `Workspace.ImplicitAnchors`.
+  archive's manifest from the pre-opened source. Before rendering, it hard
+  refuses through the import preflight gates: `VerifyManifestTools`,
+  `VerifyEntryTools`, and per-block `PreflightBlock` category, anchor, and
+  resolution validation.
 - `ExecutePull(ctx, opts, plan, source) (*importer.Result, error)`: runs
   `importer.Run(ctx, opts.AllTools, opts.Targets, ...)` against the source.
 - `(*PushPlan).Render(io.Writer) error`, `(*PullPlan).Render(io.Writer) error`:
@@ -82,8 +83,8 @@ Used by `cmd/cc-port` push and pull.
 - `openArchiveSource` translates encrypted-no-passphrase to
   `ErrPassphraseRequired`. The `encrypt.ErrUnencryptedInput` sentinel for
   plaintext-with-passphrase propagates wrapped without translation.
-- `ExecutePull` (via `importer.Run`'s manifest-tool validation) refuses when
-  an archive manifest names an unregistered tool.
+- `PlanPull` (dry-run) and `ExecutePull` refuse when an archive manifest
+  names an unregistered tool.
 
 #### Not covered
 

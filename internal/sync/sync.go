@@ -251,13 +251,9 @@ func PlanPull(ctx context.Context, opts PullOptions, source pipeline.Source) (*P
 		if !ok {
 			continue
 		}
-		anchors, err := target.Workspace.ImplicitAnchors(opts.TargetPath)
+		anchors, resolutions, err := importer.PreflightBlock(target, block, opts.FromManifest, opts.TargetPath)
 		if err != nil {
-			return nil, fmt.Errorf("sync.PlanPull: implicit anchors for %s: %w", block.Name, err)
-		}
-		resolutions, err := importer.MergeResolutions(block, opts.FromManifest, anchors)
-		if err != nil {
-			return nil, fmt.Errorf("sync.PlanPull: merge resolutions for %s: %w", block.Name, err)
+			return nil, fmt.Errorf("sync.PlanPull: %w", err)
 		}
 		unresolved, err := importer.UnresolvedReferencedKeys(
 			ctx, block, anchors, resolutions, entriesByTool[block.Name], caps.MaxAggregateBytes,

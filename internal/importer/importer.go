@@ -207,14 +207,7 @@ func preflightTargets(
 			result.SkippedTools = append(result.SkippedTools, name)
 			continue
 		}
-		if _, err := manifest.ApplyToolCategories(name, categoryNames(target.Tool), block.Categories); err != nil {
-			return Result{}, nil, nil, fmt.Errorf("manifest categories for %s: %w", name, err)
-		}
-		anchors, err := target.Workspace.ImplicitAnchors(options.TargetPath)
-		if err != nil {
-			return Result{}, nil, nil, fmt.Errorf("implicit anchors for %s: %w", name, err)
-		}
-		resolutions, err := MergeResolutions(block, options.FromManifest, anchors)
+		anchors, resolutions, err := PreflightBlock(target, block, options.FromManifest, options.TargetPath)
 		if err != nil {
 			return Result{}, nil, nil, err
 		}
@@ -271,6 +264,30 @@ func categoryNames(t tool.Tool) []string {
 		names[i] = category.Name
 	}
 	return names
+}
+
+// PreflightBlock runs the per-tool hard gates that import preflight
+// (preflightTargets) and pull planning (sync.PlanPull) must agree on:
+// category validation, implicit-anchor resolution, and resolution merging.
+// It returns the tool's implicit anchors and merged resolutions so each
+// caller runs its own reference-classification step. Routing both callers
+// through it keeps a pull dry-run from accepting an archive apply refuses.
+func PreflightBlock(
+	target tool.Target, block manifest.Tool, fromManifest *manifest.Metadata, targetPath string,
+) (anchors, resolutions map[string]string, err error) {
+	name := target.Tool.Name()
+	if _, err := manifest.ApplyToolCategories(name, categoryNames(target.Tool), block.Categories); err != nil {
+		return nil, nil, fmt.Errorf("manifest categories for %s: %w", name, err)
+	}
+	anchors, err = target.Workspace.ImplicitAnchors(targetPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("implicit anchors for %s: %w", name, err)
+	}
+	resolutions, err = MergeResolutions(block, fromManifest, anchors)
+	if err != nil {
+		return nil, nil, err
+	}
+	return anchors, resolutions, nil
 }
 
 // MergeResolutions merges, for one tool, the sender's own pre-filled

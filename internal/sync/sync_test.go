@@ -367,6 +367,19 @@ func TestPullPlanApplyGateParity(t *testing.T) {
 				require.ErrorAs(t, err, &typed)
 			},
 		},
+		{
+			name: "manifest has an unknown category",
+			archive: func(t *testing.T) []byte {
+				return archiveWithManifest(t, &manifest.Metadata{Tools: []manifest.Tool{{
+					Name:       "claude",
+					Categories: []manifest.Category{{Name: "not-a-declared-claude-category"}},
+				}}})
+			},
+			assertError: func(t *testing.T, err error) {
+				var typed *manifest.UnknownCategoriesError
+				require.ErrorAs(t, err, &typed)
+			},
+		},
 	}
 
 	for _, testCase := range tests {
