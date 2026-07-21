@@ -589,6 +589,7 @@ func (workspace *Workspace) stageRollout(entry archive.Entry, relative, root str
 		}
 		return nil, err
 	}
+	workspace.rolloutsStaged = true
 	return []archive.Staged{staged}, nil
 }
 
@@ -629,7 +630,11 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 	if err := appendUniqueExact(ctx, filepath.Join(workspace.home.Dir, sessionIndexFile), workspace.indexAppends); err != nil {
 		return nil, err
 	}
-	unapplied, err := workspace.applyThreadSidecars()
+	databases, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
+	if err != nil {
+		return nil, err
+	}
+	unapplied, err := workspace.applyThreadSidecars(databases)
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +645,7 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 			unapplied,
 		))
 	}
-	workspace.historyAppends, workspace.indexAppends, workspace.sidecarAppends = nil, nil, nil
+	workspace.historyAppends, workspace.indexAppends, workspace.sidecarAppends, workspace.rolloutsStaged = nil, nil, nil, false
 	return warnings, nil
 }
 
@@ -816,7 +821,7 @@ func appendLinesToFile(path string, lines [][]byte) (err error) {
 	return nil
 }
 
-func (workspace *Workspace) applyThreadSidecars() (int, error) {
+func (workspace *Workspace) applyThreadSidecars(databases []string) (int, error) {
 	var sidecars []threadSidecar
 	for _, chunk := range workspace.sidecarAppends {
 		lines, err := boundedChunkLines(chunk)
@@ -833,10 +838,6 @@ func (workspace *Workspace) applyThreadSidecars() (int, error) {
 	}
 	if len(sidecars) == 0 {
 		return 0, nil
-	}
-	databases, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
-	if err != nil {
-		return 0, err
 	}
 	unapplied := 0
 	for _, sidecar := range sidecars {

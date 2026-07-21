@@ -573,7 +573,7 @@ func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
 		`"title":null,"git":{"sha":null,"branch":null,"origin_url":null}}` + "\n"
 	workspace.sidecarAppends = [][]byte{[]byte(sidecar)}
 
-	_, err := workspace.applyThreadSidecars()
+	_, err := workspace.applyThreadSidecars(nil)
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "line 1")
