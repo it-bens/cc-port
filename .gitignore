@@ -52,6 +52,8 @@ AGENTS.local.md
 !.claude/settings.json
 !.claude/skills/
 
+docs/superpowers/
+
 # ChunkHound local index (.chunkhound.json is committed; API keys come from the
 # machine-global ~/.config/chunkhound/chunkhound.json)
 .chunkhound/
