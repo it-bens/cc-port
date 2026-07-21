@@ -126,7 +126,7 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	if err != nil {
 		return nil, fmt.Errorf("read metadata from archive: %w", err)
 	}
-	if err := verifyManifestTools(allTools, metadata); err != nil {
+	if err := VerifyManifestTools(allTools, metadata); err != nil {
 		return nil, err
 	}
 	blocksByTool := make(map[string]manifest.Tool, len(metadata.Tools))
@@ -142,7 +142,7 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyEntryTools(allTools, entries); err != nil {
+	if err := VerifyEntryTools(allTools, entries); err != nil {
 		return nil, err
 	}
 	entriesByTool := groupEntriesByTool(entries)
@@ -214,7 +214,7 @@ func preflightTargets(
 		if err != nil {
 			return Result{}, nil, nil, fmt.Errorf("implicit anchors for %s: %w", name, err)
 		}
-		resolutions, err := mergeResolutions(block, options.FromManifest, anchors)
+		resolutions, err := MergeResolutions(block, options.FromManifest, anchors)
 		if err != nil {
 			return Result{}, nil, nil, err
 		}
@@ -234,9 +234,9 @@ func preflightTargets(
 	return result, present, resolutionsByTool, nil
 }
 
-// verifyManifestTools hard-fails when the manifest declares a <tool> block
+// VerifyManifestTools hard-fails when the manifest declares a <tool> block
 // this binary does not register at all.
-func verifyManifestTools(allTools *tool.Set, metadata *manifest.Metadata) error {
+func VerifyManifestTools(allTools *tool.Set, metadata *manifest.Metadata) error {
 	for _, block := range metadata.Tools {
 		if _, ok := allTools.ByName(block.Name); !ok {
 			return fmt.Errorf("archive manifest: %w", &manifest.UnregisteredToolError{Tool: block.Name})
@@ -245,9 +245,9 @@ func verifyManifestTools(allTools *tool.Set, metadata *manifest.Metadata) error 
 	return nil
 }
 
-// verifyEntryTools hard-fails when any archive entry's leading path segment
+// VerifyEntryTools hard-fails when any archive entry's leading path segment
 // names a tool this binary does not register at all.
-func verifyEntryTools(allTools *tool.Set, entries []archive.RawEntry) error {
+func VerifyEntryTools(allTools *tool.Set, entries []archive.RawEntry) error {
 	for _, raw := range entries {
 		if _, ok := allTools.ByName(raw.ToolName); !ok {
 			return &UnknownEntryToolError{Tool: raw.ToolName, Name: raw.Entry.Name}
@@ -273,12 +273,13 @@ func categoryNames(t tool.Tool) []string {
 	return names
 }
 
-// mergeResolutions merges, for one tool, the sender's own pre-filled
+// MergeResolutions merges, for one tool, the sender's own pre-filled
 // Resolve values (weakest), any --from-manifest override for that tool
 // (stronger), and the target's implicit anchors (strongest — cc-port
 // computes these itself and a stale or malicious sender value must never
-// override them).
-func mergeResolutions(
+// override them). Import preflight (preflightTargets) and pull planning
+// (sync.PlanPull) use it.
+func MergeResolutions(
 	block manifest.Tool, fromManifest *manifest.Metadata, anchors map[string]string,
 ) (map[string]string, error) {
 	resolutions := make(map[string]string)
@@ -366,11 +367,11 @@ func checkMissingResolutions(
 // for a key the write path will never touch — excluding it keeps the
 // closed-placeholder contract honest rather than weakening it.
 //
-// This is the single gate both import preflight (checkMissingResolutions,
-// above) and pull planning (sync.PlanPull) use, so an archive one path
-// accepts the other can no longer refuse: anchors marks placeholder keys
-// the recipient resolves implicitly, and resolutions marks placeholder keys
-// already covered by a sender-baked-in or --from-manifest resolve value.
+// Import preflight and pull planning share VerifyManifestTools,
+// VerifyEntryTools, MergeResolutions, and this classifier. An archive one
+// path accepts therefore cannot fail these gates on the other path: anchors
+// mark keys the recipient resolves implicitly, while resolutions mark keys
+// covered by sender-provided or --from-manifest resolve values.
 func UnresolvedReferencedKeys(
 	ctx context.Context,
 	block manifest.Tool, anchors, resolutions map[string]string, entries []archive.RawEntry, maxAggregateBytes int64,

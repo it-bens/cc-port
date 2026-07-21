@@ -14,6 +14,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
+	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
@@ -78,6 +79,32 @@ func TestPull_DryRunDoesNotImport(t *testing.T) {
 	if _, statErr := os.Stat(encodedDir); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected encoded project dir to be absent after dry-run, stat err = %v", statErr)
 	}
+}
+
+func TestPull_DryRunWithImplicitFromManifestResolutionRefuses(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	fromManifestPath := filepath.Join(t.TempDir(), "from-manifest.xml")
+	require.NoError(t, manifest.WriteManifest(fromManifestPath, &manifest.Metadata{Tools: []manifest.Tool{{
+		Name:         "claude",
+		Placeholders: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolve: projectPath}},
+	}}}))
+
+	rootCmd := newRootCmd(noopBanner{})
+	rootCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-home", claudeFixtureDir,
+		"--to", filepath.Join(t.TempDir(), "pulled-project"),
+		"--remote", url,
+		"--from-manifest", fromManifestPath,
+	})
+
+	err := rootCmd.Execute()
+
+	var typed *importer.ImplicitKeyOverrideError
+	require.ErrorAs(t, err, &typed)
 }
 
 func TestPull_ApplyImportsToTarget(t *testing.T) {

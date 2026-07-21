@@ -1,8 +1,10 @@
 package sync
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"io"
 	"os"
@@ -16,8 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
@@ -270,6 +274,120 @@ func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 	if len(plan.UnresolvedPlaceholders["claude"]) != 0 {
 		t.Fatalf("UnresolvedPlaceholders[claude] = %v, want empty (sender Resolve covers)", plan.UnresolvedPlaceholders["claude"])
 	}
+}
+
+func TestPullPlanApplyGateParity(t *testing.T) {
+	tests := []struct {
+		name        string
+		archive     func(*testing.T) []byte
+		from        *manifest.Metadata
+		assertError func(*testing.T, error)
+	}{
+		{
+			name: "implicit-key override in from-manifest",
+			archive: func(t *testing.T) []byte {
+				targets, projectPath := buildTestTargets(t)
+				return buildArchiveBytes(t, targets, projectPath, "host-user", time.Now().UTC(), map[string][]manifest.Placeholder{
+					"claude": {{Key: "{{PROJECT_PATH}}", Original: projectPath}},
+				}, "")
+			},
+			from: &manifest.Metadata{Tools: []manifest.Tool{{
+				Name:         "claude",
+				Placeholders: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolve: "/sender/project"}},
+			}}},
+			assertError: func(t *testing.T, err error) {
+				var typed *importer.ImplicitKeyOverrideError
+				require.ErrorAs(t, err, &typed)
+			},
+		},
+		{
+			name: "undeclared from-manifest key",
+			archive: func(t *testing.T) []byte {
+				targets, projectPath := buildTestTargets(t)
+				return buildArchiveBytes(t, targets, projectPath, "host-user", time.Now().UTC(), map[string][]manifest.Placeholder{
+					"claude": {{Key: "{{DECLARED}}", Original: projectPath}},
+				}, "")
+			},
+			from: &manifest.Metadata{Tools: []manifest.Tool{{
+				Name:         "claude",
+				Placeholders: []manifest.Placeholder{{Key: "{{UNDECLARED}}", Resolve: "/sender/project"}},
+			}}},
+			assertError: func(t *testing.T, err error) {
+				var typed *importer.UndeclaredResolutionKeysError
+				require.ErrorAs(t, err, &typed)
+			},
+		},
+		{
+			name: "non-absolute resolution value",
+			archive: func(t *testing.T) []byte {
+				targets, projectPath := buildTestTargets(t)
+				return buildArchiveBytes(t, targets, projectPath, "host-user", time.Now().UTC(), map[string][]manifest.Placeholder{
+					"claude": {{Key: "{{DECLARED}}", Original: projectPath, Resolve: "relative/path"}},
+				}, "")
+			},
+			assertError: func(t *testing.T, err error) {
+				var typed *archive.InvalidResolutionsError
+				require.ErrorAs(t, err, &typed)
+			},
+		},
+		{
+			name: "archive manifest names an unregistered tool",
+			archive: func(t *testing.T) []byte {
+				return archiveWithManifest(t, &manifest.Metadata{Tools: []manifest.Tool{{Name: "unregistered"}}})
+			},
+			assertError: func(t *testing.T, err error) {
+				var typed *manifest.UnregisteredToolError
+				require.ErrorAs(t, err, &typed)
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			body := testCase.archive(t)
+			home := buildTestHomeBlank(t)
+			opts := PullOptions{
+				AllTools:     toolSetForTest(),
+				Targets:      targetsFor(home),
+				Name:         "k",
+				TargetPath:   filepath.Join(t.TempDir(), "pulled-project"),
+				FromManifest: testCase.from,
+			}
+			source := pipeline.Source{View: pipeline.View{ReaderAt: bytes.NewReader(body), Size: int64(len(body))}}
+
+			plan, planErr := PlanPull(context.Background(), opts, source)
+
+			require.Nil(t, plan)
+			require.Error(t, planErr)
+			testCase.assertError(t, planErr)
+
+			_, applyErr := importer.Run(context.Background(), opts.AllTools, opts.Targets, &importer.Options{
+				Source:       source.ReaderAt,
+				Size:         source.Size,
+				TargetPath:   opts.TargetPath,
+				Caps:         archive.DefaultCaps(),
+				FromManifest: opts.FromManifest,
+			})
+
+			require.Error(t, applyErr)
+			testCase.assertError(t, applyErr)
+		})
+	}
+}
+
+func archiveWithManifest(t *testing.T, metadata *manifest.Metadata) []byte {
+	t.Helper()
+	data, err := xml.Marshal(metadata)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	entry, err := writer.Create("metadata.xml")
+	require.NoError(t, err)
+	_, err = entry.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return buf.Bytes()
 }
 
 // TestPullImportGateAgree pins that PlanPull's unresolved-placeholder
