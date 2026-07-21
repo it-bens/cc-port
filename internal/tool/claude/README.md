@@ -669,8 +669,11 @@ read-merge-write against existing content rather than plain promotion.
   the same run, so a re-run of the same import never duplicates a line.
 - `finalizeConfig` splices the buffered project block into `~/.claude.json`
   under the target path's key via `sjson.SetRawBytes`, preserving every byte
-  outside the inserted entry; re-running with the same block is naturally
-  idempotent.
+  outside the inserted entry. Incoming `hasTrustDialogAccepted`,
+  `hasClaudeMdExternalIncludesApproved`, and
+  `hasClaudeMdExternalIncludesWarningShown` approval gates are dropped and
+  destination values for them preserved. Re-running with the same block
+  against an unchanged destination is naturally idempotent.
 - `ImplicitAnchors` supplies `{{PROJECT_PATH}}` (the import target),
   `{{HOME}}` (the import machine's real home directory, independent of any
   `--claude-home` override), and `{{PROJECT_DIR}}` (the target's encoded
@@ -771,7 +774,8 @@ path: base64 blobs, GitHub URL and ref fragments, RuboCop cop names, tilde
 paths, pseudo-XML tags, bare filenames in prose, and an assertion that the
 planted project anchor placeholder survives discovery), `import_merge_internal_test.go`
 (`finalizeHistory`'s newline-boundary handling and `mergeProjectConfigBytes`'s
-sibling-key preservation and invalid-JSON refusal),
+sibling-key preservation, invalid-JSON refusal, and approval-gate ownership:
+incoming gates dropped, destination values preserved, and fixed point),
 `session_keyed_groups_drift_test.go` (every `Registries` session-keyed
 entry's `Category` matches a name this adapter's `Categories()` declares),
 and `witness_test.go` (`FindActive` on a live vs. a dead session PID).

@@ -306,8 +306,8 @@ func scanHistoryLines(data []byte) ([][]byte, error) {
 
 // finalizeConfig splices workspace.configBlock into ~/.claude.json under
 // the target project's key, preserving every byte outside the inserted
-// entry. Re-running with the same block produces byte-identical output, so
-// the merge is naturally idempotent without extra bookkeeping.
+// entry. Re-running with the same block against an unchanged destination
+// produces byte-identical output, so the merge is naturally idempotent.
 func (workspace *Workspace) finalizeConfig(project string) error {
 	configPath := workspace.home.ConfigFile
 	existing, err := readExistingOrEmpty(configPath)
@@ -348,9 +348,22 @@ func (e *InvalidConfigJSONError) Error() string {
 	return fmt.Sprintf("invalid JSON in config file %q", e.Path)
 }
 
+// destinationOwnedProjectKeys are .claude.json project-block keys that record
+// the destination user's answers to Claude Code's approval prompts. Import
+// neither grants nor revokes them: incoming values are dropped and the
+// destination's existing values are preserved. Any approval gate Claude Code
+// adds later must be appended here.
+var destinationOwnedProjectKeys = []string{
+	"hasTrustDialogAccepted",
+	"hasClaudeMdExternalIncludesApproved",
+	"hasClaudeMdExternalIncludesWarningShown",
+}
+
 // mergeProjectConfigBytes returns the JSON bytes of existingData with
 // blockData spliced in as the project entry under targetPath, using sjson
-// so every byte outside the inserted entry survives untouched.
+// so every byte outside the inserted entry survives untouched. It drops the
+// three incoming destination-owned approval gates and preserves destination
+// values for them. Re-running against an unchanged destination is idempotent.
 func mergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error) {
 	if len(existingData) == 0 {
 		existingData = []byte(`{}`)
@@ -359,6 +372,20 @@ func mergeProjectConfigBytes(existingData []byte, configPath, targetPath string,
 	}
 
 	path := "projects." + rewrite.EscapeSJSONKey(targetPath)
+	var err error
+	for _, key := range destinationOwnedProjectKeys {
+		blockData, err = sjson.DeleteBytes(blockData, key)
+		if err != nil {
+			return nil, fmt.Errorf("strip destination-owned key %q from config file %q: %w", key, configPath, err)
+		}
+		result := gjson.GetBytes(existingData, path+"."+key)
+		if result.Exists() {
+			blockData, err = sjson.SetRawBytes(blockData, key, []byte(result.Raw))
+			if err != nil {
+				return nil, fmt.Errorf("preserve destination-owned key %q in config file %q: %w", key, configPath, err)
+			}
+		}
+	}
 	updatedData, err := sjson.SetRawBytes(existingData, path, blockData)
 	if err != nil {
 		return nil, fmt.Errorf("set project block in config file %q: %w", configPath, err)
