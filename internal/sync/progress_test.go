@@ -67,7 +67,8 @@ func TestExecutePush_ExportSubPhasesNest(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, ExecutePush(context.Background(), opts, plan, writer))
+	_, err = ExecutePush(context.Background(), opts, plan, writer)
+	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
 	events := recorder.Events()
@@ -95,10 +96,11 @@ func TestExecutePull_ImportSubPhasesNest(t *testing.T) {
 	}, openPriorForTest(t, r, "k", ""))
 	require.NoError(t, err)
 	writerA := openWriterForTest(t, r, "k", "")
-	require.NoError(t, ExecutePush(context.Background(), PushOptions{
+	_, err = ExecutePush(context.Background(), PushOptions{
 		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
 		Selected: allSelection(),
-	}, planA, writerA))
+	}, planA, writerA)
+	require.NoError(t, err)
 	require.NoError(t, writerA.Close())
 
 	homeB := buildTestHomeBlank(t)

@@ -153,12 +153,12 @@ func PlanPush(_ context.Context, opts PushOptions, prior *PriorRead) (*PushPlan,
 // ExecutePush runs the export-side pipeline.
 //
 //nolint:gocritic // hugeParam: by-value PushOptions matches the public Plan/Execute contract.
-func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output io.Writer) error {
+func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output io.Writer) (*export.Result, error) {
 	if plan == nil {
-		return errors.New("sync.ExecutePush: plan is nil")
+		return nil, errors.New("sync.ExecutePush: plan is nil")
 	}
 	if output == nil {
-		return errors.New("sync.ExecutePush: output is nil")
+		return nil, errors.New("sync.ExecutePush: output is nil")
 	}
 	if opts.Reporter == nil {
 		opts.Reporter = progress.Noop()
@@ -174,11 +174,12 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 		SyncPushedAt: now().UTC(),
 		Reporter:     exportPhase,
 	}
-	if _, err := export.Run(ctx, opts.Targets, &exportOptions); err != nil {
-		return fmt.Errorf("sync.ExecutePush: export: %w", err)
+	result, err := export.Run(ctx, opts.Targets, &exportOptions)
+	if err != nil {
+		return nil, fmt.Errorf("sync.ExecutePush: export: %w", err)
 	}
 	exportPhase.End("")
-	return nil
+	return &result, nil
 }
 
 // PlanPull reads the remote archive's manifest from the pre-opened source

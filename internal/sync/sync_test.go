@@ -106,7 +106,7 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 		t.Fatalf("PlanPush A: %v", err)
 	}
 	writerA := openWriterForTest(t, r, "k", "")
-	if err := ExecutePush(context.Background(), PushOptions{
+	if _, err := ExecutePush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
 		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
@@ -206,7 +206,7 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	t.Cleanup(func() { now = time.Now })
 
 	writer := openWriterForTest(t, r, "k", "")
-	if err := ExecutePush(context.Background(), PushOptions{
+	if _, err := ExecutePush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
 	}, plan, writer); err != nil {
@@ -235,6 +235,33 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	if want := fixed.Format(time.RFC3339); metadata.SyncPushedAt != want {
 		t.Fatalf("SyncPushedAt = %q, want %q", metadata.SyncPushedAt, want)
 	}
+}
+
+func TestExecutePush_ReturnsExportWarnings(t *testing.T) {
+	home, projectPath := buildTestHomeAndProject(t)
+	require.NoError(t, os.MkdirAll(home.RulesDir(), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home.RulesDir(), "push-rule.md"),
+		[]byte("Applies to "+projectPath+" only.\n"),
+		0o600,
+	))
+	targets := targetsFor(home)
+	r := newFileRemote(t)
+	plan, err := PlanPush(context.Background(), PushOptions{
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
+	}, openPriorForTest(t, r, "k", ""))
+	require.NoError(t, err)
+
+	writer := openWriterForTest(t, r, "k", "")
+	result, err := ExecutePush(context.Background(), PushOptions{
+		Targets: targets, ProjectPath: projectPath, Name: "k", Selected: allSelection(),
+	}, plan, writer)
+
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	assert.Contains(t, result.ByTool["claude"].Warnings, "rules file push-rule.md (line 1) references this project")
 }
 
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
@@ -458,7 +485,7 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 		t.Fatalf("PlanPush: %v", err)
 	}
 	writerA := openWriterForTest(t, r, "k", "")
-	if err := ExecutePush(context.Background(), PushOptions{
+	if _, err := ExecutePush(context.Background(), PushOptions{
 		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
 		Selected: allSelection(),
 	}, planA, writerA); err != nil {

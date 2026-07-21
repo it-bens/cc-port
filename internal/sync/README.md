@@ -19,7 +19,7 @@ This package has no tool-specific knowledge; it drives `internal/export` and
 - `PlanPush(ctx, opts, prior) (*PushPlan, error)`: reads prior remote (when
   prior is non-nil), populates plan with cross-machine state and encryption
   metadata.
-- `ExecutePush(ctx, opts, plan, output io.Writer) error`: runs
+- `ExecutePush(ctx, opts, plan, output io.Writer) (*export.Result, error)`: runs
   `export.Run(ctx, opts.Targets, ...)` against the writer cmd opened.
 - `PlanPull(ctx, opts, source) (*PullPlan, error)`: reads the remote
   archive's manifest from the pre-opened source, and for every target
@@ -102,7 +102,7 @@ Used by `cmd/cc-port` push and pull.
 `sync_test.go` covers `selfPusher` (hyphen-separated host-user on a
 configured machine, refuse-or-platform-fall-back from an empty `$USER`), the
 push-side Plan and Execute paths (no-prior, same-self, cross-machine prior,
-round-trip with sync fields), the pull-side Plan paths (declared-placeholder
+round-trip with sync fields, export-warning propagation), the pull-side Plan paths (declared-placeholder
 discovery across multiple tools, resolution coverage by sender `Resolve` and
 by `--from-manifest`), a push-pull round-trip via `file://`, and the
 sentinel errors. Pipeline-open dispatch tests (remote-not-found,
