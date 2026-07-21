@@ -1144,7 +1144,7 @@ func (workspace *Workspace) EnumerateProjects(ctx context.Context) ([]tool.Proje
 func (workspace *Workspace) configProjectKeys(ctx context.Context) ([]string, error) {
 	configFiles, err := discoverConfigTOMLFiles(workspace.home)
 	if err != nil {
-		return nil, fmt.Errorf("discover config files: %w", err)
+		return nil, err
 	}
 	var keys []string
 	for _, path := range configFiles {
@@ -1163,7 +1163,7 @@ func (workspace *Workspace) configProjectKeys(ctx context.Context) ([]string, er
 func (workspace *Workspace) rolloutProjectCWDs(ctx context.Context) ([]string, error) {
 	rollouts, err := discoverRolloutFiles(workspace.home)
 	if err != nil {
-		return nil, fmt.Errorf("discover rollouts: %w", err)
+		return nil, err
 	}
 	var cwds []string
 	for _, path := range rollouts {
@@ -1174,11 +1174,7 @@ func (workspace *Workspace) rolloutProjectCWDs(ctx context.Context) ([]string, e
 		if err != nil {
 			return nil, fmt.Errorf("read rollout %s: %w", path, err)
 		}
-		identity := rolloutIdentityFromLines(lines)
-		if identity.EraA {
-			continue
-		}
-		cwds = append(cwds, identity.CWDs...)
+		cwds = append(cwds, rolloutIdentityFromLines(lines).CWDs...)
 	}
 	return cwds, nil
 }

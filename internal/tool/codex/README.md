@@ -115,7 +115,7 @@ shapes themselves.
   `discoverConfigTOMLFiles` project keys, and rollout
   `session_meta`/`turn_context` cwd values. A project known only through a
   thread row under a divergent profile's `sqlite_home` never becomes a
-  candidate: it is missing from the listing entirely, not reported
+  candidate. It is missing from the listing entirely, not reported
   incomplete. `EnumerateProjects` also forwards whatever error
   `DiskCategories` returns for any one candidate project
   (`export_import_stats.go:1130`) without scoping the failure to that

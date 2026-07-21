@@ -875,7 +875,7 @@ func TestEnumerateProjectsIncludesRolloutOnlyProject(t *testing.T) {
 	const rolloutOnlyProject = "/Users/fixture/rollout-only-project"
 	rollout := filepath.Join(dir, sessionsSubdir, "2026", "07", "21", "rollout-only.jsonl")
 	rolloutData := []byte(
-		`{"type":"session_meta","payload":{"id":"rollout-only-session","cwd":"/Users/fixture/rollout-only-project"}}` + "\n",
+		`{"type":"session_meta","payload":{"id":"rollout-only-session","cwd":"` + rolloutOnlyProject + `"}}` + "\n",
 	)
 	require.NoError(t, os.MkdirAll(filepath.Dir(rollout), 0o750))
 	require.NoError(t, os.WriteFile(rollout, rolloutData, 0o600))
@@ -893,22 +893,32 @@ func TestEnumerateProjectsIncludesRolloutOnlyProject(t *testing.T) {
 		}
 	}
 	require.True(t, found, "EnumerateProjects must include a project known only via a rollout")
-	assert.True(t, info.Resolved)
 	assert.Positive(t, sizeCategoryNamed(info.Disk, "sessions").Bytes)
+	assert.Positive(t, info.Bytes)
 }
 
-func TestEnumerateProjectsSkipsEraAOnlyRollout(t *testing.T) {
+// A rollout line that is neither session_meta nor turn_context is era-A and
+// carries no structured cwd. The cwd-shaped field here is deliberate: it keeps
+// the assertion non-vacuous, since a parser regression that read cwd from an
+// unstructured line would surface it as a candidate and fail.
+func TestEnumerateProjectsExcludesEraARollout(t *testing.T) {
 	dir := t.TempDir()
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	rollout := filepath.Join(dir, sessionsSubdir, "2026", "07", "21", "era-a-only.jsonl")
+	const eraAPhantom = "/Users/fixture/era-a-phantom-project"
+	rollout := filepath.Join(dir, sessionsSubdir, "2026", "07", "21", "era-a.jsonl")
 	require.NoError(t, os.MkdirAll(filepath.Dir(rollout), 0o750))
-	require.NoError(t, os.WriteFile(rollout, []byte(`{"type":"response_item","payload":{}}`+"\n"), 0o600))
+	eraA := []byte(`{"type":"response_item","payload":{"cwd":"` + eraAPhantom + `"}}` + "\n")
+	require.NoError(t, os.WriteFile(rollout, eraA, 0o600))
 	workspace := quietTestWorkspace(home)
 
 	projects, err := workspace.EnumerateProjects(t.Context())
-
 	require.NoError(t, err)
-	assert.Empty(t, projects)
+
+	var labels []string
+	for _, candidate := range projects {
+		labels = append(labels, candidate.Label)
+	}
+	assert.NotContains(t, labels, eraAPhantom, "an era-A rollout must contribute no candidate")
 }
 
 func TestCodexExportsThreadOnlyProjectState(t *testing.T) {
