@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/credentials"
@@ -172,7 +173,7 @@ func TestPush_ApplyRendersToolWarnings(t *testing.T) {
 	})
 
 	require.NoError(t, rootCmd.Execute())
-	require.Contains(t, stderr.String(), "Warning: rules file push-rule.md (line 1) references this project")
+	assert.Contains(t, stderr.String(), "Warning: rules file push-rule.md (line 1) references this project")
 }
 
 func TestPush_CrossMachineRefusesWithoutForce(t *testing.T) {
