@@ -1,13 +1,10 @@
 package rewrite_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,156 +12,53 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
-func splitLines(data []byte) []string {
-	parts := bytes.Split(data, []byte("\n"))
-	result := make([]string, len(parts))
-	for index, part := range parts {
-		result[index] = string(part)
-	}
-	return result
-}
+func TestPromoteDir(t *testing.T) {
+	t.Run("copy failure removes partial staging through restore", func(t *testing.T) {
+		root := t.TempDir()
+		source := filepath.Join(root, "source")
+		destination := filepath.Join(root, "destination")
+		restorer := tool.NewRestorer()
+		require.NoError(t, os.Mkdir(source, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(source, "source.txt"), []byte("source"), 0o600))
 
-// runStreamHistoryJSONL invokes StreamHistoryJSONL on input, rewriting
-// "/old/project" to "/new/project". Keeps each test focused on behavior
-// rather than reader/writer plumbing.
-func runStreamHistoryJSONL(t *testing.T, input string) (written []byte, count int, malformed []int) {
-	t.Helper()
-	var dst bytes.Buffer
-	replaced, malformed, err := rewrite.StreamHistoryJSONL(
-		t.Context(), strings.NewReader(input), &dst, "/old/project", "/new/project",
-	)
-	require.NoError(t, err)
-	return dst.Bytes(), replaced, malformed
-}
+		err := rewrite.PromoteDir(context.Background(), source, destination, restorer,
+			func(_ context.Context, _, staging string, _ func()) error {
+				assert.DirExists(t, staging)
+				require.NoError(t, os.WriteFile(filepath.Join(staging, "partial.txt"), []byte("partial"), 0o600))
+				return assert.AnError
+			})
 
-func TestStreamHistoryJSONL(t *testing.T) {
-	t.Run("rewrites matching lines and preserves non-matching lines", assertStreamHistoryJSONLRewritesMatching)
-
-	t.Run("returns zero count when no lines match", func(t *testing.T) {
-		input := `{"project":"/other/project","command":"ls"}` + "\n"
-
-		_, count, malformed := runStreamHistoryJSONL(t, input)
-
-		assert.Equal(t, 0, count)
-		assert.Empty(t, malformed)
+		require.ErrorIs(t, err, assert.AnError)
+		assert.NoDirExists(t, destination)
+		assert.FileExists(t, filepath.Join(source, "source.txt"))
+		require.NoError(t, restorer.Restore())
+		assert.NoDirExists(t, destination+rewrite.StagingSuffix)
 	})
 
-	t.Run("rewrites path occurrences inside non-project fields", func(t *testing.T) {
-		input := `{"project":"/old/project","display":"open /old/project/main.go please"}` + "\n"
+	t.Run("successful promotion rolls back destination", func(t *testing.T) {
+		root := t.TempDir()
+		source := filepath.Join(root, "source")
+		destination := filepath.Join(root, "destination")
+		restorer := tool.NewRestorer()
+		require.NoError(t, os.Mkdir(source, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(source, "source.txt"), []byte("source"), 0o600))
 
-		result, count, malformed := runStreamHistoryJSONL(t, input)
+		err := rewrite.PromoteDir(context.Background(), source, destination, restorer,
+			func(_ context.Context, from, to string, _ func()) error {
+				data, readErr := os.ReadFile(filepath.Join(from, "source.txt")) //nolint:gosec // G304: t.TempDir() path
+				require.NoError(t, readErr)
+				return os.WriteFile(filepath.Join(to, "source.txt"), data, 0o600) //nolint:gosec // G304: t.TempDir() path
+			})
 
-		assert.Equal(t, 1, count)
-		assert.Empty(t, malformed)
-		assert.NotContains(t, string(result), "/old/project")
-		assert.Contains(t, string(result), "/new/project/main.go")
+		require.NoError(t, err)
+		assert.FileExists(t, filepath.Join(destination, "source.txt"))
+		assert.NoDirExists(t, destination+rewrite.StagingSuffix)
+		require.NoError(t, restorer.Restore())
+		assert.NoDirExists(t, destination)
 	})
-
-	t.Run("does not rewrite a path that is a prefix of another path", func(t *testing.T) {
-		input := `{"project":"/old/project-extras","display":"unrelated"}` + "\n"
-
-		result, count, malformed := runStreamHistoryJSONL(t, input)
-
-		assert.Equal(t, 0, count, "path-boundary protection must skip prefix collision")
-		assert.Empty(t, malformed)
-		assert.Contains(t, string(result), "/old/project-extras")
-		assert.NotContains(t, string(result), "/new/project-extras")
-	})
-
-	t.Run("preserves the absence of a trailing newline", func(t *testing.T) {
-		input := `{"project":"/old/project"}`
-
-		result, _, _ := runStreamHistoryJSONL(t, input)
-
-		assert.False(t, bytes.HasSuffix(result, []byte("\n")),
-			"output must not invent a trailing newline that was not in the input")
-	})
-
-	t.Run("preserves the presence of a trailing newline", func(t *testing.T) {
-		input := `{"project":"/old/project"}` + "\n"
-
-		result, _, _ := runStreamHistoryJSONL(t, input)
-
-		assert.True(t, bytes.HasSuffix(result, []byte("\n")),
-			"output must keep the trailing newline present in the input")
-	})
-}
-
-func TestStreamHistoryJSONL_RewritesAndReportsMalformed(t *testing.T) {
-	input := `{"project":"/old","display":"x"}
-not-valid-json
-{"project":"/old/sub","display":"y"}
-`
-	var dst bytes.Buffer
-
-	replaced, malformed, err := rewrite.StreamHistoryJSONL(
-		t.Context(), strings.NewReader(input), &dst, "/old", "/new",
-	)
-
-	require.NoError(t, err)
-	assert.Equal(t, 2, replaced)
-	assert.Equal(t, []int{2}, malformed)
-	assert.Contains(t, dst.String(), `"project":"/new"`)
-	assert.Contains(t, dst.String(), `"project":"/new/sub"`)
-	assert.Contains(t, dst.String(), `not-valid-json`)
-}
-
-func TestStreamHistoryJSONL_CancelMidStream(t *testing.T) {
-	input := strings.Repeat(`{"project":"/old"}`+"\n", 10_000)
-	var dst bytes.Buffer
-
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	_, _, err := rewrite.StreamHistoryJSONL(ctx, strings.NewReader(input), &dst, "/old", "/new")
-
-	require.ErrorIs(t, err, context.Canceled)
-}
-
-func assertStreamHistoryJSONLRewritesMatching(t *testing.T) {
-	line1 := `{"project":"/old/project","command":"ls"}`
-	line2 := `{"project":"/other/project","command":"pwd"}`
-	line3 := `{"project":"/old/project","command":"git status"}`
-	input := line1 + "\n" + line2 + "\n" + line3 + "\n"
-
-	result, count, malformed := runStreamHistoryJSONL(t, input)
-
-	assert.Equal(t, 2, count)
-	assert.Empty(t, malformed)
-
-	lines := splitLines(result)
-	// Last element should be empty string (trailing newline)
-	assert.Empty(t, lines[len(lines)-1])
-
-	var entry1, entry2, entry3 map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(lines[0]), &entry1))
-	require.NoError(t, json.Unmarshal([]byte(lines[1]), &entry2))
-	require.NoError(t, json.Unmarshal([]byte(lines[2]), &entry3))
-
-	assert.Equal(t, "/new/project", entry1["project"])
-	assert.Equal(t, "ls", entry1["command"])
-	assert.Equal(t, "/other/project", entry2["project"])
-	assert.Equal(t, "/new/project", entry3["project"])
-	assert.Equal(t, "git status", entry3["command"])
-}
-
-func TestStreamHistoryJSONL_PreservesMalformedLinesVerbatim(t *testing.T) {
-	good := `{"project":"/old/project","display":"a"}`
-	bad := `{ this is not valid json`
-	alsoGood := `{"project":"/old/project","display":"b"}`
-	input := good + "\n" + bad + "\n" + alsoGood + "\n"
-
-	result, count, malformed := runStreamHistoryJSONL(t, input)
-
-	assert.Equal(t, 2, count, "two well-formed lines should be rewritten")
-	assert.Equal(t, []int{2}, malformed, "1-based line number of the malformed line")
-
-	lines := splitLines(result)
-	assert.Equal(t, bad, lines[1], "malformed line must be preserved verbatim")
-	assert.Contains(t, lines[0], "/new/project")
-	assert.Contains(t, lines[2], "/new/project")
 }
 
 func TestReplacePathInBytes(t *testing.T) {
@@ -201,23 +95,50 @@ func TestReplacePathInBytes(t *testing.T) {
 	})
 }
 
-func TestStreamHistoryJSONL_RewritesEscapedSlashForm(t *testing.T) {
-	input := `{"project":"\/Users\/me\/foo","display":"x"}`
-	var dst bytes.Buffer
-	replaced, _, err := rewrite.StreamHistoryJSONL(
-		t.Context(), strings.NewReader(input), &dst, "/Users/me/foo", "/Users/me/bar",
-	)
-	require.NoError(t, err)
-	assert.Equal(t, 1, replaced)
-	assert.Contains(t, dst.String(), `"project":"\/Users\/me\/bar"`)
+func TestIsBoundaryDescendant(t *testing.T) {
+	tests := []struct {
+		name      string
+		parent    string
+		candidate string
+		want      bool
+	}{
+		{name: "equal", parent: "/a/proj", candidate: "/a/proj", want: true},
+		{name: "nested", parent: "/a/proj", candidate: "/a/proj/sub", want: true},
+		{name: "continuation byte", parent: "/a/proj", candidate: "/a/proj-backup", want: false},
+		{name: "extension dot", parent: "/a/proj", candidate: "/a/proj.bak", want: false},
+		{name: "no prefix", parent: "/a/proj", candidate: "/a/other", want: false},
+		{name: "empty parent", parent: "", candidate: "/a/proj", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, rewrite.IsBoundaryDescendant(test.parent, test.candidate))
+		})
+	}
 }
 
-func TestSessionFile_RewritesEscapedSlashForm(t *testing.T) {
-	input := []byte(`{"cwd":"\/Users\/me\/foo","v":1}`)
-	got, changed, err := rewrite.SessionFile(input, "/Users/me/foo", "/Users/me/bar")
-	require.NoError(t, err)
-	assert.True(t, changed)
-	assert.Contains(t, string(got), `"cwd":"\/Users\/me\/bar"`)
+func TestIsBoundaryDescendant_RootParent(t *testing.T) {
+	tests := []struct {
+		name      string
+		parent    string
+		candidate string
+		want      bool
+	}{
+		{name: "root parent, any child", parent: "/", candidate: "/x", want: true},
+		{name: "separator-terminated parent, nested child", parent: "/a/", candidate: "/a/b", want: true},
+		{
+			name: "non-separator-terminated parent, continuation byte", parent: "/a", candidate: "/a-b", want: false,
+			// Guards against widening the [A-Za-z0-9_-] boundary set: "/a-b"
+			// must still be refused as a descendant of "/a" (README §Boundary
+			// rules, internal/rewrite/AGENTS.md).
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, rewrite.IsBoundaryDescendant(test.parent, test.candidate))
+		})
+	}
 }
 
 func TestReplacePathInBytesWithJSONEscape_RewritesBothForms(t *testing.T) {
@@ -295,247 +216,6 @@ func TestReplacePathInBytesDotBoundary(t *testing.T) {
 	})
 }
 
-func TestSessionFile(t *testing.T) {
-	t.Run("rewrites cwd when it starts with oldProject", func(t *testing.T) {
-		input := []byte(`{"cwd":"/old/project/subdir","extraField":"value"}`)
-		result, changed, err := rewrite.SessionFile(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.True(t, changed)
-
-		var decoded map[string]interface{}
-		require.NoError(t, json.Unmarshal(result, &decoded))
-		assert.Equal(t, "/new/project/subdir", decoded["cwd"])
-		assert.Equal(t, "value", decoded["extraField"])
-	})
-
-	t.Run("rewrites cwd when it equals oldProject exactly", func(t *testing.T) {
-		input := []byte(`{"cwd":"/old/project"}`)
-		result, changed, err := rewrite.SessionFile(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.True(t, changed)
-
-		var decoded map[string]interface{}
-		require.NoError(t, json.Unmarshal(result, &decoded))
-		assert.Equal(t, "/new/project", decoded["cwd"])
-	})
-
-	t.Run("does not rewrite cwd when it does not match oldProject", func(t *testing.T) {
-		input := []byte(`{"cwd":"/other/project"}`)
-		result, changed, err := rewrite.SessionFile(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.False(t, changed)
-
-		var decoded map[string]interface{}
-		require.NoError(t, json.Unmarshal(result, &decoded))
-		assert.Equal(t, "/other/project", decoded["cwd"])
-	})
-
-	t.Run("returns error on invalid JSON", func(t *testing.T) {
-		_, _, err := rewrite.SessionFile([]byte(`not json`), "/old", "/new")
-		assert.Error(t, err)
-	})
-
-	t.Run("rewrites occurrences embedded outside the cwd field", assertSessionFileRewritesEmbedded)
-
-	t.Run("does not rewrite a path that is a prefix of another path", func(t *testing.T) {
-		input := []byte(`{"cwd":"/old/project-extras"}`)
-		result, changed, err := rewrite.SessionFile(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.False(t, changed)
-		assert.Contains(t, string(result), "/old/project-extras",
-			"path-boundary protection must skip prefix collision")
-		assert.NotContains(t, string(result), "/new/project-extras")
-	})
-}
-
-func assertSessionFileRewritesEmbedded(t *testing.T) {
-	input := []byte(
-		`{"cwd":"/old/project","history":["/old/project/main.go"],` +
-			`"notes":"opened /old/project/README.md today"}`,
-	)
-	result, changed, err := rewrite.SessionFile(input, "/old/project", "/new/project")
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	assert.NotContains(t, string(result), `"/old/project"`,
-		"quoted cwd occurrence must be rewritten")
-	assert.NotContains(t, string(result), "/old/project/",
-		"path-followed-by-/ occurrences must be rewritten")
-	assert.Contains(t, string(result), "/new/project")
-	assert.Contains(t, string(result), "/new/project/main.go")
-	assert.Contains(t, string(result), "/new/project/README.md")
-}
-
-func TestUserConfig(t *testing.T) {
-	t.Run("re-keys old project to new project and preserves other projects", func(t *testing.T) {
-		input := []byte(`{
-			"projects": {
-				"/old/project": {"setting": "value"},
-				"/other/project": {"setting": "other-value"}
-			},
-			"globalSetting": "global"
-		}`)
-
-		result, changed, err := rewrite.UserConfig(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.True(t, changed)
-
-		var decoded map[string]interface{}
-		require.NoError(t, json.Unmarshal(result, &decoded))
-
-		projects := decoded["projects"].(map[string]interface{})
-		assert.Contains(t, projects, "/new/project")
-		assert.NotContains(t, projects, "/old/project")
-		assert.Contains(t, projects, "/other/project")
-
-		newProjectData := projects["/new/project"].(map[string]interface{})
-		assert.Equal(t, "value", newProjectData["setting"])
-
-		assert.Equal(t, "global", decoded["globalSetting"])
-	})
-
-	t.Run("returns false when old project key does not exist", func(t *testing.T) {
-		input := []byte(`{"projects": {"/other/project": {}}}`)
-		_, changed, err := rewrite.UserConfig(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.False(t, changed)
-	})
-
-	t.Run("returns error on invalid JSON", func(t *testing.T) {
-		_, _, err := rewrite.UserConfig([]byte(`not json`), "/old", "/new")
-		assert.Error(t, err)
-	})
-
-	t.Run("rewrites embedded path references inside the moved block", assertUserConfigRewritesEmbeddedPaths)
-
-	t.Run("preserves top-level key order and formatting outside the edit", assertUserConfigPreservesFormatting)
-
-	t.Run("does not rewrite path prefixes inside the moved block", func(t *testing.T) {
-		input := []byte(`{
-			"projects": {
-				"/old/project": {
-					"mcpContextUris": ["/old/project-extras/note.md"]
-				}
-			}
-		}`)
-
-		result, changed, err := rewrite.UserConfig(input, "/old/project", "/new/project")
-		require.NoError(t, err)
-		assert.True(t, changed)
-
-		assert.Contains(t, string(result), "/old/project-extras/note.md",
-			"path-boundary protection must skip prefix collision")
-		assert.NotContains(t, string(result), "/new/project-extras")
-	})
-}
-
-func assertUserConfigRewritesEmbeddedPaths(t *testing.T) {
-	input := []byte(`{
-		"projects": {
-			"/old/project": {
-				"mcpServers": {
-					"example": {
-						"args": ["--root", "/old/project/src"],
-						"env": {"PROJECT_DIR": "/old/project"}
-					}
-				},
-				"mcpContextUris": ["file:///old/project/context.md"],
-				"exampleFiles": ["/old/project/examples/one.txt"]
-			}
-		}
-	}`)
-
-	result, changed, err := rewrite.UserConfig(input, "/old/project", "/new/project")
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	var decoded map[string]interface{}
-	require.NoError(t, json.Unmarshal(result, &decoded))
-
-	projects := decoded["projects"].(map[string]interface{})
-	block := projects["/new/project"].(map[string]interface{})
-
-	mcpServers := block["mcpServers"].(map[string]interface{})
-	example := mcpServers["example"].(map[string]interface{})
-	args := example["args"].([]interface{})
-	assert.Equal(t, "/new/project/src", args[1])
-
-	env := example["env"].(map[string]interface{})
-	assert.Equal(t, "/new/project", env["PROJECT_DIR"])
-
-	contextURIs := block["mcpContextUris"].([]interface{})
-	assert.Equal(t, "file:///new/project/context.md", contextURIs[0])
-
-	exampleFiles := block["exampleFiles"].([]interface{})
-	assert.Equal(t, "/new/project/examples/one.txt", exampleFiles[0])
-
-	assert.NotContains(t, string(result), "/old/project")
-}
-
-func assertUserConfigPreservesFormatting(t *testing.T) {
-	// Input uses 2-space indent and a specific top-level key order that Go's
-	// encoding/json would scramble (alphabetical). sjson-based splicing must
-	// leave everything outside the rekeyed projects entry byte-identical.
-	input := []byte(`{
-  "numStartups": 42,
-  "theme": "dark",
-  "projects": {
-    "/old/project": {"setting": "value"},
-    "/other/project": {"setting": "other-value"}
-  },
-  "oauthAccount": {
-    "email": "user@example.com"
-  }
-}
-`)
-
-	result, changed, err := rewrite.UserConfig(input, "/old/project", "/new/project")
-	require.NoError(t, err)
-	assert.True(t, changed)
-
-	assert.Equal(t,
-		[]string{"numStartups", "theme", "projects", "oauthAccount"},
-		topLevelKeys(t, result),
-		"top-level key order must survive the rewrite",
-	)
-
-	// Lines outside the projects object must be preserved byte-for-byte —
-	// including leading indent, which Go's encoding/json would otherwise
-	// collapse or reorder.
-	content := string(result)
-	assert.Contains(t, content, "\n  \"numStartups\": 42,\n",
-		"numStartups line and its indent must survive")
-	assert.Contains(t, content, "\n  \"theme\": \"dark\",\n",
-		"theme line and its indent must survive")
-	assert.Contains(t, content, "\n    \"email\": \"user@example.com\"\n",
-		"oauthAccount.email line and its 4-space indent must survive")
-	assert.True(t, strings.HasSuffix(content, "}\n"),
-		"trailing newline must survive")
-	assert.Contains(t, content, "\"/other/project\": {\"setting\": \"other-value\"}",
-		"unaffected project key must be preserved byte-for-byte")
-}
-
-// topLevelKeys parses raw as a JSON object and returns its keys in the order
-// they appear on the wire, using a token stream rather than decoding to a map
-// (which Go deliberately randomizes).
-func topLevelKeys(t *testing.T, raw []byte) []string {
-	t.Helper()
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	startToken, err := decoder.Token()
-	require.NoError(t, err)
-	require.Equal(t, json.Delim('{'), startToken, "expected a top-level object")
-
-	var keys []string
-	for decoder.More() {
-		keyToken, err := decoder.Token()
-		require.NoError(t, err)
-		keys = append(keys, keyToken.(string))
-		var skip json.RawMessage
-		require.NoError(t, decoder.Decode(&skip))
-	}
-	return keys
-}
-
 func TestRewriteSettingsJSON(t *testing.T) {
 	t.Run("replaces project path strings in settings content", func(t *testing.T) {
 		input := []byte(`{"allowedPaths":["/old/project","/old/project/subdir"],"other":"value"}`)
@@ -587,7 +267,8 @@ func TestSafeWriteFile(t *testing.T) {
 	})
 
 	t.Run("returns error when directory does not exist", func(t *testing.T) {
-		err := rewrite.SafeWriteFile("/nonexistent/directory/file.json", []byte("data"), 0o600)
+		absentPath := filepath.Join(t.TempDir(), "absent", "file.json")
+		err := rewrite.SafeWriteFile(absentPath, []byte("data"), 0o600)
 		assert.Error(t, err)
 	})
 }
@@ -629,28 +310,7 @@ func TestSafeRenamePromoter_Files(t *testing.T) {
 	t.Run("rollback removes a promoted file that did not exist before", assertRollbackRemovesNewFile)
 }
 
-func TestSafeRenamePromoter_Dirs(t *testing.T) {
-	t.Run("promotes a directory onto a non-existent final", func(t *testing.T) {
-		dir := t.TempDir()
-		final := filepath.Join(dir, "project")
-		temp := filepath.Join(dir, "project.tmp")
-		require.NoError(t, os.MkdirAll(filepath.Join(temp, "sub"), 0o750))
-		require.NoError(t, os.WriteFile(filepath.Join(temp, "sub", "x.txt"), []byte("x"), 0o600))
-
-		promoter := rewrite.NewSafeRenamePromoter()
-		promoter.StageDir(temp, final)
-		require.NoError(t, promoter.Promote())
-
-		data, err := os.ReadFile(filepath.Join(final, "sub", "x.txt")) //nolint:gosec // G304: t.TempDir() path
-		require.NoError(t, err)
-		assert.Equal(t, "x", string(data))
-		assert.NoDirExists(t, temp)
-	})
-
-	t.Run("rollback restores an overwritten directory", assertRollbackRestoresDir)
-}
-
-func TestSafeRenamePromoter_PreservesMtimeOnFileAndDirRenames(t *testing.T) {
+func TestSafeRenamePromoter_PreservesMtimeOnFileRename(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// File-rename case: a temp file with a known mtime promoted via StageFile.
@@ -660,32 +320,34 @@ func TestSafeRenamePromoter_PreservesMtimeOnFileAndDirRenames(t *testing.T) {
 	require.NoError(t, os.WriteFile(fileTemp, []byte("body"), 0o600), "write file temp")
 	require.NoError(t, os.Chtimes(fileTemp, fileMtime, fileMtime), "set file temp mtime")
 
-	// Dir-rename case: a temp directory containing a file with a known mtime
-	// promoted via StageDir. The per-file mtime inside the directory is what
-	// pattern-A staging relies on.
-	dirMtime := time.Date(2024, 7, 16, 10, 0, 0, 0, time.UTC)
-	dirTemp := filepath.Join(tempDir, "dir.tmp")
-	dirFinal := filepath.Join(tempDir, "dir.final")
-	require.NoError(t, os.MkdirAll(dirTemp, 0o750), "create dir temp")
-	nestedFile := filepath.Join(dirTemp, "nested")
-	require.NoError(t, os.WriteFile(nestedFile, []byte("body"), 0o600), "write nested file")
-	require.NoError(t, os.Chtimes(nestedFile, dirMtime, dirMtime), "set nested file mtime")
-
 	promoter := rewrite.NewSafeRenamePromoter()
 	promoter.StageFile(fileTemp, fileFinal)
-	promoter.StageDir(dirTemp, dirFinal)
-	require.NoError(t, promoter.Promote(), "promote both stages")
+	require.NoError(t, promoter.Promote(), "promote staged file")
 
 	fileStat, err := os.Stat(fileFinal)
 	require.NoError(t, err, "stat promoted file")
 	require.WithinDuration(t, fileMtime, fileStat.ModTime(), time.Second,
 		"StageFile must preserve mtime on the renamed file")
+}
 
-	nestedFinal := filepath.Join(dirFinal, "nested")
-	nestedStat, err := os.Stat(nestedFinal)
-	require.NoError(t, err, "stat nested file under promoted dir")
-	require.WithinDuration(t, dirMtime, nestedStat.ModTime(), time.Second,
-		"StageDir must preserve mtime on files inside the renamed directory")
+func TestSafeRenamePromoter_PromotionErrorIncludesRollbackFailure(t *testing.T) {
+	dir := t.TempDir()
+	firstTemp := filepath.Join(dir, "first.tmp")
+	secondTemp := filepath.Join(dir, "second.tmp")
+	require.NoError(t, os.WriteFile(firstTemp, []byte("first"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(secondTemp, "nested"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(secondTemp, "nested", "body"), []byte("second"), 0o600))
+
+	promoter := rewrite.NewSafeRenamePromoter()
+	promoter.StageFile(firstTemp, filepath.Join(dir, "first"))
+	promoter.StageFile(secondTemp, filepath.Join(dir, "second"))
+	promoter.SetRenameFunc(failOnCallN(2))
+
+	err := promoter.Promote()
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "simulated failure")
+	assert.ErrorContains(t, err, "remove unpromoted temp")
 }
 
 func assertRollbackRestoresFile(t *testing.T) {
@@ -736,35 +398,6 @@ func assertRollbackRemovesNewFile(t *testing.T) {
 
 	assert.NoFileExists(t, finalA)
 	assert.NoFileExists(t, finalB)
-}
-
-func assertRollbackRestoresDir(t *testing.T) {
-	dir := t.TempDir()
-	final := filepath.Join(dir, "project")
-	temp := filepath.Join(dir, "project.tmp")
-
-	require.NoError(t, os.MkdirAll(final, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(final, "old.txt"), []byte("old"), 0o600))
-	require.NoError(t, os.MkdirAll(temp, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(temp, "new.txt"), []byte("new"), 0o600))
-
-	other := filepath.Join(dir, "other.txt")
-	otherTemp := filepath.Join(dir, "other.txt.tmp")
-	require.NoError(t, os.WriteFile(otherTemp, []byte("o"), 0o600))
-
-	promoter := rewrite.NewSafeRenamePromoter()
-	promoter.StageDir(temp, final)
-	promoter.StageFile(otherTemp, other)
-	// call 1: stash dir backup; 2: promote dir; 3: promote file (fail).
-	promoter.SetRenameFunc(failOnCallN(3))
-
-	err := promoter.Promote()
-	require.Error(t, err)
-
-	got, readErr := os.ReadFile(filepath.Join(final, "old.txt")) //nolint:gosec // G304: t.TempDir() path
-	require.NoError(t, readErr)
-	assert.Equal(t, "old", string(got))
-	assert.NoFileExists(t, filepath.Join(final, "new.txt"))
 }
 
 // failOnCallN returns a rename hook that invokes os.Rename on every call
@@ -904,6 +537,30 @@ func TestCountPathInBytesWithJSONEscape(t *testing.T) {
 		assert.Equal(t, rewrite.CountPathInBytes(data, projectPath),
 			rewrite.CountPathInBytesWithJSONEscape(data, projectPath))
 	})
+}
+
+func TestRewrite_IsArtifactPath(t *testing.T) {
+	tests := []struct {
+		name string
+		base string
+		want bool
+	}{
+		{name: "staging suffix", base: "myproject.cc-port-staging.tmp", want: true},
+		{name: "rollback suffix", base: "MEMORY.md.cc-port-rollback.tmp", want: true},
+		{name: "import staging suffix", base: "config.toml.cc-port-import.tmp", want: true},
+		{name: "safe-write temp prefix", base: ".tmp-123456789", want: true},
+		{name: "bare suffix with no real name", base: ".cc-port-rollback.tmp", want: true},
+		{name: "lookalike suffix with trailing byte is rejected", base: "foo.cc-port-rollback.tmpx", want: false},
+		{name: "ordinary memory file", base: "MEMORY.md", want: false},
+		{name: "ordinary directory", base: "myproject", want: false},
+		{name: "empty base", base: "", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, rewrite.IsArtifactPath(test.base))
+		})
+	}
 }
 
 // TestCountPathAgreesWithReplace pins the count primitives to the replacers

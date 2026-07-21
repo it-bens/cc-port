@@ -9,22 +9,22 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/stats"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
-// newStatsCmd returns the stats subcommand. With a project argument it reports
-// that project's full footprint; with none it ranks every project by disk
-// footprint. It is read-only: no lock, no progress wrapper, writing its result
-// to cmd.OutOrStdout() like move's dry-run. The root --json persistent flag
-// switches the result from the human table to the DTO.
-func newStatsCmd(claudeDir *string) *cobra.Command {
+// newStatsCmd returns the stats subcommand. With a project argument it
+// reports that project's full footprint per tool; with none it ranks
+// every target's known projects by disk footprint. It is read-only: no
+// lock, no progress wrapper. The root --json persistent flag switches the
+// result from the human table to the DTO.
+func newStatsCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stats [<project-path>]",
-		Short: "Report a project's footprint in ~/.claude",
-		Long: "Reports how entangled a project's path is across shared Claude Code files\n" +
-			"and how much disk its own data uses. With no argument, ranks every project\n" +
-			"by disk footprint. Read-only — it never writes.",
+		Short: "Report a project's footprint across every selected tool",
+		Long: "Reports how entangled a project's path is across shared files for every\n" +
+			"selected tool and how much disk its own data uses. With no argument, ranks\n" +
+			"every known project by disk footprint. Read-only — it never writes.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
 				return &usageError{err: err}
@@ -32,7 +32,7 @@ func newStatsCmd(claudeDir *string) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			claudeHome, err := claude.NewHome(*claudeDir)
+			targets, err := resolveTargets(toolSet, flags)
 			if err != nil {
 				return err
 			}
@@ -42,25 +42,21 @@ func newStatsCmd(claudeDir *string) *cobra.Command {
 			}
 
 			if len(args) == 1 {
-				return runStatsProject(cmd.Context(), cmd.OutOrStdout(), claudeHome, args[0], asJSON)
+				return runStatsProject(cmd.Context(), cmd.OutOrStdout(), targets, args[0], asJSON)
 			}
-			return runStatsAll(cmd.Context(), cmd.OutOrStdout(), claudeHome, asJSON)
+			return runStatsAll(cmd.Context(), cmd.OutOrStdout(), targets, asJSON)
 		},
 	}
 }
 
 func runStatsProject(
-	ctx context.Context,
-	stdout io.Writer,
-	claudeHome *claude.Home,
-	rawPath string,
-	asJSON bool,
+	ctx context.Context, stdout io.Writer, targets []tool.Target, rawPath string, asJSON bool,
 ) error {
-	projectPath, err := claude.ResolveProjectPath(rawPath)
+	projectPath, err := tool.ResolveProjectPath(rawPath)
 	if err != nil {
 		return fmt.Errorf("resolve project path: %w", err)
 	}
-	footprint, err := stats.ComputeFootprint(ctx, claudeHome, projectPath)
+	footprint, err := stats.ComputeFootprint(ctx, targets, projectPath)
 	if err != nil {
 		return err
 	}
@@ -70,8 +66,8 @@ func runStatsProject(
 	return renderFootprint(stdout, footprint)
 }
 
-func runStatsAll(ctx context.Context, stdout io.Writer, claudeHome *claude.Home, asJSON bool) error {
-	footprints, err := stats.ComputeAllFootprints(ctx, claudeHome)
+func runStatsAll(ctx context.Context, stdout io.Writer, targets []tool.Target, asJSON bool) error {
+	footprints, err := stats.ComputeAllFootprints(ctx, targets)
 	if err != nil {
 		return err
 	}
@@ -93,59 +89,37 @@ func writeStatsJSON(stdout io.Writer, payload any) error {
 	return nil
 }
 
-// statsSurfaceLabels maps reference-surface keys to the file-shaped labels shown
-// in the human table; keys absent from the map fall back to the key itself.
-var statsSurfaceLabels = map[string]string{
-	"history":                    "history.jsonl",
-	"sessions":                   "sessions/*.json",
-	"transcripts":                "transcripts",
-	"memory":                     "memory",
-	"config":                     "~/.claude.json",
-	"settings":                   "settings.json",
-	"plugins/installed_plugins":  "plugins/installed_plugins.json",
-	"plugins/known_marketplaces": "plugins/known_marketplaces.json",
-	"todos":                      "todos/",
-	"usage-data/session-meta":    "usage-data/session-meta/",
-	"usage-data/facets":          "usage-data/facets/",
-	"plugins-data":               "plugins/data/",
-	"tasks":                      "tasks/",
-}
-
-func statsSurfaceLabel(surface string) string {
-	if label, ok := statsSurfaceLabels[surface]; ok {
-		return label
-	}
-	return surface
-}
-
 func renderFootprint(stdout io.Writer, footprint *stats.Footprint) error {
 	var builder strings.Builder
 
 	fmt.Fprintf(&builder, "cc-port stats: %s\n\n", footprint.ProjectPath)
-	fmt.Fprintf(&builder, "  Storage: %s\n\n", footprint.ProjectDir)
 
-	// Transcript references reflect what a move would touch under
-	// --rewrite-transcripts; a default move leaves transcripts untouched.
-	fmt.Fprintf(&builder, "  References (%d occurrences)\n", footprint.ReferenceTotal)
-	for _, reference := range footprint.References {
-		if reference.Count == 0 {
+	for _, toolFootprint := range footprint.ByTool {
+		fmt.Fprintf(&builder, "  [%s]\n", toolFootprint.Tool)
+		if toolFootprint.Absent {
+			fmt.Fprintln(&builder, "    (project unknown to this tool)")
 			continue
 		}
-		fmt.Fprintf(&builder, "    %-32s %d\n", statsSurfaceLabel(reference.Surface), reference.Count)
-	}
-	fmt.Fprintln(&builder)
 
-	fmt.Fprintf(&builder, "  Disk footprint (%d files, %s)\n", footprint.DiskFiles, humanizeBytes(footprint.DiskBytes))
-	for _, usage := range footprint.Disk {
-		if usage.Files == 0 {
-			continue
+		fmt.Fprintf(&builder, "    References (%d occurrences)\n", toolFootprint.ReferenceTotal)
+		for _, reference := range toolFootprint.References {
+			if reference.Count == 0 {
+				continue
+			}
+			fmt.Fprintf(&builder, "      %-24s %d\n", reference.Name, reference.Count)
 		}
-		fmt.Fprintf(&builder, "    %-16s %4d files  %s\n", usage.Category, usage.Files, humanizeBytes(usage.Bytes))
-	}
-	fmt.Fprintln(&builder)
+		fmt.Fprintln(&builder)
 
-	fmt.Fprintf(&builder, "  History entries: %d\n", footprint.HistoryEntryCount)
-	fmt.Fprintf(&builder, "  Session files:   %d\n", footprint.SessionFileCount)
+		fmt.Fprintf(&builder, "    Disk footprint (%d files, %s)\n",
+			toolFootprint.DiskFiles, humanizeBytes(toolFootprint.DiskBytes))
+		for _, usage := range toolFootprint.Disk {
+			if usage.Files == 0 {
+				continue
+			}
+			fmt.Fprintf(&builder, "      %-16s %4d files  %s\n", usage.Name, usage.Files, humanizeBytes(usage.Bytes))
+		}
+		fmt.Fprintln(&builder)
+	}
 
 	_, err := io.WriteString(stdout, builder.String())
 	return err
@@ -154,13 +128,14 @@ func renderFootprint(stdout io.Writer, footprint *stats.Footprint) error {
 func renderAllFootprints(stdout io.Writer, footprints []stats.ProjectFootprint) error {
 	var builder strings.Builder
 
-	fmt.Fprintf(&builder, "cc-port stats: %d projects (ranked by disk footprint)\n\n", len(footprints))
+	fmt.Fprintf(&builder, "cc-port stats: %d known projects (ranked by disk footprint)\n\n", len(footprints))
 	for _, footprint := range footprints {
 		label := footprint.Label
 		if !footprint.Resolved {
 			label += " (no session witness)"
 		}
-		fmt.Fprintf(&builder, "  %10s  %4d files  %s\n", humanizeBytes(footprint.Bytes), footprint.Files, label)
+		fmt.Fprintf(&builder, "  [%-8s] %10s  %4d files  %s\n",
+			footprint.Tool, humanizeBytes(footprint.Bytes), footprint.Files, label)
 	}
 
 	_, err := io.WriteString(stdout, builder.String())

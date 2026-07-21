@@ -4,29 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io"
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/file"
-	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
-	"github.com/it-bens/cc-port/internal/scan"
+	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/ui"
 )
 
 // newExportCmd returns the export subcommand with closure-scoped flag
-// locals. claudeDir points at the persistent root flag's local; cobra
-// populates it on flag parse, so the RunE closure must dereference at
-// call time. The export manifest subcommand is attached here so the
-// caller wires both with one AddCommand.
-func newExportCmd(claudeDir *string, banner Banner) *cobra.Command {
+// locals. The export manifest subcommand is attached here so the caller
+// wires both with one AddCommand.
+func newExportCmd(toolSet *tool.Set, flags *toolFlags, banner Banner) *cobra.Command {
 	var (
 		output         string
 		fromManifest   string
@@ -36,7 +31,7 @@ func newExportCmd(claudeDir *string, banner Banner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export <project-path>",
 		Short: "Export a project to a portable ZIP archive",
-		Long:  "Exports Claude Code project data to a ZIP archive with path anonymization.",
+		Long:  "Exports project data across every selected tool to a ZIP archive with path anonymization.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return &usageError{err: err}
@@ -44,22 +39,20 @@ func newExportCmd(claudeDir *string, banner Banner) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			exportOptions, outputPath, err := parseExportOptions(cmd, args)
+			projectPath, err := tool.ResolveProjectPath(args[0])
+			if err != nil {
+				return fmt.Errorf("resolve project path: %w", err)
+			}
+
+			targets, err := resolveTargets(toolSet, flags)
 			if err != nil {
 				return err
 			}
 
-			claudeHome, err := claude.NewHome(*claudeDir)
+			selection, placeholders, err := applyCategorySelection(cmd, targets, projectPath, banner)
 			if err != nil {
 				return err
 			}
-
-			categories, placeholders, err := applyCategorySelection(cmd, claudeHome, exportOptions.ProjectPath, banner)
-			if err != nil {
-				return err
-			}
-			exportOptions.Categories = categories
-			exportOptions.Placeholders = placeholders
 
 			passphrase, err := resolvePassphrase(passphraseEnv, passphraseFile)
 			if err != nil {
@@ -68,12 +61,17 @@ func newExportCmd(claudeDir *string, banner Banner) *cobra.Command {
 
 			var result export.Result
 			if err := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
-				exportOptions.Reporter = reporter
+				exportOptions := export.Options{
+					ProjectPath:  projectPath,
+					Selected:     selection,
+					Placeholders: placeholders,
+					Reporter:     reporter,
+				}
 				runResult, runErr := runExportWithStages(
-					ctx, claudeHome, &exportOptions,
+					ctx, targets, &exportOptions,
 					[]pipeline.WriterStage{
 						&encrypt.WriterStage{Pass: passphrase},
-						&file.Sink{Path: outputPath},
+						&file.Sink{Path: output},
 					},
 				)
 				if runErr != nil {
@@ -85,21 +83,9 @@ func newExportCmd(claudeDir *string, banner Banner) *cobra.Command {
 				return err
 			}
 
-			renderRulesReport(cmd.ErrOrStderr(), "", result.RulesReport)
+			renderToolWarnings(cmd.ErrOrStderr(), targets, result.ByTool)
 
-			if snapshotCount := len(result.FileHistory); snapshotCount > 0 {
-				if _, err := fmt.Fprintf(
-					cmd.ErrOrStderr(),
-					"Warning: %d file-history snapshot(s) archived as-is. "+
-						"Contents may still reference the original project path "+
-						"(used for in-session rewinds, not persisted data)\n",
-					snapshotCount,
-				); err != nil {
-					return fmt.Errorf("write file-history warning: %w", err)
-				}
-			}
-
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Exported to %s\n", outputPath); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Exported to %s\n", output); err != nil {
 				return fmt.Errorf("write success line: %w", err)
 			}
 			return nil
@@ -125,17 +111,31 @@ func newExportCmd(claudeDir *string, banner Banner) *cobra.Command {
 	// MarkFlagRequired errors only when the flag name doesn't exist; "output" was registered above.
 	_ = cmd.MarkFlagRequired("output")
 
-	cmd.AddCommand(newExportManifestCmd(claudeDir, banner))
+	cmd.AddCommand(newExportManifestCmd(toolSet, flags, banner))
 	return cmd
+}
+
+// renderToolWarnings prints every target's tool.ExportResult.Warnings,
+// prefixed with the tool's display name when more than one target ran.
+func renderToolWarnings(stderr io.Writer, targets []tool.Target, byTool map[string]tool.ExportResult) {
+	multi := len(targets) > 1
+	for _, target := range targets {
+		toolResult := byTool[target.Tool.Name()]
+		for _, warning := range toolResult.Warnings {
+			if multi {
+				fmt.Fprintf(stderr, "Warning (%s): %s\n", target.Tool.DisplayName(), warning) //nolint:errcheck // best-effort stderr diagnostic
+			} else {
+				fmt.Fprintf(stderr, "Warning: %s\n", warning) //nolint:errcheck // best-effort stderr diagnostic
+			}
+		}
+	}
 }
 
 // runExportWithStages composes a writer pipeline from stages, hands it to
 // export.Run via Options.Output, and surfaces any close-time error on the
-// pipeline writer through a "close output pipeline" wrap. Extracted so a
-// test can drive the close-error path with a stage that fails on Close
-// without re-running the whole cobra command.
+// pipeline writer through a "close output pipeline" wrap.
 func runExportWithStages(
-	ctx context.Context, claudeHome *claude.Home,
+	ctx context.Context, targets []tool.Target,
 	exportOptions *export.Options, stages []pipeline.WriterStage,
 ) (result export.Result, err error) {
 	writer, err := pipeline.RunWriter(ctx, stages)
@@ -150,18 +150,15 @@ func runExportWithStages(
 
 	exportOptions.Output = writer
 
-	result, err = export.Run(ctx, claudeHome, exportOptions)
+	result, err = export.Run(ctx, targets, exportOptions)
 	if err != nil {
 		return result, fmt.Errorf("export: %w", err)
 	}
 	return result, nil
 }
 
-// newExportManifestCmd returns the `export manifest` subcommand. claudeDir
-// points at the persistent root flag's local. Output and category flags
-// live as closure-scoped locals on the cmd; runExportManifest reads
-// --output via cmd.Flags().GetString.
-func newExportManifestCmd(claudeDir *string, banner Banner) *cobra.Command {
+// newExportManifestCmd returns the `export manifest` subcommand.
+func newExportManifestCmd(toolSet *tool.Set, flags *toolFlags, banner ui.Banner) *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
 		Use:   "manifest <project-path>",
@@ -174,7 +171,7 @@ func newExportManifestCmd(claudeDir *string, banner Banner) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExportManifest(cmd, args, *claudeDir, banner)
+			return runExportManifest(cmd, args, toolSet, flags, banner)
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "manifest.xml",
@@ -183,42 +180,38 @@ func newExportManifestCmd(claudeDir *string, banner Banner) *cobra.Command {
 	return cmd
 }
 
-// runExportManifest is the export manifest subcommand body, extracted so
-// tests can drive it without re-wiring the whole cobra tree. Refuses to
-// overwrite an existing output file; the user deletes it or picks a
-// different path with --output. The guard runs before placeholder
-// discovery so the user is not asked to answer prompts only to fail on
-// the pre-existing output.
-func runExportManifest(cmd *cobra.Command, args []string, claudeDir string, banner ui.Banner) error {
+// runExportManifest is the export manifest subcommand body. Refuses to
+// overwrite an existing output file.
+func runExportManifest(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *toolFlags, banner ui.Banner) error {
 	output, _ := cmd.Flags().GetString("output")
 	if err := requireOutputAbsent(output); err != nil {
 		return err
 	}
 
-	projectPath, err := claude.ResolveProjectPath(args[0])
+	projectPath, err := tool.ResolveProjectPath(args[0])
 	if err != nil {
 		return fmt.Errorf("resolve project path: %w", err)
 	}
 
-	claudeHome, err := claude.NewHome(claudeDir)
+	targets, err := resolveTargets(toolSet, flags)
 	if err != nil {
 		return err
 	}
 
-	categories, placeholders, err := resolveCategoriesAndPlaceholders(cmd, claudeHome, projectPath, banner)
+	selection, placeholders, err := resolveCategoriesAndPlaceholders(cmd, targets, projectPath, banner)
 	if err != nil {
 		return err
 	}
 
-	renderRulesReport(cmd.ErrOrStderr(), "", scan.ScanReport(claudeHome.RulesDir(), projectPath))
-
-	exportOptions := export.Options{
-		ProjectPath:  projectPath,
-		Categories:   categories,
-		Placeholders: placeholders,
+	metadata := &manifest.Metadata{}
+	for _, target := range targets {
+		name := target.Tool.Name()
+		metadata.Tools = append(metadata.Tools, manifest.Tool{
+			Name:         name,
+			Categories:   manifest.BuildToolCategoryEntries(categoryNames(target.Tool), selection[name]),
+			Placeholders: placeholders[name],
+		})
 	}
-
-	metadata := buildExportMetadata(&exportOptions)
 
 	if err := manifest.WriteManifest(output, metadata); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
@@ -228,153 +221,4 @@ func runExportManifest(cmd *cobra.Command, args []string, claudeDir string, bann
 		return fmt.Errorf("write success line: %w", err)
 	}
 	return nil
-}
-
-// parseExportOptions resolves the project path and the output destination
-// from positional args plus the --output flag. Returns a partial Options
-// (ProjectPath, FromManifest) and the output path. Categories and
-// Placeholders are filled in by applyCategorySelection in the caller.
-func parseExportOptions(cmd *cobra.Command, args []string) (export.Options, string, error) {
-	projectPath, err := claude.ResolveProjectPath(args[0])
-	if err != nil {
-		return export.Options{}, "", fmt.Errorf("resolve project path: %w", err)
-	}
-	output, _ := cmd.Flags().GetString("output")
-	fromManifest, _ := cmd.Flags().GetString("from-manifest")
-	return export.Options{
-		ProjectPath:  projectPath,
-		FromManifest: fromManifest,
-	}, output, nil
-}
-
-func discoverAndPromptPlaceholders(claudeHome *claude.Home, projectPath string) ([]manifest.Placeholder, error) {
-	locations, err := claude.LocateProject(claudeHome, projectPath)
-	if err != nil {
-		return nil, fmt.Errorf("locate project: %w", err)
-	}
-
-	contentBuffer, err := gatherProjectContent(locations)
-	if err != nil {
-		return nil, err
-	}
-
-	homePath, err := resolveHomeAnchor()
-	if err != nil {
-		return nil, err
-	}
-
-	suggestions := export.DiscoverPlaceholders(contentBuffer, projectPath, homePath)
-	placeholders := resolveSuggestions(suggestions)
-	// gatherProjectContent omits the session-subdir bodies where the encoded
-	// dir appears, so declare it unconditionally rather than via discovery.
-	placeholders = append(placeholders, manifest.Placeholder{
-		Key:      "{{PROJECT_DIR}}",
-		Original: claudeHome.ProjectDir(projectPath),
-	})
-	return placeholders, nil
-}
-
-func gatherProjectContent(locations *claude.ProjectLocations) ([]byte, error) {
-	var contentBuffer []byte
-
-	for _, transcriptPath := range locations.SessionTranscripts {
-		data, err := os.ReadFile(transcriptPath) //nolint:gosec // path constructed from trusted internal data
-		if err != nil {
-			return nil, fmt.Errorf("read transcript %s: %w", transcriptPath, err)
-		}
-		contentBuffer = append(contentBuffer, data...)
-	}
-
-	for _, memoryFilePath := range locations.MemoryFiles {
-		data, err := os.ReadFile(memoryFilePath) //nolint:gosec // path constructed from trusted internal data
-		if err != nil {
-			return nil, fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
-		}
-		contentBuffer = append(contentBuffer, data...)
-	}
-
-	for _, sessionFilePath := range locations.SessionFiles {
-		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // path constructed from trusted internal data
-		if err != nil {
-			return nil, fmt.Errorf("read session file %s: %w", sessionFilePath, err)
-		}
-		contentBuffer = append(contentBuffer, data...)
-	}
-
-	extra, err := gatherSessionKeyedContent(locations)
-	if err != nil {
-		return nil, err
-	}
-	contentBuffer = append(contentBuffer, extra...)
-
-	return contentBuffer, nil
-}
-
-// gatherSessionKeyedContent reads every file yielded by AllFlatFiles() and
-// returns their concatenated bytes. The iterator applies each group's
-// sidecar filter, so callers do not need to exclude runtime-only
-// basenames themselves.
-func gatherSessionKeyedContent(locations *claude.ProjectLocations) ([]byte, error) {
-	var buf []byte
-	for group, path := range locations.AllFlatFiles() {
-		data, err := os.ReadFile(path) //nolint:gosec // path from trusted ProjectLocations
-		if err != nil {
-			return nil, fmt.Errorf("read %s file %s: %w", group.Name, path, err)
-		}
-		buf = append(buf, data...)
-	}
-	return buf, nil
-}
-
-func resolveSuggestions(suggestions []export.PlaceholderSuggestion) []manifest.Placeholder {
-	placeholders := make([]manifest.Placeholder, 0, len(suggestions))
-	for _, suggestion := range suggestions {
-		placeholders = append(placeholders, manifest.Placeholder{
-			Key:      suggestion.Key,
-			Original: suggestion.Original,
-		})
-	}
-	return placeholders
-}
-
-func buildExportMetadata(exportOptions *export.Options) *manifest.Metadata {
-	placeholders := make([]manifest.Placeholder, 0, len(exportOptions.Placeholders))
-	for _, placeholder := range exportOptions.Placeholders {
-		placeholders = append(placeholders, manifest.Placeholder{
-			Key:      placeholder.Key,
-			Original: placeholder.Original,
-			Resolve:  placeholder.Resolve,
-		})
-	}
-
-	return &manifest.Metadata{
-		Export: manifest.Info{
-			Categories: manifest.BuildCategoryEntries(&exportOptions.Categories),
-		},
-		Placeholders: placeholders,
-	}
-}
-
-// resolveHomeAnchor mirrors claude.ResolveProjectPath: a symlinked HOME
-// must resolve to its target before the anchor filter compares against
-// project paths, otherwise every home-rooted candidate is silently
-// dropped. Rejecting `/` and non-absolute values prevents the anchor
-// from matching every absolute path in the corpus.
-func resolveHomeAnchor() (string, error) {
-	homePath, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("determine home directory: %w", err)
-	}
-	if !filepath.IsAbs(homePath) {
-		return "", fmt.Errorf("invalid home directory %q: must be absolute", homePath)
-	}
-	resolved, err := fsutil.ResolveExistingAncestor(homePath)
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	cleaned := filepath.Clean(resolved)
-	if !filepath.IsAbs(cleaned) || cleaned == "/" {
-		return "", fmt.Errorf("invalid home directory %q", cleaned)
-	}
-	return cleaned, nil
 }

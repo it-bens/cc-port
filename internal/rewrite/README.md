@@ -14,29 +14,38 @@ Every path-rewriting command routes through this package so the boundary contrac
   - `CountPathInBytes(data []byte, path string) int`: counts bounded occurrences without rewriting, scanning without a rewritten copy. The counting analogue of `ReplacePathInBytes`.
   - `CountPathInBytesWithJSONEscape(data []byte, path string) int`: counts bounded occurrences across both the raw and JSON-escaped forms. The counting analogue of `ReplacePathInBytesWithJSONEscape`.
   - `EscapeSJSONKey(key string) string`: escapes a key for use as a single segment in an sjson path expression.
-- **Typed file helpers**
-  - `StreamHistoryJSONL(ctx context.Context, src io.Reader, dst io.Writer, oldProject, newProject string) (int, []int, error)`: streams `history.jsonl` line by line, writing the rewritten output to dst; returns changed-line count, malformed-line numbers, and error. Caps one line at `claude.MaxHistoryLine`. Routes through `ReplacePathInBytesWithJSONEscape` so escape-form slashes in emitted JSON are rewritten.
-  - `SessionFile(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites a session JSON file. Uses the JSON-escape variant for the same reason.
-  - `UserConfig(data []byte, oldProject, newProject string) ([]byte, bool, error)`: rewrites `~/.claude.json`. The raw-block pass uses the JSON-escape variant.
+- **TOML rewrite**
+  - `TOMLPathRewrite(data []byte, oldPath, newPath string) (rewritten []byte, count int, err error)`: rewrites bounded path references in raw TOML while preserving the original formatting and comments.
 - **Atomic rename**
   - `NewSafeRenamePromoter() *SafeRenamePromoter`: constructor for the staged-write promoter used by `import`.
   - `SafeRenamePromoter` type with methods:
-    - `StageFile`, `StageDir`: register destinations.
+    - `StageFile`: registers a destination.
     - `Promote`: runs the rename chain.
     - `Rollback`: reverses completed renames.
     - `SetRenameFunc`: injects a test hook.
   - `SafeWriteFile(path string, data []byte, permissions os.FileMode) error`: write-then-rename helper for single-file atomic writes.
+  - `PromoteDir(ctx context.Context, source, destination string, undo undoRegistrar, copyDir func(context.Context, string, string, func()) error) error`:
+    stages `source` into a sibling `.cc-port-staging.tmp` directory beside
+    `destination`, then atomically renames it into place. The directory-promotion
+    counterpart to `SafeRenamePromoter`, used by `move`'s project-directory surface.
 
 ## Contracts
 
 ### Boundary rules
 
-Every path substitution in cc-port (`move`, `export` anonymization, `import`
-placeholder resolution) runs through `ReplacePathInBytes`. A bare substring
-replace would corrupt unrelated paths sharing a prefix with the old project
-path (`/Users/x/myproject` inside `/Users/x/myproject.v2`). To prevent this,
-the function requires each match to be bounded on the right by a byte that
+Every raw-path substitution in cc-port (`move`'s rewrites, `export`'s
+anonymization) runs through `ReplacePathInBytes`. A bare substring replace
+would corrupt unrelated paths sharing a prefix with the old project path
+(`/Users/x/myproject` inside `/Users/x/myproject.v2`). To prevent this, the
+function requires each match to be bounded on the right by a byte that
 cannot extend a path component.
+
+Import placeholder resolution is a different mechanism and does not go
+through this function: it substitutes self-delimiting `{{UPPER_SNAKE}}`
+tokens via `archive.ResolvePlaceholdersStream` (streaming) or
+`archive.ResolveEntryBytes` (in-memory, routed through the same primitive),
+where the token's own `}}` suffix makes a boundary check unnecessary (see
+[`internal/archive/README.md`](../archive/README.md) §Placeholder machinery).
 
 Path-component bytes are `[A-Za-z0-9_-]`. The `.` byte uses a two-byte
 lookahead because it appears both as an extension separator (`.v2`, `.txt`)
@@ -49,10 +58,8 @@ rewriter. `ReplacePathInBytesWithJSONEscape` runs the raw pass first, then
 a second pass keyed on `oldPath` and `newPath` with every `/` replaced by
 `\/`. The boundary check applies independently to each pass, so
 `\/Users\/me\/foo\/bar` still matches while `\/Users\/me\/foobar` does not.
-`StreamHistoryJSONL`, `SessionFile`, and `UserConfig` route through this
-variant; callers rewriting raw filesystem bytes (memory files,
-session-keyed flat files) stay on `ReplacePathInBytes` because a second
-pass would be noise.
+Tool-specific helpers choose this variant when their JSON surfaces require it.
+Callers rewriting raw filesystem bytes stay on `ReplacePathInBytes`.
 
 `CountPathInBytes` and `CountPathInBytesWithJSONEscape` apply the identical
 boundary rule but report only the match count; `stats` uses them to inventory
@@ -85,14 +92,94 @@ one-byte boundary checking alone. These names are pathological on Unix and
 forbidden on Windows. cc-port accepts this trade-off in favour of correctly
 rewriting sentence-ending prose references.
 
+### TOML boundary rules
+
+Codex stores project paths inside TOML table keys: the canonical
+`[projects."<path>"]` trust table, and any project-local
+`[hooks.state."<path>:<event>:<group>:<handler>"]` entry whose hook source
+sits under the project. Codex preserves comments and formatting when it edits
+its own config. Go has no `toml_edit`-equivalent library, and re-emitting a
+parsed document would destroy that formatting, so `TOMLPathRewrite` performs
+the same boundary-aware byte replacement as `ReplacePathInBytes` and then
+validates the result rather than re-serializing it: input parses as TOML,
+output parses as TOML, and the multiset of full dotted key paths matches the
+one produced by applying the project-path substitution to every key segment.
+A key carrying the old project path is expected to change; a key that changes
+any other way fails the check.
+
+#### Handled
+
+- A project table key (`[projects."/old/path"]`) and a project path value
+  elsewhere in the document (for example under `[hooks]`) both rewrite in
+  one call, with every comment and blank line preserved verbatim.
+- A project-local `hooks.state` key whose hook-source prefix is the old
+  project path: rewritten exactly as its bytes are, so the entry stays
+  addressable under the moved project. Any table keyed by the project path is
+  covered this way, with no enumerated table list; a user-level hook key
+  outside the project keeps its path.
+- The multiset walks every array-of-tables element under its parent key path,
+  so a path key inside a `[[...]]` block rewrites and validates the same way.
+
+#### Refused
+
+- Paths containing a quote (`"`) or a backslash (`\`): `TOMLPathRewrite`
+  refuses before attempting any rewrite, since a TOML basic-string key
+  containing either character would require escaping this primitive does
+  not implement.
+- A rewrite whose output key-path multiset differs from the expected one: a
+  key changed by anything other than the project-path substitution. Refused
+  with no partial write, the original bytes returned unchanged.
+- A rewrite whose output no longer parses as TOML, such as a collision that
+  fuses two project keys into a duplicate table: refused by the output
+  re-parse, again with the original bytes returned unchanged.
+
+#### Not covered
+
+- TOML documents this package's parser (`github.com/pelletier/go-toml/v2`,
+  used for validation only) cannot parse. `TOMLPathRewrite` refuses such
+  input rather than guessing at a byte-level rewrite against an
+  unparseable document.
+
+### Directory promotion
+
+`PromoteDir` creates a sibling `<destination>.cc-port-staging.tmp` directory,
+copies `source` into it, then renames the staging directory onto
+`destination`. The rename publishes the completed directory in one operation,
+so a failed copy never leaves a partial directory at the real destination
+path. `move`'s project-directory surface is its only caller
+([`internal/tool/claude/README.md`](../tool/claude/README.md) §Apply contract
+(move)); `import` still promotes through `SafeRenamePromoter`.
+
+#### Handled
+
+- A destination that does not yet exist: staged copy, then an atomic
+  `os.Rename` onto `destination`.
+- Rollback via the caller's `undo.RegisterUndo`: before the rename, removes
+  the staging directory; after the rename, removes `destination`.
+
+#### Not covered
+
+- Classifying whether `destination` is safe to promote into. `PromoteDir`
+  performs no destination-existence check itself; the caller decides
+  promote vs. converged vs. refuse before invoking it
+  ([`internal/tool/claude/README.md`](../tool/claude/README.md) §Apply
+  contract (move)).
+
 ## Tests
 
-Unit tests in `rewrite_test.go` cover `StreamHistoryJSONL`, `ReplacePathInBytes`
-(including dot-boundary lookahead), `SessionFile`, `UserConfig`,
-`SafeRenamePromoter` (files, dirs, rollback path), `EscapeSJSONKey`,
+Unit tests in `rewrite_test.go` cover `PromoteDir`'s staging, copy, atomic
+rename, and rollback behavior. Tests also cover
+`ReplacePathInBytes` (including dot-boundary lookahead),
+`SafeRenamePromoter` (files, rollback path), `EscapeSJSONKey`,
 `ContainsBoundedPath`, the `Count*` primitives (boundary cases, the
 JSON-escaped form, and parity with their `Replace*` counterparts), and
 `SafeWriteFile`.
+
+Unit tests in `toml_test.go` cover `TOMLPathRewrite`: table-key and
+value-position renames, comment and formatting preservation, project-local
+`hooks.state` key rewrites (with a user-level hook key left untouched and a
+nested array-of-tables key), the refusal on a colliding key rewrite, and the
+quote/backslash input refusal.
 
 Fuzz target in `rewrite_fuzz_test.go`. `FuzzReplacePathInBytes` asserts
 empty-`oldPath` no-op, identity-rewrite byte equality, and the length

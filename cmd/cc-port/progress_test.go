@@ -73,7 +73,7 @@ func TestRunWithProgress_JSONModeEmitsEventObjectsThroughSink(t *testing.T) {
 	require.NoError(t, err)
 
 	rendered := readSink(t, sinkPath)
-	assert.Contains(t, rendered, `{"v":1,`)
+	assert.Contains(t, rendered, `{"event":`)
 	assert.Contains(t, rendered, `"event":"phase_start"`)
 	assert.Contains(t, rendered, `"event":"phase_end"`)
 }
@@ -129,9 +129,9 @@ func readSink(t *testing.T, sinkPath string) string {
 }
 
 // newProgressTestCmd builds a command carrying the four verbosity flags
-// runWithProgress reads, with a non-nil context so signal.NotifyContext has a
-// real parent. Production seeds the context via cobra's Execute; tests that
-// call runWithProgress directly must seed it here.
+// runWithProgress reads, with a non-nil context so context.WithCancel has a
+// real parent. Production seeds the context via cobra's ExecuteContext; tests
+// that call runWithProgress directly must seed it here.
 func newProgressTestCmd(t *testing.T) *cobra.Command {
 	t.Helper()
 	cmd := &cobra.Command{Use: "test"}

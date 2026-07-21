@@ -1,17 +1,13 @@
-# internal/move — agent notes
+# internal/move: agent notes
 
 ## Before editing
 
-- Do not inspect or rewrite file-history snapshot contents; bytes are opaque (README §File-history handling (move)).
-- Preserve malformed `history.jsonl` lines verbatim; no parser-error recovery path (README §Malformed history entries preserved).
-- Wrap every `Apply` path body in `lock.WithLock` before any write (internal/lock/README.md §Concurrency guard).
-- Route all path substring replacement through `internal/rewrite.ReplacePathInBytes`; no hand-rolled `strings.ReplaceAll` on user paths (internal/rewrite/README.md §Boundary rules).
-- Reuse `rewriteTracked` for every uniform plain-bytes rewrite; do not introduce a separate rollback tracker (README §Apply contract).
+- This package is generic orchestration; it must never import a tool adapter. Per-tool surfaces (history, sessions, config, file-history, etc.) come from each adapter's `MoveSurfaces` (e.g. `internal/tool/claude`), including file-history opacity and malformed-history handling. (README §Apply contract, docs/architecture.md §File-history policy (cross-cutting))
+- Preflight each target's `MoveSurfaces`, then acquire its witness-first flock via `lock.Acquire` in registry order before any target applies; hold all locks through apply and release them in reverse order. (internal/lock/README.md §Concurrency guard)
+- Cross-tool rollback does not exist: a target that already completed reflects the true new path even if a later target fails (README §Apply contract).
 
 ## Navigation
 
 - Entry: `move.go:DryRun`, `move.go:Apply`.
-- Orchestration and rollback: `execute.go:executeMove`, `execute.go:globalFileTracker`.
-- Reference rewrites: `rewrite_global.go`, `rewrite_in_project.go`.
-- Dry-run counts: `plan_counts.go`.
-- Tests: `move_test.go`, `rewrite_global_test.go`, `restore_internal_test.go`.
+- Per-target application and rollback: `move.go:applyTarget`.
+- Tests: `move_test.go`.

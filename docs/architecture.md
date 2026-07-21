@@ -4,27 +4,32 @@
 
 ```
 cc-port/
-├── cmd/cc-port/            CLI entry point (flag parsing, dispatch, exit codes)
+├── cmd/cc-port/            CLI entry point: flag parsing, dispatch, exit codes, tool registry
 ├── internal/
-│   ├── claude/             Claude Code data layout: path encoding, locations, schemas
+│   ├── archive/            ZIP layout shared by every tool: <tool>/ prefixes, entry caps,
+│   │                       os.Root containment, placeholder substitution
+│   ├── credentials/        Layered remote-credential resolution: env, file, echo-suppressed TTY prompt
 │   ├── encrypt/            Age encrypt and decrypt stages for the pipeline runner
-│   ├── export/             Export orchestration: ZIP, manifest, path anonymisation
+│   ├── export/             Generic export orchestration: one archive across every target
 │   ├── file/               Pipeline source/sink stages for local filesystem I/O
 │   ├── fsutil/             Shared filesystem helpers: directory copy, path-ancestor resolution
-│   ├── importer/           Import orchestration: placeholder validation, atomic staging
-│   ├── lock/               Advisory lock + live-session refusal
+│   ├── importer/           Generic import orchestration: preflight, staging, atomic promotion
+│   ├── lock/               Advisory lock + live-writer refusal
 │   ├── logo/               ASCII banner rendered when built with -tags logo (cc-port-with-logo binary)
-│   ├── manifest/           metadata.xml wire DTOs + category enum table
-│   ├── move/               Move plan, dry-run, apply with copy-verify-delete
+│   ├── manifest/           metadata.xml wire DTOs + per-tool category validation
+│   ├── move/               Generic move orchestration: per-tool surfaces, preflight, apply
 │   ├── pipeline/           WriterStage/ReaderStage interfaces + composing runners
 │   ├── progress/           Progress reporter, event stream, and four output renderers
 │   ├── remote/             gocloud.dev-backed remote source and sink stages
-│   ├── rewrite/            Byte-level rewrite primitives + SafeRenamePromoter
+│   ├── rewrite/            Byte-level and TOML rewrite primitives + SafeRenamePromoter
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
-│   ├── stats/              Project footprint: reference counts + disk usage (read-only)
+│   ├── sqlrewrite/         SQL-level path rewriting on SQLite (busy_timeout=0, checkpoint discipline)
+│   ├── stats/              Generic project-footprint orchestration (read-only)
 │   ├── sync/               Push and pull orchestration: plan, execute, dry-run rendering
 │   ├── testutil/           Test fixture helper
-│   ├── transport/          ZIP layout registry for session-keyed groups
+│   ├── tool/               The tool contract (Tool, Workspace, Surface, Restorer) + tool.Set registry
+│   │   ├── claude/         Claude Code adapter: path encoding, locations, schemas, move/export/import/stats
+│   │   └── codex/          OpenAI Codex adapter: SQLite + TOML + rollout JSONL, move/export/import/stats
 │   └── ui/                 Interactive prompts (charm.land/huh v2)
 ├── integration_test.go     End-to-end CLI tests
 └── testdata/dotclaude/     Minimal ~/.claude fixture for tests
@@ -32,26 +37,117 @@ cc-port/
 
 Each non-trivial directory has a `README.md`. Directories with hard editing rules additionally carry an `AGENTS.md` (loaded by Claude Code via a one-line `CLAUDE.md`). The `README.md` is the developer narrative. The `AGENTS.md` is a pointer-only map into it.
 
+`internal/claude` and `internal/transport` do not exist anymore. The Claude Code adapter moved to `internal/tool/claude` and absorbed `internal/transport`'s archive-layout registry into one merged `claude.Registries` slice (see §Registry source of truth). Command packages (`internal/move`, `internal/export`, `internal/importer`, `internal/stats`, `internal/sync`) import `internal/tool` only; they never import an adapter package. Only `cmd/cc-port` imports `internal/tool/claude` and `internal/tool/codex`, in `cmd/cc-port/tools.go`.
+
+## The tool contract
+
+cc-port is an N-tool porting engine. `internal/tool` defines a compile-time
+contract every supported coding tool implements; `internal/tool/claude` and
+`internal/tool/codex` are the two current adapters. Every other invariant in
+this document and every command-layer README assumes the shapes described
+here.
+
+### Registry: a literal constructor call, not a plugin system
+
+`cmd/cc-port/tools.go:newToolSet` is the one place cc-port lists its
+supported tools:
+
+```go
+func newToolSet() *tool.Set {
+	return tool.NewSet(claude.New(), codex.New())
+}
+```
+
+There is no `init()` and no discovery mechanism. `tool.NewSet` validates the
+registry once at construction (non-empty, unique tool names, unique
+`(tool, category)` pairs, unique implicit placeholder keys across tools) and
+panics on a violation, because a collision there is a registry-construction
+bug in `tools.go`, not an operational error a caller can recover from.
+`tool.Set` then exposes `All`, `ByName`, and `Detected` in registration
+order; `tool.ParseQualified` is a separate package function that parses a
+`"<tool>/<category>"` argument, with no `*Set` involved.
+
+### Adapter boundaries
+
+Command packages (`internal/move`, `internal/export`, `internal/importer`,
+`internal/stats`, `internal/sync`) import `internal/tool` and nothing more.
+They drive every tool through the `Tool` and `Workspace` interfaces and
+never branch on which tool they are talking to. Adapters
+(`internal/tool/claude`, `internal/tool/codex`) import `internal/tool` plus
+whatever shared substrate they need (`internal/rewrite`, `internal/sqlrewrite`,
+`internal/archive`); only `cmd/cc-port` imports an adapter package directly.
+A new tool adds one adapter package and one line in `tools.go`; it changes no
+command package (see `internal/tool/README.md` §Extension rule for the full
+checklist a third adapter follows).
+
+`Tool` is the tool-level, connection-free half of the contract. `Open`
+resolves the tool's state roots under its own rules (an explicit
+`--<name>-home` override must already exist for Codex; Claude's home may be
+lazily created) and returns a `Workspace` bound to them, composing the four
+command-facing capabilities so one `Open` result serves every command (see
+[`internal/tool/README.md`](../internal/tool/README.md) §Public API for the
+full `Tool`/`Workspace`/`Mover`/`Exporter`/`Importer`/`Auditor` method
+lists). Auditor's three methods take `context.Context` first, so cancelling
+the context stops a running scan. A move's per-surface work is a `Surface`: a `Name`, a `Plan` that
+returns `SurfaceResult` without writing, and an `Apply` that performs the
+rewrite and registers its rollback with a `Restorer`. `SurfaceResult.Warnings`
+holds facts discovered by executing a surface. `ResidualWarnings` holds
+request-level residuals that need no surface execution to discover (see
+§Crash and idempotence contract).
+
+### Sweep semantics
+
+Three sentinel errors govern how a multi-tool sweep treats one target that
+cannot participate:
+
+| Error | Meaning | Sweep behavior |
+|---|---|---|
+| `tool.ErrToolAbsent` | The tool has no state on this machine. | A tool named explicitly via `--tool` fails hard on it; an undetected tool in the default (no `--tool`) sweep is silently skipped by `cmd/cc-port/toolselect.go:resolveTargets`. |
+| `tool.ErrProjectAbsent` | This tool has no record of the requested project. | Every command treats this as a legitimate empty result, not a failure: export writes an empty `<tool>` manifest block, move reports the target `Absent` with no surfaces, stats reports a zero, `Absent: true` footprint. |
+| `tool.ErrNoWitness` | Liveness evidence could not be read (a witness source failed, not merely found nothing). | Blocks mutation exactly like a positive liveness result. An unreadable witness cannot be treated as "no writers"; refusing is the only safe response. |
+
+`tool.ErrProjectAbsent` is deliberately not fatal because it is the common
+case: a project workspace is not necessarily open in every installed tool,
+and the sweep's job is to port what each tool actually knows.
+
+### Construction seams
+
+Adapters obtain environment lookups and process observation through
+constructor fields that default to real sources rather than free in-line
+calls. Codex's `NewAdapter(getenv, listProcesses)` makes home resolution
+(`$CODEX_SQLITE_HOME`) and its witness's process-table scan testable without
+global mutation. Claude's `NewAdapter(getenv, processLiveness)` routes
+default-home resolution and per-session witness liveness through constructor
+seams; it checks the specific PIDs named in session files rather than
+scanning a process table. `New()` wires the real sources for production use.
+
 ## Contracts
 
 One invariant per row; click through to the owning module for the full `Handled / Refused / Not covered` breakdown.
 
 | Invariant                                               | Owner                                                                            |
 |---------------------------------------------------------|----------------------------------------------------------------------------------|
+| A compile-time registry maps `Tool` to its adapter; command packages never import an adapter | §The tool contract, [`internal/tool/README.md`](../internal/tool/README.md) §Contract surface |
+| A multi-tool sweep skips `ErrToolAbsent`, empties on `ErrProjectAbsent`, refuses on `ErrNoWitness` | §Sweep semantics |
 | Interactive prompts require a TTY                       | [`internal/ui/README.md`](../internal/ui/README.md)                              |
 | Path substring rewrites respect component boundaries    | [`internal/rewrite/README.md`](../internal/rewrite/README.md)                    |
-| Project paths use a lossy encoding; collisions refused  | [`internal/claude/README.md`](../internal/claude/README.md)                      |
+| SQLite path columns are rewritten through SQL, never byte-level | [`internal/sqlrewrite/README.md`](../internal/sqlrewrite/README.md) §Contracts |
+| TOML project keys are rewritten byte-level with a parse-validate round trip | [`internal/rewrite/README.md`](../internal/rewrite/README.md) §TOML boundary rules |
+| Archive entries carry a `<tool>/` namespace; decompression is capped and containment-checked | [`internal/archive/README.md`](../internal/archive/README.md) §Contracts |
+| Project paths use a lossy encoding; collisions refused  | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md)            |
 | `~/.claude/rules/*.md` never rewritten in place         | [`internal/scan/README.md`](../internal/scan/README.md)                          |
 | Rules-scan output flows as `scan.Report` bundle         | [`internal/scan/README.md`](../internal/scan/README.md)                          |
-| Malformed `history.jsonl` lines preserved, not repaired | [`internal/move/README.md`](../internal/move/README.md)                          |
-| `history.jsonl` lines bounded at 16 MiB, oversized fail  | [`internal/claude/README.md`](../internal/claude/README.md) §History line cap    |
+| Malformed `history.jsonl` lines preserved, not repaired | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §Malformed history entries preserved |
+| `history.jsonl` lines bounded at 16 MiB, oversized fail  | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §History line cap |
 | Archives are a closed placeholder contract              | [`internal/importer/README.md`](../internal/importer/README.md) §Import contract |
-| Placeholder resolution composition (implicit-key filter, manifest-known merge) | [`internal/importer/README.md`](../internal/importer/README.md) §Public API (`ResolvePlaceholders`, `IsImplicitKey`) |
-| Every export declares all categories; unknown refused   | [`internal/manifest/README.md`](../internal/manifest/README.md) §Category manifest |
-| Import writes are atomic with rollback                  | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
-| Mutating commands lock + refuse during live sessions    | [`internal/lock/README.md`](../internal/lock/README.md)                          |
-| Session-keyed user-wide directories follow the project  | [`internal/claude/README.md`](../internal/claude/README.md) §Project enumeration |
-| User-wide files are rewritten via a polymorphic registry | [`internal/claude/README.md`](../internal/claude/README.md) §User-wide registry |
+| Placeholder resolution composition (implicit anchors strongest, `--from-manifest` next, sender's own resolve weakest) | [`internal/importer/README.md`](../internal/importer/README.md) §Placeholder handling |
+| Every export declares all of a tool's categories; unknown or missing refused | [`internal/manifest/README.md`](../internal/manifest/README.md) §Category manifest |
+| Import writes are atomic with rollback across every tool's staged files | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
+| A move's per-tool apply is a crash-safe, idempotent bracket; cross-tool rollback does not exist | §Crash and idempotence contract, [`internal/move/README.md`](../internal/move/README.md) §Apply contract |
+| A `.git` object store inside a tool's state is never rewritten at the byte level | §Git-repo-in-state policy (cross-cutting) |
+| Mutating commands lock + refuse during live writer activity | [`internal/lock/README.md`](../internal/lock/README.md)                          |
+| Session-keyed user-wide directories follow the project  | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §Project enumeration |
+| User-wide files are rewritten via a polymorphic registry | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §User-wide registry |
 | Sync conflict-detection metadata stays inside the archive | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
 | Cross-machine push refuses without `--force`              | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |
 | `--from-manifest` exclusivity with `--all` and per-category flags | [`cmd/cc-port/README.md`](../cmd/cc-port/README.md) §Category selection |
@@ -59,7 +155,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Layered AWS credential resolution (file > env > prompt) | [`internal/credentials/README.md`](../internal/credentials/README.md) §Source layering and precedence |
 | Banner is consumer-defined; `internal/logo` is opt-in via `-tags logo` | `cmd/cc-port/banner_default.go`, `cmd/cc-port/banner_logo.go` |
 | Reporter injected through Options, never package-global | [`internal/progress/README.md`](../internal/progress/README.md) §Reporter injection |
-| Footprint reference counts match each surface's apply-rewrite variant | [`internal/stats/README.md`](../internal/stats/README.md) §Per-surface count variant |
+| Footprint reference counts match each surface's apply-rewrite variant | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §Reference and disk accounting (stats) |
 
 ### TTY-prompt ownership split
 
@@ -71,33 +167,42 @@ Several `~/.claude/` directories carry per-session state belonging to a project:
 `todos/<sid>-agent-<sid>.json`,
 `usage-data/{session-meta,facets}/<sid>.json`,
 `plugins/data/<ns>/<sid>/**`, and
-`tasks/<sid>/**`. Each is enumerated through the project's session-UUID set (the
-same set computed by `collectProjectDirEntries`). Per-command handling lives in
-the relevant module:
+`tasks/<sid>/**`. This set is a Claude Code concept: Codex has no equivalent
+session-keyed user-wide directory. Each is enumerated through the project's
+session-UUID set (the same set computed by `collectProjectDirEntries`). The
+generic `internal/move`, `internal/export`, and `internal/importer` packages
+have no knowledge of these directories; the Claude adapter's `Surface`,
+`Export`, and `Stage`/`Finalize` implementations do:
 
-- [`internal/move/README.md`](../internal/move/README.md) §Apply contract: copy
-  + rewrite + tracker rollback, with `tasks/.lock` and `tasks/.highwatermark`
-  excluded.
-- [`internal/export/README.md`](../internal/export/README.md) §Session-keyed zip layout:
-  opt-in via `--todos`, `--usage-data`, `--plugins-data`, `--tasks`, included
-  in `--all`. Bodies pass through `applyPlaceholders`.
-- [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging:
-  session-keyed prefix arms staged at sibling temps, promoted last in
-  order so the most load-bearing data settles first.
+- [`internal/tool/claude/README.md`](../internal/tool/claude/README.md)
+  §Apply contract (move): rewrite + tracker rollback per surface, with
+  `tasks/.lock` and `tasks/.highwatermark` excluded.
+- [`internal/tool/claude/README.md`](../internal/tool/claude/README.md)
+  §Session-keyed zip layout (export): opt-in via `--include claude/todos`,
+  `--include claude/usage-data`, `--include claude/plugins-data`,
+  `--include claude/tasks`, included in `--all`. Bodies pass through
+  `sink.ApplyPlaceholders`.
+- [`internal/importer/README.md`](../internal/importer/README.md) §Atomic
+  staging: every tool's staged files, session-keyed or not, promote as one
+  all-or-nothing batch. Promotion order follows archive entry order per tool,
+  not a category-specific sequence.
 
 ### Registry source of truth
 
-The canonical enumeration of session-keyed groups is
-`claude.SessionKeyedGroups` (see
-[`internal/claude/README.md`](../internal/claude/README.md) §Session-keyed
-registry). Archive layout (zip prefix + import home base directory) lives in
-`transport.SessionKeyedTargets`, index-aligned with `SessionKeyedGroups` and
-verified by an alignment unit test in `internal/transport`. Every per-command
-consumer (move, export, import, CLI renderers) iterates these registries
-instead of open-coding group names. Adding a new session-keyed group
-means editing both slices in the same commit and pointing the new
-entry's `Category` at a `manifest.AllCategories` name; `internal/move`'s
-`planCategories` derives from `SessionKeyedGroups` and updates automatically.
+The canonical enumeration of Claude's storage surfaces is `claude.Registries`
+(see [`internal/tool/claude/README.md`](../internal/tool/claude/README.md)
+§Session-keyed registry and §User-wide registry). One `RegistryEntry` row
+carries both the session-keyed file selector (`Files`) and the archive
+layout (`ZipPrefix`, `HomeBaseDir`) that used to live in the separate
+`internal/transport` package; `internal/transport` no longer exists. Every
+consumer but import staging (the adapter's move surfaces, export, and CLI
+renderers) iterates `claude.SessionKeyedGroups()` or
+`claude.UserWideRewriteTargets()` instead of open-coding group names; import
+staging's `matchSessionKeyedPrefix` walks `Registries` directly by
+`ZipPrefix`, since it matches an archive entry name rather than selecting a
+category. Adding a new session-keyed group means adding one `Registries`
+row and pointing its `Category` at a name the adapter's `Categories()`
+declares.
 
 `~/.claude/teams/<team>/**` is intentionally NOT in this set. Team directories
 are user-wide workspaces with no inspectable per-project attribution.
@@ -111,13 +216,28 @@ file the user edited through Claude Code. The in-session rewind feature
 uses it by filename, not by content. Any project-path string that
 appears inside a snapshot body is coincidental (log line, comment,
 string literal) and not load-bearing, so cc-port never inspects or
-rewrites snapshot contents.
+rewrites snapshot contents. File-history is a Claude Code concept; Codex has no equivalent, and the
+never-inspect-opaque-bytes principle does not extend to Codex's own state.
+Codex's memories worktree files are rewritten in place, not left opaque (see
+§Git-repo-in-state policy). Rollout bodies get similar treatment. Within a
+structured rollout, session identity fields are always rewritten, and
+non-structured lines are rewritten too under `--deep`. An era-A rollout (one
+with no session_meta or turn_context line) is skipped entirely, even under
+`--deep` (see `internal/tool/codex/README.md` §Era-A rollout handling).
 
-Per-command handling:
+Per-command handling, all owned by the Claude adapter now that `internal/move`,
+`internal/export`, and `internal/importer` are generic:
 
-- [`internal/move/README.md`](../internal/move/README.md) §File-history handling (move): copy-verbatim, stderr warning, stale-path-strings residual risk.
-- [`internal/export/README.md`](../internal/export/README.md) §File-history handling (export): archive-verbatim, stderr warning, privacy-of-exported-snapshots residual risk and the `--file-history=false` opt-out.
-- [`internal/importer/README.md`](../internal/importer/README.md) §File-history handling (import): write-verbatim; placeholder substitution is skipped on file-history bodies on current archives.
+- [`internal/tool/claude/README.md`](../internal/tool/claude/README.md)
+  §File-history handling (move): left in place untouched (snapshots are keyed
+  by session UUID, not by project path, so a move never needs to relocate
+  them), with a residual-warning naming the preserved-verbatim count.
+- [`internal/tool/claude/README.md`](../internal/tool/claude/README.md)
+  §File-history handling (export): archive-verbatim, warning, privacy-of-exported-snapshots
+  residual risk and the opt-out via omitting `--include claude/file-history`.
+- [`internal/tool/claude/README.md`](../internal/tool/claude/README.md)
+  §File-history handling (import): write-verbatim; placeholder resolution is
+  skipped on file-history bodies.
 
 ## Per-session project subdirectories (cross-cutting)
 
@@ -130,8 +250,7 @@ ride the same session-subdir handling as transcripts.
 
 - `move` copies the whole encoded project directory, so the subtree
   relocates with it. The project-path rewrite reaches subdir bodies only
-  under `--rewrite-transcripts`, the same opt-in that covers subagent
-  transcripts.
+  under `--deep`, the same opt-in that covers subagent transcripts.
 - `export` archives the subtree under the `sessions` category and `import`
   restores it from the `sessions/` prefix, with bodies anonymised on the way
   out and resolved on the way in. `push` and `pull` inherit this through the
@@ -144,6 +263,80 @@ through `{{PROJECT_DIR}}`, and `move` swaps it, all keyed on the known absolute
 path. The globals (`history.jsonl`, `sessions/*.json`, `.claude.json`) get no
 dedicated encoded-dir pass on `move`, so they keep the residual handling
 described in §File-history policy (cross-cutting).
+
+## Git-repo-in-state policy (cross-cutting)
+
+A tool's own state directory can itself contain a git repository. Codex's
+memories directory (`$CODEX_HOME/memories/`) is the current instance: Codex
+baselines it as a git worktree so it can diff and commit generated memory
+files. Three rules govern any state git repository cc-port's rewrite surfaces
+touch, in priority order:
+
+1. Never rewrite bytes inside a `.git` object store. A byte-level substring
+   replacement would corrupt git's own packed or loose object encoding.
+2. When the owning tool provably re-initializes a missing `.git`, rewrite the
+   worktree and delete `.git`. Deleting is safe only because the tool's own
+   source-verified behavior recreates the baseline unconditionally on next
+   use; this is not a general license to delete a git directory.
+3. Otherwise, leave `.git` in place, rewrite the worktree, and warn. The
+   worktree files still need their path rewritten; the repository state
+   (commits, remotes, refs) is left untouched and the caller is told so.
+
+Rule 2 applies to Codex's memories baseline behind a shape probe:
+`memories/.git/config` exists and contains no `[remote` section. This shape
+(a local-only baseline with no configured remote) is cc-port's own heuristic
+standing in for the underlying fact that Codex's baseline helper
+unconditionally re-initializes a missing or unusable `.git` on next write.
+Any other shape (a `.git` carrying a `[remote` section, meaning a user or
+tooling has attached the worktree to a real remote) falls back to rule 3:
+`internal/tool/codex/README.md` §Git baseline handling reports it as a warning
+rather than deleting it. No git dependency enters cc-port; the probe reads
+`memories/.git/config` as a plain text file.
+
+## Crash and idempotence contract
+
+`cc-port move --apply` runs each selected tool's `Surface` list in order
+(`internal/move/README.md` §Apply contract) and the same shape governs a
+tool's own internal apply bracket. This section is the one place the
+bracket's crash and idempotence guarantees are described; every module
+README that implements a `Surface` points here instead of restating it.
+
+### The apply bracket
+
+Within one tool's apply, SQL surfaces begin their transactions and register
+rollback with `tool.Restorer` before subsequent surfaces run. File surfaces
+register pre-images before sibling-temp-and-rename writes. Directory promotion
+copies into sibling staging and publishes with an atomic rename. The final
+surface commits open SQL transactions and checkpoints each database.
+
+### In-process failure
+
+If any surface's `Apply` returns an error, `move.applyTarget` calls
+`Restorer.Restore`, which walks every registration in reverse order: open SQL
+transactions roll back and close, and every registered file is restored from
+its saved pre-image. The tool's on-disk state returns to exactly what it was
+before the apply attempt began.
+
+### SIGKILL and re-run convergence
+
+After an interrupt, the two-path witness accepts witnesses naming either the
+old or new path, allowing reference rewrites to converge. Directory-promotion
+interrupts are handled by destination classification: a non-empty staging
+directory, or a destination that exists while its source remains, is refused
+with instructions; an empty staging directory is removed and an existing
+destination with no source is converged. SQLite transactions that were not
+committed are rolled back by SQLite.
+
+### No cross-tool rollback
+
+A completed tool already reflects the true new path by the time a later
+tool's apply fails. `move.Apply` records a per-tool success/failure result
+rather than attempting to undo an already-succeeded tool, because undoing it
+would require re-deriving the old state from data that has already been
+correctly rewritten, and there is nothing to roll back to. The caller sees a
+per-tool table and exits non-zero when any tool failed, with the failed
+tool's own state left exactly as its own apply bracket guarantees (rolled
+back to pre-apply, per §In-process failure).
 
 ## Pipeline composition (cross-cutting)
 

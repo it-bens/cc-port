@@ -4,24 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/user"
 
 	"github.com/spf13/cobra"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // newPushCmd returns the push subcommand with closure-scoped flag locals.
-// claudeDir points at the persistent root flag's local; runPushCmd reads
-// it via *claudeDir at call time. applyCategorySelection (shared with
-// newExportCmd) reads --from-manifest via cmd.Flags() and owns the
-// exclusivity guard with --all and per-category flags.
-func newPushCmd(claudeDir *string, banner Banner) *cobra.Command {
+func newPushCmd(toolSet *tool.Set, flags *toolFlags, banner Banner) *cobra.Command {
 	var (
 		asName          string
 		remoteURL       string
@@ -36,9 +34,9 @@ func newPushCmd(claudeDir *string, banner Banner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "push <project-path>",
 		Short: "Push a project archive to a remote",
-		Long: "Pushes a cc-port export of <project-path> to a remote storage backend " +
-			"(file:// or s3://). Dry-run by default; pass --apply to commit. " +
-			"Refuses cross-machine conflicts without --force.\n\n" +
+		Long: "Pushes a cc-port export of <project-path>, across every selected tool, to a " +
+			"remote storage backend (file:// or s3://). Dry-run by default; pass --apply to " +
+			"commit. Refuses cross-machine conflicts without --force.\n\n" +
 			remote.URLDoc,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
@@ -47,7 +45,7 @@ func newPushCmd(claudeDir *string, banner Banner) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPushCmd(cmd, args, *claudeDir, banner)
+			return runPushCmd(cmd, args, toolSet, flags, banner)
 		},
 	}
 	cmd.Flags().StringVar(&asName, "as", "",
@@ -77,9 +75,6 @@ func newPushCmd(claudeDir *string, banner Banner) *cobra.Command {
 }
 
 // openPriorRead opens the prior reader pipeline for the cross-machine check.
-// Returns nil for the two no-prior cases (object absent, or encrypted-with-
-// --force suppression) so PlanPush leaves prior fields zero. Other errors
-// translate to sync sentinels at the cmd boundary.
 func openPriorRead(
 	ctx context.Context,
 	r *remote.Remote,
@@ -105,10 +100,8 @@ func openPriorRead(
 	return &syncc.PriorRead{Source: src, WasEncrypted: src.Meta.WasEncrypted}, nil
 }
 
-// runPushCmd is the push subcommand body. The named return + deferred
-// closes pattern is load-bearing: prior.Source.Close releases the
-// decrypt-tempfile, and writer.Close commits the upload via remote.Sink.
-func runPushCmd(cmd *cobra.Command, args []string, claudeDir string, banner Banner) (err error) {
+// runPushCmd is the push subcommand body.
+func runPushCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *toolFlags, banner Banner) (err error) {
 	asName, _ := cmd.Flags().GetString("as")
 	remoteURL, _ := cmd.Flags().GetString("remote")
 	apply, _ := cmd.Flags().GetBool("apply")
@@ -128,17 +121,17 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string, banner Bann
 		return err
 	}
 
-	projectPath, err := claude.ResolveProjectPath(args[0])
+	projectPath, err := tool.ResolveProjectPath(args[0])
 	if err != nil {
 		return fmt.Errorf("resolve project path: %w", err)
 	}
 
-	claudeHome, err := claude.NewHome(claudeDir)
+	targets, err := resolveTargets(toolSet, flags)
 	if err != nil {
 		return err
 	}
 
-	categories, placeholders, err := applyCategorySelection(cmd, claudeHome, projectPath, banner)
+	selection, placeholders, err := applyCategorySelection(cmd, targets, projectPath, banner)
 	if err != nil {
 		return err
 	}
@@ -166,11 +159,14 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string, banner Bann
 	}()
 
 	opts := syncc.PushOptions{
-		ClaudeHome:        claudeHome,
+		Targets:           targets,
 		ProjectPath:       projectPath,
 		Name:              asName,
-		Categories:        categories,
+		Selected:          selection,
 		Placeholders:      placeholders,
+		Hostname:          os.Hostname,
+		Getenv:            os.Getenv,
+		CurrentUser:       user.Current,
 		Force:             force,
 		EncryptionEnabled: passphrase != "",
 	}
@@ -210,10 +206,7 @@ func runPushCmd(cmd *cobra.Command, args []string, claudeDir string, banner Bann
 }
 
 // applyPush runs the cross-machine guard, opens the writer pipeline, calls
-// ExecutePush, and prints the confirmation. Lives outside runPushCmd so the
-// writer's deferred Close has its own named-return scope: the upload commits
-// inside Close, so a failed Close must surface to runPushCmd via the
-// returned error.
+// ExecutePush, and prints the confirmation.
 //
 //nolint:gocritic // hugeParam: by-value PushOptions mirrors the public Plan/Execute contract.
 func applyPush(
@@ -246,9 +239,6 @@ func applyPush(
 		}
 	}()
 
-	// plan.PriorSize is a best-known total proxy: the prior archive's size on
-	// a re-push, zero (indeterminate) on the first push. The true upload size
-	// is unknowable before export streams it.
 	uploadPhase := opts.Reporter.Phase("upload", plan.PriorSize, progress.UnitBytes)
 	countingWriter := progress.CountingWriter(writer, uploadPhase)
 

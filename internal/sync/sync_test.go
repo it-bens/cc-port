@@ -6,17 +6,30 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
+func testHostname() (string, error) { return "test-host", nil }
+
+func testGetenv(string) string { return "test-user" }
+
+func testCurrentUser() (*user.User, error) { return &user.User{Username: "test-user"}, nil }
+
 func TestSelfPusher_OnConfiguredMachineReturnsHostUser(t *testing.T) {
-	got, err := selfPusher()
+	got, err := selfPusher(os.Hostname, os.Getenv, user.Current)
 	if err != nil {
 		t.Fatalf("selfPusher: %v", err)
 	}
@@ -29,32 +42,40 @@ func TestSelfPusher_OnConfiguredMachineReturnsHostUser(t *testing.T) {
 }
 
 func TestSelfPusher_EmptyUsernameReturnsError(t *testing.T) {
-	// Force the empty-username branch by clearing $USER. On most CI
-	// runners the user lookup succeeds via /etc/passwd; this test
-	// exercises only the env-clearing path and accepts a pass when
-	// the platform-level fallback fills the username.
-	t.Setenv("USER", "")
-	got, err := selfPusher()
-	if err != nil {
-		// Empty-username branch fired; correct.
-		return
-	}
-	if got == "" {
-		t.Fatal("selfPusher returned empty string with no error")
-	}
-	// Platform supplied a username via os/user.Current(); also correct.
+	_, err := selfPusher(
+		func() (string, error) { return "test-host", nil },
+		func(string) string { return "" },
+		func() (*user.User, error) { return &user.User{}, nil },
+	)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "username is empty")
+}
+
+func TestSelfPusher_UsesIdentitySeams(t *testing.T) {
+	got, err := selfPusher(
+		func() (string, error) { return "test-host", nil },
+		func(string) string { return "test-user" },
+		func() (*user.User, error) { return nil, errors.New("should not be called") },
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "test-host-test-user", got)
 }
 
 func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
 	r := newFileRemote(t)
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 
 	prior := openPriorForTest(t, r, "fresh-name", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome:  home,
+		Targets:     targets,
 		ProjectPath: projectPath,
 		Name:        "fresh-name",
-		Categories:  allCategoriesSet(),
+		Selected:    allSelection(),
+		Hostname:    testHostname,
+		Getenv:      testGetenv,
+		CurrentUser: testCurrentUser,
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -69,20 +90,22 @@ func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
 
 func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 	r := newFileRemote(t)
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 
 	priorA := openPriorForTest(t, r, "k", "")
 	planA, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, priorA)
 	if err != nil {
 		t.Fatalf("PlanPush A: %v", err)
 	}
 	writerA := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, planA, writerA); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
@@ -92,8 +115,9 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 
 	priorB := openPriorForTest(t, r, "k", "")
 	planB, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, priorB)
 	if err != nil {
 		t.Fatalf("PlanPush B: %v", err)
@@ -110,11 +134,12 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 	r := newFileRemote(t)
 	injectArchiveWithPusher(t, r, "k", "different-host-different-user", time.Now().UTC().Add(-1*time.Hour))
 
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 	prior := openPriorForTest(t, r, "k", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -125,14 +150,49 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 	}
 }
 
+func TestPlanPush_RejectsIdentityFailureRegardlessOfForce(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run("force="+strconv.FormatBool(force), func(t *testing.T) {
+			_, err := PlanPush(context.Background(), PushOptions{
+				Name:        "k",
+				Hostname:    func() (string, error) { return "", nil },
+				Getenv:      testGetenv,
+				CurrentUser: testCurrentUser,
+				Force:       force,
+			}, nil)
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "derive self identity")
+		})
+	}
+}
+
+func TestPlanPush_ForceAllowsCrossMachinePrior(t *testing.T) {
+	r := newFileRemote(t)
+	injectArchiveWithPusher(t, r, "k", "different-host-different-user", time.Now().UTC().Add(-time.Hour))
+	prior := openPriorForTest(t, r, "k", "")
+
+	plan, err := PlanPush(context.Background(), PushOptions{
+		Name:        "k",
+		Hostname:    testHostname,
+		Getenv:      testGetenv,
+		CurrentUser: testCurrentUser,
+		Force:       true,
+	}, prior)
+
+	require.NoError(t, err)
+	assert.True(t, plan.CrossMachine)
+}
+
 func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	r := newFileRemote(t)
-	home, projectPath := buildTestHomeAndProject(t)
+	targets, projectPath := buildTestTargets(t)
 
 	prior := openPriorForTest(t, r, "k", "")
 	plan, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, prior)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
@@ -143,8 +203,8 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 
 	writer := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: home, ProjectPath: projectPath, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targets, ProjectPath: projectPath, Name: "k",
+		Selected: allSelection(),
 	}, plan, writer); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
@@ -175,53 +235,114 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	r := newFileRemote(t)
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
-	home, _ := buildTestHomeAndProject(t)
+	// Original must be a path the fixture's own export bodies actually
+	// contain, so the placeholder token is embedded and the corrected
+	// referenced-in-body classifier (finding FE3) still flags it as
+	// unresolved. A never-referenced Original would legitimately no longer
+	// be flagged, which is exactly the bug this classifier fixes.
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", testutil.FixtureProjectPath(), "host-user")
+	targets, _ := buildTestTargets(t)
 
 	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
+		AllTools: toolSetForTest(), Targets: targets, Name: "k", TargetPath: t.TempDir(),
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
-	if len(plan.UnresolvedPlaceholders) != 1 || plan.UnresolvedPlaceholders[0] != "{{ORG}}" {
-		t.Fatalf("UnresolvedPlaceholders = %v, want [{{ORG}}]", plan.UnresolvedPlaceholders)
+	unresolved := plan.UnresolvedPlaceholders["claude"]
+	if len(unresolved) != 1 || unresolved[0] != "{{ORG}}" {
+		t.Fatalf("UnresolvedPlaceholders[claude] = %v, want [{{ORG}}]", unresolved)
 	}
 }
 
 func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 	r := newFileRemote(t)
 	injectArchiveWithSenderResolve(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
-	home, _ := buildTestHomeAndProject(t)
+	targets, _ := buildTestTargets(t)
 	source := openSourceForTest(t, r, "k", "")
 	plan, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: home, Name: "k", TargetPath: t.TempDir(),
+		AllTools: toolSetForTest(), Targets: targets, Name: "k", TargetPath: t.TempDir(),
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
-	if len(plan.UnresolvedPlaceholders) != 0 {
-		t.Fatalf("UnresolvedPlaceholders = %v, want empty (sender Resolve covers)", plan.UnresolvedPlaceholders)
+	if len(plan.UnresolvedPlaceholders["claude"]) != 0 {
+		t.Fatalf("UnresolvedPlaceholders[claude] = %v, want empty (sender Resolve covers)", plan.UnresolvedPlaceholders["claude"])
+	}
+}
+
+// TestPullImportGateAgree pins that PlanPull's unresolved-placeholder
+// classification and the import preflight ExecutePull runs under the hood
+// agree on the same archive (finding FE3): pull must no longer refuse an
+// archive plain import accepts, and both must still refuse an archive that
+// genuinely has an unresolved, referenced placeholder.
+func TestPullImportGateAgree(t *testing.T) {
+	const key = "{{SECRET}}"
+
+	tests := []struct {
+		name        string
+		original    string
+		wantRefused bool
+	}{
+		{
+			name:        "declared, referenced, unresolved: both refuse",
+			original:    testutil.FixtureProjectPath(),
+			wantRefused: true,
+		},
+		{
+			name:        "declared but never referenced: both accept",
+			original:    "/Users/sender/never-referenced",
+			wantRefused: false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			r := newFileRemote(t)
+			injectArchiveWithDeclaredPlaceholder(t, r, "k", key, testCase.original, "host-user")
+			homeB := buildTestHomeBlank(t)
+			targetsB := targetsFor(homeB)
+			targetPath := filepath.Join(t.TempDir(), "pulled-project")
+
+			source := openSourceForTest(t, r, "k", "")
+			pullOpts := PullOptions{AllTools: toolSetForTest(), Targets: targetsB, Name: "k", TargetPath: targetPath}
+			plan, err := PlanPull(context.Background(), pullOpts, source)
+			require.NoError(t, err)
+
+			planRefuses := len(plan.UnresolvedPlaceholders["claude"]) > 0
+			assert.Equal(t, testCase.wantRefused, planRefuses, "PlanPull's unresolved-placeholder verdict")
+
+			_, err = ExecutePull(context.Background(), pullOpts, plan, source)
+
+			if testCase.wantRefused {
+				require.Error(t, err, "import preflight must refuse the same archive PlanPull flagged unresolved")
+				var missingErr *importer.MissingResolutionsError
+				assert.ErrorAs(t, err, &missingErr)
+			} else {
+				require.NoError(t, err, "import preflight must accept the same archive PlanPull cleared")
+			}
+		})
 	}
 }
 
 func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	r := newFileRemote(t)
-	homeA, projectPathA := buildTestHomeAndProject(t)
+	targetsA, projectPathA := buildTestTargets(t)
 
 	priorA := openPriorForTest(t, r, "k", "")
 	planA, err := PlanPush(context.Background(), PushOptions{
-		ClaudeHome: homeA, ProjectPath: projectPathA, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
+		Selected: allSelection(),
+		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
 	}, priorA)
 	if err != nil {
 		t.Fatalf("PlanPush: %v", err)
 	}
 	writerA := openWriterForTest(t, r, "k", "")
 	if err := ExecutePush(context.Background(), PushOptions{
-		ClaudeHome: homeA, ProjectPath: projectPathA, Name: "k",
-		Categories: allCategoriesSet(),
+		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
+		Selected: allSelection(),
 	}, planA, writerA); err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
@@ -230,20 +351,21 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	}
 
 	homeB := buildTestHomeBlank(t)
+	targetsB := targetsFor(homeB)
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
 	source := openSourceForTest(t, r, "k", "")
 	planB, err := PlanPull(context.Background(), PullOptions{
-		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
+		AllTools: toolSetForTest(), Targets: targetsB, Name: "k", TargetPath: targetPath,
 	}, source)
 	if err != nil {
 		t.Fatalf("PlanPull: %v", err)
 	}
-	if len(planB.UnresolvedPlaceholders) != 0 {
-		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders)
+	if len(planB.UnresolvedPlaceholders["claude"]) != 0 {
+		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders["claude"])
 	}
 	if _, err := ExecutePull(context.Background(), PullOptions{
-		ClaudeHome: homeB, Name: "k", TargetPath: targetPath,
+		AllTools: toolSetForTest(), Targets: targetsB, Name: "k", TargetPath: targetPath,
 	}, planB, source); err != nil {
 		t.Fatalf("ExecutePull: %v", err)
 	}
@@ -251,21 +373,5 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	encodedDir := claude.EncodePath(targetPath)
 	if _, err := os.Stat(filepath.Join(homeB.Dir, "projects", encodedDir)); err != nil {
 		t.Fatalf("encoded project dir missing after pull: %v", err)
-	}
-}
-
-func TestSentinels_AreNonNil(t *testing.T) {
-	for _, e := range []error{
-		ErrCrossMachineConflict,
-		ErrRemoteNotFound,
-		ErrPassphraseRequired,
-		ErrUnresolvedPlaceholder,
-	} {
-		if e == nil {
-			t.Fatal("nil sentinel error")
-		}
-	}
-	if !errors.Is(ErrRemoteNotFound, ErrRemoteNotFound) {
-		t.Fatal("errors.Is identity broken")
 	}
 }

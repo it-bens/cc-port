@@ -1,0 +1,3 @@
+# Fixture profile overlay — synthetic, not copied from a real ~/.codex.
+[projects."/Users/fixture/codexproject"]
+trust_level = "trusted"

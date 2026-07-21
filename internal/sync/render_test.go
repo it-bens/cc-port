@@ -13,7 +13,7 @@ func TestPushPlan_RenderNoPriorPlaintext(t *testing.T) {
 	plan := &PushPlan{
 		Name:              "myproj",
 		SelfPusher:        "laptop1-alice",
-		Categories:        allCategoriesSet(),
+		Selected:          allSelection(),
 		EncryptionEnabled: false,
 	}
 	var buf bytes.Buffer
@@ -24,7 +24,7 @@ func TestPushPlan_RenderNoPriorPlaintext(t *testing.T) {
 	for _, want := range []string{
 		"cc-port push myproj",
 		"Pipeline: export -> remote sink",
-		"Categories: all",
+		"Categories: claude:",
 		"Encryption: disabled",
 		"Self pusher:  laptop1-alice",
 	} {
@@ -41,7 +41,7 @@ func TestPushPlan_RenderEncryptedWithPriorAndCrossMachine(t *testing.T) {
 	plan := &PushPlan{
 		Name:              "myproj",
 		SelfPusher:        "laptop1-alice",
-		Categories:        allCategoriesSet(),
+		Selected:          allSelection(),
 		PriorPushedBy:     "laptop2-bob",
 		PriorPushedAt:     time.Date(2026, 4, 25, 14, 32, 18, 0, time.UTC),
 		PriorEncrypted:    true,
@@ -56,7 +56,7 @@ func TestPushPlan_RenderEncryptedWithPriorAndCrossMachine(t *testing.T) {
 	got := buf.String()
 	for _, want := range []string{
 		"Pipeline: export -> encrypt -> remote sink",
-		"Categories: all",
+		"Categories: claude:",
 		"Encryption: enabled",
 		"Pushed by:   laptop2-bob",
 		"Pushed at:   2026-04-25T14:32:18Z",
@@ -73,13 +73,15 @@ func TestPushPlan_RenderEncryptedWithPriorAndCrossMachine(t *testing.T) {
 
 func TestPullPlan_RenderWithUnresolvedPlaceholders(t *testing.T) {
 	plan := &PullPlan{
-		Name:                   "myproj",
-		RemotePushedBy:         "laptop1-alice",
-		RemotePushedAt:         time.Date(2026, 4, 25, 14, 32, 18, 0, time.UTC),
-		RemoteSize:             5_242_880,
-		Categories:             allCategoriesSet(),
-		DeclaredPlaceholders:   []manifest.Placeholder{{Key: "{{HOME}}"}, {Key: "{{CACHE}}"}},
-		UnresolvedPlaceholders: []string{"{{CACHE}}"},
+		Name:           "myproj",
+		RemotePushedBy: "laptop1-alice",
+		RemotePushedAt: time.Date(2026, 4, 25, 14, 32, 18, 0, time.UTC),
+		RemoteSize:     5_242_880,
+		Tools:          []string{"claude"},
+		DeclaredPlaceholders: map[string][]manifest.Placeholder{
+			"claude": {{Key: "{{HOME}}"}, {Key: "{{CACHE}}"}},
+		},
+		UnresolvedPlaceholders: map[string][]string{"claude": {"{{CACHE}}"}},
 	}
 	var buf bytes.Buffer
 	if err := plan.Render(&buf); err != nil {
@@ -89,7 +91,7 @@ func TestPullPlan_RenderWithUnresolvedPlaceholders(t *testing.T) {
 	for _, want := range []string{
 		"cc-port pull myproj",
 		"Pipeline: remote source -> import core",
-		"Categories:  all",
+		"Tools:       claude",
 		"{{HOME}}",
 		"{{CACHE}}",
 		"MISSING; supply --from-manifest",
@@ -106,7 +108,6 @@ func TestPullPlan_RenderEncryptedClean(t *testing.T) {
 		Name:            "x",
 		RemoteEncrypted: true,
 		RemoteSize:      1024,
-		Categories:      allCategoriesSet(),
 	}
 	var buf bytes.Buffer
 	if err := plan.Render(&buf); err != nil {
@@ -127,21 +128,30 @@ func TestPullPlan_RenderEncryptedClean(t *testing.T) {
 	}
 }
 
-func TestHumanizeBytesBoundaries(t *testing.T) {
+// TestPullPlan_RenderHumanizesByteMagnitudes drives the two humanizeBytes
+// branches the other render tests in this file don't reach: KiB is covered
+// by TestPullPlan_RenderEncryptedClean and MiB by
+// TestPushPlan_RenderEncryptedWithPriorAndCrossMachine.
+func TestPullPlan_RenderHumanizesByteMagnitudes(t *testing.T) {
 	cases := []struct {
-		n    int64
+		name string
+		size int64
 		want string
 	}{
-		{0, "0 B"},
-		{512, "512 B"},
-		{1024, "1.0 KiB"},
-		{1024 * 1024, "1.0 MiB"},
-		{5 * 1024 * 1024, "5.0 MiB"},
-		{int64(1.5 * 1024 * 1024 * 1024), "1.5 GiB"},
+		{"sub-KiB value renders as bytes", 512, "512 B"},
+		{"GiB value renders with one decimal", 1_610_612_736, "1.5 GiB"},
 	}
-	for _, c := range cases {
-		if got := humanizeBytes(c.n); got != c.want {
-			t.Errorf("humanizeBytes(%d) = %q, want %q", c.n, got, c.want)
-		}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan := &PullPlan{Name: "x", RemoteSize: testCase.size}
+			var buf bytes.Buffer
+			if err := plan.Render(&buf); err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			got := buf.String()
+			if !strings.Contains(got, testCase.want) {
+				t.Fatalf("output missing %q:\n%s", testCase.want, got)
+			}
+		})
 	}
 }

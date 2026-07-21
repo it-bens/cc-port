@@ -6,6 +6,8 @@ import (
 	"encoding/xml"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,30 +23,28 @@ func TestMetadata_MarshalUnmarshal(t *testing.T) {
 	created := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 
 	original := &manifest.Metadata{
-		Export: manifest.Info{
-			Created: created,
-			Categories: []manifest.Category{
-				{Name: "sessions", Included: true},
-				{Name: "settings", Included: false},
+		Created: created,
+		Tools: []manifest.Tool{
+			{
+				Name: "claude",
+				Categories: []manifest.Category{
+					{Name: "sessions", Included: true},
+					{Name: "history", Included: false},
+				},
+				Placeholders: []manifest.Placeholder{
+					{Key: "{{HOME}}", Original: "/home/user"},
+					{Key: "{{PROJECT_PATH}}", Original: "/home/user/project"},
+				},
 			},
 		},
-		Placeholders: []manifest.Placeholder{
-			{Key: "HOME", Original: "/home/user"},
-			{Key: "PROJECT", Original: "/home/user/project"},
-		},
 	}
 
-	temporaryDirectory := t.TempDir()
-	path := filepath.Join(temporaryDirectory, "metadata.xml")
+	path := filepath.Join(t.TempDir(), "metadata.xml")
 
-	if err := manifest.WriteManifest(path, original); err != nil {
-		t.Fatalf("WriteManifest: %v", err)
-	}
+	require.NoError(t, manifest.WriteManifest(path, original))
 
 	roundTripped, err := manifest.ReadManifest(path)
-	if err != nil {
-		t.Fatalf("ReadManifest: %v", err)
-	}
+	require.NoError(t, err)
 
 	opts := cmp.Options{
 		cmpopts.IgnoreFields(manifest.Metadata{}, "XMLName"),
@@ -56,58 +56,18 @@ func TestMetadata_MarshalUnmarshal(t *testing.T) {
 	}
 }
 
-func TestMetadata_XMLFormat(t *testing.T) {
-	created := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	metadata := &manifest.Metadata{
-		Export: manifest.Info{
-			Created: created,
-			Categories: []manifest.Category{
-				{Name: "sessions", Included: true},
-			},
-		},
-		Placeholders: []manifest.Placeholder{
-			{Key: "HOME", Original: "/home/user"},
-		},
-	}
-
-	path := filepath.Join(t.TempDir(), "metadata.xml")
-
-	require.NoError(t, manifest.WriteManifest(path, metadata))
-
-	data, err := os.ReadFile(path) //nolint:gosec // G304: test-controlled temp path
-	require.NoError(t, err)
-	content := string(data)
-
-	assert.Contains(t, content, xml.Header[:5])
-	assert.Contains(t, content, "<cc-port")
-	assert.Contains(t, content, "<export>")
-	assert.Contains(t, content, "<categories>")
-	assert.Contains(t, content, `name="sessions"`)
-	assert.Contains(t, content, `included="true"`)
-	assert.Contains(t, content, "<placeholders>")
-	assert.Contains(t, content, "<placeholder")
-	assert.Contains(t, content, `key="HOME"`)
-	assert.Contains(t, content, `original="/home/user"`)
-}
-
 func TestManifest_PlaceholderFieldsSurviveXMLRoundTrip(t *testing.T) {
 	created := time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC)
 
 	original := &manifest.Metadata{
-		Export: manifest.Info{
-			Created:    created,
-			Categories: []manifest.Category{},
-		},
-		Placeholders: []manifest.Placeholder{
+		Created: created,
+		Tools: []manifest.Tool{
 			{
-				Key:      "HOME",
-				Original: "/home/olduser",
-				Resolve:  "/home/newuser",
-			},
-			{
-				Key:      "PLAIN",
-				Original: "/plain/path",
+				Name: "claude",
+				Placeholders: []manifest.Placeholder{
+					{Key: "{{HOME}}", Original: "/home/olduser", Resolve: "/home/newuser"},
+					{Key: "{{PLAIN}}", Original: "/plain/path"},
+				},
 			},
 		},
 	}
@@ -118,29 +78,24 @@ func TestManifest_PlaceholderFieldsSurviveXMLRoundTrip(t *testing.T) {
 	roundTripped, err := manifest.ReadManifest(path)
 	require.NoError(t, err)
 
-	assert.Equal(t, "/home/newuser", roundTripped.Placeholders[0].Resolve,
-		"non-empty Resolve must round-trip")
-	assert.Empty(t, roundTripped.Placeholders[1].Resolve,
-		"omitted Resolve must round-trip as empty string")
+	block, ok := roundTripped.ToolBlock("claude")
+	require.True(t, ok)
+	assert.Equal(t, "/home/newuser", block.Placeholders[0].Resolve, "non-empty Resolve must round-trip")
+	assert.Empty(t, block.Placeholders[1].Resolve, "omitted Resolve must round-trip as empty string")
 }
 
 func TestManifest_MetadataSurvivesZIPRoundTrip(t *testing.T) {
 	created := time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC)
 
 	original := &manifest.Metadata{
-		Export: manifest.Info{
-			Created:    created,
-			Categories: []manifest.Category{},
-		},
-		Placeholders: []manifest.Placeholder{
+		Created: created,
+		Tools: []manifest.Tool{
 			{
-				Key:      "HOME",
-				Original: "/home/olduser",
-				Resolve:  "/home/newuser",
-			},
-			{
-				Key:      "PLAIN",
-				Original: "/plain/path",
+				Name: "claude",
+				Placeholders: []manifest.Placeholder{
+					{Key: "{{HOME}}", Original: "/home/olduser", Resolve: "/home/newuser"},
+					{Key: "{{PLAIN}}", Original: "/plain/path"},
+				},
 			},
 		},
 	}
@@ -195,6 +150,65 @@ func TestReadManifest_RejectsOversizedFile(t *testing.T) {
 	require.ErrorIs(t, err, manifest.ErrManifestFileTooLarge)
 }
 
+func TestReadManifest_RejectsOversizedNamedPipe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+	require.NoError(t, syscall.Mkfifo(path, 0o600))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		file, err := os.OpenFile(path, os.O_WRONLY, 0) //nolint:gosec // G304: test-controlled FIFO path
+		if err != nil {
+			return
+		}
+		defer func() { _ = file.Close() }()
+		_, _ = file.Write(bytes.Repeat([]byte("x"), (4<<20)+1))
+	}()
+
+	_, err := manifest.ReadManifest(path)
+
+	require.ErrorIs(t, err, manifest.ErrManifestFileTooLarge)
+	<-done
+}
+
+func TestReadManifest_RejectsOverlongPlaceholderKey(t *testing.T) {
+	overlongKey := "{{" + strings.Repeat("A", 4100) + "}}" // well over the 4 KiB cap
+	metadata := &manifest.Metadata{
+		Tools: []manifest.Tool{{
+			Name:         "claude",
+			Placeholders: []manifest.Placeholder{{Key: overlongKey, Original: "/home/user"}},
+		}},
+	}
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+	require.NoError(t, manifest.WriteManifest(path, metadata))
+
+	_, err := manifest.ReadManifest(path)
+
+	require.ErrorIs(t, err, manifest.ErrPlaceholderKeyTooLong)
+}
+
+func TestReadManifest_RejectsMalformedPlaceholderKey(t *testing.T) {
+	for name, key := range map[string]string{
+		"no braces at all":       "TOKEN",
+		"missing closing braces": "{{TOKEN",
+		"empty inner segment":    "{{}}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			metadata := &manifest.Metadata{
+				Tools: []manifest.Tool{{
+					Name:         "claude",
+					Placeholders: []manifest.Placeholder{{Key: key, Original: "/home/user"}},
+				}},
+			}
+			path := filepath.Join(t.TempDir(), "metadata.xml")
+			require.NoError(t, manifest.WriteManifest(path, metadata))
+
+			_, err := manifest.ReadManifest(path)
+
+			require.ErrorIs(t, err, manifest.ErrPlaceholderKeyMalformed)
+		})
+	}
+}
+
 func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "oversize.zip")
@@ -207,13 +221,10 @@ func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
 	require.NoError(t, err)
 	// 5 MiB of XML-safe padding inside a <placeholders> block. Above the
 	// 4 MiB manifest cap, so ReadManifestFromZip must reject it.
-	headerTxt := xml.Header +
-		`<cc-port><export>` +
-		`<created>2026-01-01T00:00:00Z</created>` +
-		`<categories></categories></export><placeholders>`
+	headerTxt := xml.Header + `<cc-port><created>2026-01-01T00:00:00Z</created><tool name="claude"><placeholders>`
 	header := []byte(headerTxt)
 	padding := bytes.Repeat([]byte("<placeholder key=\"K\" original=\"V\"/>"), 5<<20/40)
-	footer := []byte(`</placeholders></cc-port>`)
+	footer := []byte(`</placeholders></tool></cc-port>`)
 	_, err = entry.Write(append(append(header, padding...), footer...))
 	require.NoError(t, err)
 	require.NoError(t, zipWriter.Close())
@@ -233,10 +244,7 @@ func TestMetadata_SyncFieldsRoundTrip(t *testing.T) {
 	created := time.Date(2024, 6, 15, 10, 30, 0, 0, time.UTC)
 
 	original := &manifest.Metadata{
-		Export: manifest.Info{
-			Created:    created,
-			Categories: []manifest.Category{},
-		},
+		Created:      created,
 		SyncPushedBy: "alice@example.com",
 		SyncPushedAt: "2026-04-25T14:32:11Z",
 	}
@@ -254,12 +262,7 @@ func TestMetadata_SyncFieldsRoundTrip(t *testing.T) {
 func TestMetadata_OmitsSyncFieldsWhenEmpty(t *testing.T) {
 	created := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	metadata := &manifest.Metadata{
-		Export: manifest.Info{
-			Created:    created,
-			Categories: []manifest.Category{},
-		},
-	}
+	metadata := &manifest.Metadata{Created: created}
 
 	path := filepath.Join(t.TempDir(), "metadata.xml")
 
@@ -271,6 +274,31 @@ func TestMetadata_OmitsSyncFieldsWhenEmpty(t *testing.T) {
 
 	assert.NotContains(t, content, "<sync-pushed-by")
 	assert.NotContains(t, content, "<sync-pushed-at")
+}
+
+func TestMetadata_ToolBlock(t *testing.T) {
+	metadata := &manifest.Metadata{
+		Tools: []manifest.Tool{{Name: "claude"}},
+	}
+
+	block, ok := metadata.ToolBlock("claude")
+	assert.True(t, ok)
+	assert.Equal(t, "claude", block.Name)
+
+	_, ok = metadata.ToolBlock("codex")
+	assert.False(t, ok)
+}
+
+func TestReadManifest_RejectsDuplicateToolBlocks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.xml")
+	data := []byte(xml.Header + `<cc-port><tool name="claude"/><tool name="claude"/></cc-port>`)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	_, err := manifest.ReadManifest(path)
+
+	var duplicate *manifest.DuplicateToolError
+	require.ErrorAs(t, err, &duplicate)
+	assert.Equal(t, "claude", duplicate.Tool)
 }
 
 // createTestZip creates a ZIP archive at zipPath containing the file at

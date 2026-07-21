@@ -1,24 +1,17 @@
-// Package rewrite provides functions for rewriting Claude Code data files
-// when a project is moved from one path to another.
+// Package rewrite provides substrate-generic path and file rewrite primitives.
 package rewrite
 
 import (
-	"bufio"
 	"bytes"
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
-
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // EscapeSJSONKey escapes `\` and `.` so an arbitrary string can be used as a
@@ -129,6 +122,113 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) (rewritten []byte,
 	return result.Bytes(), count
 }
 
+// TOMLPathRewrite rewrites bounded path references in raw TOML while preserving
+// the original formatting and comments. It refuses paths containing a quote or
+// backslash and verifies that every key it changed differs only by the expected
+// project-path substitution, failing hard on any other key change.
+func TOMLPathRewrite(data []byte, oldPath, newPath string) (rewritten []byte, count int, err error) {
+	if strings.ContainsAny(oldPath, `"\\`) || strings.ContainsAny(newPath, `"\\`) {
+		return data, 0, fmt.Errorf("TOML path rewrite refuses paths containing a quote or backslash")
+	}
+
+	inputPaths, err := tomlKeyPaths(data)
+	if err != nil {
+		return data, 0, fmt.Errorf("validate TOML path rewrite input: %w", err)
+	}
+
+	rewritten, count = ReplacePathInBytes(data, oldPath, newPath)
+	outputPaths, err := tomlKeyPaths(rewritten)
+	if err != nil {
+		return data, 0, fmt.Errorf("validate TOML path rewrite output: %w", err)
+	}
+
+	if !equalKeyPathMultisets(expectedTOMLKeyPaths(inputPaths, oldPath, newPath), outputPaths) {
+		return data, 0, fmt.Errorf("validate TOML path rewrite: a key changed by something other than the project-path substitution")
+	}
+	return rewritten, count, nil
+}
+
+func tomlKeyPaths(data []byte) (map[string]int, error) {
+	var document map[string]any
+	if err := toml.Unmarshal(data, &document); err != nil {
+		return nil, err
+	}
+
+	paths := make(map[string]int)
+	collectTOMLKeyPaths(document, nil, paths)
+	return paths, nil
+}
+
+func collectTOMLKeyPaths(value any, prefix []string, paths map[string]int) {
+	switch document := value.(type) {
+	case map[string]any:
+		for key, child := range document {
+			path := append(append([]string(nil), prefix...), key)
+			paths[encodeTOMLKeyPath(path)]++
+			collectTOMLKeyPaths(child, path, paths)
+		}
+	case []any:
+		for _, child := range document {
+			collectTOMLKeyPaths(child, prefix, paths)
+		}
+	}
+}
+
+// expectedTOMLKeyPaths applies the project-path substitution to every key
+// segment, not only projects sub-keys, so any path-keyed table (hooks.state
+// and future ones) is covered without an enumerated table list.
+func expectedTOMLKeyPaths(paths map[string]int, oldPath, newPath string) map[string]int {
+	expected := make(map[string]int, len(paths))
+	for encoded, count := range paths {
+		path := decodeTOMLKeyPath(encoded)
+		for index, segment := range path {
+			rewritten, replacements := ReplacePathInBytes([]byte(segment), oldPath, newPath)
+			if replacements > 0 {
+				path[index] = string(rewritten)
+			}
+		}
+		expected[encodeTOMLKeyPath(path)] += count
+	}
+	return expected
+}
+
+func encodeTOMLKeyPath(path []string) string {
+	var encoded strings.Builder
+	for _, segment := range path {
+		encoded.WriteString(strconv.Itoa(len(segment)))
+		encoded.WriteByte(':')
+		encoded.WriteString(segment)
+	}
+	return encoded.String()
+}
+
+func decodeTOMLKeyPath(encoded string) []string {
+	var path []string
+	for encoded != "" {
+		separator := strings.IndexByte(encoded, ':')
+		length, err := strconv.Atoi(encoded[:separator])
+		if err != nil || length < 0 || separator+1+length > len(encoded) {
+			panic("invalid TOML key path encoding")
+		}
+		start := separator + 1
+		path = append(path, encoded[start:start+length])
+		encoded = encoded[start+length:]
+	}
+	return path
+}
+
+func equalKeyPathMultisets(left, right map[string]int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for path, leftCount := range left {
+		if right[path] != leftCount {
+			return false
+		}
+	}
+	return true
+}
+
 // ReplacePathInBytesWithJSONEscape runs the boundary-aware rewriter twice:
 // once against the raw path, once against the JSON-escaped form where every
 // "/" becomes "\/". The boundary check applies to each pass independently.
@@ -158,6 +258,39 @@ func ReplacePathInBytesWithJSONEscape(data []byte, oldPath, newPath string) (rew
 func ContainsBoundedPath(data []byte, path string) bool {
 	_, count := ReplacePathInBytes(data, path, path)
 	return count > 0
+}
+
+// IsBoundaryDescendant reports whether candidate equals parent, or is nested
+// under it at a real path-component boundary — the same boundary rule
+// ReplacePathInBytes enforces on the byte immediately following a match.
+// "/a/proj" is a boundary descendant of itself and of "/a/proj/sub", but not
+// of "/a/proj-backup" or "/a/proj.bak" (continuation byte / genuine
+// extension dot, same as a ReplacePathInBytes non-match).
+func IsBoundaryDescendant(parent, candidate string) bool {
+	if parent == "" {
+		return false
+	}
+	if candidate == parent {
+		return true
+	}
+	if !strings.HasPrefix(candidate, parent) {
+		return false
+	}
+	if parent[len(parent)-1] == filepath.Separator {
+		// parent already ends at a boundary (e.g. "/" or "/a/"), so any
+		// strictly longer candidate sharing that prefix is a descendant
+		// with no continuation byte to inspect. Without this branch,
+		// IsBoundaryDescendant("/", "/anything") falls through to the
+		// general case below, where remainder's first byte is an ordinary
+		// path byte rather than a boundary, and the check wrongly refuses.
+		return len(candidate) > len(parent)
+	}
+	remainder := candidate[len(parent):]
+	next := remainder[0]
+	if next == '.' {
+		return !isExtensionDotAt([]byte(remainder), 0)
+	}
+	return !isPathContinuationByte(next)
 }
 
 // CountPathInBytes returns how many times path occurs in data as a bounded
@@ -221,168 +354,6 @@ func countBoundedPath(data []byte, path string) int {
 	return count
 }
 
-// StreamHistoryJSONL streams src line by line, rewriting every well-formed
-// entry so oldProject becomes newProject (in the structured `project` field
-// AND in any free-text reference such as `display` or `pastedContents`),
-// using path-boundary-aware substring replacement so unrelated paths sharing
-// a prefix (e.g. "myproject-extras") are not corrupted.
-//
-// Returns the count of lines whose contents changed and the 1-based line
-// numbers of malformed (non-JSON) lines. Malformed lines are preserved
-// verbatim — cc-port cannot reliably repair data that was already broken
-// before the move. Callers should surface the line numbers so the malformed
-// entries can be inspected manually.
-//
-// The output is byte-for-byte equivalent to the previous whole-file path:
-// empty lines are preserved, and the trailing newline (or its absence) is
-// mirrored from the input. Lines exceeding claude.MaxHistoryLine fail with
-// bufio.ErrTooLong rather than being silently truncated.
-//
-// Cancellation: ctx is checked at each line boundary; a canceled ctx
-// short-circuits the stream and returns ctx.Err() after a best-effort flush.
-func StreamHistoryJSONL(
-	ctx context.Context,
-	src io.Reader,
-	dst io.Writer,
-	oldProject, newProject string,
-) (count int, malformed []int, err error) {
-	reader := bufio.NewReaderSize(src, 64<<10)
-	writer := bufio.NewWriterSize(dst, 64<<10)
-
-	lineNumber := 0
-	for {
-		if err := ctx.Err(); err != nil {
-			return 0, nil, err
-		}
-
-		line, readErr := reader.ReadBytes('\n')
-		if len(line) > claude.MaxHistoryLine {
-			return 0, nil, fmt.Errorf(
-				"history.jsonl line %d exceeds %d bytes: %w",
-				lineNumber+1, claude.MaxHistoryLine, bufio.ErrTooLong,
-			)
-		}
-
-		if len(line) > 0 {
-			lineNumber++
-			body, terminator := splitLineTerminator(line)
-
-			out, isMalformed := rewriteHistoryLine(body, oldProject, newProject, &count)
-			if isMalformed {
-				malformed = append(malformed, lineNumber)
-			}
-
-			if _, err := writer.Write(out); err != nil {
-				return 0, nil, fmt.Errorf("write history line %d: %w", lineNumber, err)
-			}
-			if len(terminator) > 0 {
-				if _, err := writer.Write(terminator); err != nil {
-					return 0, nil, fmt.Errorf("write history line %d terminator: %w", lineNumber, err)
-				}
-			}
-		}
-
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return 0, nil, fmt.Errorf("read history line %d: %w", lineNumber+1, readErr)
-		}
-	}
-
-	if err := writer.Flush(); err != nil {
-		return 0, nil, fmt.Errorf("flush history output: %w", err)
-	}
-	return count, malformed, nil
-}
-
-// splitLineTerminator separates a line read by bufio.Reader.ReadBytes('\n')
-// into its body and the trailing '\n' terminator (empty when the last line
-// has no terminator). Exposed separately so the rewrite loop never writes a
-// terminator that was not present in the source.
-func splitLineTerminator(line []byte) (body, terminator []byte) {
-	if len(line) > 0 && line[len(line)-1] == '\n' {
-		return line[:len(line)-1], line[len(line)-1:]
-	}
-	return line, nil
-}
-
-// rewriteHistoryLine applies the per-line transform. Empty lines round-trip
-// unchanged; malformed lines are preserved verbatim; well-formed lines go
-// through ReplacePathInBytes and bump *count when at least one match lands.
-func rewriteHistoryLine(body []byte, oldProject, newProject string, count *int) ([]byte, bool) {
-	if len(bytes.TrimSpace(body)) == 0 {
-		return body, false
-	}
-	var probe claude.HistoryEntry
-	if err := json.Unmarshal(body, &probe); err != nil {
-		return body, true
-	}
-	rewritten, replaced := ReplacePathInBytesWithJSONEscape(body, oldProject, newProject)
-	if replaced > 0 {
-		*count++
-	}
-	return rewritten, false
-}
-
-// SessionFile rewrites every occurrence of oldProject to newProject inside
-// the session JSON using path-boundary-aware substitution. The top-level
-// `cwd` field is covered, as is any occurrence embedded elsewhere in the
-// file, including nested values that JSON-decode into the preserved Extra map.
-//
-// Uses json.Unmarshal against the typed claude.SessionFile shape to validate
-// the input: the typed validator rejects structurally invalid files before any
-// bytes are rewritten. (UserConfig uses gjson.ValidBytes instead because sjson
-// does the mutation and only byte-level JSON validity matters there.)
-//
-// The bool return indicates whether at least one occurrence was rewritten.
-func SessionFile(data []byte, oldProject, newProject string) (rewritten []byte, changed bool, err error) {
-	var sessionFile claude.SessionFile
-	if err := json.Unmarshal(data, &sessionFile); err != nil {
-		return nil, false, fmt.Errorf("unmarshal session file: %w", err)
-	}
-
-	body, count := ReplacePathInBytesWithJSONEscape(data, oldProject, newProject)
-	return body, count > 0, nil
-}
-
-// UserConfig rewrites ~/.claude.json to re-key the project entry from
-// oldProject to newProject. Path references embedded in the block's
-// contents (e.g. mcpServers.*.args, mcpServers.*.env.*, mcpContextUris,
-// exampleFiles) are rewritten with path-boundary-aware substitution so
-// values that hard-coded the old project path follow the rename.
-//
-// The operation uses sjson to splice only the projects object, which
-// preserves every byte outside the rekeyed entry — original key order,
-// indent style, and trailing newlines all survive.
-//
-// The bool return indicates whether the old key was found and moved. Other
-// project keys and top-level fields are left untouched.
-func UserConfig(data []byte, oldProject, newProject string) (updated []byte, rekeyed bool, err error) {
-	if !gjson.ValidBytes(data) {
-		return nil, false, fmt.Errorf("invalid user config JSON")
-	}
-
-	oldPath := "projects." + EscapeSJSONKey(oldProject)
-	existing := gjson.GetBytes(data, oldPath)
-	if !existing.Exists() {
-		return data, false, nil
-	}
-
-	rewrittenBlock, _ := ReplacePathInBytesWithJSONEscape([]byte(existing.Raw), oldProject, newProject)
-
-	updated, err = sjson.DeleteBytes(data, oldPath)
-	if err != nil {
-		return nil, false, fmt.Errorf("delete old project key: %w", err)
-	}
-	newPath := "projects." + EscapeSJSONKey(newProject)
-	updated, err = sjson.SetRawBytes(updated, newPath, rewrittenBlock)
-	if err != nil {
-		return nil, false, fmt.Errorf("insert new project key: %w", err)
-	}
-	return updated, true, nil
-}
-
 // renameEntry captures one pending rename operation handled by
 // SafeRenamePromoter. `temp` is the already-staged path that Promote will
 // move into `final`. If `final` already exists at promote time, its bytes
@@ -399,20 +370,11 @@ type renameEntry struct {
 	backupBytes []byte
 	// backupMode is the pre-promote mode of `final`.
 	backupMode os.FileMode
-	// isDir is true when the entry represents a directory rename rather
-	// than a file rename. Directory backups are stored as temp paths on
-	// disk (see backupDir) because in-memory buffering is unbounded.
-	isDir bool
-	// backupDir is the path where the replaced directory (if any) was
-	// relocated before the promote. On rollback, it is renamed back into
-	// place. Empty when `final` did not previously exist or when the
-	// entry is a file.
-	backupDir string
 }
 
 // SafeRenamePromoter stages a sequence of rename operations and applies them
 // atomically from the caller's perspective. Each entry is a
-// (temp, final) pair; Stage records the intent, Promote renames each temp
+// (temp, final) file pair; Stage records the intent, Promote renames each temp
 // onto its final in registration order (saving any displaced content as a
 // backup), and Rollback walks the promoted entries in reverse order,
 // restoring backups and removing any content that did not previously exist.
@@ -452,21 +414,13 @@ func (p *SafeRenamePromoter) StageFile(temp, final string) {
 	p.entries = append(p.entries, &renameEntry{temp: temp, final: final})
 }
 
-// StageDir records an intent to rename a staged directory at temp onto
-// final at Promote time. If final already exists at promote time, it is
-// relocated to a sibling backup path so Rollback can restore it.
-func (p *SafeRenamePromoter) StageDir(temp, final string) {
-	p.entries = append(p.entries, &renameEntry{temp: temp, final: final, isDir: true})
-}
-
 // Promote applies each staged rename in order. On the first failure, it
 // calls Rollback and returns the promote error; callers should not invoke
 // Rollback themselves in that case.
 func (p *SafeRenamePromoter) Promote() error {
 	for _, entry := range p.entries {
 		if err := p.promoteEntry(entry); err != nil {
-			p.Rollback()
-			return fmt.Errorf("promote %s: %w", entry.final, err)
+			return errors.Join(fmt.Errorf("promote %s: %w", entry.final, err), p.Rollback())
 		}
 	}
 	return nil
@@ -480,19 +434,11 @@ func (p *SafeRenamePromoter) promoteEntry(entry *renameEntry) error {
 	case err == nil:
 		entry.existed = true
 		entry.backupMode = info.Mode()
-		if entry.isDir {
-			backupDir := entry.final + ".cc-port-rollback"
-			if renameErr := p.doRename(entry.final, backupDir); renameErr != nil {
-				return fmt.Errorf("stash existing directory: %w", renameErr)
-			}
-			entry.backupDir = backupDir
-		} else {
-			data, readErr := os.ReadFile(entry.final)
-			if readErr != nil {
-				return fmt.Errorf("read existing file for backup: %w", readErr)
-			}
-			entry.backupBytes = data
+		data, readErr := os.ReadFile(entry.final)
+		if readErr != nil {
+			return fmt.Errorf("read existing file for backup: %w", readErr)
 		}
+		entry.backupBytes = data
 	case errors.Is(err, fs.ErrNotExist):
 		entry.existed = false
 	default:
@@ -500,10 +446,6 @@ func (p *SafeRenamePromoter) promoteEntry(entry *renameEntry) error {
 	}
 
 	if err := p.doRename(entry.temp, entry.final); err != nil {
-		// Best-effort restore of any backup already relocated for this entry.
-		if entry.isDir && entry.backupDir != "" {
-			_ = p.doRename(entry.backupDir, entry.final)
-		}
 		return err
 	}
 	entry.promoted = true
@@ -518,45 +460,44 @@ func (p *SafeRenamePromoter) doRename(oldpath, newpath string) error {
 }
 
 // Rollback walks promoted entries in reverse order and restores the
-// pre-promote state on disk: backups are renamed or rewritten into their
-// finals, and content that did not previously exist is removed. Best
-// effort: errors from a single entry's restore are swallowed and the
-// remaining entries are still attempted.
-func (p *SafeRenamePromoter) Rollback() {
+// pre-promote state on disk: backups are rewritten into their finals, and
+// content that did not previously exist is removed. It attempts every entry
+// and joins cleanup errors so callers can see residual promotion state.
+func (p *SafeRenamePromoter) Rollback() error {
+	var rollbackErrors []error
 	for index := len(p.entries) - 1; index >= 0; index-- {
 		entry := p.entries[index]
 		if !entry.promoted {
-			// Not yet promoted; best-effort clean up the temp if it still
-			// exists. Ignore errors — the import is already failing.
-			if entry.isDir {
-				_ = os.RemoveAll(entry.temp)
-			} else {
-				_ = os.Remove(entry.temp)
+			if err := os.Remove(entry.temp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove unpromoted temp %s: %w", entry.temp, err))
 			}
 			continue
 		}
-		p.rollbackEntry(entry)
-	}
-}
-
-func (p *SafeRenamePromoter) rollbackEntry(entry *renameEntry) {
-	if !entry.existed {
-		if entry.isDir {
-			_ = os.RemoveAll(entry.final)
-		} else {
-			_ = os.Remove(entry.final)
+		if err := p.rollbackEntry(entry); err != nil {
+			rollbackErrors = append(rollbackErrors, err)
 		}
-		return
 	}
-
-	if entry.isDir {
-		_ = os.RemoveAll(entry.final)
-		_ = p.doRename(entry.backupDir, entry.final)
-		return
-	}
-
-	_ = SafeWriteFile(entry.final, entry.backupBytes, entry.backupMode)
+	return errors.Join(rollbackErrors...)
 }
+
+func (p *SafeRenamePromoter) rollbackEntry(entry *renameEntry) error {
+	if !entry.existed {
+		if err := os.Remove(entry.final); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove promoted file %s: %w", entry.final, err)
+		}
+		return nil
+	}
+
+	if err := SafeWriteFile(entry.final, entry.backupBytes, entry.backupMode); err != nil {
+		return fmt.Errorf("restore promoted file %s: %w", entry.final, err)
+	}
+	return nil
+}
+
+// SafeWriteTempPrefix is the prefix SafeWriteFile passes to os.CreateTemp.
+// os.CreateTemp appends its own random suffix, so IsArtifactPath matches
+// this as a name prefix rather than a fixed whole-name suffix.
+const SafeWriteTempPrefix = ".tmp-"
 
 // SafeWriteFile writes data to a temporary file in the same directory as path,
 // then renames it to path. This provides an atomic write on most file systems.
@@ -564,7 +505,7 @@ func (p *SafeRenamePromoter) rollbackEntry(entry *renameEntry) {
 func SafeWriteFile(path string, data []byte, permissions os.FileMode) error {
 	directory := filepath.Dir(path)
 
-	temporaryFile, err := os.CreateTemp(directory, ".tmp-")
+	temporaryFile, err := os.CreateTemp(directory, SafeWriteTempPrefix)
 	if err != nil {
 		return fmt.Errorf("create temporary file: %w", err)
 	}

@@ -1,7 +1,6 @@
 package lock
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,139 +10,119 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
-func newTestHome(t *testing.T) *claude.Home {
+func newTestLockPath(t *testing.T) string {
 	t.Helper()
-	claudeDir := filepath.Join(t.TempDir(), "dotclaude")
-	require.NoError(t, os.MkdirAll(claudeDir, 0o750))
-	return &claude.Home{
-		Dir:        claudeDir,
-		ConfigFile: claudeDir + ".json",
-	}
+	toolDir := filepath.Join(t.TempDir(), "tool-state")
+	require.NoError(t, os.MkdirAll(toolDir, 0o750))
+	return filepath.Join(toolDir, FileName)
 }
 
-func writeSessionFile(t *testing.T, claudeHome *claude.Home, name string, pid int) {
-	t.Helper()
-
-	sessionsDir := claudeHome.SessionsDir()
-	require.NoError(t, os.MkdirAll(sessionsDir, 0o750))
-
-	sessionFile := claude.SessionFile{Cwd: "/test/project", Pid: pid}
-	data, err := json.Marshal(sessionFile)
-	require.NoError(t, err)
-
-	require.NoError(t, os.WriteFile(filepath.Join(sessionsDir, name+".json"), data, 0o600))
-}
-
-func TestFindActive_ReportsPidAndCwdForLiveSession(t *testing.T) {
-	claudeHome := newTestHome(t)
-	writeSessionFile(t, claudeHome, "live", os.Getpid())
-
-	active, err := FindActive(claudeHome)
-
-	require.NoError(t, err)
-	require.Len(t, active, 1)
-	assert.Equal(t, os.Getpid(), active[0].Pid)
-	assert.Equal(t, "/test/project", active[0].Cwd)
-}
-
-func TestFindActive_OmitsDeadSession(t *testing.T) {
-	claudeHome := newTestHome(t)
-	// A PID above every modern OS's pid_max is guaranteed dead.
-	writeSessionFile(t, claudeHome, "stale", 2_000_000_001)
-
-	active, err := FindActive(claudeHome)
-
-	require.NoError(t, err)
-	assert.Empty(t, active)
+func noActive() ([]tool.ActiveWriter, error) {
+	return nil, nil
 }
 
 func TestWithLock_SucceedsWithNoSessions(t *testing.T) {
-	claudeHome := newTestHome(t)
+	lockPath := newTestLockPath(t)
 
-	err := WithLock(claudeHome, func() error { return nil })
+	err := WithLock(lockPath, noActive, func() error { return nil })
 	require.NoError(t, err)
 }
 
-func TestWithLock_RemovesLockFileOnSuccess(t *testing.T) {
-	claudeHome := newTestHome(t)
+func TestWithLock_PersistsLockFileOnSuccess(t *testing.T) {
+	lockPath := newTestLockPath(t)
 
-	err := WithLock(claudeHome, func() error { return nil })
+	err := WithLock(lockPath, noActive, func() error { return nil })
 	require.NoError(t, err)
 
-	assert.NoFileExists(t, filepath.Join(claudeHome.Dir, FileName))
+	assert.FileExists(t, lockPath)
 }
 
-func TestWithLock_RemovesLockFileOnFnError(t *testing.T) {
-	claudeHome := newTestHome(t)
+func TestHeld_SecondReleaseIsNoOpAndLockFilePersists(t *testing.T) {
+	lockPath := newTestLockPath(t)
+	held, err := Acquire(lockPath, noActive)
+	require.NoError(t, err)
+
+	require.NoError(t, held.Release())
+	require.NoError(t, held.Release())
+	assert.FileExists(t, lockPath)
+}
+
+func TestWithLock_PersistsLockFileOnFnError(t *testing.T) {
+	lockPath := newTestLockPath(t)
 
 	boom := errors.New("boom")
-	err := WithLock(claudeHome, func() error { return boom })
+	err := WithLock(lockPath, noActive, func() error { return boom })
 	require.ErrorIs(t, err, boom)
 
-	assert.NoFileExists(t, filepath.Join(claudeHome.Dir, FileName))
-}
-
-func TestWithLock_SucceedsWhenSessionPIDIsDead(t *testing.T) {
-	claudeHome := newTestHome(t)
-	// A PID above every modern OS's pid_max is guaranteed dead.
-	writeSessionFile(t, claudeHome, "stale", 2_000_000_001)
-
-	err := WithLock(claudeHome, func() error { return nil })
-	require.NoError(t, err)
+	assert.FileExists(t, lockPath)
 }
 
 func TestWithLock_AbortsWhenSessionPIDIsAlive(t *testing.T) {
-	claudeHome := newTestHome(t)
-	// os.Getpid() is this test process — guaranteed alive.
-	writeSessionFile(t, claudeHome, "live", os.Getpid())
+	lockPath := newTestLockPath(t)
 
-	err := WithLock(claudeHome, func() error { return nil })
+	err := WithLock(lockPath, func() ([]tool.ActiveWriter, error) {
+		return []tool.ActiveWriter{{Pid: os.Getpid(), Cwd: "/test/project"}}, nil
+	}, func() error { return nil })
 
 	var liveErr *LiveSessionsError
 	require.ErrorAs(t, err, &liveErr)
 	assert.Len(t, liveErr.Sessions, 1)
+	assert.ErrorContains(t, err, "live writer process")
 }
 
 func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
-	claudeHome := newTestHome(t)
+	lockPath := newTestLockPath(t)
 
 	// Hold the lock from a sibling flock.Flock. In a real scenario this
 	// is a second cc-port process; in-test we reuse the same path. Linux
 	// and Darwin both use syscall.Flock under the hood, which is per-fd
 	// (not per-process like fcntl F_SETLK), so two in-process flock.Flock
 	// instances on the same path contend as expected.
-	require.NoError(t, os.MkdirAll(claudeHome.Dir, 0o750))
-	sibling := flock.New(filepath.Join(claudeHome.Dir, FileName))
+	sibling := flock.New(lockPath)
 	ok, err := sibling.TryLock()
 	require.NoError(t, err)
 	require.True(t, ok)
 	defer func() { _ = sibling.Unlock() }()
 
-	err = WithLock(claudeHome, func() error { return nil })
+	err = WithLock(lockPath, noActive, func() error { return nil })
+	require.ErrorIs(t, err, ErrConcurrentInvocation)
+	assert.ErrorContains(t, err, "this tool's state")
+}
+
+func TestAcquire_SecondCallObservesFirstHold(t *testing.T) {
+	lockPath := newTestLockPath(t)
+	first, err := Acquire(lockPath, noActive)
+	require.NoError(t, err)
+	defer func() { _ = first.Release() }()
+
+	second, err := Acquire(lockPath, noActive)
+
+	assert.Nil(t, second)
 	require.ErrorIs(t, err, ErrConcurrentInvocation)
 }
 
 func TestWithLock_SucceedsAfterPreviousReleased(t *testing.T) {
-	// The first call removes the lock file on exit, so the second call
-	// must recreate it. Load-bearing: TryLock opens with O_CREATE.
-	claudeHome := newTestHome(t)
+	// The first call leaves the lock file in place, so the second reuses its
+	// inode and competes on the same flock.
+	lockPath := newTestLockPath(t)
 
-	require.NoError(t, WithLock(claudeHome, func() error { return nil }))
-	require.NoError(t, WithLock(claudeHome, func() error { return nil }))
+	require.NoError(t, WithLock(lockPath, noActive, func() error { return nil }))
+	assert.FileExists(t, lockPath)
+	require.NoError(t, WithLock(lockPath, noActive, func() error { return nil }))
 }
 
 func TestWithLock_CallsFn(t *testing.T) {
-	claudeHome := newTestHome(t)
+	lockPath := newTestLockPath(t)
 
 	var fnCalled bool
-	err := WithLock(claudeHome, func() error {
+	err := WithLock(lockPath, noActive, func() error {
 		fnCalled = true
 		// While the outer lock is held, a sibling flock.Flock on the same
 		// path must fail to acquire (per-fd flock semantics on Linux/Darwin).
-		sibling := flock.New(filepath.Join(claudeHome.Dir, FileName))
+		sibling := flock.New(lockPath)
 		ok, lockErr := sibling.TryLock()
 		require.NoError(t, lockErr)
 		assert.False(t, ok, "sibling flock must report not-locked while WithLock holds the lock")
@@ -154,22 +133,23 @@ func TestWithLock_CallsFn(t *testing.T) {
 }
 
 func TestWithLock_ReleasesOnFnError(t *testing.T) {
-	claudeHome := newTestHome(t)
+	lockPath := newTestLockPath(t)
 
 	boom := errors.New("boom")
-	err := WithLock(claudeHome, func() error { return boom })
+	err := WithLock(lockPath, noActive, func() error { return boom })
 	require.ErrorIs(t, err, boom)
 
 	// A subsequent WithLock must succeed — release ran despite fn's error.
-	require.NoError(t, WithLock(claudeHome, func() error { return nil }))
+	require.NoError(t, WithLock(lockPath, noActive, func() error { return nil }))
 }
 
 func TestWithLock_PropagatesAcquireError(t *testing.T) {
-	claudeHome := newTestHome(t)
-	writeSessionFile(t, claudeHome, "live", os.Getpid())
+	lockPath := newTestLockPath(t)
 
 	var fnCalled bool
-	err := WithLock(claudeHome, func() error {
+	err := WithLock(lockPath, func() ([]tool.ActiveWriter, error) {
+		return []tool.ActiveWriter{{Pid: os.Getpid(), Cwd: "/test/project"}}, nil
+	}, func() error {
 		fnCalled = true
 		return nil
 	})
@@ -179,26 +159,26 @@ func TestWithLock_PropagatesAcquireError(t *testing.T) {
 }
 
 func TestWithLock_ReleasesAfterRecoveredPanic(t *testing.T) {
-	claudeHome := newTestHome(t)
+	lockPath := newTestLockPath(t)
 
 	func() {
 		defer func() {
 			_ = recover() // swallow the synthetic panic so the test can proceed
 		}()
 
-		_ = WithLock(claudeHome, func() error {
+		_ = WithLock(lockPath, noActive, func() error {
 			panic("synthetic panic inside fn")
 		})
 	}()
 
 	// If the defer-based Unlock worked, the lock is now free and a
 	// second WithLock call must succeed.
-	err := WithLock(claudeHome, func() error { return nil })
+	err := WithLock(lockPath, noActive, func() error { return nil })
 	require.NoError(t, err, "second WithLock must succeed — the first call's lock should be released")
 }
 
 func TestWithLock_ReleaseErrorSurfacesOnFnSuccess(t *testing.T) {
-	claudeHome := newTestHome(t)
+	lockPath := newTestLockPath(t)
 
 	originalUnlock := unlockFn
 	t.Cleanup(func() { unlockFn = originalUnlock })
@@ -207,13 +187,13 @@ func TestWithLock_ReleaseErrorSurfacesOnFnSuccess(t *testing.T) {
 		return injectedUnlockErr
 	}
 
-	err := WithLock(claudeHome, func() error { return nil })
+	err := WithLock(lockPath, noActive, func() error { return nil })
 	require.ErrorIs(t, err, ErrUnlockFailure)
 	require.ErrorIs(t, err, injectedUnlockErr)
 }
 
 func TestWithLock_ReleaseErrorSuppressedOnFnError(t *testing.T) {
-	claudeHome := newTestHome(t)
+	lockPath := newTestLockPath(t)
 
 	originalUnlock := unlockFn
 	t.Cleanup(func() { unlockFn = originalUnlock })
@@ -222,7 +202,7 @@ func TestWithLock_ReleaseErrorSuppressedOnFnError(t *testing.T) {
 	}
 
 	fnErr := errors.New("fn returned this")
-	err := WithLock(claudeHome, func() error { return fnErr })
+	err := WithLock(lockPath, noActive, func() error { return fnErr })
 	require.ErrorIs(t, err, fnErr)
 	assert.NotErrorIs(t, err, ErrUnlockFailure)
 }

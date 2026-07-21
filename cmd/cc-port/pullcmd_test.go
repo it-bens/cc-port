@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/manifest"
@@ -20,6 +19,8 @@ import (
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 func TestPull_RejectsMissingTo(t *testing.T) {
@@ -60,7 +61,7 @@ func TestPull_DryRunDoesNotImport(t *testing.T) {
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 	})
@@ -71,7 +72,7 @@ func TestPull_DryRunDoesNotImport(t *testing.T) {
 	if !strings.Contains(buf.String(), "[dry-run]") {
 		t.Fatalf("expected dry-run header in output:\n%s", buf.String())
 	}
-	resolved, err := claude.ResolveProjectPath(targetPath)
+	resolved, err := tool.ResolveProjectPath(targetPath)
 	require.NoError(t, err)
 	encodedDir := filepath.Join(claudeFixtureDir, "projects", claude.EncodePath(resolved))
 	if _, statErr := os.Stat(encodedDir); !errors.Is(statErr, os.ErrNotExist) {
@@ -89,7 +90,7 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--apply",
@@ -98,7 +99,7 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.NoError(t, err)
-	resolved, err := claude.ResolveProjectPath(targetPath)
+	resolved, err := tool.ResolveProjectPath(targetPath)
 	require.NoError(t, err)
 	encodedDir := filepath.Join(claudeFixtureDir, "projects", claude.EncodePath(resolved))
 	if _, statErr := os.Stat(encodedDir); statErr != nil {
@@ -106,11 +107,47 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	}
 }
 
-func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
+func TestPull_ApplyRendersToolWarnings(t *testing.T) {
 	tmpHome, _ := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
 	url := "file://" + t.TempDir()
-	injectArchiveWithDeclaredPlaceholderAtURL(t, url, "myproj", "{{SECRET}}", "/Users/sender/secret", "host-user")
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	resolved, err := tool.ResolveProjectPath(targetPath)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(claudeFixtureDir, "rules"), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(claudeFixtureDir, "rules", "pull-rule.md"),
+		[]byte("Applies to "+resolved+" only.\n"),
+		0o600,
+	))
+
+	rootCmd := newRootCmd(noopBanner{})
+	var stderr bytes.Buffer
+	rootCmd.SetErr(&stderr)
+	rootCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-home", claudeFixtureDir,
+		"--to", targetPath,
+		"--remote", url,
+		"--apply",
+	})
+
+	require.NoError(t, rootCmd.Execute())
+
+	assert.Contains(t, stderr.String(), "Warning: rules file pull-rule.md (line 1) references this project")
+}
+
+func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	url := "file://" + t.TempDir()
+	// Original must be a path the fixture's own archived bodies actually
+	// contain, so the placeholder is embedded and genuinely referenced.
+	// Under the corrected classifier (finding FE3), a declared-but-never-
+	// referenced placeholder no longer blocks --apply — see the sibling
+	// TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts below.
+	injectArchiveWithDeclaredPlaceholderAtURL(t, url, "myproj", "{{SECRET}}", projectPath, "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 	emptyManifestPath := filepath.Join(t.TempDir(), "empty-manifest.xml")
 	require.NoError(t, manifest.WriteManifest(emptyManifestPath, &manifest.Metadata{}))
@@ -118,7 +155,7 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--from-manifest", emptyManifestPath,
@@ -132,6 +169,48 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	}
 }
 
+// TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts is the accept-side
+// sibling of TestPull_ApplyWithUnresolvedPlaceholdersRefuses: a declared
+// placeholder whose Original never appears in any archived body must not
+// block --apply on either command, and pull must agree with plain import
+// on the exact same archive bytes (finding FE3 — pull used to refuse
+// archives plain import accepted).
+func TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts(t *testing.T) {
+	tmpHome, _ := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	placeholders := map[string][]manifest.Placeholder{
+		"claude": {{Key: "{{SECRET}}", Original: "/Users/sender/never-referenced"}},
+	}
+	body := buildCmdArchiveBytes(t, "host-user", "", placeholders)
+
+	url := "file://" + t.TempDir()
+	writeAtURL(t, url, "myproj", body)
+	pullTargetPath := filepath.Join(t.TempDir(), "pulled-project")
+
+	pullCmd := newRootCmd(noopBanner{})
+	pullCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-home", claudeFixtureDir,
+		"--to", pullTargetPath,
+		"--remote", url,
+		"--apply",
+	})
+	require.NoError(t, pullCmd.Execute(), "pull --apply must accept a declared-but-unused placeholder")
+
+	archivePath := filepath.Join(t.TempDir(), "same-archive.zip")
+	require.NoError(t, os.WriteFile(archivePath, body, 0o600))
+	importTargetPath := filepath.Join(t.TempDir(), "imported-project")
+	importHomeDir := filepath.Join(t.TempDir(), "import-claude-home")
+	require.NoError(t, os.MkdirAll(importHomeDir, 0o750))
+
+	importCmd := newRootCmd(noopBanner{})
+	importCmd.SetArgs([]string{
+		"import", archivePath, importTargetPath,
+		"--claude-home", importHomeDir,
+	})
+	require.NoError(t, importCmd.Execute(), "import must accept the same declared-but-unused placeholder")
+}
+
 func TestPull_AcceptsValidCredentialsFile(t *testing.T) {
 	tmpHome, _ := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
@@ -143,7 +222,7 @@ func TestPull_AcceptsValidCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--credentials-file", credentialsPath,
@@ -164,7 +243,7 @@ func TestPull_AcceptsNoPromptFlag(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--no-prompt",
@@ -190,7 +269,7 @@ func TestPull_RejectsTooPermissiveCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--credentials-file", credentialsPath,
@@ -213,7 +292,7 @@ func TestPull_RejectsMalformedCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--to", targetPath,
 		"--remote", url,
 		"--credentials-file", malformedCredentialsPath,

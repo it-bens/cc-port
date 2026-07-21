@@ -1,20 +1,16 @@
-# internal/importer — agent notes
+# internal/importer: agent notes
 
 ## Before editing
 
-- Refuse any archive with an unresolved declared key. Undeclared `{{UPPER_SNAKE}}` tokens in bodies are content; preserve them verbatim (README §Import contract).
-- Read the manifest first when classifying placeholders. Never fall back to parsing tokens from ZIP entry content (README §Placeholder handling).
-- Form every staging temp via `fsutil.ResolveExistingAncestor`. Never use the raw parent path when the parent may be a symlink (README §Atomic staging).
-- Drive all-or-nothing promotion through `SafeRenamePromoter`. Do not bypass it on partial failure (README §Atomic staging and `internal/rewrite/README.md` §Boundary rules).
-- Never inspect or rewrite file-history snapshot contents (README §File-history handling (import) and `docs/architecture.md` §File-history policy (cross-cutting)).
-- Route manifest category validation through `manifest.ApplyCategoryEntries`. Hard-fail on unknown ZIP entry prefixes (README §Strict archive contract and `internal/manifest/README.md` §Category manifest).
-- Use `transport.SessionKeyedTargets` for every session-keyed dispatch. Do not add per-group staging helpers or a parallel slice (README §Atomic staging).
+- Refuse any archive with an unresolved declared key that is actually referenced in a body. Undeclared `{{UPPER_SNAKE}}` tokens in bodies are content; preserve them verbatim (README §Import contract).
+- This package is generic orchestration; it must never import a tool adapter. Per-tool staging and merge logic lives in each adapter's `Stage`/`Finalize` (e.g. `internal/tool/claude`). (README §Import contract)
+- Drive all-or-nothing promotion through `rewrite.SafeRenamePromoter` over every tool's staged files as one batch. Do not bypass it on partial failure (README §Import contract and `internal/rewrite/README.md` §Boundary rules).
+- Route manifest category validation through `manifest.ApplyToolCategories`. Hard-fail on an archive entry whose leading path segment names an unregistered tool (README §Import contract and `internal/manifest/README.md` §Category manifest).
+- A registered tool absent from the manifest is reported and skipped; do not treat it as a hard failure (README §Import contract).
 
 ## Navigation
 
 - Entry: `importer.go:Run`.
-- Resolution orchestrator: `resolve_orchestrator.go:ResolvePlaceholders`.
-- Classification: `resolve.go:ValidateResolutions`.
-- Staging preflight: `importer.go:stagingTempPath`, `importer.go:checkStagingFilesystems`.
-- Conflict check: `resolve.go:CheckConflict`.
-- Tests: `importer_test.go`, `resolve_test.go`, `resolve_fuzz_test.go`, `resolve_orchestrator_test.go`.
+- Promotion: `promote.go:promoteStaged`.
+- Cap enforcement, containment, and placeholder streaming: `internal/archive`.
+- Tests: `importer_test.go`, `importer_large_test.go` (`-tags large`).

@@ -15,25 +15,26 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
-// pushTestManifestPath writes a manifest XML enabling every category
-// and declaring no placeholders, then returns its path. Tests pass
-// --from-manifest <path> instead of --all + per-category flags so
-// runPushCmd skips both ui.SelectCategories and
-// discoverAndPromptPlaceholders. --from-manifest bypasses the discovery
-// pipeline entirely and loads the placeholder set straight from XML; the
-// test uses it so the assertion is keyed to a known placeholder list
-// rather than whatever export.DiscoverPlaceholders happens to surface
-// from the fixture's transcripts.
+// pushTestManifestPath writes a manifest XML enabling every category for
+// the claude tool and declaring no placeholders, then returns its path.
+// Tests pass --from-manifest <path> instead of --all + --include so
+// runPushCmd skips both ui.SelectCategories and placeholder discovery.
 func pushTestManifestPath(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "push-manifest.xml")
-	categories := allCategoriesCmdSet()
+	claudeTool := claude.New()
+	selected := make(map[string]bool)
+	for _, category := range claudeTool.Categories() {
+		selected[category.Name] = true
+	}
 	metadata := &manifest.Metadata{
-		Export: manifest.Info{
-			Categories: manifest.BuildCategoryEntries(&categories),
-		},
+		Tools: []manifest.Tool{{
+			Name:       claudeTool.Name(),
+			Categories: manifest.BuildToolCategoryEntries(categoryNames(claudeTool), selected),
+		}},
 	}
 	require.NoError(t, manifest.WriteManifest(path, metadata))
 	return path
@@ -47,7 +48,7 @@ func TestPush_RejectsFromManifestWithCategoryFlag(t *testing.T) {
 		"--as", "myproj",
 		"--remote", remoteURL,
 		"--from-manifest", "/tmp/m.xml",
-		"--sessions",
+		"--include", "claude/sessions",
 	})
 
 	err := rootCmd.Execute()
@@ -96,7 +97,7 @@ func TestPush_DryRunDoesNotUpload(t *testing.T) {
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--as", "myproj",
 		"--remote", remoteURL,
 		"--from-manifest", manifestPath,
@@ -128,7 +129,7 @@ func TestPush_ApplyCommitsToRemote(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--as", "myproj",
 		"--remote", url,
 		"--from-manifest", manifestPath,
@@ -156,7 +157,7 @@ func TestPush_CrossMachineRefusesWithoutForce(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--as", "myproj",
 		"--remote", url,
 		"--from-manifest", manifestPath,
@@ -180,7 +181,7 @@ func TestPush_ForceOverridesCrossMachineRefusal(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--as", "myproj",
 		"--remote", url,
 		"--from-manifest", manifestPath,
@@ -215,7 +216,7 @@ func TestPush_AcceptsValidCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--as", "myproj",
 		"--remote", remoteURL,
 		"--from-manifest", manifestPath,
@@ -236,7 +237,7 @@ func TestPush_AcceptsNoPromptFlag(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--as", "myproj",
 		"--remote", remoteURL,
 		"--from-manifest", manifestPath,
@@ -249,10 +250,7 @@ func TestPush_AcceptsNoPromptFlag(t *testing.T) {
 }
 
 // TestPush_RejectsTooPermissiveCredentialsFile pins the wiring between
-// the --credentials-file flag and credentials.Resolve. A 0644-mode file
-// would parse fine but the resolver refuses it before reading; the
-// test passes only when ErrFilePermissionsTooPermissive surfaces from
-// the cmd boundary, proving the resolver was actually invoked.
+// the --credentials-file flag and credentials.Resolve.
 func TestPush_RejectsTooPermissiveCredentialsFile(t *testing.T) {
 	tmpHome, projectPath := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
@@ -263,7 +261,7 @@ func TestPush_RejectsTooPermissiveCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--as", "myproj",
 		"--remote", remoteURL,
 		"--from-manifest", manifestPath,
@@ -286,7 +284,7 @@ func TestPush_RejectsMalformedCredentialsFile(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetArgs([]string{
 		"push", projectPath,
-		"--claude-dir", claudeFixtureDir,
+		"--claude-home", claudeFixtureDir,
 		"--as", "myproj",
 		"--remote", remoteURL,
 		"--from-manifest", manifestPath,

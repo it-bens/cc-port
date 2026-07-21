@@ -4,6 +4,7 @@ builds:
   - id: cc-port
     main: ./cmd/cc-port
     binary: cc-port
+    env: [CGO_ENABLED=0]
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
@@ -16,6 +17,7 @@ builds:
   - id: cc-port-with-logo
     main: ./cmd/cc-port
     binary: cc-port-with-logo
+    env: [CGO_ENABLED=0]
     flags:
       - -tags=logo
     ldflags:

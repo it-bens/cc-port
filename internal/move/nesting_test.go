@@ -1,0 +1,151 @@
+package move_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/it-bens/cc-port/internal/move"
+	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/codex"
+)
+
+func TestNestedMovePrecondition(t *testing.T) {
+	tests := []struct {
+		name     string
+		newPath  func(string) string
+		refsOnly bool
+		refused  bool
+	}{
+		{name: "equal paths", newPath: func(oldPath string) string { return oldPath }, refused: true},
+		{name: "boundary descendant", newPath: func(oldPath string) string { return oldPath + "/nested" }, refused: true},
+		{name: "safe sibling", newPath: func(oldPath string) string { return oldPath + "-backup" }},
+		{name: "refs only descendant", newPath: func(oldPath string) string { return oldPath + "/nested" }, refsOnly: true, refused: true},
+	}
+	targets := []struct {
+		name  string
+		setup func(*testing.T) (tool.Target, string)
+	}{
+		{
+			name: "claude",
+			setup: func(t *testing.T) (tool.Target, string) {
+				home := testutil.SetupFixture(t)
+				return tool.Target{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}, testutil.FixtureProjectPath()
+			},
+		},
+		{
+			name: "codex",
+			setup: func(t *testing.T) (tool.Target, string) {
+				home := codex.SetupFixture(t)
+				return tool.Target{Tool: codex.New(), Workspace: quietCodexWorkspace(home)}, codex.FixtureProjectPath()
+			},
+		},
+	}
+	operations := []struct {
+		name string
+		run  func(context.Context, []tool.Target, move.Options) error
+	}{
+		{
+			name: "dry run",
+			run: func(ctx context.Context, targets []tool.Target, options move.Options) error {
+				_, err := move.DryRun(ctx, targets, options)
+				return err
+			},
+		},
+		{
+			name: "apply",
+			run: func(ctx context.Context, targets []tool.Target, options move.Options) error {
+				_, err := move.Apply(ctx, targets, options)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		for _, targetCase := range targets {
+			for _, operation := range operations {
+				t.Run(test.name+"/"+targetCase.name+"/"+operation.name, func(t *testing.T) {
+					target, oldPath := targetCase.setup(t)
+					err := operation.run(t.Context(), []tool.Target{target}, move.Options{
+						OldPath:  oldPath,
+						NewPath:  test.newPath(oldPath),
+						RefsOnly: test.refsOnly,
+					})
+
+					if test.refused {
+						require.Error(t, err)
+						assert.ErrorIs(t, err, move.ErrNestedMove)
+						return
+					}
+					assert.NotErrorIs(t, err, move.ErrNestedMove)
+				})
+			}
+		}
+	}
+}
+
+// TestMove_RefusesStagingCollision covers the pathological geometry where a
+// move's source path is identical to the destination's staging sibling
+// (OldPath == NewPath+StagingSuffix). Reconciling that staging path before
+// promotion would delete OldPath itself — the real source, not foreign
+// debris — so this precondition must refuse before any target is touched;
+// no tool.Target is needed since the check runs before target enumeration.
+func TestMove_RefusesStagingCollision(t *testing.T) {
+	newPath := filepath.Join(t.TempDir(), "project")
+	oldPath := newPath + rewrite.StagingSuffix
+	require.NoError(t, os.MkdirAll(oldPath, 0o750))
+
+	_, dryRunErr := move.DryRun(t.Context(), nil, move.Options{OldPath: oldPath, NewPath: newPath})
+	require.ErrorIs(t, dryRunErr, move.ErrStagingCollision)
+	assert.DirExists(t, oldPath, "a refused dry run must not touch the source directory")
+
+	_, applyErr := move.Apply(t.Context(), nil, move.Options{OldPath: oldPath, NewPath: newPath})
+	require.ErrorIs(t, applyErr, move.ErrStagingCollision)
+	assert.DirExists(t, oldPath, "a refused apply must not delete the source directory")
+}
+
+// TestMove_RefusesRootNestedMove covers the root-parent boundary case:
+// IsBoundaryDescendant("/", "/anything") must report true, so a move whose
+// old path is "/" refuses a new path nested under it exactly like any other
+// nested move — no tool.Target is needed since the precondition check runs
+// before target enumeration.
+func TestMove_RefusesRootNestedMove(t *testing.T) {
+	_, dryRunErr := move.DryRun(t.Context(), nil, move.Options{OldPath: "/", NewPath: "/.cc-port-new"})
+	require.ErrorIs(t, dryRunErr, move.ErrNestedMove)
+
+	_, applyErr := move.Apply(t.Context(), nil, move.Options{OldPath: "/", NewPath: "/.cc-port-new"})
+	require.ErrorIs(t, applyErr, move.ErrNestedMove)
+}
+
+func TestApply_RejectedNestedMoveLeavesClaudeStateUnchangedAcrossRetries(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	oldPath := testutil.FixtureProjectPath()
+	before, err := os.ReadFile(home.HistoryFile())
+	require.NoError(t, err)
+
+	for attempt := range 2 {
+		_, err := move.Apply(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: oldPath + "/nested", RefsOnly: true})
+		require.Error(t, err, "attempt %d", attempt+1)
+		require.ErrorIs(t, err, move.ErrNestedMove, "attempt %d", attempt+1)
+
+		after, readErr := os.ReadFile(home.HistoryFile())
+		require.NoError(t, readErr)
+		assert.Equal(t, before, after)
+	}
+}
+
+func quietCodexWorkspace(home *codex.Home) *codex.Workspace {
+	return codex.NewWorkspace(
+		home,
+		func(string) string { return "" },
+		func() ([]codex.ProcessInfo, error) { return nil, nil },
+	)
+}

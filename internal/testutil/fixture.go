@@ -9,14 +9,44 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/it-bens/cc-port/internal/claude"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/fsutil"
-	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // deadSessionPID exceeds the Linux/macOS PID ceiling but stays below int32 max, so Kill(pid, 0) returns ESRCH.
 const deadSessionPID = 2_000_000_001
+
+// IsolateHome redirects HOME to a newly created directory with only an empty
+// .claude marker. The marker keeps legacy Claude-only command tests selected
+// while ensuring Codex is never detected; fixture homes are still passed by
+// explicit flags. The returned cleanup restores HOME and removes the directory.
+func IsolateHome() (func(), error) {
+	dir, err := os.MkdirTemp("", "cc-port-test-home-")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Mkdir(filepath.Join(dir, ".claude"), 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+
+	previous, hadPrevious := os.LookupEnv("HOME")
+	if err := os.Setenv("HOME", dir); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+
+	return func() {
+		if hadPrevious {
+			_ = os.Setenv("HOME", previous)
+		} else {
+			_ = os.Unsetenv("HOME")
+		}
+		_ = os.RemoveAll(dir)
+	}, nil
+}
 
 // SetupFixture stages testdata/dotclaude under t.TempDir(), sanitizes session PIDs, and returns a Home pointing to it.
 func SetupFixture(t *testing.T) *claude.Home {
@@ -111,17 +141,21 @@ func WriteFixtureArchive(t *testing.T) string {
 	}
 	defer func() { _ = file.Close() }()
 
-	var allCategories manifest.CategorySet
-	for _, spec := range manifest.AllCategories {
-		spec.Apply(&allCategories, true)
+	claudeTool := claude.New()
+	workspace := claude.NewWorkspace(home)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: workspace}}
+
+	selected := make(map[string]bool)
+	for _, category := range claudeTool.Categories() {
+		selected[category.Name] = true
 	}
 
 	options := export.Options{
 		ProjectPath: FixtureProjectPath(),
 		Output:      file,
-		Categories:  allCategories,
+		Selected:    map[string]map[string]bool{claudeTool.Name(): selected},
 	}
-	if _, err := export.Run(context.Background(), home, &options); err != nil {
+	if _, err := export.Run(context.Background(), targets, &options); err != nil {
 		t.Fatalf("export fixture: %v", err)
 	}
 	return archivePath
@@ -137,7 +171,7 @@ func findFixtureDir(t *testing.T) string {
 
 	// Walk upward looking for a testdata/ that contains our dotclaude/ fixture.
 	// A bare testdata/ check would match a package-local fuzz corpus (e.g.
-	// internal/claude/testdata/fuzz/) and stop before the repo-root testdata/,
+	// internal/tool/claude/testdata/fuzz/) and stop before the repo-root testdata/,
 	// leading to a confusing "no such file or directory" on dotclaude.
 	for {
 		candidate := filepath.Join(currentDir, "testdata")

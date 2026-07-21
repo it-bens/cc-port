@@ -4,7 +4,7 @@ AGENTS.md is a pointer-only map into the adjacent module README. No summaries; s
 
 ## Existence check
 
-Hard cross-cutting constraints in the current cc-port tree: `internal/lock` (concurrency guard around mutating commands), `internal/importer` (`os.Root` and `io.LimitReader` containment), `internal/rewrite` (no `strings.ReplaceAll` on user paths).
+A module qualifies when it owns at least one hard constraint an editor must know before changing code — a contract with residual risk, a banned primitive, a required call bracket. Examples in the current tree: `internal/lock` (concurrency guard around mutating commands), `internal/sqlrewrite` (SQL-only path mutation, `LIKE` banned), `internal/archive` (containment and decompression caps). Do not enumerate qualifying modules here; the tree itself is the inventory.
 
 A ceremonial AGENTS.md is noise — the agent loads it expecting a warning and finds none, so the next AGENTS.md it loads carries less weight too.
 
@@ -38,6 +38,7 @@ Every bullet ends with `(README §<heading name>)` pointing at a real heading in
 - **Cross-refs use `§<heading name>`, never line numbers, never anchor links.** Headings survive edits; line numbers don't.
 - **3 to 8 bullets per section.** Twelve is a smell. Prose drift is the failure mode the 30-line ceiling prevents.
 - **Identifiers mirror the code.** Don't shorten `repository` to `repo` to tighten the bullet — abbreviations that drift from the identifiers they reference defeat grep and break the pointer-to-README coupling.
+- **Root `AGENTS.md` cross-refs name the target file.** The root map points across modules, so its bullets end with the file plus heading: `(internal/rewrite/README.md §Boundary rules)`, `(docs/architecture.md §File-history policy (cross-cutting))`. The adjacent-README shorthand `(README §X)` applies only inside a module.
 
 ## Worked WRONG / CORRECT
 

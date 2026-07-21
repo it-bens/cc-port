@@ -1,25 +1,23 @@
 //go:build darwin || linux
 
-// Package lock guards ~/.claude against concurrent cc-port runs and live
-// Claude Code sessions.
+// Package lock guards tool state against concurrent cc-port runs and live
+// writers.
 package lock
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/gofrs/flock"
 
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
-// FileName is the name of the advisory-lock file cc-port creates inside
-// the Claude Code home directory.
+// FileName is the name of the advisory-lock file cc-port creates inside a
+// tool's state directory.
 const FileName = ".cc-port.lock"
 
 // unlockFn is the function used to release the advisory lock. Tests swap
@@ -28,21 +26,28 @@ const FileName = ".cc-port.lock"
 var unlockFn = (*flock.Flock).Unlock
 
 // ErrConcurrentInvocation is returned by WithLock when another cc-port run
-// already holds the advisory lock. Callers discriminate via errors.Is; the
-// wrapping message names the contended home directory.
-var ErrConcurrentInvocation = errors.New("another cc-port invocation is operating on the Claude home")
+// already holds a tool's advisory lock. Callers discriminate via errors.Is;
+// the wrapping message names the contended lock directory.
+var ErrConcurrentInvocation = errors.New("another cc-port invocation is operating on this tool's state")
 
 // ErrUnlockFailure is returned by WithLock when releasing the advisory lock
 // fails on the fn-success path. The wrapping error joins the underlying
 // unlock cause via %w, so errors.Is matches both this sentinel and the cause.
 var ErrUnlockFailure = errors.New("release cc-port lock")
 
-// LiveSessionsError is returned by WithLock when one or more live Claude Code
-// sessions are detected before the lock is taken. Sessions carries the witness
+// LiveSessionsError is returned by WithLock when one or more live writers are
+// detected before the lock is taken. Sessions carries the witness
 // list; callers inspect it via errors.As. WithLock takes the lock only when the
 // list is empty.
 type LiveSessionsError struct {
-	Sessions []ActiveSession
+	Sessions []tool.ActiveWriter
+}
+
+// Held is an acquired cc-port advisory lock. Release frees it after the
+// protected work completes; later calls are no-ops.
+type Held struct {
+	fileLock *flock.Flock
+	released bool
 }
 
 func (e *LiveSessionsError) Error() string {
@@ -51,121 +56,76 @@ func (e *LiveSessionsError) Error() string {
 		descriptors[index] = fmt.Sprintf("pid=%d cwd=%q", session.Pid, session.Cwd)
 	}
 	return fmt.Sprintf(
-		"refusing to run: %d live Claude Code session(s) detected: [%s]",
+		"refusing to run: %d live writer process(es) detected: [%s]",
 		len(e.Sessions),
 		strings.Join(descriptors, "; "),
 	)
 }
 
-// WithLock runs the live-session check before taking the lock, ensuring
-// no Claude Code session is active before fn is called.
-func WithLock(claudeHome *claude.Home, fn func() error) (returnErr error) {
-	active, err := FindActive(claudeHome)
+// Acquire runs witness before acquiring the advisory lock and retains the
+// flock until the caller releases it.
+func Acquire(lockPath string, witness func() ([]tool.ActiveWriter, error)) (*Held, error) {
+	if witness == nil {
+		return nil, fmt.Errorf("witness is required")
+	}
+	active, err := witness()
 	if err != nil {
-		return fmt.Errorf("scan active sessions: %w", err)
+		return nil, fmt.Errorf("scan active writers: %w", err)
 	}
 	if len(active) > 0 {
-		return &LiveSessionsError{Sessions: active}
+		return nil, &LiveSessionsError{Sessions: active}
 	}
 
-	if err := os.MkdirAll(claudeHome.Dir, 0o750); err != nil {
-		return fmt.Errorf("ensure claude home exists: %w", err)
+	lockDir := filepath.Dir(lockPath)
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
+		return nil, fmt.Errorf("ensure lock directory exists: %w", err)
 	}
 
-	lockPath := filepath.Join(claudeHome.Dir, FileName)
 	fileLock := flock.New(lockPath)
 
 	ok, err := fileLock.TryLock()
 	if err != nil {
-		return fmt.Errorf("acquire cc-port lock: %w", err)
+		return nil, fmt.Errorf("acquire cc-port lock: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrConcurrentInvocation, claudeHome.Dir)
+		return nil, fmt.Errorf("%w: %s", ErrConcurrentInvocation, lockDir)
+	}
+	return &Held{fileLock: fileLock}, nil
+}
+
+// Release unlocks the advisory lock.
+func (held *Held) Release() error {
+	if held == nil || held.fileLock == nil {
+		return fmt.Errorf("release nil cc-port lock")
+	}
+	if held.released {
+		return nil
+	}
+	held.released = true
+	if err := unlockFn(held.fileLock); err != nil {
+		return fmt.Errorf("%w: %w", ErrUnlockFailure, err)
+	}
+	return nil
+}
+
+// WithLock runs witness before acquiring the advisory lock.
+func WithLock(
+	lockPath string,
+	witness func() ([]tool.ActiveWriter, error),
+	fn func() error,
+) (returnErr error) {
+	held, err := Acquire(lockPath, witness)
+	if err != nil {
+		return err
 	}
 
 	defer func() {
-		unlockErr := unlockFn(fileLock)
-		// Cleanup runs unconditionally: unlink is orthogonal to flock state, and
-		// leaving the file on an unlock error would just re-accumulate stubs.
-		removeErr := os.Remove(lockPath)
-		if errors.Is(removeErr, os.ErrNotExist) {
-			removeErr = nil
-		}
+		releaseErr := held.Release()
 		if returnErr != nil {
 			return
 		}
-		if unlockErr != nil {
-			returnErr = fmt.Errorf("%w: %w", ErrUnlockFailure, unlockErr)
-			return
-		}
-		if removeErr != nil {
-			returnErr = fmt.Errorf("remove cc-port lock file: %w", removeErr)
-		}
+		returnErr = releaseErr
 	}()
 
 	return fn()
-}
-
-// ActiveSession describes one live Claude Code process identified from
-// ~/.claude/sessions/<pid>.json.
-type ActiveSession struct {
-	Pid int
-	Cwd string
-}
-
-// FindActive returns one ActiveSession per ~/.claude/sessions/*.json
-// file whose recorded PID is alive on the host. An empty or missing
-// sessions directory produces a nil slice and no error so fresh
-// installations pass through cleanly. Callers that want to refuse on
-// any live session should test len(result) > 0; callers that want to
-// filter by project pass the cwd through a downstream equality check.
-func FindActive(claudeHome *claude.Home) ([]ActiveSession, error) {
-	sessionsDir := claudeHome.SessionsDir()
-	entries, err := os.ReadDir(sessionsDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read sessions directory: %w", err)
-	}
-
-	var active []ActiveSession
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		sessionFilePath := filepath.Join(sessionsDir, entry.Name())
-		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // path under claudeHome
-		if err != nil {
-			return nil, fmt.Errorf("read session file %s: %w", sessionFilePath, err)
-		}
-		var sessionFile claude.SessionFile
-		if err := json.Unmarshal(data, &sessionFile); err != nil {
-			// Unknown / future schema; skip rather than block.
-			continue
-		}
-		if sessionFile.Pid <= 0 {
-			continue
-		}
-		if !processAlive(sessionFile.Pid) {
-			continue
-		}
-		active = append(active, ActiveSession{Pid: sessionFile.Pid, Cwd: sessionFile.Cwd})
-	}
-	return active, nil
-}
-
-// processAlive reports whether a process with the given PID is currently
-// running on the host. Both "exists and signalable" and "exists but owned
-// by another user" count as alive; only "no such process" counts as dead.
-func processAlive(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-	return errors.Is(err, syscall.EPERM)
 }

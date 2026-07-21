@@ -28,7 +28,7 @@ test-race: ## Run unit tests with -race and coverage
 test-integration: ## Run unit + integration tests
 	go test -tags integration -race ./...
 
-test-large: ## Run importer cap-rejection tests
+test-large: ## Run archive tests at production scale
 	go test -tags large ./internal/importer/...
 
 test-all: ## Run unit, integration, and large-archive tests
@@ -55,7 +55,7 @@ snapshot: ## Run the full release pipeline locally (no publish, no brew, no sign
 snapshot-sign: ## Same as snapshot but exercises cosign sign-blob (opens browser for OIDC)
 	$(GORELEASER) release --snapshot --clean --skip=publish,homebrew
 
-ci: vet test-race test-integration lint release-check snapshot ## Run the same checks CI runs
+ci: vet test-race test-large test-integration lint release-check snapshot ## Run the same checks CI runs
 
 clean: ## Remove the binary and build artifacts
 	rm -f $(BINARY) coverage.txt

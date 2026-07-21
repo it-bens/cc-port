@@ -9,105 +9,96 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 )
 
-func TestAllCategories_CanonicalOrder(t *testing.T) {
-	expected := []string{
-		"sessions", "memory", "history", "file-history", "config",
-		"todos", "usage-data", "plugins-data", "tasks",
-	}
-	require.Len(t, manifest.AllCategories, len(expected))
-	for i, want := range expected {
-		assert.Equal(t, want, manifest.AllCategories[i].Name, "position %d", i)
-	}
-}
+var testDeclaredNames = []string{"sessions", "memory", "history"}
 
-func TestBuildCategoryEntries_LengthAndOrder(t *testing.T) {
-	set := manifest.CategorySet{Sessions: true, UsageData: true}
-	entries := manifest.BuildCategoryEntries(&set)
+func TestBuildToolCategoryEntries_LengthAndOrder(t *testing.T) {
+	selected := map[string]bool{"sessions": true, "history": true}
+	entries := manifest.BuildToolCategoryEntries(testDeclaredNames, selected)
 
-	require.Len(t, entries, 9)
+	require.Len(t, entries, 3)
 	names := make([]string, len(entries))
 	for i, e := range entries {
 		names[i] = e.Name
 	}
-	assert.Equal(t, []string{
-		"sessions", "memory", "history", "file-history", "config",
-		"todos", "usage-data", "plugins-data", "tasks",
-	}, names)
+	assert.Equal(t, testDeclaredNames, names)
 }
 
-func TestBuildCategoryEntries_IncludedReflectsGet(t *testing.T) {
-	set := manifest.CategorySet{
-		Sessions: true, Memory: false, History: true, FileHistory: false, Config: true,
-		Todos: false, UsageData: true, PluginsData: false, Tasks: true,
-	}
-	entries := manifest.BuildCategoryEntries(&set)
+func TestBuildToolCategoryEntries_IncludedReflectsSelection(t *testing.T) {
+	selected := map[string]bool{"sessions": true, "memory": false, "history": true}
+	entries := manifest.BuildToolCategoryEntries(testDeclaredNames, selected)
 
-	want := map[string]bool{
-		"sessions": true, "memory": false, "history": true, "file-history": false, "config": true,
-		"todos": false, "usage-data": true, "plugins-data": false, "tasks": true,
-	}
+	want := map[string]bool{"sessions": true, "memory": false, "history": true}
 	for _, e := range entries {
 		assert.Equal(t, want[e.Name], e.Included, "entry %s", e.Name)
 	}
 }
 
-func TestApplyCategoryEntries_RoundTripsCategorySet(t *testing.T) {
-	original := manifest.CategorySet{
-		Sessions: true, Memory: false, History: true, FileHistory: true, Config: false,
-		Todos: true, UsageData: false, PluginsData: true, Tasks: false,
-	}
-	entries := manifest.BuildCategoryEntries(&original)
+func TestAbsentToolBlockReturnsFreshEmptySelectionAndNoPlaceholders(t *testing.T) {
+	firstSelection, firstPlaceholders := manifest.AbsentToolBlock()
+	assert.Empty(t, firstSelection)
+	assert.Nil(t, firstPlaceholders)
+	firstSelection["sessions"] = true
 
-	got, err := manifest.ApplyCategoryEntries(entries)
+	secondSelection, secondPlaceholders := manifest.AbsentToolBlock()
+
+	assert.Empty(t, secondSelection)
+	assert.Nil(t, secondPlaceholders)
+}
+
+func TestApplyToolCategories_RoundTripsSelection(t *testing.T) {
+	original := map[string]bool{"sessions": true, "memory": false, "history": true}
+	entries := manifest.BuildToolCategoryEntries(testDeclaredNames, original)
+
+	got, err := manifest.ApplyToolCategories("claude", testDeclaredNames, entries)
 	require.NoError(t, err)
 	assert.Equal(t, original, got)
 }
 
-func TestApplyCategoryEntries_MissingNameIsError(t *testing.T) {
-	entries := manifest.BuildCategoryEntries(&manifest.CategorySet{})
-	// Drop the "tasks" entry.
-	truncated := entries[:len(entries)-1]
+func TestApplyToolCategories_MissingNameIsError(t *testing.T) {
+	entries := manifest.BuildToolCategoryEntries(testDeclaredNames, nil)
+	truncated := entries[:len(entries)-1] // drop "history"
 
-	_, err := manifest.ApplyCategoryEntries(truncated)
-
-	var missingErr *manifest.MissingCategoriesError
-	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Names, "tasks")
-}
-
-func TestApplyCategoryEntries_EveryMissingNameListed(t *testing.T) {
-	// Drop the last two entries (plugins-data + tasks).
-	entries := manifest.BuildCategoryEntries(&manifest.CategorySet{})[:7]
-
-	_, err := manifest.ApplyCategoryEntries(entries)
+	_, err := manifest.ApplyToolCategories("claude", testDeclaredNames, truncated)
 
 	var missingErr *manifest.MissingCategoriesError
 	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Names, "plugins-data")
-	assert.Contains(t, missingErr.Names, "tasks")
+	assert.Equal(t, "claude", missingErr.Tool)
+	assert.Contains(t, missingErr.Names, "history")
 }
 
-func TestApplyCategoryEntries_UnknownNameIsError(t *testing.T) {
-	entries := manifest.BuildCategoryEntries(&manifest.CategorySet{})
+func TestApplyToolCategories_UnknownNameIsError(t *testing.T) {
+	entries := manifest.BuildToolCategoryEntries(testDeclaredNames, nil)
 	entries = append(entries, manifest.Category{Name: "bogus", Included: true})
 
-	_, err := manifest.ApplyCategoryEntries(entries)
+	_, err := manifest.ApplyToolCategories("claude", testDeclaredNames, entries)
 
 	var unknownErr *manifest.UnknownCategoriesError
 	require.ErrorAs(t, err, &unknownErr)
+	assert.Equal(t, "claude", unknownErr.Tool)
 	assert.Contains(t, unknownErr.Names, "bogus")
 }
 
-func TestApplyCategoryEntries_MissingAndUnknownAggregated(t *testing.T) {
-	// Drop "tasks", add "bogus".
-	entries := manifest.BuildCategoryEntries(&manifest.CategorySet{})[:8]
+func TestApplyToolCategories_DuplicateNameIsError(t *testing.T) {
+	entries := manifest.BuildToolCategoryEntries(testDeclaredNames, map[string]bool{"sessions": true})
+	entries = append(entries, manifest.Category{Name: "sessions", Included: false})
+
+	_, err := manifest.ApplyToolCategories("claude", testDeclaredNames, entries)
+
+	var duplicateErr *manifest.DuplicateCategoriesError
+	require.ErrorAs(t, err, &duplicateErr)
+	assert.Equal(t, "claude", duplicateErr.Tool)
+	assert.Equal(t, []string{"sessions"}, duplicateErr.Names)
+}
+
+func TestApplyToolCategories_MissingAndUnknownAggregated(t *testing.T) {
+	entries := manifest.BuildToolCategoryEntries(testDeclaredNames, nil)[:2] // drop "history"
 	entries = append(entries, manifest.Category{Name: "bogus", Included: true})
 
-	_, err := manifest.ApplyCategoryEntries(entries)
+	_, err := manifest.ApplyToolCategories("claude", testDeclaredNames, entries)
 
 	var missingErr *manifest.MissingCategoriesError
 	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Names, "tasks")
+	assert.Contains(t, missingErr.Names, "history")
 
 	var unknownErr *manifest.UnknownCategoriesError
 	require.ErrorAs(t, err, &unknownErr)
@@ -115,21 +106,15 @@ func TestApplyCategoryEntries_MissingAndUnknownAggregated(t *testing.T) {
 }
 
 func TestBuildApplyBuild_IsStable(t *testing.T) {
-	original := manifest.CategorySet{Sessions: true, FileHistory: true, Tasks: true}
-	entries1 := manifest.BuildCategoryEntries(&original)
-	applied, err := manifest.ApplyCategoryEntries(entries1)
+	original := map[string]bool{"sessions": true, "history": true}
+	entries1 := manifest.BuildToolCategoryEntries(testDeclaredNames, original)
+	applied, err := manifest.ApplyToolCategories("claude", testDeclaredNames, entries1)
 	require.NoError(t, err)
-	entries2 := manifest.BuildCategoryEntries(&applied)
+	entries2 := manifest.BuildToolCategoryEntries(testDeclaredNames, applied)
 	assert.Equal(t, entries1, entries2)
 }
 
-func TestSpecByName_ReturnsKnownCategory(t *testing.T) {
-	spec, ok := manifest.SpecByName("sessions")
-	require.True(t, ok)
-	assert.Equal(t, "sessions", spec.Name)
-}
-
-func TestSpecByName_RejectsUnknownCategory(t *testing.T) {
-	_, ok := manifest.SpecByName("does-not-exist")
-	assert.False(t, ok)
+func TestUnregisteredToolError_Message(t *testing.T) {
+	err := &manifest.UnregisteredToolError{Tool: "codex"}
+	assert.Contains(t, err.Error(), "codex")
 }

@@ -15,6 +15,8 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // setupCmdFixture stages the dotclaude fixture and returns the home dir
@@ -49,18 +51,15 @@ func injectEncryptedArchiveAtURL(t *testing.T, url, name, pass, pusher string) {
 // declares one placeholder to the file:// URL.
 func injectArchiveWithDeclaredPlaceholderAtURL(t *testing.T, url, name, key, original, pusher string) {
 	t.Helper()
-	placeholders := []manifest.Placeholder{{Key: key, Original: original}}
+	placeholders := map[string][]manifest.Placeholder{"claude": {{Key: key, Original: original}}}
 	body := buildCmdArchiveBytes(t, pusher, "", placeholders)
 	writeAtURL(t, url, name, body)
 }
 
-func defaultResolutionsForCmd(_ *testing.T) map[string]string {
-	return map[string]string{"{{HOME}}": "/Users/me"}
-}
-
-func buildCmdArchiveBytes(t *testing.T, pusher, pass string, placeholders []manifest.Placeholder) []byte {
+func buildCmdArchiveBytes(t *testing.T, pusher, pass string, placeholders map[string][]manifest.Placeholder) []byte {
 	t.Helper()
 	home := testutil.SetupFixture(t)
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 	var buf bytes.Buffer
 	stages := []pipeline.WriterStage{
 		&encrypt.WriterStage{Pass: pass},
@@ -73,12 +72,12 @@ func buildCmdArchiveBytes(t *testing.T, pusher, pass string, placeholders []mani
 	opts := export.Options{
 		ProjectPath:  "/Users/test/Projects/myproject",
 		Output:       w,
-		Categories:   allCategoriesCmdSet(),
+		Selected:     allCategoriesCmdSelection(),
 		Placeholders: placeholders,
 		SyncPushedBy: pusher,
 		SyncPushedAt: time.Now().UTC(),
 	}
-	if _, err := export.Run(context.Background(), home, &opts); err != nil {
+	if _, err := export.Run(context.Background(), targets, &opts); err != nil {
 		_ = w.Close()
 		t.Fatalf("export.Run: %v", err)
 	}
@@ -103,12 +102,13 @@ func writeAtURL(t *testing.T, url, name string, body []byte) {
 	}
 }
 
-func allCategoriesCmdSet() manifest.CategorySet {
-	var set manifest.CategorySet
-	for _, spec := range manifest.AllCategories {
-		spec.Apply(&set, true)
+func allCategoriesCmdSelection() map[string]map[string]bool {
+	claudeTool := claude.New()
+	selected := make(map[string]bool)
+	for _, category := range claudeTool.Categories() {
+		selected[category.Name] = true
 	}
-	return set
+	return map[string]map[string]bool{claudeTool.Name(): selected}
 }
 
 type cmdBytesSink struct{ buf *bytes.Buffer }
@@ -121,36 +121,3 @@ func (s *cmdBytesSink) Name() string { return "bytes sink" }
 type cmdBytesSinkCloser struct{}
 
 func (b *cmdBytesSinkCloser) Close() error { return nil }
-
-// TestSyncCmdHelpersSmoke wires every helper at least once. Tasks 9 and
-// 10 add the behavior-driven tests; this smoke test exists today so the
-// unused linter does not flag landed-but-not-yet-called helpers and so a
-// typo in a helper signature surfaces here rather than in Task 9.
-func TestSyncCmdHelpersSmoke(t *testing.T) {
-	tempHome, projectPath := setupCmdFixture(t)
-	if tempHome == "" || projectPath == "" {
-		t.Fatal("setupCmdFixture returned empty values")
-	}
-	if got := defaultResolutionsForCmd(t)["{{HOME}}"]; got == "" {
-		t.Fatal("defaultResolutionsForCmd missing {{HOME}}")
-	}
-	categories := allCategoriesCmdSet()
-	if !categories.Sessions || !categories.Tasks {
-		t.Fatal("allCategoriesCmdSet did not enable every category")
-	}
-
-	dir := t.TempDir()
-	url := "file://" + dir
-	injectArchiveWithPusherAtURL(t, url, "smoke-plain", "host-user")
-	injectArchiveWithDeclaredPlaceholderAtURL(t, url, "smoke-declared", "{{HOME}}", "/Users/test", "host-user")
-
-	for _, name := range []string{"smoke-plain", "smoke-declared"} {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatalf("Stat %s: %v", name, err)
-		}
-		if info.Size() == 0 {
-			t.Fatalf("archive %s has zero size", name)
-		}
-	}
-}

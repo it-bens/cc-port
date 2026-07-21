@@ -1,0 +1,8 @@
+# Fixture config.toml — synthetic, not copied from a real ~/.codex.
+model = "gpt-5-fixture"
+
+[projects."/Users/fixture/codexproject"]
+trust_level = "trusted"
+
+[projects."/Users/fixture/other-project"]
+trust_level = "trusted"

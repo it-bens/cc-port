@@ -15,29 +15,36 @@ import (
 func TestCommandConstructorsAreIsolated(t *testing.T) {
 	type pair struct {
 		name  string
-		ctor  func(*string) *cobra.Command
+		ctor  func() *cobra.Command
 		flag  string
 		value string // valid value for the flag's type
 	}
 	cases := []pair{
-		{"export", func(d *string) *cobra.Command { return newExportCmd(d, noopBanner{}) }, "from-manifest", "/tmp/m.xml"},
-		{"import", newImportCmd, "from-manifest", "/tmp/m.xml"},
-		{"push", func(d *string) *cobra.Command { return newPushCmd(d, noopBanner{}) }, "from-manifest", "/tmp/m.xml"},
-		{"pull", newPullCmd, "from-manifest", "/tmp/m.xml"},
-		{"move", newMoveCmd, "apply", "true"},
+		{"export", func() *cobra.Command { return newExportCmd(newToolSet(), newToolFlagsForTest(), noopBanner{}) }, "from-manifest", "/tmp/m.xml"},
+		{"export manifest", func() *cobra.Command { return newExportManifestCmd(newToolSet(), newToolFlagsForTest(), noopBanner{}) }, "all", "true"},
+		{"import", func() *cobra.Command { return newImportCmd(newToolSet(), newToolFlagsForTest()) }, "from-manifest", "/tmp/m.xml"},
+		{"push", func() *cobra.Command { return newPushCmd(newToolSet(), newToolFlagsForTest(), noopBanner{}) }, "from-manifest", "/tmp/m.xml"},
+		{"pull", func() *cobra.Command { return newPullCmd(newToolSet(), newToolFlagsForTest()) }, "from-manifest", "/tmp/m.xml"},
+		{"move", func() *cobra.Command { return newMoveCmd(newToolSet(), newToolFlagsForTest()) }, "apply", "true"},
+		{"stats", newStatsCmdForTest, "json", "true"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var claudeDirA, claudeDirB string
-			a := tc.ctor(&claudeDirA)
-			b := tc.ctor(&claudeDirB)
+			a := tc.ctor()
+			b := tc.ctor()
+			flagsA := a.Flags()
+			flagsB := b.Flags()
+			if flagsA.Lookup(tc.flag) == nil {
+				flagsA = a.InheritedFlags()
+				flagsB = b.InheritedFlags()
+			}
 
-			require.NoError(t, a.Flags().Set(tc.flag, tc.value))
+			require.NoError(t, flagsA.Set(tc.flag, tc.value))
 			// b should not observe a's setting.
-			valueOnB, err := b.Flags().GetString(tc.flag)
+			valueOnB, err := flagsB.GetString(tc.flag)
 			if err != nil {
 				// For bool flags GetString returns an error; use GetBool.
-				boolOnB, errBool := b.Flags().GetBool(tc.flag)
+				boolOnB, errBool := flagsB.GetBool(tc.flag)
 				require.NoError(t, errBool)
 				assert.False(t, boolOnB,
 					"%s.%s leaked from instance a to instance b", tc.name, tc.flag)
@@ -48,4 +55,20 @@ func TestCommandConstructorsAreIsolated(t *testing.T) {
 				tc.name, tc.flag, valueOnB)
 		})
 	}
+}
+
+func newStatsCmdForTest() *cobra.Command {
+	root := &cobra.Command{}
+	root.PersistentFlags().Bool("json", false, "")
+	cmd := newStatsCmd(newToolSet(), registerToolFlags(root, newToolSet()))
+	root.AddCommand(cmd)
+	return cmd
+}
+
+// newToolFlagsForTest registers a fresh --tool / --<name>-home flag set on
+// a throwaway root command and returns the locals, mirroring what
+// newRootCmd wires in production.
+func newToolFlagsForTest() *toolFlags {
+	root := &cobra.Command{}
+	return registerToolFlags(root, newToolSet())
 }

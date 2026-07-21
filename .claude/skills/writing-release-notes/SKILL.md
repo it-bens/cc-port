@@ -137,7 +137,7 @@ Mark a PR as breaking if any apply:
 - Removed CLI subcommand or flag (check `cmd/cc-port` diffs).
 - Removed or renamed exported symbol that another module references.
 - Changed manifest XML schema in a way that older archives no longer load.
-- Changed lock-file or session-keyed registry contracts (see `internal/lock/README.md`, `internal/claude/README.md`).
+- Changed lock-file or session-keyed registry contracts (see `internal/lock/README.md`, `internal/tool/claude/README.md`).
 
 If any breaking change is present, the notes must include `### Breaking Changes` with migration guidance.
 

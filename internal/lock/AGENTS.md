@@ -1,17 +1,19 @@
-# internal/lock — agent notes
+# internal/lock: agent notes
 
 ## Before editing
 
-- Wrap every mutating command in `WithLock` (README §Concurrency guard).
-- Run the live-session check before acquiring the flock, never after (README §Concurrency guard).
-- Do not expose locking for read-only operations (`cc-port move` dry-run, `cc-port export`). Read-only callers needing the witness list call `FindActive` directly, without taking the flock (README §Public API).
-- Keep `processAlive` unexported; it is an implementation detail of `FindActive` (README §Public API).
-- Never replace the `defer` release with an early-return release path (README §Public API).
+- Use `Acquire` when a caller must hold several tools' locks at once through
+  a multi-target apply; use `WithLock` when one call needs the lock only for
+  its own duration (README §Concurrency guard).
+- Run the witness before acquiring the flock, for both entry points (README
+  §Concurrency guard).
+- Keep read-only operations outside both `Acquire` and `WithLock` (README
+  §Concurrency guard).
+- Keep the deferred release path (README §Public API).
 
 ## Navigation
 
-- Entry: `lock.go:WithLock`.
-- Live-session witness API: `lock.go:FindActive`, `lock.go:ActiveSession`.
-- Liveness probe (internal): `lock.go:processAlive`.
-- Test hook: `lock.go:unlockFn` (swap to simulate release failure).
+- Entry points: `lock.go` (`Acquire`, `WithLock`).
+- Live-session witness: `internal/tool/claude/witness.go` (`FindActive`).
+- Test hook: `lock.go` (`unlockFn`).
 - Tests: `lock_test.go` (in-package).

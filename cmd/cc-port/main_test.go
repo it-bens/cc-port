@@ -3,12 +3,25 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/it-bens/cc-port/internal/testutil"
 )
+
+func TestMain(m *testing.M) {
+	restore, err := testutil.IsolateHome()
+	if err != nil {
+		panic(err)
+	}
+	exitCode := m.Run()
+	restore()
+	os.Exit(exitCode)
+}
 
 // captureRootCmd builds a fresh rootCmd via newRootCmd(noopBanner{}),
 // redirects its output and error streams to a shared buffer, and sets

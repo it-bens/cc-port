@@ -1,0 +1,739 @@
+package claude
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool"
+)
+
+// uuidPattern matches the canonical 8-4-4-4-12 UUID string format,
+// case-insensitive. Version and variant nibbles are not enforced — Claude Code
+// has used different UUID variants for session IDs across versions, so we
+// accept any.
+var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// ProjectLocations holds all data locations for a specific project.
+type ProjectLocations struct {
+	ProjectPath           string
+	ProjectDir            string
+	SessionTranscripts    []string
+	SessionSubdirs        []string
+	MemoryFiles           []string
+	FileHistoryDirs       []string
+	SessionFiles          []string
+	MalformedSessionFiles []string
+	HistoryEntryCount     int
+	HasConfigBlock        bool
+	TodoFiles             []string
+	UsageDataSessionMeta  []string
+	UsageDataFacets       []string
+	PluginsDataFiles      []string
+	TaskFiles             []string
+}
+
+// LocateProject enumerates all data locations for the given project path under
+// the provided Home. It returns an error if the project directory does
+// not exist. Optional resources (memory files, history entries, etc.) are
+// collected with zero values when absent.
+func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, error) {
+	return locateProjectData(claudeHome, projectPath, verifyProjectIdentity)
+}
+
+// locateProjectForMove enumerates projectPath's data WITHOUT re-verifying
+// witness identity. It exists for exactly one caller, MoveSurfaces: a move
+// can be interrupted after sessionsSurface has already rewritten every
+// witness to the move's other path but before the encoded directory
+// itself has been promoted, and the single-path verifyProjectIdentity has
+// no way to tell that state apart from a genuine mismatch. MoveSurfaces
+// resolves identity ONCE, up front, via verifyProjectMoveIdentity (which
+// DOES compare against both of the move's paths and still hard-refuses a
+// witness naming a third, unrelated one); every subsequent enumeration of
+// the SAME already-identity-confirmed directory reuses that result instead
+// of re-running a check that would incorrectly refuse the very witness
+// state a resume expects.
+func locateProjectForMove(claudeHome *Home, projectPath string) (*ProjectLocations, error) {
+	return locateProjectData(claudeHome, projectPath, func(context.Context, *Home, string, []string) error { return nil })
+}
+
+// locateProjectData is the shared engine behind LocateProject and
+// locateProjectForMove: identical enumeration, with the identity check
+// injected so the move-context caller can supply a no-op in place of the
+// hard-refusing verifyProjectIdentity once it has already confirmed
+// identity through a different, move-aware check.
+func locateProjectData(
+	claudeHome *Home, projectPath string,
+	checkIdentity func(ctx context.Context, claudeHome *Home, projectPath string, sessionUUIDs []string) error,
+) (*ProjectLocations, error) {
+	projectDir := claudeHome.ProjectDir(projectPath)
+
+	if _, err := os.Stat(projectDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w: project directory not found: %s", tool.ErrProjectAbsent, projectDir)
+		}
+		return nil, fmt.Errorf("stat project directory: %w", err)
+	}
+
+	locations := &ProjectLocations{
+		ProjectPath: projectPath,
+		ProjectDir:  projectDir,
+	}
+
+	// LocateProject resolves a single caller-supplied project path and has no
+	// context.Context of its own to thread (out of scope for the enumeration
+	// cancellation fix, which targets EnumerateProjects's all-projects walk).
+	// context.Background() below is a real "no cancellation source", not a
+	// silently degraded default: LocateProject's per-project cost is bounded
+	// and unaffected by the finding these collectors are otherwise shared for.
+	sessionUUIDs, err := collectProjectDirEntries(context.Background(), locations, projectDir)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := checkIdentity(context.Background(), claudeHome, projectPath, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := collectMemoryFiles(context.Background(), locations, projectDir); err != nil {
+		return nil, err
+	}
+
+	if err := collectFileHistoryDirs(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := collectSessionFiles(context.Background(), locations, claudeHome, projectPath); err != nil {
+		return nil, err
+	}
+
+	if err := collectTodos(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := collectUsageData(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := collectPluginsData(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := collectTaskFiles(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+		return nil, err
+	}
+
+	if err := countHistoryEntries(locations, claudeHome, projectPath); err != nil {
+		return nil, err
+	}
+
+	if err := checkConfigBlock(locations, claudeHome, projectPath); err != nil {
+		return nil, err
+	}
+
+	return locations, nil
+}
+
+func collectProjectDirEntries(ctx context.Context, locations *ProjectLocations, projectDir string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("read project directory: %w", err)
+	}
+
+	uuidSet := make(map[string]struct{})
+
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		name := entry.Name()
+
+		if entry.IsDir() {
+			if name == categoryMemory || name == categorySessions {
+				continue
+			}
+			if uuidPattern.MatchString(name) {
+				locations.SessionSubdirs = append(locations.SessionSubdirs, filepath.Join(projectDir, name))
+				uuidSet[name] = struct{}{}
+			}
+			continue
+		}
+
+		if strings.HasSuffix(name, ".jsonl") {
+			locations.SessionTranscripts = append(locations.SessionTranscripts, filepath.Join(projectDir, name))
+			uuid := strings.TrimSuffix(name, ".jsonl")
+			if uuidPattern.MatchString(uuid) {
+				uuidSet[uuid] = struct{}{}
+			}
+		}
+	}
+
+	sessionUUIDs := make([]string, 0, len(uuidSet))
+	for uuid := range uuidSet {
+		sessionUUIDs = append(sessionUUIDs, uuid)
+	}
+	sort.Strings(sessionUUIDs)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return sessionUUIDs, nil
+}
+
+func collectMemoryFiles(ctx context.Context, locations *ProjectLocations, projectDir string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	memoryDir := filepath.Join(projectDir, "memory")
+	entries, err := os.ReadDir(memoryDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return nil
+		}
+		return fmt.Errorf("read memory directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || rewrite.IsArtifactPath(entry.Name()) {
+			continue
+		}
+		locations.MemoryFiles = append(locations.MemoryFiles, filepath.Join(memoryDir, entry.Name()))
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func collectFileHistoryDirs(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	fileHistoryBase := claudeHome.FileHistoryDir()
+
+	for _, uuid := range sessionUUIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		candidate := filepath.Join(fileHistoryBase, uuid)
+		if _, err := os.Stat(candidate); err == nil {
+			locations.FileHistoryDirs = append(locations.FileHistoryDirs, candidate)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat file-history directory for session %s: %w", uuid, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// collectTodos enumerates ~/.claude/todos/<sid1>-agent-<sid2>.json files,
+// including any file where either UUID is in sessionUUIDs.
+//
+// The two-UUID filename pattern admits sub-agent spawns: the parent agent
+// embeds its own session UUID and its child's session UUID in the filename.
+// Including a file when either UUID matches catches todo state for sub-agents
+// whose parent session belongs to the project; in practice the two UUIDs are
+// equal in every existing file, but the format admits the divergent case.
+func collectTodos(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	todosDir := claudeHome.TodosDir()
+	entries, err := os.ReadDir(todosDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return nil
+		}
+		return fmt.Errorf("read todos directory: %w", err)
+	}
+
+	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
+	for _, uuid := range sessionUUIDs {
+		uuidSet[uuid] = struct{}{}
+	}
+
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		base := strings.TrimSuffix(name, ".json")
+		parts := strings.SplitN(base, "-agent-", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if !uuidPattern.MatchString(parts[0]) || !uuidPattern.MatchString(parts[1]) {
+			continue
+		}
+		if _, ok := uuidSet[parts[0]]; ok {
+			locations.TodoFiles = append(locations.TodoFiles, filepath.Join(todosDir, name))
+			continue
+		}
+		if _, ok := uuidSet[parts[1]]; ok {
+			locations.TodoFiles = append(locations.TodoFiles, filepath.Join(todosDir, name))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// collectUsageData enumerates ~/.claude/usage-data/{session-meta,facets}/<sid>.json
+// for each session UUID in the project's set. Both subdirectories are checked
+// independently — either may exist without the other on older Claude Code
+// installs.
+func collectUsageData(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	base := claudeHome.UsageDataDir()
+	for _, subdir := range []struct {
+		name string
+		dest *[]string
+	}{
+		{"session-meta", &locations.UsageDataSessionMeta},
+		{"facets", &locations.UsageDataFacets},
+	} {
+		dir := filepath.Join(base, subdir.name)
+		if _, err := os.Stat(dir); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("stat usage-data/%s: %w", subdir.name, err)
+		}
+		for _, uuid := range sessionUUIDs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate := filepath.Join(dir, uuid+".json")
+			if _, err := os.Stat(candidate); err == nil {
+				*subdir.dest = append(*subdir.dest, candidate)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("stat usage-data/%s/%s: %w", subdir.name, uuid, err)
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// collectPluginsData enumerates every file under ~/.claude/plugins/data/<ns>/<sid>/
+// where <sid> is in the project's session set. Plugin namespace <ns> is opaque
+// — the walk visits every namespace and treats them identically. The subtree
+// is flattened to a list of absolute file paths so downstream consumers see a
+// uniform shape across session-keyed groups.
+func collectPluginsData(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	base := claudeHome.PluginsDataDir()
+	namespaces, err := os.ReadDir(base)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return nil
+		}
+		return fmt.Errorf("read plugins/data directory: %w", err)
+	}
+
+	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
+	for _, uuid := range sessionUUIDs {
+		uuidSet[uuid] = struct{}{}
+	}
+
+	for _, namespace := range namespaces {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !namespace.IsDir() {
+			continue
+		}
+		namespaceDir := filepath.Join(base, namespace.Name())
+		sessionEntries, err := os.ReadDir(namespaceDir)
+		if err != nil {
+			return fmt.Errorf("read plugins/data/%s: %w", namespace.Name(), err)
+		}
+		for _, sessionEntry := range sessionEntries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if !sessionEntry.IsDir() {
+				continue
+			}
+			if _, ok := uuidSet[sessionEntry.Name()]; !ok {
+				continue
+			}
+			sessionDir := filepath.Join(namespaceDir, sessionEntry.Name())
+			if err := appendFilesRecursive(ctx, &locations.PluginsDataFiles, sessionDir); err != nil {
+				return fmt.Errorf("walk plugins/data/%s/%s: %w",
+					namespace.Name(), sessionEntry.Name(), err)
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// collectTaskFiles enumerates every non-directory entry under ~/.claude/tasks/<sid>/
+// where <sid> is in the project's session set, including `.lock` and
+// `.highwatermark` sidecars. This collector deliberately reports every file;
+// consumers iterating via the registry apply the sidecar filter so the policy
+// decision lives in one place.
+func collectTaskFiles(ctx context.Context, locations *ProjectLocations, claudeHome *Home, sessionUUIDs []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	base := claudeHome.TasksDir()
+	for _, uuid := range sessionUUIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		candidate := filepath.Join(base, uuid)
+		info, err := os.Stat(candidate)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("stat tasks/%s: %w", uuid, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		if err := appendFilesRecursive(ctx, &locations.TaskFiles, candidate); err != nil {
+			return fmt.Errorf("walk tasks/%s: %w", uuid, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// verifyProjectIdentity cross-checks any ~/.claude/sessions/*.json whose
+// sessionId appears inside the encoded project directory against projectPath.
+// A matching cwd confirms identity. A non-matching cwd among witnesses
+// rejects: two distinct real paths can encode to the same directory name,
+// so without this guard a rewrite run would splice one project's data into
+// another's. No witness (no sessions attributed, or none readable) logs a
+// one-line warning to os.Stderr and returns nil so fresh projects still
+// work.
+func verifyProjectIdentity(ctx context.Context, claudeHome *Home, projectPath string, sessionUUIDs []string) error {
+	encodedDir := claudeHome.ProjectDir(projectPath)
+
+	if len(sessionUUIDs) == 0 {
+		warnIdentityCheckSkipped(encodedDir, projectPath)
+		return nil
+	}
+
+	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
+	for _, uuid := range sessionUUIDs {
+		uuidSet[uuid] = struct{}{}
+	}
+
+	cwds, err := walkSessionWitnesses(ctx, claudeHome.SessionsDir(), uuidSet)
+	if err != nil {
+		return err
+	}
+	for _, cwd := range cwds {
+		if cwd == projectPath {
+			return nil
+		}
+	}
+	if len(cwds) > 0 {
+		return fmt.Errorf(
+			"encoded directory %s: sessions/*.json attributes it to %s, not to requested project %q; refusing to rewrite",
+			encodedDir, formatCwdList(cwds), projectPath,
+		)
+	}
+
+	warnIdentityCheckSkipped(encodedDir, projectPath)
+	return nil
+}
+
+// verifyProjectMoveIdentity is the move-context identity check. Unlike
+// verifyProjectIdentity (a single expected path, hard refuse on ANY
+// mismatch), it accepts either of the move's two paths as confirming
+// identity, because a move can be interrupted after sessionsSurface has
+// already rewritten every witness to newPath but before the encoded
+// directory itself has been renamed — the exact state a naive single-path
+// check cannot distinguish from a genuine foreign collision. A witness
+// reporting oldPath or newPath confirms identity; one reporting neither is
+// a foreign collision and is refused exactly as verifyProjectIdentity
+// refuses a single mismatched witness — two distinct real paths can encode
+// to the same directory name, so this guard must never widen to accept a
+// THIRD path. No witness at all is the same skip case LocateProject already
+// tolerates for a project with no attributable sessions; it returns the
+// warning text so the move path can surface it as a structured plan
+// warning instead of a stderr note.
+func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessionUUIDs []string) (skipWarning string, err error) {
+	encodedDir := claudeHome.ProjectDir(oldPath)
+
+	if len(sessionUUIDs) == 0 {
+		return identityCheckSkippedMessage(encodedDir, oldPath), nil
+	}
+
+	uuidSet := make(map[string]struct{}, len(sessionUUIDs))
+	for _, uuid := range sessionUUIDs {
+		uuidSet[uuid] = struct{}{}
+	}
+
+	cwds, err := walkSessionWitnesses(context.Background(), claudeHome.SessionsDir(), uuidSet)
+	if err != nil {
+		return "", err
+	}
+	if len(cwds) == 0 {
+		return identityCheckSkippedMessage(encodedDir, oldPath), nil
+	}
+
+	for _, cwd := range cwds {
+		if cwd != oldPath && cwd != newPath {
+			return "", fmt.Errorf(
+				"encoded directory %s: sessions/*.json attributes it to %s, neither %q nor %q; refusing to rewrite",
+				encodedDir, formatCwdList(cwds), oldPath, newPath,
+			)
+		}
+	}
+	return "", nil
+}
+
+// walkSessionWitnesses inspects every sessions/*.json and returns the distinct
+// cwd values that witnesses report for the encoded directory — a witness being
+// a session whose sessionId is in uuidSet. An empty slice means no witness was
+// found; a missing sessions directory collapses to the same. The walk is
+// target-agnostic: callers decide whether a returned cwd is a match (identity
+// confirmed), a contradiction (identity rejected), or the resolved label
+// (all-projects enumeration), so verifyProjectIdentity and EnumerateProjects
+// share one walk.
+func walkSessionWitnesses(ctx context.Context, sessionsDir string, uuidSet map[string]struct{}) (cwds []string, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read sessions directory: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		sessionFilePath := filepath.Join(sessionsDir, entry.Name())
+		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // G304: path constructed from trusted sessions directory
+		if err != nil {
+			return nil, fmt.Errorf("read session file %s: %w", entry.Name(), err)
+		}
+		var probe struct {
+			SessionID string `json:"sessionId"`
+			Cwd       string `json:"cwd"`
+		}
+		if err := json.Unmarshal(data, &probe); err != nil {
+			continue
+		}
+		if _, ok := uuidSet[probe.SessionID]; !ok {
+			continue
+		}
+		if _, duplicate := seen[probe.Cwd]; !duplicate {
+			seen[probe.Cwd] = struct{}{}
+			cwds = append(cwds, probe.Cwd)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return cwds, nil
+}
+
+// formatCwdList renders cwd witnesses as a comma-separated list of Go-quoted
+// strings so the error message survives copy-paste even when a cwd contains
+// spaces, quotes, or control bytes.
+func formatCwdList(cwds []string) string {
+	quoted := make([]string, len(cwds))
+	for index, cwd := range cwds {
+		quoted[index] = fmt.Sprintf("%q", cwd)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func identityCheckSkippedMessage(encodedDir, projectPath string) string {
+	return fmt.Sprintf(
+		"no witness in sessions/*.json attributes %s to project %s; identity check skipped",
+		encodedDir, projectPath,
+	)
+}
+
+func warnIdentityCheckSkipped(encodedDir, projectPath string) {
+	fmt.Fprintln(os.Stderr, "note: "+identityCheckSkippedMessage(encodedDir, projectPath))
+}
+
+func collectSessionFiles(ctx context.Context, locations *ProjectLocations, claudeHome *Home, projectPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sessionsDir := claudeHome.SessionsDir()
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return nil
+		}
+		return fmt.Errorf("read sessions directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		sessionFilePath := filepath.Join(sessionsDir, entry.Name())
+		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // G304: path constructed from trusted sessions directory
+		if err != nil {
+			return fmt.Errorf("read session file %s: %w", entry.Name(), err)
+		}
+
+		var sessionFile SessionFile
+		if err := json.Unmarshal(data, &sessionFile); err != nil {
+			locations.MalformedSessionFiles = append(locations.MalformedSessionFiles, sessionFilePath)
+			continue
+		}
+
+		if sessionFile.Cwd == projectPath {
+			locations.SessionFiles = append(locations.SessionFiles, sessionFilePath)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func countHistoryEntries(locations *ProjectLocations, claudeHome *Home, projectPath string) error {
+	historyFilePath := claudeHome.HistoryFile()
+	file, err := os.Open(historyFilePath) //nolint:gosec // G304: historyFilePath is derived from the trusted ClaudeHome
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("open history file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64<<10), MaxHistoryLine)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var historyEntry HistoryEntry
+		if err := json.Unmarshal([]byte(line), &historyEntry); err != nil {
+			continue
+		}
+
+		if historyEntry.Project == projectPath {
+			locations.HistoryEntryCount++
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan history file: %w", err)
+	}
+	return nil
+}
+
+func checkConfigBlock(locations *ProjectLocations, claudeHome *Home, projectPath string) error {
+	data, err := os.ReadFile(claudeHome.ConfigFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read config file: %w", err)
+	}
+
+	var userConfig UserConfig
+	if err := json.Unmarshal(data, &userConfig); err != nil {
+		return nil
+	}
+
+	if _, exists := userConfig.Projects[projectPath]; exists {
+		locations.HasConfigBlock = true
+	}
+	return nil
+}
+
+// appendFilesRecursive appends every non-directory, non-cc-port-artifact entry
+// under dir to *dst. Callers remain responsible for domain-specific filters.
+func appendFilesRecursive(ctx context.Context, dst *[]string, dir string) error {
+	// The callback below already checks ctx.Err() per visited entry; this
+	// entry check additionally catches an already-canceled context before
+	// the recursive walk starts at all.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if rewrite.IsArtifactPath(entry.Name()) {
+			return nil
+		}
+		*dst = append(*dst, path)
+		return nil
+	})
+}

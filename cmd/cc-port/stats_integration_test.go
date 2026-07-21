@@ -20,7 +20,6 @@ func TestStatsIntegration_SingleProjectHumanOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, stdout, "cc-port stats: "+testutil.FixtureProjectPath())
-	assert.Contains(t, stdout, "History entries: 4")
 	assert.Contains(t, stdout, "file-history")
 	// The sibling /Users/test/Projects/myproject-extras must never be rendered
 	// as part of this project's footprint.
@@ -36,7 +35,7 @@ func TestStatsIntegration_AllProjectsHumanOutput(t *testing.T) {
 	stdout, err := driveStats(t, home.Dir)
 	require.NoError(t, err)
 
-	assert.Contains(t, stdout, "4 projects (ranked by disk footprint)")
+	assert.Contains(t, stdout, "4 known projects (ranked by disk footprint)")
 	assert.Contains(t, stdout, "/Users/test/Projects/myproject")
 	// The witness recovers the space spelling; a naive decode of the encoded
 	// directory name could not.

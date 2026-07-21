@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/stats"
 	"github.com/it-bens/cc-port/internal/testutil"
 )
@@ -25,7 +25,7 @@ func driveStats(t *testing.T, claudeDir string, args ...string) (stdout string, 
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetOut(&outBuffer)
 	rootCmd.SetErr(&errBuffer)
-	rootCmd.SetArgs(append([]string{"stats", "--claude-dir", claudeDir}, args...))
+	rootCmd.SetArgs(append([]string{"stats", "--claude-home", claudeDir}, args...))
 	err = rootCmd.Execute()
 	return outBuffer.String(), err
 }
@@ -38,6 +38,7 @@ func TestStatsCmd_ResultRoutedToStdout(t *testing.T) {
 
 	// A bare fmt.Println would write to os.Stdout and leave this buffer empty.
 	assert.Contains(t, stdout, "cc-port stats: "+testutil.FixtureProjectPath())
+	assert.Contains(t, stdout, "[claude]")
 	assert.Contains(t, stdout, "References")
 	assert.Contains(t, stdout, "Disk footprint")
 }
@@ -52,10 +53,12 @@ func TestStatsCmd_JSONFlagEmitsFootprintDTO(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &footprint))
 
 	assert.Equal(t, testutil.FixtureProjectPath(), footprint.ProjectPath)
-	assert.Len(t, footprint.Disk, len(manifest.AllCategories),
-		"the disk DTO carries every manifest category, including zero ones")
-	assert.NotEmpty(t, footprint.References)
-	assert.Positive(t, footprint.ReferenceTotal)
+	require.Len(t, footprint.ByTool, 1)
+	claudeFootprint := footprint.ByTool[0]
+	assert.Equal(t, "claude", claudeFootprint.Tool)
+	assert.NotEmpty(t, claudeFootprint.Disk)
+	assert.NotEmpty(t, claudeFootprint.References)
+	assert.Positive(t, claudeFootprint.ReferenceTotal)
 }
 
 func TestStatsCmd_JSONFlagEmitsAllProjectsDTO(t *testing.T) {
@@ -71,14 +74,12 @@ func TestStatsCmd_JSONFlagEmitsAllProjectsDTO(t *testing.T) {
 
 // TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes drives all-projects
 // mode against a single witness-less project and asserts the renderer flags the
-// missing witness and humanizes the byte total. A 2 KiB transcript pins the KiB
-// branch of humanizeBytes, and the absent sessions/ directory leaves the project
-// unresolved so the "(no session witness)" suffix renders.
+// missing witness and humanizes the byte total.
 func TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes(t *testing.T) {
 	claudeDir := filepath.Join(t.TempDir(), "dotclaude")
 	orphanDir := filepath.Join(claudeDir, "projects", "-tmp-orphan")
 	require.NoError(t, os.MkdirAll(orphanDir, 0o750))
-	transcript := filepath.Join(orphanDir, "aaaaaaaa-0000-0000-0000-000000000001.jsonl")
+	transcript := filepath.Join(orphanDir, "7f39c2a1-1e4b-4d38-9a6c-528e8d1b4f73.jsonl")
 	require.NoError(t, os.WriteFile(transcript, bytes.Repeat([]byte("x"), 2048), 0o600))
 
 	stdout, err := driveStats(t, claudeDir)
@@ -90,6 +91,61 @@ func TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes(t *testing.T) {
 		"a 2048-byte footprint must render via humanizeBytes' KiB branch")
 }
 
+// TestStatsCmd_HumanizesDiskFootprintAcrossMagnitudes drives all-projects
+// mode against a witness-less project whose sole transcript file is sized to
+// land in each humanizeBytes branch in turn, closing the sub-KiB, MiB, and
+// GiB branches TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes (KiB)
+// doesn't reach. Disk footprint is sized from the file's logical byte count
+// (os.Stat), so a sparse file — grown with os.Truncate rather than written —
+// drives the GiB case without materializing a gigabyte of real content.
+func TestStatsCmd_HumanizesDiskFootprintAcrossMagnitudes(t *testing.T) {
+	cases := []struct {
+		name string
+		size int64
+		want string
+	}{
+		{"sub-KiB value renders as bytes", 512, "512 B"},
+		{"MiB value renders with one decimal", 5 * 1024 * 1024, "5.0 MiB"},
+		{"GiB value renders with one decimal", 1_610_612_736, "1.5 GiB"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			claudeDir := filepath.Join(t.TempDir(), "dotclaude")
+			orphanDir := filepath.Join(claudeDir, "projects", "-tmp-orphan")
+			require.NoError(t, os.MkdirAll(orphanDir, 0o750))
+			transcript := filepath.Join(orphanDir, "7f39c2a1-1e4b-4d38-9a6c-528e8d1b4f73.jsonl")
+			require.NoError(t, os.WriteFile(transcript, nil, 0o600))
+			require.NoError(t, os.Truncate(transcript, testCase.size))
+
+			stdout, err := driveStats(t, claudeDir)
+			require.NoError(t, err)
+
+			assert.Contains(t, stdout, testCase.want)
+		})
+	}
+}
+
+// TestStatsCmd_CancelledRootContextAbortsScan drives stats through the same
+// ExecuteContext entry main() uses, with the root context already cancelled.
+// It pins that the read-only stats command inherits the composition root's
+// interrupt: cancellation reaches the scan and surfaces as context.Canceled,
+// which would fail if stats stopped threading cmd.Context() into ComputeFootprint.
+func TestStatsCmd_CancelledRootContextAbortsScan(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var outBuffer, errBuffer bytes.Buffer
+	rootCmd := newRootCmd(noopBanner{})
+	rootCmd.SetOut(&outBuffer)
+	rootCmd.SetErr(&errBuffer)
+	rootCmd.SetArgs([]string{"stats", "--claude-home", home.Dir, testutil.FixtureProjectPath()})
+
+	err := rootCmd.ExecuteContext(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestStatsCmd_TooManyArgsIsUsageError(t *testing.T) {
 	home := testutil.SetupFixture(t)
 
@@ -98,23 +154,4 @@ func TestStatsCmd_TooManyArgsIsUsageError(t *testing.T) {
 
 	var usageErr *usageError
 	assert.ErrorAs(t, err, &usageErr, "a second positional argument must be a usage error (exit 2)")
-}
-
-func TestHumanizeBytes(t *testing.T) {
-	cases := []struct {
-		name  string
-		bytes int64
-		want  string
-	}{
-		{"below one KiB renders as bytes", 512, "512 B"},
-		{"exact KiB boundary", 1 << 10, "1.0 KiB"},
-		{"fractional KiB", 1536, "1.5 KiB"},
-		{"MiB branch", 5 << 20, "5.0 MiB"},
-		{"GiB branch", 3 << 30, "3.0 GiB"},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			assert.Equal(t, testCase.want, humanizeBytes(testCase.bytes))
-		})
-	}
 }

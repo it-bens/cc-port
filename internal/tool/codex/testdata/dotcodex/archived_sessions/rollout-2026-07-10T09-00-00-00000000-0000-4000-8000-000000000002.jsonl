@@ -1,0 +1,2 @@
+{"type":"session_meta","payload":{"session_id":"00000000-0000-4000-8000-000000000002","id":"00000000-0000-4000-8000-000000000002","timestamp":"2026-07-10T09:00:00Z","cwd":"/Users/fixture/codexproject","originator":"codex_cli_rs","cli_version":"0.144.5-fixture","source":"cli","model_provider":"openai","base_instructions":null}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"Reviewed /Users/fixture/codexproject/README.md"}}

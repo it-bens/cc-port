@@ -1,4 +1,4 @@
-# internal/scan — agent notes
+# internal/scan: agent notes
 
 ## Before editing
 
@@ -10,6 +10,4 @@
 
 - Entry: `rules.go:Rules`.
 - Warning type: `rules.go:Warning`.
-- Report type: `rules.go:Report`.
-- Report helper: `rules.go:ScanReport`.
 - Tests: `rules_test.go`.

@@ -2,135 +2,90 @@
 
 ## Purpose
 
-Relocate one project from an old path to a new path. Plans the rewrite (`DryRun`), applies it with copy-verify-delete (`Apply`), and preserves file-history snapshots verbatim.
+Generic move orchestration across every selected tool: preflight each
+target's move surfaces, acquire its lock, apply its surfaces in order, and
+report a per-tool result. This package has no tool-specific knowledge; every
+surface's actual rewrite (which files, which database columns, what counts
+as "the project") lives in the owning adapter's `MoveSurfaces` (for example
+`internal/tool/claude`).
 
 ## Public API
 
-- `DryRun(ctx context.Context, claudeHome *claude.Home, moveOptions Options) (*Plan, error)`: compute the plan without writing any files.
-- `Apply(ctx context.Context, claudeHome *claude.Home, moveOptions Options) error`: execute the plan with copy-verify-delete, emitting progress and warnings through `Options.Reporter`.
-- `PlanCategories() []string`: returns a copy of the canonical category ordering so CLI renderers iterate `ReplacementsByCategory` in a stable order.
-- `Options`: input parameters for a move operation.
-  - `OldPath`, `NewPath`: source and destination project paths.
-  - `RewriteTranscripts`: opt-in project-local transcript rewrite.
-  - `RefsOnly`: skip the on-disk encoded-dir rename, update references only.
-  - `Reporter`: progress and warning sink, unused by `DryRun`; nil-handling follows `internal/progress/README.md` §Reporter injection.
-- `Plan`: dry-run output.
-  - `OldProjectDir` / `NewProjectDir`: encoded storage paths.
-  - `ReplacementsByCategory map[string]int`: keyed on `planCategories` order, missing keys read as zero.
-  - `TranscriptReplacements` and `MemoryReplacements` (ints), `ConfigBlockRekey` and `MoveProjectDir` (booleans).
-  - `HistoryMalformedLines []int`: 1-based line numbers that failed to parse.
-  - `RulesReport scan.Report`.
-
-### Errors
-
-- `ErrEncodedDirAmbiguous`: returned by `DryRun` and `Apply` when the old and new
-  project paths both encode to the same on-disk directory. Tests assert via
-  `errors.Is`.
-- `ErrEncodedDirCollision`: returned by `DryRun` and `Apply` when the new
-  project's encoded directory already exists because another real path encodes to
-  the same name. Tests assert via `errors.Is`.
-- `ErrResidualSourceDir`: returned by `Apply` when the encoded project data was
-  removed but the on-disk source directory cannot be deleted, the non-retryable
-  branch of `deleteOriginals`. Wraps the os cause and joins with any rollback
-  error; tests assert via `errors.Is`.
-
-### Internal helpers
-
-`rewriteTracked(path, oldPath, newPath, tracker)` is the shared save -> `rewrite.ReplacePathInBytes` -> `rewrite.SafeWriteFile` sandwich. Every uniform plain-bytes rewrite in `Apply` routes through it so the rollback tracker sees pre-write bytes consistently: `rewriteUserWideFiles` iterates `claude.UserWideRewriteTargets` (settings.json, plugins/installed_plugins.json, plugins/known_marketplaces.json). The session-keyed-groups loop iterates `locations.AllFlatFiles()` through `rewriteTrackedPreservingMtime`, which wraps `rewriteTracked` and restores each file's pre-rewrite modification time. See §Source mtime preservation (move).
-
-`snapshotPaths(ctx, locations)` enumerates every snapshot path under `locations.FileHistoryDirs`. Contents are never read; only path discovery. The returned length equals the dry-run `plan.ReplacementsByCategory["file-history-snapshots"]`. `DryRun`'s counter and `Apply`'s preservation warning call it so both stay in lock-step off one enumeration. `ctx` is checked at the top of the outer loop and inside the `fsutil.ListFilesRecursive` walk so a long enumeration aborts within one iteration. The helper is unexported; the black-box test file reaches it through a `_test.go` binding.
-
-`rewriteHistoryFile` picks the rollback snapshot route by `history.jsonl` size. Files under `siblingBackupThreshold` (1 MiB) take the in-memory route via `tracker.save`; larger files take the on-disk `saveToSibling` route so the original never lands whole in RAM. Both routes share `rewrite.StreamHistoryJSONL` for the actual rewrite, so behavior parity between the two sizes is guaranteed.
+- `DryRun(ctx context.Context, targets []tool.Target, options Options) (*Plan, error)`:
+  computes the plan without writing any files or taking a lock. For each
+  target, calls `Workspace.MoveSurfaces` then `Surface.Plan` on each returned
+  surface, plus `Workspace.ResidualWarnings`.
+- `Apply(ctx context.Context, targets []tool.Target, options Options) (*ApplyResult, error)`:
+  executes the move. Every selected target is preflighted in registry order
+  (`MoveSurfaces`, then witness-first `lock.Acquire`) before any tool
+  applies; the acquired locks are held through the full apply and released
+  in reverse order via a deferred cleanup. See
+  `docs/architecture.md` §Crash and idempotence contract for the per-tool
+  apply bracket, in-process failure, re-run convergence, and cross-tool
+  rollback guarantees this call implements. `ApplyResult` carries a per-tool
+  success/failure record; `(*ApplyResult).Failed()` reports whether the
+  caller should exit non-zero.
+- `Options`: `OldPath`, `NewPath`, `RefsOnly`, `DeepRewrite` (the CLI's
+  `--deep` flag: extends rewriting into narrative bodies such as session
+  transcripts), `Reporter` (progress and warning sink, unused by `DryRun`;
+  nil-handling follows `internal/progress/README.md` §Reporter injection).
+- `Plan`: `ByTool []ToolPlan`. `ToolPlan`: `Tool`, `Absent` (true when the
+  target reported `tool.ErrProjectAbsent`: it simply does not know this
+  project, and `Surfaces` is empty rather than fabricated), `Surfaces
+  []SurfaceCount`, `Warnings []string`.
+- `ApplyResult`: `ByTool []ToolResult`. `ToolResult`: `Tool`, `Absent`,
+  `Success`, `Err`, `Surfaces []SurfaceCount`, `Warnings []string`.
+- `SurfaceCount`: `Name`, `Count`.
 
 ## Contracts
 
-### Malformed history entries preserved
-
-`~/.claude/history.jsonl` is expected to hold one JSON object per line. If a line fails to parse, cc-port cannot reconstruct the intended data from what was written. Repairing broken lines is out of scope.
-
-Callers: `cc-port move` command in `cmd/cc-port`.
-
-#### Handled
-
-- `DryRun` includes a `Warning: history.jsonl has N malformed line(s) at [...]` block in the plan output when any entries fail to parse.
-- `Apply` emits a `history.jsonl contains N malformed line(s) at [...]` warning through `Options.Reporter` after `history.jsonl` is rewritten. The rewrite still succeeds. Malformed lines are preserved verbatim and well-formed lines are rewritten normally.
-
-#### Refused
-
-None at runtime. Malformed lines never block the rewrite. They pass through unchanged with well-formed lines rewritten around them.
-
-#### Not covered
-
-- Automatic repair. cc-port does not attempt to reconstruct a broken line, drop it, or quarantine it. The original bytes land back on disk unchanged.
-- Detection outside `history.jsonl`. Session transcripts and session subdir files are rewritten as opaque byte streams with path-boundary-aware substitution, not scanned for parse errors.
-
 ### Apply contract
 
-`Apply` copies, verifies, and rewrites every file that belongs to the project. Beyond the encoded project directory, history, sessions, and settings, the session-keyed user-wide shapes also receive copy, rewrite, and rollback coverage.
-
-Every session-keyed shape flows through the same `globalFileTracker` rollback as history, sessions, settings, and config. No separate tracker exists for the session-keyed categories.
-
-If rollback cannot restore every saved file, per-file restoration errors are aggregated via `errors.Join` and returned alongside the primary failure.
-
-Callers: `cc-port move --apply` command in `cmd/cc-port`. See `internal/lock/README.md §Concurrency guard` for the live-session check that wraps `Apply`.
+Callers: `cc-port move --apply` command in `cmd/cc-port`. See
+[`internal/lock/README.md`](../lock/README.md) §Concurrency guard for the
+witness-then-flock ordering that guards `Apply`.
 
 #### Handled
 
-- Encoded-dir collision check runs before any write. Moves where old and new paths encode to the same directory, or where the new encoded directory already exists, are refused with a descriptive error.
-- `Apply` wraps its body in `lock.WithLock`, which aborts if a Claude Code session is live or another cc-port invocation is running.
-- Session-keyed categories: `~/.claude/todos/<sid>-agent-<sid>.json`, `~/.claude/usage-data/session-meta/<sid>.json`, `~/.claude/usage-data/facets/<sid>.json`, `~/.claude/plugins/data/<ns>/<sid>/**`, `~/.claude/tasks/<sid>/**`.
-- User-wide categories iterated via `claude.UserWideRewriteTargets`: `~/.claude/settings.json`, `~/.claude/plugins/installed_plugins.json`, `~/.claude/plugins/known_marketplaces.json`. Each is stat-gated; missing files skip without error.
-- Copied project-dir bodies have the old encoded storage dir swapped for the new one via a second `rewrite.ReplacePathInBytes` pass in `rewritePathsPreservingMtime`, alongside the real-path rewrite. The pass covers the transcript / session-subdir tree under `--rewrite-transcripts` and the memory files unconditionally.
+- Every selected target's `MoveSurfaces` and witness-plus-flock preflight
+  run before any target applies. A `tool.ErrProjectAbsent` from
+  `MoveSurfaces` marks that target `Absent` and skips it during apply, still
+  holding its (already-acquired) lock through the full run for consistency
+  with the other targets.
+- Each target's surfaces apply in the order its adapter returned them, each
+  registering its own rollback with a fresh `tool.Restorer`; a surface
+  failure rolls back only that target's own `Restorer` (see
+  `docs/architecture.md` §Crash and idempotence contract).
+- Every acquired lock is released, in reverse acquisition order, via a single
+  deferred cleanup that runs regardless of how `Apply` returns.
 
 #### Refused
 
-- Moves where old and new paths encode to the same directory are refused before any write.
-- Moves where the new encoded directory already exists are refused before any write.
-- Moves attempted while a live Claude Code session or concurrent cc-port run holds the advisory lock (see `internal/lock/README.md §Concurrency guard`).
+- A project cannot be moved into itself or a path-boundary descendant of
+  itself. This generic precondition is checked once before any adapter surface
+  runs, for every mode.
+- Beyond that nesting precondition, a target's own encoded-directory collision
+  and identity checks are the adapter's responsibility (see
+  `internal/tool/claude/README.md` for the Claude instance); this package does
+  not special-case any tool's refusal conditions.
 
 #### Not covered
 
-- `tasks/.lock` and `tasks/.highwatermark` are not copied and not rewritten. They are runtime-only artifacts.
-
-### Source mtime preservation (move)
-
-A move rewrites the embedded project path in every file, and additionally swaps the encoded storage dir in the copied project-dir tree (transcripts and memory), leaving the session data otherwise unchanged. Transcripts, memory files, and session-keyed flat files keep their source modification times so the move does not reorder Claude Code's mtime-sorted `/resume` picker.
-
-Callers: `cc-port move --apply` command in `cmd/cc-port`.
-
-#### Handled
-
-- Transcripts and memory files: copied by `internal/fsutil.CopyDir`, which restores mtime per [`internal/fsutil/README.md`](../fsutil/README.md) §Symlink replication for CopyDir, then rewritten by `rewritePathsPreservingMtime`, which restores the mtime the copy carried over.
-- Session-keyed flat files (`todos`, `usage-data`, `plugins-data`, `tasks`): rewritten in place through `rewriteTrackedPreservingMtime`, matching how `cc-port import` preserves the same categories (see [`internal/importer/README.md`](../importer/README.md) §Source mtime preservation).
-
-#### Refused
-
-None at runtime. An `os.Stat` or `os.Chtimes` failure aborts the rewrite and the rollback tracker unwinds partial work.
-
-#### Not covered
-
-- `history.jsonl`, `~/.claude.json`, `settings.json`, and `~/.claude/sessions/*.json`: rewritten with a fresh modification time. These are merged or genuinely edited globals, not verbatim session files, so they inherit the write-time mtime the way an import treats merge results.
-- File-history snapshots: never rewritten, so their mtime survives untouched. See §File-history handling (move).
-
-### File-history handling (move)
-
-File-history snapshots under `~/.claude/file-history/<session-uuid>/` are opaque byte streams. cc-port never inspects or rewrites their content. See [`docs/architecture.md`](../../docs/architecture.md) §File-history policy (cross-cutting) for the framing that governs every command. This section covers the move-specific handling.
-
-Callers: `cc-port move` command in `cmd/cc-port`.
-
-#### Handled
-
-- `Apply` leaves every snapshot under the same UUID directory untouched. The old project path may appear inside a snapshot body afterwards. The apply path emits a `note: N file-history snapshot(s) preserved verbatim ...` warning through `Options.Reporter`. The dry-run plan reports the preserved count in the same position.
-
-#### Refused
-
-None at runtime. The move never refuses based on snapshot content. Copy is unconditional.
-
-#### Not covered
-
-- Stale path strings inside snapshots after a move. Grepping `~/.claude/file-history/` for the old project path still returns hits after a successful move. This is by design. Rewind continues to work because it resolves by filename, not by content.
-- Decoding snapshot UUIDs back to a project. To find the owner of a UUID directory, read the matching `~/.claude/sessions/<uuid>.json` and check its `cwd` field.
+- Per-tool file shapes, categories, or residual-risk content. Those are
+  described where the adapter that owns them documents its own `Surface`
+  list.
 
 ## Tests
 
-Unit tests live in `move_test.go` (end-to-end `DryRun`/`Apply` coverage) and `rewrite_global_test.go` (`rewriteTracked` happy path and failure modes). Coverage includes dry-run (with and without transcripts, refs-only, project-not-found), apply (basic, refs-only, with transcripts), encoded-dir collision refusal, live-session refusal, malformed-history reporting, file-history snapshot preservation, source mtime preservation on session files, and fresh mtime on merged globals.
+Unit tests in `move_test.go`, `preflight_test.go`, and `sweep_test.go`.
+Coverage: `DryRun`/`Apply` across single- and multi-target sweeps, the
+`tool.ErrProjectAbsent` absent-target path in both dry-run and apply,
+preflight ordering (surfaces before lock, lock acquisition in registry
+order), lock release in reverse order regardless of apply outcome, per-tool
+failure isolation (`ApplyResult.Failed`), and residual-warning propagation
+into both `Plan` and `ApplyResult`.
+
+Per-adapter move behavior (which files move, malformed-history handling,
+file-history preservation, source mtime preservation) is tested in each
+adapter package; see `internal/tool/claude/README.md` §Tests for the Claude
+instance and `internal/tool/codex/README.md` §Tests for the Codex instance.

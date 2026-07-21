@@ -25,7 +25,7 @@ The Reporter observes quantities only: file counts, byte totals, phase names, du
   - `LedgerRenderer`, `StreamRenderer`, `JSONRenderer`, `NullRenderer`: the four sinks, built via `NewLedgerRenderer`, `NewStreamRenderer`, `NewJSONRenderer`, `NewNullRenderer`.
     - **Ledger** drives an interactive TTY through bubbletea: a live tree of phase nodes with spinner and progress bars. Selected when the sink is a TTY and neither `--json` nor `--quiet` is set.
     - **Stream** writes append-only, ANSI-free lines for CI logs and redirected stderr. `PhaseStart`/`PhaseEnd` always print; `PhaseAdvance` is rate-limited to one line per phase per 500 ms. The non-TTY default.
-    - **JSON** emits one schema-stable, newline-delimited object per event under `--json`, regardless of TTY.
+    - **JSON** emits one newline-delimited object per event under `--json`, regardless of TTY.
     - **Null** is the `--quiet` sink. It drops every event but warnings and a terminal summary: an `[ERROR]` line plus a `failed at <phase>` line on failure, a single line otherwise.
   - `Selection`: the flag-derived intent (`JSON`, `Quiet`, `Verbose`, `Debug`, `Output`).
   - `Pick(selection) (Renderer, Level)`: maps a `Selection` to a concrete renderer and active level. See §Contracts §Renderer selection.

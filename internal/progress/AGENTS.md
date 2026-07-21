@@ -1,4 +1,4 @@
-# internal/progress — agent notes
+# internal/progress: agent notes
 
 ## Before editing
 

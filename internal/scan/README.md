@@ -8,18 +8,16 @@ Read-only scanner for `~/.claude/rules/*.md`.
 
 - `Rules(rulesDir string, paths ...string) ([]Warning, error)`: scans every `.md` directly inside `rulesDir` for occurrences of any given path and returns per-line `Warning` entries.
 - `Warning`: struct with fields `File` (base filename, not full path), `Line` (1-based), `Text` (full line content), and `Path` (the search path that matched).
-- `Report`: struct with fields `Warnings []Warning` and `Err error`. Canonical bundle the cmd-layer renders; `Err` is non-fatal so callers surface both fields without aborting.
-- `ScanReport(rulesDir string, paths ...string) Report`: calls `Rules` and wraps the result as a `Report`. Convenience for callers that hand the bundle straight to a renderer.
 
 ## Contracts
 
 ### Rules files preserved
 
-Called by `internal/move.DryRun` only; `Apply` does not re-scan. See `internal/move/README.md` §Malformed history entries preserved for the surrounding plan flow.
+Called by `internal/tool/claude` on three surfaces: `Export`, import `Finalize`, and move `ResidualWarnings`. See `internal/tool/claude/README.md` §Anonymisation (export) for the surrounding export flow.
 
 #### Handled
 
-`move` surfaces matches so the user can edit them manually. `cc-port move` (dry-run) runs `internal/scan/rules.go:Rules` over every `.md` file in `~/.claude/rules/`. Each line that contains the old project path is reported as a `Warning` alongside the rest of the plan output. `--apply` does not re-scan, so edits made after the dry-run do not trigger a fresh warning.
+`cc-port export` surfaces matches so the user can edit them manually before sharing an archive. `internal/tool/claude`'s `Export` runs `internal/scan/rules.go:Rules` over every `.md` file in `~/.claude/rules/`. Each line that contains the project path is reported as a `Warning` alongside the export's other warnings. Import's `Finalize` and move's `ResidualWarnings` run the same scan against their project path, so an import or move reports lingering rules references the same way.
 
 Files on disk are not modified. One `Warning` is emitted per matched line, not per matched path.
 
@@ -43,6 +41,7 @@ Unit tests in `rules_test.go`. Coverage:
 - multiple paths across multiple files.
 - one warning per line even when multiple paths match.
 - no-match case, empty directory, missing directory, non-`.md` files ignored.
+- an unreadable rules directory propagates its permission error.
 - 1 MiB line scanned intact, staying under the 16 MiB cap. A 17 MiB line returns `bufio.ErrTooLong`.
 
 ## References

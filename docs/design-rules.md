@@ -20,11 +20,11 @@ State the category's opacity policy first. File-history snapshot bodies are opaq
 
 ## Add a category, session-keyed directory, or user-wide rewrite target
 
-Extend the registry. New export category → `manifest.AllCategories`, referenced via `manifest.BuildCategoryEntries` and `manifest.ApplyCategoryEntries`. New session-keyed directory under `~/.claude/` → one entry in both `claude.SessionKeyedGroups` and `transport.SessionKeyedTargets`, with the group's `Category` field pointing at a value in `manifest.AllCategories`. New user-wide file under `~/.claude/` whose contents reference user paths → one entry in `claude.UserWideRewriteTargets`. The drift-guard test for the parity invariant ships in the same change.
+Extend the registry. New export category → one entry in the owning tool's `Categories()` list, validated through `manifest.ApplyToolCategories` and `manifest.BuildToolCategoryEntries`. New session-keyed directory under `~/.claude/` → one `claude.Registries` row (surfaced through `claude.SessionKeyedGroups`), its `Category` field naming one of the tool's registered categories. New user-wide file under `~/.claude/` whose contents reference user paths → one `claude.Registries` row surfaced through `claude.UserWideRewriteTargets`. The drift-guard test for the parity invariant ships in the same change.
 
 **Don't** hard-code a category slice in `cmd/cc-port/`. Don't enumerate the directory in callers (move, export, importer, ui). Don't maintain a parallel list of user-wide rewrite files in move's logic. Don't defer the parity test — drift that lands in the original change is invisible to a test added later.
 
-**See** `internal/manifest/README.md` and `internal/claude/README.md` §Session-keyed registry.
+**See** `internal/manifest/README.md` and `internal/tool/claude/README.md` §Session-keyed registry.
 
 ## Write a command body that mutates user state
 

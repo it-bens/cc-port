@@ -4,1599 +4,441 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
-	"encoding/xml"
-	"errors"
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/claude"
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
-	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
-// openArchive opens archivePath for the duration of the test and returns
-// it as the (Source, Size) pair the importer's Options expects.
-func openArchive(t *testing.T, archivePath string) (source io.ReaderAt, size int64) {
+func allSelected(t tool.Tool) map[string]bool {
+	selected := make(map[string]bool)
+	for _, category := range t.Categories() {
+		selected[category.Name] = true
+	}
+	return selected
+}
+
+func buildArchive(t *testing.T) (body []byte, projectPath string) {
 	t.Helper()
-	zipFile, err := os.Open(archivePath) //nolint:gosec // G304: test-controlled archive path
-	require.NoError(t, err, "open archive")
-	t.Cleanup(func() { _ = zipFile.Close() })
-	zipInfo, err := zipFile.Stat()
-	require.NoError(t, err, "stat archive")
-	return zipFile, zipInfo.Size()
-}
-
-// Fixture-wide constants — hardcoded in the test-data directory layout.
-const (
-	fixtureSourceProjectPath = "/Users/test/Projects/myproject"
-	fixtureSourceHomeDir     = "/Users/test"
-	fixtureDestProjectPath   = "/Users/dest/Projects/newproject"
-)
-
-// addEntry is a helper type for adding entries to a test ZIP archive.
-type addEntry func(zipName string, content []byte)
-
-// buildTestArchive constructs a cc-port ZIP archive from fixture data,
-// replacing source paths with placeholder tokens so the importer can resolve
-// them at import time.
-//
-// The archive contains:
-//   - metadata.xml
-//   - sessions/99999.json  (from fixture sessions/ directory)
-//   - memory/MEMORY.md
-//   - memory/project_notes.md
-//   - history/history.jsonl (only entries for sourceProjectPath)
-//   - file-history/<uuid>/abcdef...@v1
-//   - config.json          (the project block from .claude.json)
-func buildTestArchive(
-	t *testing.T,
-	sourceClaudeHome *claude.Home,
-	archivePath string,
-) {
-	t.Helper()
-	sourceProjectPath := fixtureSourceProjectPath
-	sourceHomeDir := fixtureSourceHomeDir
-
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err, "create archive file")
-	defer func() { _ = archiveFile.Close() }()
-
-	zipWriter := zip.NewWriter(archiveFile)
-	defer func() { _ = zipWriter.Close() }()
-
-	// entryAdder: add a byte slice to the ZIP as zipName, replacing sourcePaths
-	// with their {{PLACEHOLDER}} equivalents.
-	entryAdder := addEntry(func(zipName string, content []byte) {
-		t.Helper()
-		content = replacePaths(content, sourceProjectPath, sourceHomeDir)
-		writer, err := zipWriter.Create(zipName)
-		require.NoError(t, err, "create zip entry %q", zipName)
-		_, err = writer.Write(content)
-		require.NoError(t, err, "write zip entry %q", zipName)
-	})
-
-	// fileAdder: add a file from the source ClaudeHome.
-	fileAdder := func(zipName, sourcePath string) {
-		t.Helper()
-		data, err := os.ReadFile(sourcePath) //nolint:gosec // G304: test helper reading fixture files
-		require.NoError(t, err, "read source file %q", sourcePath)
-		entryAdder(zipName, data)
-	}
-
-	writeMetadataEntry(t, zipWriter, sourceProjectPath, sourceHomeDir)
-
-	encodedProjectDir := sourceClaudeHome.ProjectDir(sourceProjectPath)
-
-	// --- sessions/99999.json ---
-	sessionEntry := filepath.Join(sourceClaudeHome.Dir, "sessions", "99999.json")
-	if _, statErr := os.Stat(sessionEntry); statErr == nil {
-		fileAdder("sessions/99999.json", sessionEntry)
-	}
-
-	// --- memory files ---
-	memoryDir := filepath.Join(encodedProjectDir, "memory")
-	memoryEntries, err := os.ReadDir(memoryDir)
-	require.NoError(t, err, "read memory directory")
-	for _, memoryEntry := range memoryEntries {
-		if memoryEntry.IsDir() {
-			continue
-		}
-		fileAdder("memory/"+memoryEntry.Name(), filepath.Join(memoryDir, memoryEntry.Name()))
-	}
-
-	// --- history/history.jsonl (filtered to this project only) ---
-	historyData, err := os.ReadFile(sourceClaudeHome.HistoryFile())
-	require.NoError(t, err, "read history file")
-	filteredHistory := filterHistoryLines(historyData, sourceProjectPath)
-	entryAdder("history/history.jsonl", filteredHistory)
-
-	addFileHistoryEntries(t, sourceClaudeHome, fileAdder)
-	addConfigEntry(t, sourceClaudeHome, sourceProjectPath, entryAdder)
-}
-
-// writeMetadataEntry writes the metadata.xml entry to the ZIP writer.
-func writeMetadataEntry(
-	t *testing.T,
-	zipWriter *zip.Writer,
-	sourceProjectPath string,
-	sourceHomeDir string,
-) {
-	t.Helper()
-
-	metadata := &manifest.Metadata{
-		Export: manifest.Info{
-			Created: time.Now(),
-			Categories: []manifest.Category{
-				{Name: "sessions", Included: true},
-				{Name: "memory", Included: true},
-				{Name: "history", Included: true},
-				{Name: "file-history", Included: true},
-				{Name: "config", Included: true},
-				{Name: "todos", Included: false},
-				{Name: "usage-data", Included: false},
-				{Name: "plugins-data", Included: false},
-				{Name: "tasks", Included: false},
-			},
-		},
-		Placeholders: []manifest.Placeholder{
-			{Key: "{{PROJECT_PATH}}", Original: sourceProjectPath},
-			{Key: "{{HOME}}", Original: sourceHomeDir},
-		},
-	}
-	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
-	require.NoError(t, manifest.WriteManifest(metadataPath, metadata), "write temp metadata")
-	metadataData, err := os.ReadFile(metadataPath) //nolint:gosec // G304: test helper reading temp file
-	require.NoError(t, err, "read temp metadata")
-	xmlEntry, err := zipWriter.Create("metadata.xml")
-	require.NoError(t, err, "create metadata.xml entry")
-	_, err = xmlEntry.Write(metadataData)
-	require.NoError(t, err, "write metadata.xml")
-}
-
-// addFileHistoryEntries adds all file-history entries to the ZIP archive.
-func addFileHistoryEntries(t *testing.T, sourceClaudeHome *claude.Home, fileAdder func(zipName, sourcePath string)) {
-	t.Helper()
-
-	fileHistoryBaseDir := sourceClaudeHome.FileHistoryDir()
-	uuidDirs, err := os.ReadDir(fileHistoryBaseDir)
-	require.NoError(t, err, "read file-history directory")
-	for _, uuidDir := range uuidDirs {
-		if !uuidDir.IsDir() {
-			continue
-		}
-		versionFiles, err := os.ReadDir(filepath.Join(fileHistoryBaseDir, uuidDir.Name()))
-		require.NoError(t, err, "read file-history uuid dir")
-		for _, versionFile := range versionFiles {
-			if versionFile.IsDir() {
-				continue
-			}
-			zipEntryName := "file-history/" + uuidDir.Name() + "/" + versionFile.Name()
-			fileAdder(zipEntryName, filepath.Join(fileHistoryBaseDir, uuidDir.Name(), versionFile.Name()))
-		}
-	}
-}
-
-// addConfigEntry extracts the project config block and adds it to the ZIP archive.
-func addConfigEntry(
-	t *testing.T,
-	sourceClaudeHome *claude.Home,
-	sourceProjectPath string,
-	entryAdder addEntry,
-) {
-	t.Helper()
-
-	configData, err := os.ReadFile(sourceClaudeHome.ConfigFile)
-	require.NoError(t, err, "read config file")
-	var userConfig claude.UserConfig
-	require.NoError(t, json.Unmarshal(configData, &userConfig), "unmarshal config")
-	projectBlock, ok := userConfig.Projects[sourceProjectPath]
-	require.True(t, ok, "project %q not found in config", sourceProjectPath)
-	entryAdder("config.json", projectBlock)
-}
-
-// replacePaths mirrors the production export anonymizer: it rewrites
-// sourceProjectPath to {{PROJECT_PATH}} and sourceHomeDir to {{HOME}} using
-// path-boundary-aware substitution so prefix collisions like
-// /…/myproject-extras are not corrupted into {{PROJECT_PATH}}-extras.
-func replacePaths(content []byte, sourceProjectPath, sourceHomeDir string) []byte {
-	content, _ = rewrite.ReplacePathInBytes(content, sourceProjectPath, "{{PROJECT_PATH}}")
-	content, _ = rewrite.ReplacePathInBytes(content, sourceHomeDir, "{{HOME}}")
-	return content
-}
-
-// filterHistoryLines returns only JSONL lines whose "project" field matches
-// targetProject.
-func filterHistoryLines(data []byte, targetProject string) []byte {
-	var filtered []byte
-	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		var entry claude.HistoryEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-		if entry.Project == targetProject {
-			filtered = append(filtered, []byte(line+"\n")...)
-		}
-	}
-	return filtered
-}
-
-func TestImport_RestoresMemoryFiles(t *testing.T) {
-	destClaudeHome := runBasicImport(t)
-	projectDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
-
-	assert.FileExists(t, filepath.Join(projectDir, "memory", "MEMORY.md"))
-	assert.FileExists(t, filepath.Join(projectDir, "memory", "project_notes.md"))
-
-	memoryPath := filepath.Join(projectDir, "memory", "MEMORY.md")
-	memoryData, err := os.ReadFile(memoryPath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	assert.NotContains(t, string(memoryData), "{{PROJECT_PATH}}",
-		"memory file must have no unresolved placeholders")
-}
-
-func TestImport_MergesHistory(t *testing.T) {
-	destClaudeHome := runBasicImport(t)
-
-	historyData, err := os.ReadFile(destClaudeHome.HistoryFile())
-	require.NoError(t, err)
-	assert.NotEmpty(t, historyData, "history file must have content")
-	assert.Contains(t, string(historyData), fixtureDestProjectPath,
-		"history must reference the destination project path after resolution")
-}
-
-func TestImport_RekeysConfigBlock(t *testing.T) {
-	destClaudeHome := runBasicImport(t)
-
-	configData, err := os.ReadFile(destClaudeHome.ConfigFile)
-	require.NoError(t, err)
-	var userConfig claude.UserConfig
-	require.NoError(t, json.Unmarshal(configData, &userConfig))
-
-	_, hasProject := userConfig.Projects[fixtureDestProjectPath]
-	assert.True(t, hasProject, "config must hold the imported project entry")
-}
-
-func TestImport_ResolvesDeclaredPlaceholders(t *testing.T) {
-	destClaudeHome := runBasicImport(t)
-	projectDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
-
-	assertNoPendingPlaceholders(t, projectDir)
-}
-
-func TestImport_LandsHistoryAndConfigAt0600(t *testing.T) {
-	destClaudeHome := runBasicImport(t)
-
-	historyInfo, err := os.Stat(destClaudeHome.HistoryFile())
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), historyInfo.Mode().Perm(),
-		"imported history.jsonl must be owner-only")
-
-	configInfo, err := os.Stat(destClaudeHome.ConfigFile)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), configInfo.Mode().Perm(),
-		"imported config file must be owner-only")
-}
-
-func TestImport_LandsSessionTranscriptAt0600(t *testing.T) {
-	destClaudeHome := runBasicImport(t)
-	projectDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
-
-	entries, err := os.ReadDir(projectDir)
-	require.NoError(t, err)
-	var transcripts []os.DirEntry
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		transcripts = append(transcripts, entry)
-	}
-	require.NotEmpty(t, transcripts, "fixture must produce at least one session transcript")
-
-	for _, transcript := range transcripts {
-		info, statErr := os.Stat(filepath.Join(projectDir, transcript.Name()))
-		require.NoError(t, statErr)
-		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
-			"session transcript %s must be owner-only", transcript.Name())
-	}
-}
-
-func TestImport_LandsMemoryFileAt0644(t *testing.T) {
-	destClaudeHome := runBasicImport(t)
-	projectDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
-
-	memoryPath := filepath.Join(projectDir, "memory", "MEMORY.md")
-	info, err := os.Stat(memoryPath)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(),
-		"memory files are not sensitive and stay at the default mode")
-}
-
-// runBasicImport runs a fresh import from a cc-port archive built off the
-// source fixture into an empty destination home, and returns the destination
-// home for assertions.
-func runBasicImport(t *testing.T) *claude.Home {
-	t.Helper()
-
-	sourceClaudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceClaudeHome, archivePath)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destHomeDir := filepath.Join(t.TempDir(), "home")
-
-	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureDestProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": fixtureDestProjectPath,
-			"{{HOME}}":         destHomeDir,
-		},
-	})
-	require.NoError(t, err)
-	return destClaudeHome
-}
-
-func TestImport_LeavesNoStagingTemps(t *testing.T) {
-	sourceClaudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceClaudeHome, archivePath)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destProjectPath := fixtureDestProjectPath
-	destHomeDir := filepath.Join(t.TempDir(), "home")
-
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: destProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destProjectPath,
-			"{{HOME}}":         destHomeDir,
-		},
-	}
-	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
-	require.NoError(t, err)
-
-	assertNoStagingTemps(t, destClaudeHome)
-}
-
-func TestImport_RefusesUnresolvedDeclaredKey(t *testing.T) {
-	sourceClaudeHome := testutil.SetupFixture(t)
-
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildArchiveWithExtraDeclaredKey(
-		t, sourceClaudeHome, archivePath, "{{EXTRA}}",
-	)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destProjectPath := fixtureDestProjectPath
-
-	preConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
-	require.NoError(t, err)
-
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: destProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destProjectPath,
-			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
-		},
-	}
-	_, err = importer.Run(t.Context(), destClaudeHome, &importOptions)
-	require.Error(t, err, "import must refuse when a declared placeholder is not resolved")
-	var missingErr *importer.MissingResolutionsError
-	require.ErrorAs(t, err, &missingErr)
-	assert.Equal(t, []string{"{{EXTRA}}"}, missingErr.Keys)
-
-	assertImportLeftDestinationUntouched(t, destClaudeHome, destProjectPath, preConfigBytes)
-}
-
-func TestImport_PreservesPlaceholderLookalikesInBodies(t *testing.T) {
-	// Arrange
-	sourceClaudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	fixtureBytes, err := os.ReadFile(filepath.Join("testdata", "lookalike-tokens.txt"))
-	require.NoError(t, err)
-	buildArchiveWithOverrides(t, archiveOverrides{
-		sourceClaudeHome: sourceClaudeHome,
-		archivePath:      archivePath,
-		memoryInjection:  string(fixtureBytes),
-	})
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destProjectPath := fixtureDestProjectPath
-	destHomeDir := filepath.Join(t.TempDir(), "home")
-
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: destProjectPath,
-		HomePath:   destHomeDir,
-	}
-
-	var expected bytes.Buffer
-	require.NoError(t, importer.ResolvePlaceholdersStream(
-		bytes.NewReader(fixtureBytes), &expected,
-		map[string]string{
-			"{{HOME}}":         destHomeDir,
-			"{{PROJECT_PATH}}": destProjectPath,
-		},
-	))
-
-	// Act
-	_, err = importer.Run(t.Context(), destClaudeHome, &importOptions)
-
-	// Assert
-	require.NoError(t, err)
-	importedMemory, err := os.ReadFile(filepath.Join(
-		destClaudeHome.ProjectDir(destProjectPath), "memory", "MEMORY.md",
-	))
-	require.NoError(t, err)
-	assert.Contains(t, string(importedMemory), expected.String(),
-		"lookalike content survives import; declared keys substitute, undeclared tokens round-trip")
-	assertNoStagingTemps(t, destClaudeHome)
-}
-
-func TestImport_AtomicRollbackOnFailure(t *testing.T) {
-	sourceClaudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceClaudeHome, archivePath)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destProjectPath := fixtureDestProjectPath
-
-	// Snapshot pre-import bytes so we can assert nothing was mutated after rollback.
-	preConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
-	require.NoError(t, err)
-	require.NoFileExists(t, destClaudeHome.HistoryFile())
-
-	// Fail the second rename — the first (project dir) has already promoted,
-	// so rollback must un-promote it.
-	callCount := 0
-	injector := func(oldpath, newpath string) error {
-		callCount++
-		if callCount == 2 {
-			return errors.New("simulated promote failure")
-		}
-		return os.Rename(oldpath, newpath)
-	}
-
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: destProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": destProjectPath,
-			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
-		},
-	}
-	err = importer.RunWithRenameHook(t.Context(), destClaudeHome, &importOptions, injector)
-	require.Error(t, err, "import must fail when a promote rename fails")
-
-	// Encoded project dir must not exist — it was promoted then rolled back.
-	assert.NoDirExists(t, destClaudeHome.ProjectDir(destProjectPath),
-		"rollback must remove the promoted project directory")
-
-	// Config file must match pre-import bytes.
-	postConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
-	require.NoError(t, err)
-	assert.Equal(t, preConfigBytes, postConfigBytes,
-		"rollback must restore config file bytes")
-
-	assert.NoFileExists(t, destClaudeHome.HistoryFile(),
-		"rollback must leave history absent when it was absent pre-import")
-
-	// No staging temps must remain.
-	assertNoStagingTemps(t, destClaudeHome)
-}
-
-// buildEmptyDestClaudeHome creates a fresh empty ClaudeHome with a minimal
-// config file. Shared by the import tests that need an untouched target.
-func buildEmptyDestClaudeHome(t *testing.T) *claude.Home {
-	t.Helper()
-
-	destTempDir := t.TempDir()
-	destClaudeDir := filepath.Join(destTempDir, "dotclaude")
-	destConfigFile := filepath.Join(destTempDir, "dotclaude.json")
-
-	require.NoError(t, os.MkdirAll(filepath.Join(destClaudeDir, "projects"), 0o755)) //nolint:gosec // G301: test setup
-	initialConfig := []byte(`{"projects":{}}`)
-	require.NoError(t, os.WriteFile(destConfigFile, initialConfig, 0o644)) //nolint:gosec // G306: test setup
-
-	return &claude.Home{
-		Dir:        destClaudeDir,
-		ConfigFile: destConfigFile,
-	}
-}
-
-// assertImportLeftDestinationUntouched verifies that a refused import did
-// not mutate the destination.
-func assertImportLeftDestinationUntouched(
-	t *testing.T, destClaudeHome *claude.Home, destProjectPath string, preConfigBytes []byte,
-) {
-	t.Helper()
-
-	assert.NoDirExists(t, destClaudeHome.ProjectDir(destProjectPath),
-		"refused import must not create the encoded project directory")
-	assert.NoFileExists(t, destClaudeHome.HistoryFile(),
-		"refused import must not create the history file")
-
-	postConfigBytes, err := os.ReadFile(destClaudeHome.ConfigFile)
-	require.NoError(t, err)
-	assert.Equal(t, preConfigBytes, postConfigBytes,
-		"refused import must not modify the config file")
-
-	assertNoStagingTemps(t, destClaudeHome)
-}
-
-// assertNoStagingTemps walks the home dir and asserts no *.cc-port-import.tmp
-// paths remain.
-func assertNoStagingTemps(t *testing.T, destClaudeHome *claude.Home) {
-	t.Helper()
-
-	walkRoots := []string{destClaudeHome.Dir, filepath.Dir(destClaudeHome.ConfigFile)}
-	for _, root := range walkRoots {
-		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info == nil {
-				return nil
-			}
-			if strings.HasSuffix(path, ".cc-port-import.tmp") {
-				t.Errorf("staging temp %q must not remain after run", path)
-			}
-			return nil
-		})
-	}
-}
-
-// buildArchiveWithExtraDeclaredKey builds a test archive identical to
-// buildTestArchive but additionally declares extraKey in the manifest and
-// injects one literal occurrence of extraKey into the MEMORY.md body so it
-// is guaranteed to show up in preflight.
-func buildArchiveWithExtraDeclaredKey(
-	t *testing.T,
-	sourceClaudeHome *claude.Home,
-	archivePath string,
-	extraKey string,
-) {
-	t.Helper()
-	buildArchiveWithOverrides(t, archiveOverrides{
-		sourceClaudeHome: sourceClaudeHome,
-		archivePath:      archivePath,
-		extraDeclaredKey: extraKey,
-		memoryInjection:  extraKey,
-	})
-}
-
-// archiveOverrides parameterises buildArchiveWithOverrides. Fields are
-// optional; the zero values produce an archive identical to the one
-// buildTestArchive builds. sourceProjectPath and sourceHomeDir are always
-// the fixture constants.
-type archiveOverrides struct {
-	sourceClaudeHome *claude.Home
-	archivePath      string
-	extraDeclaredKey string
-	memoryInjection  string
-}
-
-// buildArchiveWithOverrides is a lower-level builder that allows test
-// archives to deviate from the default shape: declaring additional keys in
-// the manifest and/or injecting literal tokens into the memory body.
-func buildArchiveWithOverrides(t *testing.T, overrides archiveOverrides) {
-	t.Helper()
-
-	archiveFile, err := os.Create(overrides.archivePath)
-	require.NoError(t, err)
-	defer func() { _ = archiveFile.Close() }()
-
-	zipWriter := zip.NewWriter(archiveFile)
-	defer func() { _ = zipWriter.Close() }()
-
-	writeMetadataEntryWithOverrides(t, zipWriter, overrides)
-
-	encodedProjectDir := overrides.sourceClaudeHome.ProjectDir(fixtureSourceProjectPath)
-
-	entryAdder := addEntry(func(zipName string, content []byte) {
-		t.Helper()
-		if overrides.memoryInjection != "" && zipName == "memory/MEMORY.md" {
-			content = append(content, []byte("\n"+overrides.memoryInjection+"\n")...)
-		}
-		content = replacePaths(content, fixtureSourceProjectPath, fixtureSourceHomeDir)
-		writer, err := zipWriter.Create(zipName)
-		require.NoError(t, err)
-		_, err = writer.Write(content)
-		require.NoError(t, err)
-	})
-
-	fileAdder := func(zipName, sourcePath string) {
-		t.Helper()
-		data, err := os.ReadFile(sourcePath) //nolint:gosec // G304: test helper reading fixture files
-		require.NoError(t, err)
-		entryAdder(zipName, data)
-	}
-
-	sessionEntry := filepath.Join(overrides.sourceClaudeHome.Dir, "sessions", "99999.json")
-	if _, statErr := os.Stat(sessionEntry); statErr == nil {
-		fileAdder("sessions/99999.json", sessionEntry)
-	}
-
-	memoryEntries, err := os.ReadDir(filepath.Join(encodedProjectDir, "memory"))
-	require.NoError(t, err)
-	for _, memoryEntry := range memoryEntries {
-		if memoryEntry.IsDir() {
-			continue
-		}
-		fileAdder("memory/"+memoryEntry.Name(),
-			filepath.Join(encodedProjectDir, "memory", memoryEntry.Name()))
-	}
-
-	historyData, err := os.ReadFile(overrides.sourceClaudeHome.HistoryFile())
-	require.NoError(t, err)
-	entryAdder("history/history.jsonl",
-		filterHistoryLines(historyData, fixtureSourceProjectPath))
-
-	addFileHistoryEntries(t, overrides.sourceClaudeHome, fileAdder)
-	addConfigEntry(t, overrides.sourceClaudeHome, fixtureSourceProjectPath, entryAdder)
-}
-
-// writeMetadataEntryWithOverrides is the parameterised cousin of
-// writeMetadataEntry that honors archiveOverrides.extraDeclaredKey.
-func writeMetadataEntryWithOverrides(t *testing.T, zipWriter *zip.Writer, overrides archiveOverrides) {
-	t.Helper()
-
-	placeholders := []manifest.Placeholder{
-		{Key: "{{PROJECT_PATH}}", Original: fixtureSourceProjectPath},
-		{Key: "{{HOME}}", Original: fixtureSourceHomeDir},
-	}
-	if overrides.extraDeclaredKey != "" {
-		placeholders = append(placeholders, manifest.Placeholder{
-			Key:      overrides.extraDeclaredKey,
-			Original: overrides.extraDeclaredKey,
-		})
-	}
-
-	metadata := &manifest.Metadata{
-		Export: manifest.Info{
-			Created: time.Now(),
-			Categories: []manifest.Category{
-				{Name: "sessions", Included: true},
-				{Name: "memory", Included: true},
-				{Name: "history", Included: true},
-				{Name: "file-history", Included: true},
-				{Name: "config", Included: true},
-				{Name: "todos", Included: false},
-				{Name: "usage-data", Included: false},
-				{Name: "plugins-data", Included: false},
-				{Name: "tasks", Included: false},
-			},
-		},
-		Placeholders: placeholders,
-	}
-	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
-	require.NoError(t, manifest.WriteManifest(metadataPath, metadata))
-	metadataData, err := os.ReadFile(metadataPath) //nolint:gosec // G304: test helper reading temp file
-	require.NoError(t, err)
-	xmlEntry, err := zipWriter.Create("metadata.xml")
-	require.NoError(t, err)
-	_, err = xmlEntry.Write(metadataData)
-	require.NoError(t, err)
-}
-
-func TestImport_ConflictRefused(t *testing.T) {
-	sourceClaudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceClaudeHome, archivePath)
-
-	// Import back to the same ClaudeHome at the same project path → conflict.
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureSourceProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": fixtureSourceProjectPath,
-			"{{HOME}}":         fixtureSourceHomeDir,
-		},
-	}
-
-	_, err := importer.Run(t.Context(), sourceClaudeHome, &importOptions)
-	require.Error(t, err, "import to existing project should fail")
-	require.ErrorIs(t, err, importer.ErrEncodedDirCollision)
-}
-
-func TestImport_RoundTrip_NewCategories(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "out.zip")
-
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
-	require.NoError(t, err)
-	_, err = export.Run(t.Context(), claudeHome, &export.Options{
-		ProjectPath: fixtureSourceProjectPath,
-		Output:      archiveFile,
-		Categories: manifest.CategorySet{
-			Sessions: true, Memory: true, History: true, Config: true,
-			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
-		},
-	})
-	require.NoError(t, err)
-	require.NoError(t, archiveFile.Close())
-
-	freshHome := testutil.SetupFixture(t)
-	require.NoError(t, os.RemoveAll(freshHome.TodosDir()))
-	require.NoError(t, os.RemoveAll(freshHome.UsageDataDir()))
-	require.NoError(t, os.RemoveAll(freshHome.PluginsDataDir()))
-	require.NoError(t, os.RemoveAll(freshHome.TasksDir()))
-	// freshHome already has the project dir, so remove it to avoid CheckConflict.
-	require.NoError(t, os.RemoveAll(freshHome.ProjectDir(fixtureSourceProjectPath)))
-
-	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), freshHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureSourceProjectPath,
-	})
-	require.NoError(t, err)
-
-	imported, err := claude.LocateProject(freshHome, fixtureSourceProjectPath)
-	require.NoError(t, err)
-	assert.NotEmpty(t, imported.TodoFiles)
-	assert.NotEmpty(t, imported.UsageDataSessionMeta)
-	assert.NotEmpty(t, imported.UsageDataFacets)
-	assert.NotEmpty(t, imported.PluginsDataFiles)
-	assert.NotEmpty(t, imported.TaskFiles)
-}
-
-func TestImport_LandsSessionKeyedFileAt0644(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "out.zip")
-
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
-	require.NoError(t, err)
-	_, err = export.Run(t.Context(), claudeHome, &export.Options{
-		ProjectPath: fixtureSourceProjectPath,
-		Output:      archiveFile,
-		Categories: manifest.CategorySet{
-			Sessions: true, Memory: true, History: true, Config: true,
-			Todos: true, UsageData: true, PluginsData: true, Tasks: true,
-		},
-	})
-	require.NoError(t, err)
-	require.NoError(t, archiveFile.Close())
-
-	freshHome := testutil.SetupFixture(t)
-	require.NoError(t, os.RemoveAll(freshHome.TodosDir()))
-	require.NoError(t, os.RemoveAll(freshHome.UsageDataDir()))
-	require.NoError(t, os.RemoveAll(freshHome.PluginsDataDir()))
-	require.NoError(t, os.RemoveAll(freshHome.TasksDir()))
-	require.NoError(t, os.RemoveAll(freshHome.ProjectDir(fixtureSourceProjectPath)))
-
-	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), freshHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureSourceProjectPath,
-	})
-	require.NoError(t, err)
-
-	imported, err := claude.LocateProject(freshHome, fixtureSourceProjectPath)
-	require.NoError(t, err)
-	require.NotEmpty(t, imported.TodoFiles,
-		"round-trip must stage at least one todo file")
-
-	info, err := os.Stat(imported.TodoFiles[0])
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(),
-		"session-keyed todo entry is metadata, not a secret, and stays at the default mode")
-}
-
-func TestImport_HardFailsOnUnknownManifestCategory(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
-	require.NoError(t, os.RemoveAll(claudeHome.ProjectDir(fixtureSourceProjectPath)))
-
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "bad-manifest.zip")
-
-	zipFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	zw := zip.NewWriter(zipFile)
-	w, err := zw.Create("metadata.xml")
-	require.NoError(t, err)
-	_, err = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` +
-		`<cc-port><export><categories>` +
-		`<category name="sessions" included="false"></category>` +
-		`<category name="memory" included="false"></category>` +
-		`<category name="history" included="false"></category>` +
-		`<category name="file-history" included="false"></category>` +
-		`<category name="config" included="false"></category>` +
-		`<category name="todos" included="false"></category>` +
-		`<category name="usage-data" included="false"></category>` +
-		`<category name="plugins-data" included="false"></category>` +
-		`<category name="tasks" included="false"></category>` +
-		`<category name="bogus" included="true"></category>` +
-		`</categories></export><placeholders></placeholders></cc-port>`))
-	require.NoError(t, err)
-	require.NoError(t, zw.Close())
-	require.NoError(t, zipFile.Close())
-
-	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), claudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureSourceProjectPath,
-	})
-
-	var unknownErr *manifest.UnknownCategoriesError
-	require.ErrorAs(t, err, &unknownErr)
-	assert.Contains(t, unknownErr.Names, "bogus")
-}
-
-func TestImport_HardFailsOnMissingManifestCategory(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
-	require.NoError(t, os.RemoveAll(claudeHome.ProjectDir(fixtureSourceProjectPath)))
-
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "incomplete-manifest.zip")
-
-	zipFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	zw := zip.NewWriter(zipFile)
-	w, err := zw.Create("metadata.xml")
-	require.NoError(t, err)
-	_, err = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` +
-		`<cc-port><export><categories>` +
-		`<category name="sessions" included="false"></category>` +
-		`<category name="memory" included="false"></category>` +
-		`<category name="history" included="false"></category>` +
-		`<category name="file-history" included="false"></category>` +
-		`<category name="config" included="false"></category>` +
-		`</categories></export><placeholders></placeholders></cc-port>`))
-	require.NoError(t, err)
-	require.NoError(t, zw.Close())
-	require.NoError(t, zipFile.Close())
-
-	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), claudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureSourceProjectPath,
-	})
-
-	var missingErr *manifest.MissingCategoriesError
-	require.ErrorAs(t, err, &missingErr)
-	assert.Contains(t, missingErr.Names, "tasks")
-}
-
-func TestImport_HardFailsOnUnknownEntryPrefix(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
-	// Remove the encoded project dir to avoid CheckConflict.
-	require.NoError(t, os.RemoveAll(claudeHome.ProjectDir(fixtureSourceProjectPath)))
-
-	tempDir := t.TempDir()
-	archivePath := filepath.Join(tempDir, "rogue.zip")
-
-	zipFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	zw := zip.NewWriter(zipFile)
-	w, err := zw.Create("metadata.xml")
-	require.NoError(t, err)
-	_, err = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` +
-		`<cc-port><export><categories>` +
-		`<category name="sessions" included="true"></category>` +
-		`<category name="memory" included="false"></category>` +
-		`<category name="history" included="false"></category>` +
-		`<category name="file-history" included="false"></category>` +
-		`<category name="config" included="false"></category>` +
-		`<category name="todos" included="false"></category>` +
-		`<category name="usage-data" included="false"></category>` +
-		`<category name="plugins-data" included="false"></category>` +
-		`<category name="tasks" included="false"></category>` +
-		`</categories></export><placeholders></placeholders></cc-port>`))
-	require.NoError(t, err)
-	w, err = zw.Create("rogue/file.txt")
-	require.NoError(t, err)
-	_, err = w.Write([]byte("content"))
-	require.NoError(t, err)
-	require.NoError(t, zw.Close())
-	require.NoError(t, zipFile.Close())
-
-	source, size := openArchive(t, archivePath)
-	_, err = importer.Run(t.Context(), claudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureSourceProjectPath,
-	})
-	var entryErr *importer.UnknownArchiveEntryError
-	require.ErrorAs(t, err, &entryErr)
-	assert.Equal(t, "rogue/file.txt", entryErr.Name)
-}
-
-// assertNoPendingPlaceholders walks dirPath and fails the test if any file
-// contains an unresolved {{...}} placeholder token.
-func assertNoPendingPlaceholders(t *testing.T, dirPath string) {
-	t.Helper()
-
-	entries, err := os.ReadDir(dirPath)
-	if err != nil {
-		t.Errorf("read dir %q: %v", dirPath, err)
-		return
-	}
-
-	for _, entry := range entries {
-		fullPath := filepath.Join(dirPath, entry.Name())
-		if entry.IsDir() {
-			assertNoPendingPlaceholders(t, fullPath)
-			continue
-		}
-		data, err := os.ReadFile(fullPath) //nolint:gosec // G304: test-controlled path
-		if err != nil {
-			t.Errorf("read file %q: %v", fullPath, err)
-			continue
-		}
-		if strings.Contains(string(data), "{{") && strings.Contains(string(data), "}}") {
-			t.Errorf("file %q still contains placeholder tokens:\n%s", fullPath, string(data))
-		}
-	}
-}
-
-// buildMinimalSessionsArchive builds an archive with a sessions-only category
-// set and the caller-supplied zip entries after metadata.xml. Each entry is
-// stored uncompressed with the given name and content.
-func buildMinimalSessionsArchive(t *testing.T, archivePath string, entries map[string][]byte) {
-	t.Helper()
-
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	defer func() { _ = archiveFile.Close() }()
-
-	zipWriter := zip.NewWriter(archiveFile)
-	defer func() { _ = zipWriter.Close() }()
-
-	md := manifest.Metadata{
-		Export: manifest.Info{
-			Created:    time.Now().UTC(),
-			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{Sessions: true}),
-		},
-	}
-	data, err := xml.MarshalIndent(&md, "", "  ")
-	require.NoError(t, err)
-	mdEntry, err := zipWriter.Create("metadata.xml")
-	require.NoError(t, err)
-	_, err = mdEntry.Write(append([]byte(xml.Header), data...))
-	require.NoError(t, err)
-
-	for name, body := range entries {
-		entry, err := zipWriter.Create(name)
-		require.NoError(t, err)
-		_, err = entry.Write(body)
-		require.NoError(t, err)
-	}
-}
-
-func TestRun_RejectsZipSlipEntry(t *testing.T) {
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	archivePath := filepath.Join(t.TempDir(), "slip.zip")
-	buildMinimalSessionsArchive(t, archivePath, map[string][]byte{
-		"sessions/../escape.txt": []byte("pwned"),
-	})
-
-	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: filepath.Join(t.TempDir(), "project"),
-	})
-	require.Error(t, err)
-	require.ErrorIs(t, err, importer.ErrZipSlip)
-
-	escapeSibling := filepath.Join(destClaudeHome.Dir, "projects", "escape.txt")
-	_, statErr := os.Stat(escapeSibling)
-	assert.True(t, os.IsNotExist(statErr), "escape.txt must not land outside the staging base")
-}
-
-func TestRun_RejectsAbsoluteZipEntry(t *testing.T) {
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	archivePath := filepath.Join(t.TempDir(), "abs.zip")
-	buildMinimalSessionsArchive(t, archivePath, map[string][]byte{
-		"sessions//etc/bogus": []byte("x"),
-	})
-
-	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: filepath.Join(t.TempDir(), "project"),
-	})
-	require.Error(t, err)
-}
-
-// TestRun_RejectsArchiveWhenStagingBaseUnstageable plants a regular file at
-// the file-history base path so the os.MkdirAll inside assertWithinRoot
-// fails. This exercises the ErrStagingFailed branch (destination-side I/O
-// failure on the staging jail) as distinct from the zip-slip containment
-// branch (ErrZipSlip).
-func TestRun_RejectsArchiveWhenStagingBaseUnstageable(t *testing.T) {
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-
-	// Block the file-history base with a regular file so MkdirAll fails.
-	require.NoError(t, os.WriteFile(
-		destClaudeHome.FileHistoryDir(), []byte("blocker"), 0o600,
-	))
-
-	archivePath := filepath.Join(t.TempDir(), "fh.zip")
-	buildArchiveWithFileHistoryEntry(t, archivePath,
-		"file-history/abc/snapshot@v1", []byte("opaque"))
-
-	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: filepath.Join(t.TempDir(), "project"),
-	})
-
-	require.Error(t, err)
-	require.ErrorIs(t, err, importer.ErrStagingFailed)
-}
-
-// TestReadZipFile_RejectsOversizedEntry_SmallCap exercises the per-entry cap
-// guard under a 1 MiB test override so the archive is a few megabytes rather
-// than 600. The scale sibling in importer_large_test.go materializes a real
-// 600 MiB archive and runs only under `-tags large`.
-func TestReadZipFile_RejectsOversizedEntry_SmallCap(t *testing.T) {
-	importer.SetMaxEntryBytes(t, 1<<20)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	archivePath := filepath.Join(t.TempDir(), "bomb.zip")
-	buildArchiveWithSingleEntry(t, archivePath, "sessions/bomb.json", 2<<20)
-
-	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: filepath.Join(t.TempDir(), "project"),
-	})
-	require.Error(t, err)
-	require.ErrorIs(t, err, importer.ErrEntryCapExceeded)
-}
-
-// TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap exercises
-// the pass-1 aggregate-cap guard in classifyPresentDeclaredKeys under a
-// 2 MiB test override, using three 1 MiB entries instead of multi-GiB
-// payloads. The scale sibling in importer_large_test.go materializes the
-// real multi-GiB archive and runs only under `-tags large`.
-func TestRun_RefusesArchiveExceedingAggregateUncompressedCap_SmallCap(t *testing.T) {
-	importer.SetMaxArchiveBytes(t, 2<<20)
-
-	archivePath := buildArchiveWithAggregateSize(t, (2<<20)+1, 1<<20)
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-
-	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(t.Context(), destClaudeHome, &importer.Options{
-		Source:      source,
-		Size:        size,
-		TargetPath:  filepath.Join(t.TempDir(), "project"),
-		Resolutions: map[string]string{},
-	})
-
-	require.Error(t, err)
-	require.ErrorIs(t, err, importer.ErrAggregateCapExceeded)
-}
-
-func TestRun_CancelsWhenContextCancelled(t *testing.T) {
-	sourceClaudeHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceClaudeHome, archivePath)
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	source, size := openArchive(t, archivePath)
-	_, err := importer.Run(ctx, destClaudeHome, &importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureDestProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": fixtureDestProjectPath,
-			"{{HOME}}":         filepath.Join(t.TempDir(), "home"),
-		},
-	})
-
-	require.ErrorIs(t, err, context.Canceled)
-}
-
-// buildArchiveWithAggregateSize writes a ZIP at t.TempDir whose entries (after
-// metadata.xml) sum to at least minAggregateBytes uncompressed, split into
-// entries of size entrySize. Callers pick entrySize below the active per-entry
-// cap so only the aggregate guard can reject the archive. Bodies are zero-
-// filled: on-disk footprint stays small even for multi-GiB minAggregateBytes.
-func buildArchiveWithAggregateSize(t *testing.T, minAggregateBytes, entrySize int64) string {
-	t.Helper()
-
-	archivePath := filepath.Join(t.TempDir(), "aggregate.zip")
-
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	defer func() { _ = archiveFile.Close() }()
-
-	zipWriter := zip.NewWriter(archiveFile)
-	defer func() { _ = zipWriter.Close() }()
-
-	writeMetadataXML(t, zipWriter)
-
-	chunk := make([]byte, 1<<20) // 1 MiB of zeros, reused across writes
-	var aggregateWritten int64
-	for entryIndex := 0; aggregateWritten < minAggregateBytes; entryIndex++ {
-		entryName := fmt.Sprintf("sessions/entry-%03d.bin", entryIndex)
-		entry, err := zipWriter.Create(entryName)
-		require.NoError(t, err)
-		var written int64
-		for written < entrySize {
-			take := min(int64(len(chunk)), entrySize-written)
-			_, err = entry.Write(chunk[:take])
-			require.NoError(t, err)
-			written += take
-		}
-		aggregateWritten += written
-	}
-	return archivePath
-}
-
-// buildArchiveWithSingleEntry writes a cc-port-shaped archive at archivePath
-// with metadata.xml plus one entry named entryName filled with sizeBytes
-// zeros. Zero-fill keeps the on-disk footprint in the low KiB regardless of
-// sizeBytes, so tests that exercise the per-entry cap guard do not need
-// gigabytes of real data.
-func buildArchiveWithSingleEntry(t *testing.T, archivePath, entryName string, sizeBytes int64) {
-	t.Helper()
-
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	defer func() { _ = archiveFile.Close() }()
-
-	zipWriter := zip.NewWriter(archiveFile)
-	defer func() { _ = zipWriter.Close() }()
-
-	writeMetadataXML(t, zipWriter)
-
-	entry, err := zipWriter.Create(entryName)
-	require.NoError(t, err)
-	chunk := make([]byte, 1<<20)
-	var written int64
-	for written < sizeBytes {
-		take := min(int64(len(chunk)), sizeBytes-written)
-		_, err = entry.Write(chunk[:take])
-		require.NoError(t, err)
-		written += take
-	}
-}
-
-// buildArchiveWithFileHistoryEntry writes a cc-port-shaped archive at
-// archivePath with metadata.xml declaring the file-history category included
-// and one entry at entryName carrying entryBody verbatim. Used by tests
-// that need importer.Run to dispatch into the file-history staging path.
-func buildArchiveWithFileHistoryEntry(
-	t *testing.T, archivePath, entryName string, entryBody []byte,
-) {
-	t.Helper()
-
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	defer func() { _ = archiveFile.Close() }()
-
-	zipWriter := zip.NewWriter(archiveFile)
-	defer func() { _ = zipWriter.Close() }()
-
-	metadata := manifest.Metadata{
-		Export: manifest.Info{
-			Created: time.Now().UTC(),
-			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{
-				FileHistory: true,
-			}),
-		},
-	}
-	metadataBytes, err := xml.MarshalIndent(&metadata, "", "  ")
-	require.NoError(t, err)
-	metadataEntry, err := zipWriter.Create("metadata.xml")
-	require.NoError(t, err)
-	_, err = metadataEntry.Write(append([]byte(xml.Header), metadataBytes...))
-	require.NoError(t, err)
-
-	entry, err := zipWriter.Create(entryName)
-	require.NoError(t, err)
-	_, err = entry.Write(entryBody)
-	require.NoError(t, err)
-}
-
-// writeMetadataXML emits the sessions-only metadata.xml header entry that
-// every test archive needs for importer.Run to accept the archive shape.
-func writeMetadataXML(t *testing.T, zipWriter *zip.Writer) {
-	t.Helper()
-	md := manifest.Metadata{
-		Export: manifest.Info{
-			Created:    time.Now().UTC(),
-			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{Sessions: true}),
-		},
-	}
-	mdBytes, err := xml.MarshalIndent(&md, "", "  ")
-	require.NoError(t, err)
-	mdEntry, err := zipWriter.Create("metadata.xml")
-	require.NoError(t, err)
-	_, err = mdEntry.Write(append([]byte(xml.Header), mdBytes...))
-	require.NoError(t, err)
-}
-
-func TestRun_NilSource(t *testing.T) {
 	home := testutil.SetupFixture(t)
+	claudeTool := claude.New()
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	projectPath = testutil.FixtureProjectPath()
 
-	_, err := importer.Run(t.Context(), home, &importer.Options{
-		Source:     nil,
-		Size:       0,
-		TargetPath: "/Users/test/Projects/myproject",
-	})
-
-	require.ErrorIs(t, err, importer.ErrSourceNil)
-}
-
-func TestImporterRun_InjectsHomePathFromOptions(t *testing.T) {
-	archiveBytes := buildArchiveWithSessionBody(t,
-		[]manifest.Placeholder{{Key: "{{HOME}}", Original: "/Users/sender"}},
-		[]byte(`{"home":"{{HOME}}/.claude/projects"}`+"\n"),
-	)
-
-	claudeHome := stageEmptyClaudeHome(t)
-
-	_, err := importer.Run(t.Context(), claudeHome, &importer.Options{
-		Source:      bytes.NewReader(archiveBytes),
-		Size:        int64(len(archiveBytes)),
-		TargetPath:  "/Users/recipient/Projects/myproj",
-		HomePath:    "/Users/recipient",
-		Resolutions: map[string]string{},
+	var buf bytes.Buffer
+	_, err := export.Run(context.Background(), targets, &export.Options{
+		ProjectPath: projectPath,
+		Output:      &buf,
+		Selected:    map[string]map[string]bool{claudeTool.Name(): allSelected(claudeTool)},
 	})
 	require.NoError(t, err)
-
-	body := readSingleSessionBody(t, claudeHome, "/Users/recipient/Projects/myproj")
-	assert.Contains(t, string(body), "/Users/recipient/.claude/projects")
-	assert.NotContains(t, string(body), "{{HOME}}")
+	return buf.Bytes(), projectPath
 }
 
-func TestImporterRun_HomePathStaleManifestResolveIgnored(t *testing.T) {
-	// Sender's manifest declares {{HOME}} with stale Resolve="/Users/sender".
-	// Recipient must see /Users/recipient in the substituted body, not the
-	// sender's value. The orchestrator filters {{HOME}} as implicit before
-	// the manifest merge; importer.Run injects via withImplicitAnchors.
-	archiveBytes := buildArchiveWithSessionBody(t,
-		[]manifest.Placeholder{{
-			Key:      "{{HOME}}",
-			Original: "/Users/sender",
-			Resolve:  "/Users/sender",
-		}},
-		[]byte(`{"home":"{{HOME}}/.claude/projects"}`+"\n"),
-	)
-
-	claudeHome := stageEmptyClaudeHome(t)
-
-	_, err := importer.Run(t.Context(), claudeHome, &importer.Options{
-		Source:      bytes.NewReader(archiveBytes),
-		Size:        int64(len(archiveBytes)),
-		TargetPath:  "/Users/recipient/Projects/myproj",
-		HomePath:    "/Users/recipient",
-		Resolutions: map[string]string{},
-	})
-	require.NoError(t, err)
-
-	body := readSingleSessionBody(t, claudeHome, "/Users/recipient/Projects/myproj")
-	assert.Contains(t, string(body), "/Users/recipient/.claude/projects")
-	assert.NotContains(t, string(body), "/Users/sender")
-}
-
-// buildArchiveWithSessionBody builds an in-memory cc-port-shaped ZIP carrying
-// metadata.xml that declares placeholders plus a single sessions/body.json
-// entry holding sessionBody verbatim. Returns the archive bytes so the caller
-// can wrap them in bytes.NewReader and pass Size = len(archiveBytes). Mirrors
-// the disk-backed buildMinimalSessionsArchive but writes to a bytes.Buffer
-// because the HomePath plumbing test wants a self-contained byte slice.
-func buildArchiveWithSessionBody(
-	t *testing.T, placeholders []manifest.Placeholder, sessionBody []byte,
-) []byte {
+func blankHome(t *testing.T) *claude.Home {
 	t.Helper()
+	dir := t.TempDir()
+	home := &claude.Home{Dir: filepath.Join(dir, "dotclaude"), ConfigFile: filepath.Join(dir, "dotclaude.json")}
+	require.NoError(t, os.MkdirAll(home.Dir, 0o700))
+	return home
+}
 
-	var buffer bytes.Buffer
-	zipWriter := zip.NewWriter(&buffer)
+func TestRun_RoundTripStagesSessionsIntoFreshHome(t *testing.T) {
+	body, projectPath := buildArchive(t)
+	home := blankHome(t)
+	toolSet := tool.NewSet(claude.New())
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
 
-	metadata := manifest.Metadata{
-		Export: manifest.Info{
-			Created:    time.Now().UTC(),
-			Categories: manifest.BuildCategoryEntries(&manifest.CategorySet{Sessions: true}),
-		},
-		Placeholders: placeholders,
+	_, err := importer.Run(context.Background(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: projectPath,
+		Caps:       archive.DefaultCaps(),
+	})
+	require.NoError(t, err)
+
+	encodedDir := home.ProjectDir(projectPath)
+	entries, err := os.ReadDir(encodedDir)
+	require.NoError(t, err)
+	assert.NotEmpty(t, entries, "encoded project directory must be populated after import")
+
+	historyBytes, err := os.ReadFile(home.HistoryFile())
+	require.NoError(t, err)
+	assert.Contains(t, string(historyBytes), projectPath)
+}
+
+func TestRun_ReRunDoesNotDuplicateHistoryLines(t *testing.T) {
+	body, projectPath := buildArchive(t)
+	home := blankHome(t)
+	toolSet := tool.NewSet(claude.New())
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+
+	for i := range 2 {
+		_, err := importer.Run(context.Background(), toolSet, targets, &importer.Options{
+			Source:     bytes.NewReader(body),
+			Size:       int64(len(body)),
+			TargetPath: projectPath,
+			Caps:       archive.DefaultCaps(),
+		})
+		require.NoError(t, err, "run %d", i)
 	}
-	metadataBytes, err := xml.MarshalIndent(&metadata, "", "  ")
+
+	historyBytes, err := os.ReadFile(home.HistoryFile())
 	require.NoError(t, err)
-	metadataEntry, err := zipWriter.Create("metadata.xml")
+	lines := bytes.Split(bytes.TrimRight(historyBytes, "\n"), []byte("\n"))
+
+	seen := make(map[string]int)
+	for _, line := range lines {
+		seen[string(line)]++
+	}
+	for line, count := range seen {
+		assert.Equalf(t, 1, count, "history line must not be duplicated by a re-import: %s", line)
+	}
+}
+
+// TestRun_MultiToolArchiveImportsClaudeAndCodex exercises multi-tool mutation
+// below the CLI. A real Codex CLI process is itself valid witness evidence, so
+// cmd-level Codex import tests must refuse rather than weakening the witness.
+func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
+	sharedProject := codex.FixtureProjectPath()
+	claudeSource := testutil.SetupFixture(t)
+	claudeTool, codexTool := claude.New(), codex.New()
+
+	moveResult, err := move.Apply(t.Context(), []tool.Target{{
+		Tool: claudeTool, Workspace: claude.NewWorkspace(claudeSource),
+	}}, move.Options{OldPath: testutil.FixtureProjectPath(), NewPath: sharedProject, RefsOnly: true})
 	require.NoError(t, err)
-	_, err = metadataEntry.Write(append([]byte(xml.Header), metadataBytes...))
+	require.False(t, moveResult.Failed())
+
+	codexSource := codex.SetupFixture(t)
+	claudeSelection := map[string]bool{"sessions": true}
+	codexSelection := map[string]bool{"sessions": true}
+	claudeWorkspace := claude.NewWorkspace(claudeSource)
+	codexWorkspace := quietCodexWorkspace(codexSource)
+	claudePlaceholders, err := claudeWorkspace.Placeholders(sharedProject, claudeSelection)
+	require.NoError(t, err)
+	codexPlaceholders, err := codexWorkspace.Placeholders(sharedProject, codexSelection)
 	require.NoError(t, err)
 
-	sessionEntry, err := zipWriter.Create("sessions/body.json")
-	require.NoError(t, err)
-	_, err = sessionEntry.Write(sessionBody)
+	var archiveBytes bytes.Buffer
+	_, err = export.Run(t.Context(), []tool.Target{
+		{Tool: claudeTool, Workspace: claudeWorkspace},
+		{Tool: codexTool, Workspace: codexWorkspace},
+	}, &export.Options{
+		ProjectPath: sharedProject,
+		Output:      &archiveBytes,
+		Selected: map[string]map[string]bool{
+			claudeTool.Name(): claudeSelection,
+			codexTool.Name():  codexSelection,
+		},
+		Placeholders: map[string][]manifest.Placeholder{
+			claudeTool.Name(): claudePlaceholders,
+			codexTool.Name():  codexPlaceholders,
+		},
+	})
 	require.NoError(t, err)
 
-	require.NoError(t, zipWriter.Close())
+	claudeDestination := blankHome(t)
+	codexDestinationDir := filepath.Join(t.TempDir(), "dotcodex")
+	require.NoError(t, os.MkdirAll(codexDestinationDir, 0o750))
+	config := []byte("# recipient config remains local\n[projects.\"/recipient/only\"]\ntrust_level = \"trusted\"\n")
+	require.NoError(t, os.WriteFile(filepath.Join(codexDestinationDir, "config.toml"), config, 0o600))
+	codexDestination := &codex.Home{Dir: codexDestinationDir, SQLiteDir: codexDestinationDir}
+
+	registry := tool.NewSet(claudeTool, codexTool)
+	reader := bytes.NewReader(archiveBytes.Bytes())
+	result, err := importer.Run(t.Context(), registry, []tool.Target{
+		{Tool: claudeTool, Workspace: claude.NewWorkspace(claudeDestination)},
+		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
+	}, &importer.Options{Source: reader, Size: int64(reader.Len()), TargetPath: sharedProject, Caps: archive.DefaultCaps()})
+	require.NoError(t, err)
+
+	require.FileExists(t, filepath.Join(
+		claudeDestination.ProjectDir(sharedProject), "a1b2c3d4-0000-0000-0000-000000000001.jsonl",
+	))
+	require.FileExists(t, filepath.Join(
+		codexDestination.Dir, "sessions", "2026", "07", "17",
+		"rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl",
+	))
+	actualConfig, err := os.ReadFile(filepath.Join(codexDestination.Dir, "config.toml"))
+	require.NoError(t, err)
+	assert.Equal(t, config, actualConfig, "Codex config.toml must remain byte-identical")
+	require.NotEmpty(t, result.Warnings[codexTool.Name()])
+	assert.Contains(t, result.Warnings[codexTool.Name()][0], "threads sidecar row(s) could not be applied")
+}
+
+func quietCodexWorkspace(home *codex.Home) *codex.Workspace {
+	return codex.NewWorkspace(
+		home,
+		func(string) string { return "" },
+		func() ([]codex.ProcessInfo, error) { return nil, nil },
+	)
+}
+
+func TestRun_RejectsIncomingHistoryLineAtScannerCapWithoutChangingTarget(t *testing.T) {
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/history/history.jsonl": "first\n" + strings.Repeat("x", claude.MaxHistoryLine) + "\nlast",
+	})
+	home := blankHome(t)
+	existing := []byte("existing history line\n")
+	require.NoError(t, os.WriteFile(home.HistoryFile(), existing, 0o600))
+	claudeTool := claude.New()
+	toolSet := tool.NewSet(claudeTool)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/history-cap", Caps: archive.DefaultCaps(),
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "16777216")
+	assert.Contains(t, err.Error(), "history/history.jsonl")
+	actual, readErr := os.ReadFile(home.HistoryFile())
+	require.NoError(t, readErr)
+	assert.Equal(t, existing, actual)
+}
+
+func TestRun_ImportsIncomingHistoryLineBelowScannerCap(t *testing.T) {
+	line := strings.Repeat("x", claude.MaxHistoryLine-1)
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/history/history.jsonl": line,
+	})
+	home := blankHome(t)
+	claudeTool := claude.New()
+	toolSet := tool.NewSet(claudeTool)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/history-cap", Caps: archive.DefaultCaps(),
+	})
+
+	require.NoError(t, err)
+	actual, readErr := os.ReadFile(home.HistoryFile())
+	require.NoError(t, readErr)
+	assert.Equal(t, line+"\n", string(actual))
+}
+
+// buildArchiveWithUnregisteredTool builds a minimal, well-formed archive
+// whose manifest declares a tool this test's registry never registers.
+func buildArchiveWithUnregisteredTool(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+
+	entry, err := writer.Create("bogus/note.txt")
+	require.NoError(t, err)
+	_, err = entry.Write([]byte("hello"))
+	require.NoError(t, err)
+
+	_, err = archive.WriteMetadata(writer, &manifest.Metadata{
+		Tools: []manifest.Tool{{Name: "bogus"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return buf.Bytes()
+}
+
+func TestRun_UnregisteredManifestToolFailsHard(t *testing.T) {
+	body := buildArchiveWithUnregisteredTool(t)
+
+	home := blankHome(t)
+	toolSet := tool.NewSet(claude.New())
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(context.Background(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/demo",
+		Caps:       archive.DefaultCaps(),
+	})
+	require.Error(t, err, "an archive naming an unregistered tool must fail hard, not silently skip")
+}
+
+func TestRun_StagingEnforcesAggregateCapWithoutPlaceholders(t *testing.T) {
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/sessions/one.jsonl":   strings.Repeat("a", 1536),
+		"claude/sessions/two.jsonl":   strings.Repeat("b", 1536),
+		"claude/sessions/three.jsonl": strings.Repeat("c", 1536),
+	})
+	home := blankHome(t)
+	toolSet := tool.NewSet(claude.New())
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/capped",
+		Caps:       archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072},
+	})
+
+	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
+	assert.Regexp(t, `claude/sessions/(one|two|three)\.jsonl`, err.Error())
+}
+
+func TestRun_StagingAggregateCapCountsShrinkingPlaceholderInput(t *testing.T) {
+	body := buildClaudeArchiveWithPlaceholders(t, map[string]string{
+		"claude/sessions/one.jsonl":   strings.Repeat("{{X}}", 12),
+		"claude/sessions/two.jsonl":   strings.Repeat("{{X}}", 12),
+		"claude/sessions/three.jsonl": strings.Repeat("{{X}}", 12),
+	}, []manifest.Placeholder{{Key: "{{X}}", Resolve: "/"}})
+	home := blankHome(t)
+	claudeTool := claude.New()
+	toolSet := tool.NewSet(claudeTool)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/capped",
+		Caps:       archive.Caps{MaxEntryBytes: 64, MaxAggregateBytes: 100},
+	})
+
+	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
+	assert.Contains(t, err.Error(), "claude/sessions/three.jsonl")
+	var capErr *archive.AggregateCapError
+	require.ErrorAs(t, err, &capErr)
+	assert.Equal(t, int64(101), capErr.Bytes)
+}
+
+func TestRun_StagingRejectsDotSegmentSessionPath(t *testing.T) {
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/sessions/..": "payload",
+	})
+	home := blankHome(t)
+	claudeTool := claude.New()
+	toolSet := tool.NewSet(claudeTool)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/dot-segment",
+		Caps:       archive.DefaultCaps(),
+	})
+
+	require.ErrorIs(t, err, archive.ErrZipSlip)
+}
+
+func TestRun_ClassificationEnforcesAggregateCapForUnresolvedPlaceholder(t *testing.T) {
+	body := buildClaudeArchiveWithPlaceholders(t, map[string]string{
+		"claude/sessions/one.jsonl": "{{ARCHIVE_PATH}}" + strings.Repeat("a", 1536),
+		"claude/sessions/two.jsonl": strings.Repeat("b", 1536),
+	}, []manifest.Placeholder{{Key: "{{ARCHIVE_PATH}}"}})
+	home := blankHome(t)
+	claudeTool := claude.New()
+	toolSet := tool.NewSet(claudeTool)
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/capped",
+		Caps:       archive.Caps{MaxEntryBytes: 4096, MaxAggregateBytes: 3072},
+	})
+
+	require.ErrorIs(t, err, archive.ErrAggregateCapExceeded)
+	assert.Contains(t, err.Error(), "claude/sessions/two.jsonl")
+}
+
+func TestRun_StagingFailureRemovesAllTemporaryFiles(t *testing.T) {
+	assertStagingFailureRemovesAllTemporaryFiles(t, map[string]string{
+		"claude/sessions/first.jsonl":       "small",
+		"claude/sessions/zzz-failing.jsonl": strings.Repeat("x", 101),
+	})
+}
+
+func TestRun_FileHistoryStagingFailureRemovesAllTemporaryFiles(t *testing.T) {
+	assertStagingFailureRemovesAllTemporaryFiles(t, map[string]string{
+		"claude/file-history/session/first":       "small",
+		"claude/file-history/session/zzz-failing": strings.Repeat("x", 101),
+	})
+}
+
+func TestRun_TodosStagingFailureRemovesAllTemporaryFiles(t *testing.T) {
+	assertStagingFailureRemovesAllTemporaryFiles(t, map[string]string{
+		"claude/todos/first.json":       "small",
+		"claude/todos/zzz-failing.json": strings.Repeat("x", 101),
+	})
+}
+
+func assertStagingFailureRemovesAllTemporaryFiles(t *testing.T, entries map[string]string) {
+	t.Helper()
+	body := buildClaudeArchive(t, entries)
+	home := blankHome(t)
+	toolSet := tool.NewSet(claude.New())
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/cleanup",
+		Caps:       archive.Caps{MaxEntryBytes: 100, MaxAggregateBytes: 4096},
+	})
+
+	require.ErrorIs(t, err, archive.ErrEntryCapExceeded)
+	var temps []string
+	walkErr := filepath.WalkDir(home.Dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && strings.HasSuffix(path, ".cc-port-import.tmp") {
+			temps = append(temps, path)
+		}
+		return nil
+	})
+	require.NoError(t, walkErr)
+	assert.Empty(t, temps)
+}
+
+func buildClaudeArchive(t *testing.T, entries map[string]string) []byte {
+	return buildClaudeArchiveWithPlaceholders(t, entries, nil)
+}
+
+func buildClaudeArchiveWithPlaceholders(t *testing.T, entries map[string]string, placeholders []manifest.Placeholder) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		content := entries[name]
+		entryWriter, err := writer.Create(name)
+		require.NoError(t, err)
+		_, err = entryWriter.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	claudeTool := claude.New()
+	categories := manifest.BuildToolCategoryEntries(categoryNames(claudeTool), nil)
+	_, err := archive.WriteMetadata(writer, &manifest.Metadata{Tools: []manifest.Tool{{
+		Name: claudeTool.Name(), Categories: categories, Placeholders: placeholders,
+	}}})
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
 	return buffer.Bytes()
 }
 
-// stageEmptyClaudeHome is buildEmptyDestClaudeHome under the name the
-// HomePath plumbing test refers to.
-func stageEmptyClaudeHome(t *testing.T) *claude.Home {
-	t.Helper()
-	return buildEmptyDestClaudeHome(t)
-}
-
-// readSingleSessionBody reads the one promoted session file under
-// claudeHome.ProjectDir(targetPath) and returns its bytes. Fails the test if
-// the project directory does not contain exactly one regular file. Used by
-// the HomePath plumbing test, which builds an archive with a single
-// sessions/body.json entry.
-func readSingleSessionBody(t *testing.T, claudeHome *claude.Home, targetPath string) []byte {
-	t.Helper()
-	projectDir := claudeHome.ProjectDir(targetPath)
-	entries, err := os.ReadDir(projectDir)
-	require.NoError(t, err)
-	var files []os.DirEntry
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		files = append(files, entry)
+func categoryNames(claudeTool tool.Tool) []string {
+	categories := claudeTool.Categories()
+	names := make([]string, len(categories))
+	for index, category := range categories {
+		names[index] = category.Name
 	}
-	require.Len(t, files, 1, "expected exactly one promoted session file")
-	data, err := os.ReadFile(filepath.Join(projectDir, files[0].Name())) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err)
-	return data
-}
-
-func TestImport_PreservesSessionMtimeFromArchive(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceHome, archivePath)
-
-	// buildTestArchive uses (*zip.Writer).Create, which leaves Modified
-	// zero. Reissue one session entry with a known non-zero Modified so the
-	// stager-level mtime path is exercised.
-	expectedMtime := time.Date(2025, 4, 1, 10, 30, 0, 0, time.UTC)
-	rewriteOneEntryWithMtime(t, archivePath, "sessions/99999.json", expectedMtime)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destHomeDir := filepath.Join(t.TempDir(), "home")
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureDestProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": fixtureDestProjectPath,
-			"{{HOME}}":         destHomeDir,
-		},
-	}
-	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
-	require.NoError(t, err, "import")
-
-	encodedDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
-	importedPath := filepath.Join(encodedDir, "99999.json")
-	stat, err := os.Stat(importedPath)
-	require.NoError(t, err, "stat imported session")
-	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
-		"imported session should carry archive mtime through promotion")
-}
-
-func TestImport_PreservesMemoryMtimeFromArchive(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceHome, archivePath)
-
-	expectedMtime := time.Date(2025, 4, 2, 14, 45, 0, 0, time.UTC)
-	rewriteOneEntryWithMtime(t, archivePath, "memory/MEMORY.md", expectedMtime)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destHomeDir := filepath.Join(t.TempDir(), "home")
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureDestProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": fixtureDestProjectPath,
-			"{{HOME}}":         destHomeDir,
-		},
-	}
-	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
-	require.NoError(t, err, "import")
-
-	encodedDir := destClaudeHome.ProjectDir(fixtureDestProjectPath)
-	importedPath := filepath.Join(encodedDir, "memory", "MEMORY.md")
-	stat, err := os.Stat(importedPath)
-	require.NoError(t, err, "stat imported memory")
-	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
-		"imported memory file should carry archive mtime through promotion")
-}
-
-// rewriteOneEntryWithMtime opens archivePath, copies all entries to a fresh
-// archive but reissues entryName via CreateHeader with the given Modified
-// value, and replaces the original archive in place. Used to inject a known
-// non-zero Modified into a fixture-built archive whose entries default to
-// the MS-DOS epoch.
-func rewriteOneEntryWithMtime(t *testing.T, archivePath, entryName string, mtime time.Time) {
-	t.Helper()
-	original, err := zip.OpenReader(archivePath)
-	require.NoError(t, err, "open original archive")
-	defer func() { _ = original.Close() }()
-
-	rewritten := &bytes.Buffer{}
-	zipWriter := zip.NewWriter(rewritten)
-	for _, file := range original.File {
-		if file.Name == entryName {
-			header := &zip.FileHeader{Name: file.Name, Method: zip.Deflate, Modified: mtime}
-			writer, err := zipWriter.CreateHeader(header)
-			require.NoError(t, err, "create header for %s", file.Name)
-			reader, err := file.Open()
-			require.NoError(t, err, "open %s", file.Name)
-			_, err = io.Copy(writer, reader) //nolint:gosec // G110: test-built archive
-			require.NoError(t, err, "copy %s", file.Name)
-			require.NoError(t, reader.Close(), "close source")
-			continue
-		}
-		writer, err := zipWriter.Create(file.Name)
-		require.NoError(t, err, "create %s", file.Name)
-		reader, err := file.Open()
-		require.NoError(t, err, "open %s", file.Name)
-		_, err = io.Copy(writer, reader) //nolint:gosec // G110: test-built archive
-		require.NoError(t, err, "copy %s", file.Name)
-		require.NoError(t, reader.Close(), "close source")
-	}
-	require.NoError(t, zipWriter.Close(), "close rewritten zip")
-	require.NoError(t, os.WriteFile(archivePath, rewritten.Bytes(), 0o600), "rewrite archive")
-}
-
-func TestImport_PreservesFileHistoryMtimeFromArchive(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	buildTestArchive(t, sourceHome, archivePath)
-
-	entryName := findFirstZipEntryWithPrefix(t, archivePath, "file-history/")
-	require.NotEmpty(t, entryName, "fixture must include at least one file-history entry")
-
-	expectedMtime := time.Date(2025, 1, 7, 8, 9, 10, 0, time.UTC)
-	rewriteOneEntryWithMtime(t, archivePath, entryName, expectedMtime)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destHomeDir := filepath.Join(t.TempDir(), "home")
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureDestProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": fixtureDestProjectPath,
-			"{{HOME}}":         destHomeDir,
-		},
-	}
-	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
-	require.NoError(t, err, "import")
-
-	importedPath := filepath.Join(destClaudeHome.FileHistoryDir(),
-		strings.TrimPrefix(entryName, "file-history/"))
-	stat, err := os.Stat(importedPath)
-	require.NoError(t, err, "stat imported file-history snapshot")
-	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
-		"imported file-history snapshot should carry archive mtime")
-}
-
-func TestImport_PreservesSessionKeyedMtimeFromArchive(t *testing.T) {
-	archivePath := filepath.Join(t.TempDir(), "export.zip")
-	expectedMtime := time.Date(2025, 4, 3, 18, 20, 0, 0, time.UTC)
-	todosEntryName := "todos/test-id-agent-test-id.json"
-	buildSingleTodosArchive(t, archivePath, todosEntryName, expectedMtime)
-
-	destClaudeHome := buildEmptyDestClaudeHome(t)
-	destHomeDir := filepath.Join(t.TempDir(), "home")
-	source, size := openArchive(t, archivePath)
-	importOptions := importer.Options{
-		Source:     source,
-		Size:       size,
-		TargetPath: fixtureDestProjectPath,
-		Resolutions: map[string]string{
-			"{{PROJECT_PATH}}": fixtureDestProjectPath,
-			"{{HOME}}":         destHomeDir,
-		},
-	}
-	_, err := importer.Run(t.Context(), destClaudeHome, &importOptions)
-	require.NoError(t, err, "import")
-
-	importedPath := filepath.Join(destClaudeHome.TodosDir(),
-		strings.TrimPrefix(todosEntryName, "todos/"))
-	stat, err := os.Stat(importedPath)
-	require.NoError(t, err, "stat imported todos entry")
-	assert.WithinDuration(t, expectedMtime, stat.ModTime(), time.Second,
-		"imported session-keyed entry should carry archive mtime through promotion")
-}
-
-// buildSingleTodosArchive writes a minimal cc-port archive declaring only the
-// todos category and a single todos/ entry whose Modified is the given mtime.
-// Self-contained because buildTestArchive omits session-keyed entries.
-func buildSingleTodosArchive(t *testing.T, archivePath, entryName string, mtime time.Time) {
-	t.Helper()
-	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled path
-	require.NoError(t, err, "create archive file")
-	defer func() { _ = archiveFile.Close() }()
-
-	zipWriter := zip.NewWriter(archiveFile)
-
-	metadata := &manifest.Metadata{
-		Export: manifest.Info{
-			Created: time.Now(),
-			Categories: []manifest.Category{
-				{Name: "sessions", Included: false},
-				{Name: "memory", Included: false},
-				{Name: "history", Included: false},
-				{Name: "file-history", Included: false},
-				{Name: "config", Included: false},
-				{Name: "todos", Included: true},
-				{Name: "usage-data", Included: false},
-				{Name: "plugins-data", Included: false},
-				{Name: "tasks", Included: false},
-			},
-		},
-	}
-	metadataPath := filepath.Join(t.TempDir(), "metadata.xml")
-	require.NoError(t, manifest.WriteManifest(metadataPath, metadata), "write temp metadata")
-	metadataData, err := os.ReadFile(metadataPath) //nolint:gosec // G304: test helper
-	require.NoError(t, err, "read temp metadata")
-	metadataEntry, err := zipWriter.Create("metadata.xml")
-	require.NoError(t, err, "create metadata.xml entry")
-	_, err = metadataEntry.Write(metadataData)
-	require.NoError(t, err, "write metadata.xml")
-
-	header := &zip.FileHeader{Name: entryName, Method: zip.Deflate, Modified: mtime}
-	todosEntry, err := zipWriter.CreateHeader(header)
-	require.NoError(t, err, "create todos entry")
-	_, err = todosEntry.Write([]byte("[]\n"))
-	require.NoError(t, err, "write todos body")
-
-	require.NoError(t, zipWriter.Close(), "close zip")
-}
-
-func findFirstZipEntryWithPrefix(t *testing.T, archivePath, prefix string) string {
-	t.Helper()
-	zipReader, err := zip.OpenReader(archivePath)
-	require.NoError(t, err, "open archive")
-	defer func() { _ = zipReader.Close() }()
-	for _, file := range zipReader.File {
-		if strings.HasPrefix(file.Name, prefix) {
-			return file.Name
-		}
-	}
-	return ""
+	return names
 }
