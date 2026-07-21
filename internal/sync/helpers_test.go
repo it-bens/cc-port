@@ -82,7 +82,7 @@ func toolSetForTest() *tool.Set { return tool.NewSet(claude.New()) }
 func injectArchiveWithPusher(t *testing.T, r *remote.Remote, name, pusher string, at time.Time) {
 	t.Helper()
 	targets, projectPath := buildTestTargets(t)
-	body := buildArchiveBytes(t, targets, projectPath, pusher, at, "", nil, "")
+	body := buildArchiveBytes(t, targets, projectPath, pusher, at, nil, "")
 	uploadBytes(t, r, name, body)
 }
 
@@ -92,7 +92,7 @@ func injectArchiveWithDeclaredPlaceholder(t *testing.T, r *remote.Remote, name, 
 	t.Helper()
 	targets, projectPath := buildTestTargets(t)
 	placeholders := map[string][]manifest.Placeholder{"claude": {{Key: key, Original: original}}}
-	body := buildArchiveBytes(t, targets, projectPath, pusher, time.Now().UTC(), "", placeholders, "")
+	body := buildArchiveBytes(t, targets, projectPath, pusher, time.Now().UTC(), placeholders, "")
 	uploadBytes(t, r, name, body)
 }
 
@@ -105,7 +105,7 @@ func injectArchiveWithSenderResolve(t *testing.T, r *remote.Remote, name, key, o
 	placeholders := map[string][]manifest.Placeholder{
 		"claude": {{Key: key, Original: original, Resolve: "/Users/sender-resolved"}},
 	}
-	body := buildArchiveBytes(t, targets, projectPath, pusher, time.Now().UTC(), "", placeholders, "")
+	body := buildArchiveBytes(t, targets, projectPath, pusher, time.Now().UTC(), placeholders, "")
 	uploadBytes(t, r, name, body)
 }
 
@@ -118,14 +118,13 @@ func buildArchiveBytes(
 	targets []tool.Target,
 	projectPath, pusher string,
 	at time.Time,
-	pass string,
 	placeholders map[string][]manifest.Placeholder,
 	_ string,
 ) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	stages := []pipeline.WriterStage{
-		&encrypt.WriterStage{Pass: pass},
+		&encrypt.WriterStage{Pass: ""},
 		&bufferSink{buf: &buf},
 	}
 	w, err := pipeline.RunWriter(context.Background(), stages)

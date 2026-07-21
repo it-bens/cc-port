@@ -17,7 +17,7 @@ func TestMergeResolutions_RejectsImplicitManifestResolution(t *testing.T) {
 		Placeholders: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolve: "/sender/path"}},
 	}}}
 
-	_, err := mergeResolutions(block, fromManifest, map[string]string{"{{PROJECT_PATH}}": "/target/path"})
+	_, err := MergeResolutions(block, fromManifest, map[string]string{"{{PROJECT_PATH}}": "/target/path"})
 
 	var implicit *ImplicitKeyOverrideError
 	require.ErrorAs(t, err, &implicit)
@@ -33,7 +33,7 @@ func TestMergeResolutions_MergesDeclaredManifestResolution(t *testing.T) {
 		Placeholders: []manifest.Placeholder{{Key: "{{DECLARED}}", Resolve: "/target/path"}},
 	}}}
 
-	resolutions, err := mergeResolutions(block, fromManifest, nil)
+	resolutions, err := MergeResolutions(block, fromManifest, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "/target/path", resolutions["{{DECLARED}}"])
@@ -42,7 +42,7 @@ func TestMergeResolutions_MergesDeclaredManifestResolution(t *testing.T) {
 func TestMergeResolutions_RejectsRelativeResolutionValue(t *testing.T) {
 	block := manifest.Tool{Name: "claude", Placeholders: []manifest.Placeholder{{Key: "{{DECLARED}}", Resolve: "relative/path"}}}
 
-	_, err := mergeResolutions(block, nil, nil)
+	_, err := MergeResolutions(block, nil, nil)
 
 	var invalid *archive.InvalidResolutionsError
 	require.ErrorAs(t, err, &invalid)
@@ -56,7 +56,7 @@ func TestMergeResolutions_RejectsUndeclaredManifestResolution(t *testing.T) {
 		Placeholders: []manifest.Placeholder{{Key: "{{UNKNOWN}}", Resolve: "/target/path"}},
 	}}}
 
-	_, err := mergeResolutions(block, fromManifest, nil)
+	_, err := MergeResolutions(block, fromManifest, nil)
 
 	var undeclared *UndeclaredResolutionKeysError
 	require.ErrorAs(t, err, &undeclared)

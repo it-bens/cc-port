@@ -153,12 +153,12 @@ func PlanPush(_ context.Context, opts PushOptions, prior *PriorRead) (*PushPlan,
 // ExecutePush runs the export-side pipeline.
 //
 //nolint:gocritic // hugeParam: by-value PushOptions matches the public Plan/Execute contract.
-func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output io.Writer) error {
+func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output io.Writer) (*export.Result, error) {
 	if plan == nil {
-		return errors.New("sync.ExecutePush: plan is nil")
+		return nil, errors.New("sync.ExecutePush: plan is nil")
 	}
 	if output == nil {
-		return errors.New("sync.ExecutePush: output is nil")
+		return nil, errors.New("sync.ExecutePush: output is nil")
 	}
 	if opts.Reporter == nil {
 		opts.Reporter = progress.Noop()
@@ -174,11 +174,12 @@ func ExecutePush(ctx context.Context, opts PushOptions, plan *PushPlan, output i
 		SyncPushedAt: now().UTC(),
 		Reporter:     exportPhase,
 	}
-	if _, err := export.Run(ctx, opts.Targets, &exportOptions); err != nil {
-		return fmt.Errorf("sync.ExecutePush: export: %w", err)
+	result, err := export.Run(ctx, opts.Targets, &exportOptions)
+	if err != nil {
+		return nil, fmt.Errorf("sync.ExecutePush: export: %w", err)
 	}
 	exportPhase.End("")
-	return nil
+	return &result, nil
 }
 
 // PlanPull reads the remote archive's manifest from the pre-opened source
@@ -198,6 +199,9 @@ func PlanPull(ctx context.Context, opts PullOptions, source pipeline.Source) (*P
 	if err != nil {
 		return nil, fmt.Errorf("sync.PlanPull: read manifest: %w", err)
 	}
+	if err := importer.VerifyManifestTools(opts.AllTools, metadata); err != nil {
+		return nil, fmt.Errorf("sync.PlanPull: verify manifest tools: %w", err)
+	}
 
 	reader, err := archive.OpenReader(source.ReaderAt, source.Size, caps)
 	if err != nil {
@@ -206,6 +210,9 @@ func PlanPull(ctx context.Context, opts PullOptions, source pipeline.Source) (*P
 	entries, err := reader.RawEntries()
 	if err != nil {
 		return nil, fmt.Errorf("sync.PlanPull: read archive entries: %w", err)
+	}
+	if err := importer.VerifyEntryTools(opts.AllTools, entries); err != nil {
+		return nil, fmt.Errorf("sync.PlanPull: verify entry tools: %w", err)
 	}
 	entriesByTool := make(map[string][]archive.RawEntry, len(entries))
 	for _, entry := range entries {
@@ -244,12 +251,12 @@ func PlanPull(ctx context.Context, opts PullOptions, source pipeline.Source) (*P
 		if !ok {
 			continue
 		}
-		anchors, err := target.Workspace.ImplicitAnchors(opts.TargetPath)
+		anchors, resolutions, err := importer.PreflightBlock(target, block, opts.FromManifest, opts.TargetPath)
 		if err != nil {
-			return nil, fmt.Errorf("sync.PlanPull: implicit anchors for %s: %w", block.Name, err)
+			return nil, fmt.Errorf("sync.PlanPull: %w", err)
 		}
 		unresolved, err := importer.UnresolvedReferencedKeys(
-			ctx, block, anchors, pullResolutions(block, opts.FromManifest), entriesByTool[block.Name], caps.MaxAggregateBytes,
+			ctx, block, anchors, resolutions, entriesByTool[block.Name], caps.MaxAggregateBytes,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("sync.PlanPull: unresolved placeholders for %s: %w", block.Name, err)
@@ -264,32 +271,6 @@ func PlanPull(ctx context.Context, opts PullOptions, source pipeline.Source) (*P
 		return nil, err
 	}
 	return plan, nil
-}
-
-// pullResolutions builds the covered-key value map PlanPull feeds to
-// importer.UnresolvedReferencedKeys: the sender's own pre-filled Resolve
-// values plus an optional --from-manifest override. Implicit anchors are
-// not folded in here — UnresolvedReferencedKeys already treats them as a
-// separate skip condition, so PlanPull passes anchors alongside this map
-// rather than merging the two, mirroring import preflight's own split
-// between mergeResolutions' resolutions map and its anchors parameter.
-func pullResolutions(block manifest.Tool, fromManifest *manifest.Metadata) map[string]string {
-	resolutions := make(map[string]string, len(block.Placeholders))
-	for _, placeholder := range block.Placeholders {
-		if placeholder.Resolve != "" {
-			resolutions[placeholder.Key] = placeholder.Resolve
-		}
-	}
-	if fromManifest != nil {
-		if overrideBlock, ok := fromManifest.ToolBlock(block.Name); ok {
-			for _, placeholder := range overrideBlock.Placeholders {
-				if placeholder.Resolve != "" {
-					resolutions[placeholder.Key] = placeholder.Resolve
-				}
-			}
-		}
-	}
-	return resolutions
 }
 
 // ExecutePull runs importer.Run against the pre-opened source.

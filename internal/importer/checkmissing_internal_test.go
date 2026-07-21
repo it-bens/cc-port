@@ -20,7 +20,7 @@ func TestMergeResolutions_MergesManifestResolveValue(t *testing.T) {
 		Placeholders: []manifest.Placeholder{{Key: "{{HOST}}", Resolve: "/srv/host"}},
 	}}}
 
-	resolutions, err := mergeResolutions(block, fromManifest, nil)
+	resolutions, err := MergeResolutions(block, fromManifest, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "/srv/host", resolutions["{{HOST}}"])
@@ -33,7 +33,7 @@ func TestMergeResolutions_IgnoresEmptyManifestResolveValue(t *testing.T) {
 		Placeholders: []manifest.Placeholder{{Key: "{{ORG}}", Resolve: ""}},
 	}}}
 
-	resolutions, err := mergeResolutions(block, fromManifest, nil)
+	resolutions, err := MergeResolutions(block, fromManifest, nil)
 
 	require.NoError(t, err)
 	_, has := resolutions["{{ORG}}"]

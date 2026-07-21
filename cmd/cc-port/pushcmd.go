@@ -242,10 +242,12 @@ func applyPush(
 	uploadPhase := opts.Reporter.Phase("upload", plan.PriorSize, progress.UnitBytes)
 	countingWriter := progress.CountingWriter(writer, uploadPhase)
 
-	if err := syncc.ExecutePush(ctx, opts, plan, countingWriter); err != nil {
+	result, err := syncc.ExecutePush(ctx, opts, plan, countingWriter)
+	if err != nil {
 		return err
 	}
 	uploadPhase.End("")
+	renderToolWarnings(cmd.ErrOrStderr(), opts.Targets, result.ByTool)
 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Pushed: %s/%s\n", r.URL(), opts.Name); err != nil {
 		return fmt.Errorf("write push confirmation: %w", err)

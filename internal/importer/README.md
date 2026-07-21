@@ -62,7 +62,7 @@ are returned by `manifest.ApplyToolCategories` and reached here via `%w`
 wrapping. `manifest.UnregisteredToolError` (a manifest `<tool>` block naming
 an unregistered tool entirely) is a type `internal/manifest` only defines.
 `ApplyToolCategories` never returns it, and this package's own registry
-validation (`verifyManifestTools`) constructs and wraps it directly. See
+validation (`VerifyManifestTools`) constructs and wraps it directly. See
 [`internal/manifest/README.md`](../manifest/README.md) §Errors for all four.
 
 ## Contracts
@@ -76,11 +76,11 @@ placeholder token a tool's bodies contain must be accounted for before any
 destination is written.
 
 `runLocked` reads the manifest, verifies every manifest tool block and every
-archive entry's tool prefix names a registered tool (`verifyManifestTools`,
-`verifyEntryTools`), then preflights each present target: validates its
+archive entry's tool prefix names a registered tool (`VerifyManifestTools`,
+`VerifyEntryTools`), then preflights each present target: validates its
 manifest block's categories via `manifest.ApplyToolCategories`, resolves its
 implicit anchors via `Workspace.ImplicitAnchors`, merges resolutions
-(`mergeResolutions`), and refuses on any declared key that is actually
+(`MergeResolutions`), and refuses on any declared key that is actually
 referenced in a body but has no resolution (`checkMissingResolutions`). Any
 mismatch aborts the import before any write. A refused import leaves the
 destination untouched: no partial writes, no dangling staging temps.
@@ -101,7 +101,7 @@ reversed from the saved pre-promote bytes of each replaced destination.
   supplies that tool's own machine-local anchor keys (for example Claude's
   `{{PROJECT_PATH}}`/`{{HOME}}`/`{{PROJECT_DIR}}`, Codex's `{{CODEX_HOME}}`),
   pre-resolved to their values for this import. Caller-supplied resolutions
-  for an implicit key are refused by `mergeResolutions` with
+  for an implicit key are refused by `MergeResolutions` with
   `ImplicitKeyOverrideError`.
 - A registered tool absent from the manifest: recorded in `Result.SkippedTools`,
   not treated as a hard failure.
@@ -152,7 +152,7 @@ keys appear in any body of a tool's entries, then resolves them via
 (in-memory, routed through the same primitive). `{{UPPER_SNAKE}}` substrings
 a tool's manifest does not declare are content and round-trip verbatim.
 
-`mergeResolutions` composes, per tool, three resolution sources in strength
+`MergeResolutions` composes, per tool, three resolution sources in strength
 order: the sender's own pre-filled `Resolve` values (weakest), an optional
 `--from-manifest` override for that tool (stronger), and the target's
 implicit anchors (strongest: cc-port computes these itself on the
@@ -238,7 +238,7 @@ staging-path construction lives in each adapter, driven by
 ## Tests
 
 Unit tests in `importer_test.go`, `merge_resolutions_test.go`, and the
-internal `checkmissing_internal_test.go`. Coverage:
+internal `checkmissing_internal_test.go` and `filehistory_drift_internal_test.go`. Coverage:
 
 - Basic round-trip, including a multi-tool archive importing into Claude and
   Codex targets in the same run.
@@ -258,6 +258,9 @@ internal `checkmissing_internal_test.go`. Coverage:
 - Incoming history line at/over the scanner cap.
 - Progress-phase sequencing (preflight, extract, promote, finalize) and the
   extract phase counting every staged entry.
+- The drift guard pins `fileHistoryTool` and `fileHistoryEntryPrefix` to the
+  Claude adapter's exported `Name()` and `file-history` category, so an adapter
+  rename fails loudly instead of silently refusing imports.
 
 ## References
 

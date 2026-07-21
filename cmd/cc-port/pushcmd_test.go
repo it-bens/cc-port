@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/credentials"
@@ -145,6 +146,34 @@ func TestPush_ApplyCommitsToRemote(t *testing.T) {
 	if _, statErr := r.Stat(context.Background(), "myproj"); statErr != nil {
 		t.Fatalf("Stat after apply: %v", statErr)
 	}
+}
+
+func TestPush_ApplyRendersToolWarnings(t *testing.T) {
+	tmpHome, projectPath := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	manifestPath := pushTestManifestPath(t)
+	url := "file://" + t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(claudeFixtureDir, "rules"), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(claudeFixtureDir, "rules", "push-rule.md"),
+		[]byte("Applies to "+projectPath+" only.\n"),
+		0o600,
+	))
+
+	rootCmd := newRootCmd(noopBanner{})
+	var stderr bytes.Buffer
+	rootCmd.SetErr(&stderr)
+	rootCmd.SetArgs([]string{
+		"push", projectPath,
+		"--claude-home", claudeFixtureDir,
+		"--as", "myproj",
+		"--remote", url,
+		"--from-manifest", manifestPath,
+		"--apply",
+	})
+
+	require.NoError(t, rootCmd.Execute())
+	assert.Contains(t, stderr.String(), "Warning: rules file push-rule.md (line 1) references this project")
 }
 
 func TestPush_CrossMachineRefusesWithoutForce(t *testing.T) {
