@@ -235,6 +235,20 @@ func (workspace *Workspace) projectRollouts(ctx context.Context, project string)
 }
 
 func rolloutProjectIdentity(lines [][]byte, project string) (rolloutIdentity, error) {
+	identity := rolloutIdentityFromLines(lines)
+	if !identity.EraA && identity.ThreadID == "" {
+		belongsToProject, err := identityMatchesProject(identity, project)
+		if err != nil {
+			return rolloutIdentity{}, err
+		}
+		if belongsToProject {
+			return rolloutIdentity{}, fmt.Errorf("associated rollout has no session id")
+		}
+	}
+	return identity, nil
+}
+
+func rolloutIdentityFromLines(lines [][]byte) rolloutIdentity {
 	identity := rolloutIdentity{EraA: true}
 	for _, line := range lines {
 		var record struct {
@@ -262,16 +276,7 @@ func rolloutProjectIdentity(lines [][]byte, project string) (rolloutIdentity, er
 			}
 		}
 	}
-	if !identity.EraA && identity.ThreadID == "" {
-		belongsToProject, err := identityMatchesProject(identity, project)
-		if err != nil {
-			return rolloutIdentity{}, err
-		}
-		if belongsToProject {
-			return rolloutIdentity{}, fmt.Errorf("associated rollout has no session id")
-		}
-	}
-	return identity, nil
+	return identity
 }
 
 func identityMatchesProject(identity rolloutIdentity, project string) (bool, error) {
@@ -1055,8 +1060,8 @@ func (workspace *Workspace) DiskCategories(ctx context.Context, project string) 
 	return []tool.SizeCategory{active, archived, history}, nil
 }
 
-// EnumerateProjects unions database thread cwd values with every
-// config.toml/profile file's [projects] TOML keys.
+// EnumerateProjects unions database thread cwd values, config.toml/profile
+// [projects] TOML keys, and rollout session_meta/turn_context cwd values.
 func (workspace *Workspace) EnumerateProjects(ctx context.Context) ([]tool.ProjectInfo, error) {
 	projects := make(map[string]struct{})
 	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
@@ -1098,21 +1103,19 @@ func (workspace *Workspace) EnumerateProjects(ctx context.Context) ([]tool.Proje
 		_ = rows.Close()
 		_ = database.Close()
 	}
-	configFiles, err := discoverConfigTOMLFiles(workspace.home)
+	configKeys, err := workspace.configProjectKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, path := range configFiles {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		keys, err := configTOMLProjectKeys(path)
-		if err != nil {
-			return nil, err
-		}
-		for _, key := range keys {
-			projects[key] = struct{}{}
-		}
+	for _, key := range configKeys {
+		projects[key] = struct{}{}
+	}
+	rolloutCWDs, err := workspace.rolloutProjectCWDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, cwd := range rolloutCWDs {
+		projects[cwd] = struct{}{}
 	}
 	names := make([]string, 0, len(projects))
 	for project := range projects {
@@ -1136,6 +1139,48 @@ func (workspace *Workspace) EnumerateProjects(ctx context.Context) ([]tool.Proje
 		result = append(result, info)
 	}
 	return result, nil
+}
+
+func (workspace *Workspace) configProjectKeys(ctx context.Context) ([]string, error) {
+	configFiles, err := discoverConfigTOMLFiles(workspace.home)
+	if err != nil {
+		return nil, fmt.Errorf("discover config files: %w", err)
+	}
+	var keys []string
+	for _, path := range configFiles {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		fileKeys, err := configTOMLProjectKeys(path)
+		if err != nil {
+			return nil, fmt.Errorf("read project keys from config %s: %w", path, err)
+		}
+		keys = append(keys, fileKeys...)
+	}
+	return keys, nil
+}
+
+func (workspace *Workspace) rolloutProjectCWDs(ctx context.Context) ([]string, error) {
+	rollouts, err := discoverRolloutFiles(workspace.home)
+	if err != nil {
+		return nil, fmt.Errorf("discover rollouts: %w", err)
+	}
+	var cwds []string
+	for _, path := range rollouts {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		lines, err := readRolloutLines(path)
+		if err != nil {
+			return nil, fmt.Errorf("read rollout %s: %w", path, err)
+		}
+		identity := rolloutIdentityFromLines(lines)
+		if identity.EraA {
+			continue
+		}
+		cwds = append(cwds, identity.CWDs...)
+	}
+	return cwds, nil
 }
 
 // knowsProject reports whether Codex has any record of project: a rollout's

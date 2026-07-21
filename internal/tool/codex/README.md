@@ -111,13 +111,14 @@ shapes themselves.
   cases as long as the project stays otherwise known.
 - `EnumerateProjects` carries the same base-only resolution limit in a
   worse shape. It builds its candidate project set from
-  `discoverDatabases(Home.SQLiteDir, ...)` thread cwds and
-  `discoverConfigTOMLFiles` project keys alone, so a project known only
-  through a thread row under a divergent profile's `sqlite_home` never
-  becomes a candidate: it is missing from the listing entirely, not
-  reported incomplete. `EnumerateProjects` also forwards whatever error
+  `discoverDatabases(Home.SQLiteDir, ...)` thread cwds,
+  `discoverConfigTOMLFiles` project keys, and rollout
+  `session_meta`/`turn_context` cwd values. A project known only through a
+  thread row under a divergent profile's `sqlite_home` never becomes a
+  candidate: it is missing from the listing entirely, not reported
+  incomplete. `EnumerateProjects` also forwards whatever error
   `DiskCategories` returns for any one candidate project
-  (`export_import_stats.go:1081`) without scoping the failure to that
+  (`export_import_stats.go:1130`) without scoping the failure to that
   project, so one project's lower-level read failure aborts the whole
   listing. All three cases above are a deliberate residual, not an
   oversight: inferring the active profile instead (the sole overlay, or
