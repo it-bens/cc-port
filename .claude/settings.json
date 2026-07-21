@@ -1,5 +1,7 @@
 {
   "enabledPlugins": {
+    "commit-message-writer@itb-ai-tools": true,
+    "software-writer@itb-ai-tools": true,
     "superpowers-additions@itb-ai-tools": true
   },
   "hooks": {
@@ -9,11 +11,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq --rawfile ctx .claude/hook-contexts/reviewing-plans.md 'if .tool_input.skill == \"superpowers-additions:reviewing-plans\" then {hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $ctx}} else empty end'"
+            "command": "jq --rawfile ctx \"$CLAUDE_PROJECT_DIR/.claude/hook-contexts/reviewing-plans.md\" 'if .tool_input.skill == \"superpowers-additions:reviewing-plans\" then {hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $ctx}} else empty end'"
           },
           {
             "type": "command",
-            "command": "jq --rawfile ctx .claude/hook-contexts/brainstorming.md 'if .tool_input.skill == \"superpowers:brainstorming\" then {hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $ctx}} else empty end'"
+            "command": "jq --rawfile ctx \"$CLAUDE_PROJECT_DIR/.claude/hook-contexts/brainstorming.md\" 'if .tool_input.skill == \"superpowers:brainstorming\" then {hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $ctx}} else empty end'"
+          },
+          {
+            "type": "command",
+            "command": "jq --rawfile ctx \"$CLAUDE_PROJECT_DIR/.claude/hook-contexts/writing-commit-messages.md\" 'if .tool_input.skill == \"commit-message-writer:writing-commit-messages\" then {hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $ctx}} else empty end'"
           }
         ]
       }
@@ -24,11 +30,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq --rawfile ctx .claude/hook-contexts/reviewing-plans.md 'if (.prompt // \"\" | startswith(\"/superpowers-additions:reviewing-plans\")) then {hookSpecificOutput: {hookEventName: \"UserPromptSubmit\", additionalContext: $ctx}} else empty end'"
+            "command": "jq --rawfile ctx \"$CLAUDE_PROJECT_DIR/.claude/hook-contexts/reviewing-plans.md\" 'if (.prompt // \"\" | startswith(\"/superpowers-additions:reviewing-plans\")) then {hookSpecificOutput: {hookEventName: \"UserPromptSubmit\", additionalContext: $ctx}} else empty end'"
           },
           {
             "type": "command",
-            "command": "jq --rawfile ctx .claude/hook-contexts/brainstorming.md 'if (.prompt // \"\" | startswith(\"/superpowers:brainstorming\")) then {hookSpecificOutput: {hookEventName: \"UserPromptSubmit\", additionalContext: $ctx}} else empty end'"
+            "command": "jq --rawfile ctx \"$CLAUDE_PROJECT_DIR/.claude/hook-contexts/brainstorming.md\" 'if (.prompt // \"\" | startswith(\"/superpowers:brainstorming\")) then {hookSpecificOutput: {hookEventName: \"UserPromptSubmit\", additionalContext: $ctx}} else empty end'"
+          },
+          {
+            "type": "command",
+            "command": "jq --rawfile ctx \"$CLAUDE_PROJECT_DIR/.claude/hook-contexts/writing-commit-messages.md\" 'if (.prompt // \"\" | startswith(\"/commit-message-writer:writing-commit-messages\")) then {hookSpecificOutput: {hookEventName: \"UserPromptSubmit\", additionalContext: $ctx}} else empty end'"
           }
         ]
       }

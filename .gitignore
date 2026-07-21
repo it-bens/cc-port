@@ -45,10 +45,16 @@ AGENTS.local.md
 
 # Claude Code local config
 .claude/*
+!.claude/CHANGELOG.md
+!.claude/extensions/
 !.claude/hook-contexts/
 !.claude/rules/
 !.claude/settings.json
 !.claude/skills/
+
+# ChunkHound local index (.chunkhound.json is committed; API keys come from the
+# machine-global ~/.config/chunkhound/chunkhound.json)
+.chunkhound/
 
 # Go build artifacts
 /cc-port

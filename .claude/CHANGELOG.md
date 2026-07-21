@@ -1,8 +1,13 @@
-# Skill Changelog
+# .claude Changelog
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning is sequential per skill (v1, v2, v3...).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Covers everything committed under `.claude/`: skills, extensions, and other configuration. Versioning is sequential per component (v1, v2, v3...).
 
 ## commit-message-generating
+
+### v2
+
+#### Removed
+- Entire skill. Replaced by the `commit-message-writer@itb-ai-tools` plugin's `writing-commit-messages` skill plus the project overlay `.claude/hook-contexts/writing-commit-messages.md`.
 
 ### v1
 
@@ -12,7 +17,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Three references: `scope-detection.md`, `type-detection.md`, `writing-rules-anti-ai-slop.md`.
 - Clipboard offer (`pbcopy` / `xclip`) and tmp-file cleanup as the final action.
 
+## extensions/software-writer
+
+### v1
+
+#### Added
+- One extension file per plugin skill (`writing-code.md`, `writing-tests.md`, `writing-docs.md`) carrying cc-port's named-value assignments and workflow-position sections. Delivered by the `software-writer@itb-ai-tools` plugin on Claude Code and via the root `AGENTS.override.md` on Codex.
+
+## hook-contexts/brainstorming
+
+### v2
+
+#### Changed
+- Sections renamed from step-numbered anchors tied to the parent skill's numbering (`## Step 7: ...`) to self-contained, phase-named headings, so the overlay survives parent-skill renumbering.
+
+## hook-contexts/reviewing-plans
+
+### v2
+
+#### Changed
+- Sections renamed from step-numbered anchors to phase-named, self-contained instructions; the spec example path and the skill-ladder table are folded into prose.
+- Writing-skill references repointed from the removed project skills to the `software-writer` plugin skills.
+
+## hook-contexts/writing-commit-messages
+
+### v1
+
+#### Added
+- Overlay for the `commit-message-writer@itb-ai-tools` plugin's `writing-commit-messages` skill: a Pre-Step-8 type rule (`.claude/**` is code, never `docs`) and a Pre-Step-9 scope vocabulary derived from commit history. Delivered through two `jq` hook entries in `.claude/settings.json`.
+
 ## writing-docs
+
+### v4
+
+#### Removed
+- Entire skill. Replaced by the `software-writer@itb-ai-tools` plugin's `writing-docs` skill plus the project extension `.claude/extensions/software-writer/writing-docs.md`.
 
 ### v3
 
@@ -40,6 +79,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Four references: `agents-md.md`, `anti-ai-slop.md`, `surface-shapes.md`, `writing-style.md`. Each reference opens with a "Loaded from SKILL.md when..." intro.
 
 ## writing-go-code
+
+### v4
+
+#### Removed
+- Entire skill. Replaced by the `software-writer@itb-ai-tools` plugin's `writing-code` skill plus the project extension `.claude/extensions/software-writer/writing-code.md`.
 
 ### v3
 
@@ -87,6 +131,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Read-only — never mutates the release.
 
 ## writing-tests
+
+### v4
+
+#### Removed
+- Entire skill. Replaced by the `software-writer@itb-ai-tools` plugin's `writing-tests` skill plus the project extension `.claude/extensions/software-writer/writing-tests.md`.
 
 ### v3
 

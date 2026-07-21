@@ -1,10 +1,10 @@
 # cc-port project overlay for brainstorming
 
-Project-specific context for the generalized `superpowers:brainstorming` skill. Adds a design-rules compliance pass to spec self-review so cc-port's task-keyed right-way rules are not silently violated by a fresh spec.
+This overlay applies to spec brainstorming in the cc-port repository. It adds a design-rules compliance pass to the spec self-review so that cc-port's task-keyed right-way rules are not silently violated by a fresh spec.
 
-## Step 7: Spec self-review — design-rules pass
+## Run a design-rules pass during spec self-review
 
-After the standard self-review checks (placeholder, internal consistency, scope, ambiguity), run a fifth pass against `docs/design-rules.md` before the User Review Gate.
+After the standard self-review checks (placeholder, internal consistency, scope, ambiguity) and before the User Review Gate, run a fifth pass against `docs/design-rules.md`.
 
 `docs/design-rules.md` is task-keyed: each section pairs a task ("Substitute one project path for another in user-owned data", "Write a command body that mutates user state", "Add a category, session-keyed directory, or user-wide rewrite target", ...) with the way that holds in cc-port and the failure modes the right way avoids. A spec that proposes covered work without naming the right way silently re-introduces the failure mode at implementation time.
 
