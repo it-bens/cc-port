@@ -37,7 +37,7 @@ cc-port/
 
 Each non-trivial directory has a `README.md`. Directories with hard editing rules additionally carry an `AGENTS.md` (loaded by Claude Code via a one-line `CLAUDE.md`). The `README.md` is the developer narrative. The `AGENTS.md` is a pointer-only map into it.
 
-`internal/claude` and `internal/transport` do not exist anymore. The Claude Code adapter moved to `internal/tool/claude` and absorbed `internal/transport`'s archive-layout registry into one merged `claude.Registries` slice (see §Registry source of truth). Command packages (`internal/move`, `internal/export`, `internal/importer`, `internal/stats`, `internal/sync`) import `internal/tool` only; they never import an adapter package. Only `cmd/cc-port` imports `internal/tool/claude` and `internal/tool/codex`, in `cmd/cc-port/tools.go`.
+`internal/claude` and `internal/transport` do not exist anymore. The Claude Code adapter moved to `internal/tool/claude` and absorbed `internal/transport`'s archive-layout registry into one merged `claude.Registries` slice (see §Registry source of truth). Command packages (`internal/move`, `internal/export`, `internal/importer`, `internal/stats`, `internal/sync`) import `internal/tool` only; they never import an adapter package. Among code linked into the shipped binary, only `cmd/cc-port` imports `internal/tool/claude` and `internal/tool/codex`, in `cmd/cc-port/tools.go`. The test-support package `internal/testutil` and demo-seed fixture `docs/videos/fixtures/cmd/encode-path` also import the Claude adapter but are not linked into the binary.
 
 ## The tool contract
 
@@ -75,7 +75,8 @@ They drive every tool through the `Tool` and `Workspace` interfaces and
 never branch on which tool they are talking to. Adapters
 (`internal/tool/claude`, `internal/tool/codex`) import `internal/tool` plus
 whatever shared substrate they need (`internal/rewrite`, `internal/sqlrewrite`,
-`internal/archive`); only `cmd/cc-port` imports an adapter package directly.
+`internal/archive`). Among code linked into the shipped binary, only
+`cmd/cc-port` imports an adapter package directly.
 A new tool adds one adapter package and one line in `tools.go`; it changes no
 command package (see `internal/tool/README.md` §Extension rule for the full
 checklist a third adapter follows).
@@ -136,7 +137,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Archive entries carry a `<tool>/` namespace; decompression is capped and containment-checked | [`internal/archive/README.md`](../internal/archive/README.md) §Contracts |
 | Project paths use a lossy encoding; collisions refused  | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md)            |
 | `~/.claude/rules/*.md` never rewritten in place         | [`internal/scan/README.md`](../internal/scan/README.md)                          |
-| Rules-scan output flows as `scan.Report` bundle         | [`internal/scan/README.md`](../internal/scan/README.md)                          |
+| Rules-scan warnings flow as per-tool warning strings through adapter export, import finalize, and move residual surfaces | [`internal/scan/README.md`](../internal/scan/README.md)                          |
 | Malformed `history.jsonl` lines preserved, not repaired | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §Malformed history entries preserved |
 | `history.jsonl` lines bounded at 16 MiB, oversized fail  | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §History line cap |
 | Archives are a closed placeholder contract              | [`internal/importer/README.md`](../internal/importer/README.md) §Import contract |
