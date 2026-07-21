@@ -178,6 +178,13 @@ CREATE TABLE threads (
 	git_branch TEXT,
 	git_origin_url TEXT
 );
+CREATE TABLE backfill_state (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	status TEXT NOT NULL,
+	last_watermark TEXT,
+	last_success_at INTEGER,
+	updated_at INTEGER NOT NULL
+);
 CREATE TABLE agent_jobs (
 	id TEXT PRIMARY KEY,
 	name TEXT NOT NULL,
@@ -209,6 +216,16 @@ CREATE TABLE agent_jobs (
 	)
 	if err != nil {
 		t.Fatalf("insert fixture thread: %v", err)
+	}
+
+	const backfillEpoch = 1_752_137_200
+	_, err = database.ExecContext(context.Background(),
+		`INSERT INTO backfill_state (id, status, last_watermark, last_success_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)`,
+		1, "complete", "sessions/2026/07/17/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl", backfillEpoch, backfillEpoch,
+	)
+	if err != nil {
+		t.Fatalf("insert fixture backfill state: %v", err)
 	}
 
 	_, err = database.ExecContext(context.Background(),

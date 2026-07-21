@@ -553,8 +553,9 @@ func TestCodexSidecarRerunAppliesThreadCreatedAfterFirstImport(t *testing.T) {
 
 	require.Equal(t, []string{
 		"1 threads sidecar row(s) could not be applied because Codex has not created their thread rows yet; " +
-			"rerun import after opening the project",
+			"the session backfill was re-armed — start Codex once (any directory), then rerun import",
 	}, first.Warnings[toolName])
+	assertBackfillState(t, filepath.Join(destinationHome.SQLiteDir, stateDBFileName), "pending", nil)
 	insertThreadRow(t, filepath.Join(destinationHome.SQLiteDir, stateDBFileName), fixtureThreadTwo, threadRowMetadata{})
 
 	second := importFixtureArchive(t, archiveBytes, destinationHome)
@@ -564,6 +565,49 @@ func TestCodexSidecarRerunAppliesThreadCreatedAfterFirstImport(t *testing.T) {
 		Title: "archived fixture", ArchivedAt: 1_752_137_200, GitSHA: "deadbeef",
 		GitBranch: "main", GitOriginURL: "https://example.invalid/fixture.git",
 	})
+}
+
+func TestCodexImportRearmLeavesAbsentBackfillStateRowAbsent(t *testing.T) {
+	sourceHome := SetupFixture(t)
+	archiveBytes := exportFixtureArchive(t, sourceHome)
+	destinationHome, _ := setupImportDestination(t)
+	destinationDatabase := filepath.Join(destinationHome.SQLiteDir, stateDBFileName)
+	deleteBackfillStateRow(t, destinationDatabase)
+
+	importFixtureArchive(t, archiveBytes, destinationHome)
+
+	assertBackfillStateAbsent(t, destinationDatabase)
+}
+
+func TestCodexImportRearmFailsWithoutBackfillStateTable(t *testing.T) {
+	sourceHome := SetupFixture(t)
+	archiveBytes := exportFixtureArchive(t, sourceHome)
+	destinationHome, _ := setupImportDestination(t)
+	destinationDatabase := filepath.Join(destinationHome.SQLiteDir, stateDBFileName)
+	dropBackfillStateTable(t, destinationDatabase)
+
+	err := importFixtureArchiveError(t, archiveBytes, destinationHome)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "backfill_state")
+}
+
+func TestCodexImportWithoutRolloutsDoesNotRearmBackfillState(t *testing.T) {
+	sourceHome := SetupFixture(t)
+	require.NoError(t, os.RemoveAll(filepath.Join(sourceHome.Dir, sessionsSubdir)))
+	require.NoError(t, os.RemoveAll(filepath.Join(sourceHome.Dir, archivedSessionsSubdir)))
+	insertThreadRow(t, filepath.Join(sourceHome.SQLiteDir, stateDBFileName), fixtureThreadTwo, threadRowMetadata{})
+	archiveBytes := exportFixtureArchive(t, sourceHome)
+	destinationHome, _ := setupImportDestination(t)
+
+	result := importFixtureArchive(t, archiveBytes, destinationHome)
+
+	require.Equal(t, []string{
+		"1 threads sidecar row(s) could not be applied because their thread rows do not exist and this " +
+			"archive carries no rollout files to rebuild them from",
+	}, result.Warnings[toolName])
+	watermark := "sessions/2026/07/17/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl"
+	assertBackfillState(t, filepath.Join(destinationHome.SQLiteDir, stateDBFileName), "complete", &watermark)
 }
 
 func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
@@ -974,6 +1018,17 @@ func importFixtureArchive(t *testing.T, data []byte, home *Home) *importer.Resul
 	return importFixtureArchiveToTarget(t, data, home, FixtureProjectPath())
 }
 
+func importFixtureArchiveError(t *testing.T, data []byte, home *Home) error {
+	t.Helper()
+	adapter := New()
+	set := tool.NewSet(adapter)
+	reader := bytes.NewReader(data)
+	_, err := importer.Run(t.Context(), set, []tool.Target{{Tool: adapter, Workspace: quietTestWorkspace(home)}}, &importer.Options{
+		Source: reader, Size: int64(reader.Len()), TargetPath: FixtureProjectPath(), Caps: archive.DefaultCaps(),
+	})
+	return err
+}
+
 func importFixtureArchiveToTarget(t *testing.T, data []byte, home *Home, target string) *importer.Result {
 	t.Helper()
 	adapter := New()
@@ -1131,4 +1186,51 @@ func assertThreadMetadata(t *testing.T, path, id string, expected threadRowMetad
 	assert.Equal(t, expected.GitSHA, sha)
 	assert.Equal(t, expected.GitBranch, branch)
 	assert.Equal(t, expected.GitOriginURL, origin)
+}
+
+func deleteBackfillStateRow(t *testing.T, path string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	_, err = database.ExecContext(t.Context(), "DELETE FROM backfill_state WHERE id = 1")
+	require.NoError(t, err)
+}
+
+func dropBackfillStateTable(t *testing.T, path string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	_, err = database.ExecContext(t.Context(), "DROP TABLE backfill_state")
+	require.NoError(t, err)
+}
+
+func assertBackfillStateAbsent(t *testing.T, path string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	var count int
+	err = database.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM backfill_state WHERE id = 1").Scan(&count)
+	require.NoError(t, err)
+	assert.Zero(t, count)
+}
+
+func assertBackfillState(t *testing.T, path, expectedStatus string, expectedWatermark *string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	var status string
+	var watermark sql.NullString
+	err = database.QueryRowContext(t.Context(), "SELECT status, last_watermark FROM backfill_state WHERE id = 1").Scan(&status, &watermark)
+	require.NoError(t, err)
+	assert.Equal(t, expectedStatus, status)
+	if expectedWatermark == nil {
+		assert.False(t, watermark.Valid)
+		return
+	}
+	assert.True(t, watermark.Valid)
+	assert.Equal(t, *expectedWatermark, watermark.String)
 }
