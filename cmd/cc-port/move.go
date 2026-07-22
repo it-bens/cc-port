@@ -42,18 +42,27 @@ func newMoveCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 			if !apply {
 				return runMoveDryRun(ctx, cmd.OutOrStdout(), targets, moveOptions)
 			}
-			return runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+			// Render the result table only after runWithProgress tears down the
+			// ledger. The ledger draws its live region on stderr; writing the
+			// table to stdout while it is still active interleaves the two on a
+			// shared terminal and corrupts the final frame.
+			var applyResult *move.ApplyResult
+			runErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
 				moveOptions.Reporter = reporter
 				result, err := move.Apply(ctx, targets, moveOptions)
 				if err != nil {
 					return err
 				}
-				renderApplyResult(cmd.OutOrStdout(), result)
+				applyResult = result
 				if result.Failed() {
-					return fmt.Errorf("one or more tools failed to move; see the table above")
+					return fmt.Errorf("one or more tools failed to move; see the per-tool results table")
 				}
 				return nil
 			})
+			if applyResult != nil {
+				renderApplyResult(cmd.OutOrStdout(), applyResult)
+			}
+			return runErr
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "execute the move (default is dry-run)")

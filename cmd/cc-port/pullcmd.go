@@ -112,7 +112,10 @@ func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 		}
 	}()
 
-	var result *importer.Result
+	var (
+		plan   *syncc.PullPlan
+		result *importer.Result
+	)
 	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) (err error) {
 		opts.Reporter = reporter
 
@@ -126,37 +129,47 @@ func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 			}
 		}()
 
-		plan, err := syncc.PlanPull(ctx, opts, source)
+		planned, err := syncc.PlanPull(ctx, opts, source)
 		if err != nil {
 			return err
 		}
-
-		if err := plan.Render(cmd.OutOrStdout()); err != nil {
-			return fmt.Errorf("render plan: %w", err)
-		}
+		plan = planned
 
 		if !apply {
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); err != nil {
-				return fmt.Errorf("write apply hint: %w", err)
-			}
 			return nil
 		}
 
 		var allUnresolved []string
-		for _, toolName := range plan.Tools {
-			allUnresolved = append(allUnresolved, plan.UnresolvedPlaceholders[toolName]...)
+		for _, toolName := range planned.Tools {
+			allUnresolved = append(allUnresolved, planned.UnresolvedPlaceholders[toolName]...)
 		}
 		if len(allUnresolved) > 0 {
 			return fmt.Errorf("%w: %s", syncc.ErrUnresolvedPlaceholder, strings.Join(allUnresolved, ", "))
 		}
 
-		runResult, err := syncc.ExecutePull(ctx, opts, plan, source)
+		runResult, err := syncc.ExecutePull(ctx, opts, planned, source)
 		if err != nil {
 			return err
 		}
 		result = runResult
 		return nil
 	})
+
+	// Render after runWithProgress tears down the ledger. The ledger holds the
+	// terminal in raw mode, where a bare "\n" moves down without a carriage
+	// return; writing the summary before teardown staircases every line. The
+	// plan's fields are materialized during PlanPull, so rendering it after the
+	// archive source has closed is safe.
+	if plan != nil {
+		if rerr := plan.Render(cmd.OutOrStdout(), apply); rerr != nil {
+			progErr = errors.Join(progErr, fmt.Errorf("render plan: %w", rerr))
+		}
+	}
+	if progErr == nil && !apply {
+		if _, werr := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); werr != nil {
+			progErr = errors.Join(progErr, fmt.Errorf("write apply hint: %w", werr))
+		}
+	}
 
 	if apply && result != nil {
 		if len(result.SkippedTools) > 0 {

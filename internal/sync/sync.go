@@ -48,8 +48,8 @@ type PushOptions struct {
 	Reporter progress.Reporter
 }
 
-// PushPlan is the read-only result of PlanPush. Render writes it for
-// dry-run output; ExecutePush consumes it to perform the upload.
+// PushPlan is the read-only result of PlanPush. Render writes the plan
+// summary (dry-run or apply); ExecutePush consumes it to perform the upload.
 type PushPlan struct {
 	Name              string
 	SelfPusher        string
@@ -78,8 +78,8 @@ type PullOptions struct {
 	Reporter progress.Reporter
 }
 
-// PullPlan is the read-only result of PlanPull. Render writes it for
-// dry-run output; ExecutePull consumes it to perform the import.
+// PullPlan is the read-only result of PlanPull. Render writes the plan
+// summary (dry-run or apply); ExecutePull consumes it to perform the import.
 type PullPlan struct {
 	Name                   string
 	RemotePushedBy         string

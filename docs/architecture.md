@@ -25,7 +25,7 @@ cc-port/
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
 │   ├── sqlrewrite/         SQL-level path rewriting on SQLite (busy_timeout=0, checkpoint discipline)
 │   ├── stats/              Generic project-footprint orchestration (read-only)
-│   ├── sync/               Push and pull orchestration: plan, execute, dry-run rendering
+│   ├── sync/               Push and pull orchestration: plan, execute, plan-summary rendering
 │   ├── testutil/           Test fixture helper
 │   ├── tool/               The tool contract (Tool, Workspace, Surface, Restorer) + tool.Set registry
 │   │   ├── claude/         Claude Code adapter: path encoding, locations, schemas, move/export/import/stats
