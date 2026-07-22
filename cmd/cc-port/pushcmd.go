@@ -216,7 +216,9 @@ func runPushCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 // and the "Pushed:" confirmation. It runs after runWithProgress tears down the
 // ledger: the ledger holds the terminal in raw mode, where a bare "\n" moves
 // down without a carriage return, so writing the summary before teardown
-// staircases every line. Any write failure is folded into progErr.
+// staircases every line. Failures writing the summary, the "(no changes)"
+// hint, and the "Pushed:" confirmation fold into progErr; the tool warnings
+// are best-effort stderr diagnostics whose write failures are not.
 //
 //nolint:gocritic // hugeParam: by-value PushOptions mirrors the public Plan/Execute contract.
 func renderPushOutcome(
