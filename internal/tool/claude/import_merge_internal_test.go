@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,6 +37,31 @@ func TestFinalize_ReportsRulesFileReferences(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, warnings, "rules file import-rule.md (line 1) references this project")
+}
+
+func TestFinalize_SynthesizesWitnessAttributingImportedSessionToDestination(t *testing.T) {
+	projectPath := "/Users/test/Projects/imported"
+	importedSessionID := "11111111-1111-4111-8111-111111111111"
+	workspace := newMergeTestWorkspace(t)
+
+	projectDir := workspace.home.ProjectDir(projectPath)
+	require.NoError(t, os.MkdirAll(projectDir, 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectDir, importedSessionID+".jsonl"),
+		[]byte(`{"type":"user","cwd":"`+projectPath+`","sessionId":"`+importedSessionID+`"}`+"\n"),
+		0o600,
+	))
+
+	_, err := workspace.Finalize(context.Background(), projectPath, nil)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(workspace.home.SessionsDir(), importedSessionID+".json"))
+	require.NoError(t, err, "import must write a session witness for the imported session")
+	var witness sessionWitness
+	require.NoError(t, json.Unmarshal(data, &witness))
+	assert.Equal(t, importedSessionID, witness.SessionID)
+	assert.Equal(t, projectPath, witness.Cwd, "witness must attribute the session to the destination project")
+	assert.LessOrEqual(t, witness.Pid, 0, "a synthesized witness must never read as a live writer")
 }
 
 func TestFinalizeHistory_EmptyExistingPrependsNothing(t *testing.T) {

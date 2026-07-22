@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -186,7 +187,7 @@ func matchSessionKeyedPrefix(name string) (RegistryEntry, string, bool) {
 // import never duplicates a history line or re-splices an identical config
 // block differently. It also reports rules files that already reference the
 // imported project path.
-func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archive.StagedSet) ([]string, error) {
+func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *archive.StagedSet) ([]string, error) {
 	if len(workspace.historyAppends) > 0 {
 		if err := workspace.finalizeHistory(); err != nil {
 			return nil, err
@@ -197,7 +198,60 @@ func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archi
 			return nil, err
 		}
 	}
+	if err := workspace.synthesizeWitnesses(ctx, project); err != nil {
+		return nil, err
+	}
 	return workspace.rulesWarningsDiagnostic(project), nil
+}
+
+// sessionWitness is the ~/.claude/sessions/<id>.json shape cc-port writes to
+// attribute an imported session to the destination project.
+type sessionWitness struct {
+	SessionID string `json:"sessionId"`
+	Cwd       string `json:"cwd"`
+	Pid       int    `json:"pid"`
+}
+
+// synthesizeWitnesses writes a session witness under ~/.claude/sessions for
+// every session imported into project, so the destination's identity check
+// resolves instead of skipping with a "no witness" note. cc-port never exports
+// the source machine's witnesses (they name a foreign PID and cwd), so a fresh
+// import has none; the reconstruction is truthful because import already
+// rewrote every transcript's cwd to project. PID 0 records the owning process
+// as gone: FindActive skips any witness with pid <= 0, so a synthesized witness
+// can never be mistaken for a live writer. The witness is named by session ID
+// (not PID, as Claude Code names its own), so it never collides with a live
+// Claude-written witness in the same directory.
+func (workspace *Workspace) synthesizeWitnesses(ctx context.Context, project string) error {
+	projectDir := workspace.home.ProjectDir(project)
+	if _, err := os.Stat(projectDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat project directory: %w", err)
+	}
+	sessionUUIDs, err := collectProjectDirEntries(ctx, &ProjectLocations{}, projectDir)
+	if err != nil {
+		return fmt.Errorf("enumerate imported sessions: %w", err)
+	}
+	if len(sessionUUIDs) == 0 {
+		return nil
+	}
+	sessionsDir := workspace.home.SessionsDir()
+	if err := os.MkdirAll(sessionsDir, dirPerm); err != nil {
+		return fmt.Errorf("create sessions directory: %w", err)
+	}
+	for _, sessionUUID := range sessionUUIDs {
+		data, err := json.Marshal(sessionWitness{SessionID: sessionUUID, Cwd: project, Pid: 0})
+		if err != nil {
+			return fmt.Errorf("marshal session witness for %s: %w", sessionUUID, err)
+		}
+		witnessPath := filepath.Join(sessionsDir, sessionUUID+".json")
+		if err := rewrite.SafeWriteFile(witnessPath, data, secretFilePerm); err != nil {
+			return fmt.Errorf("write session witness %s: %w", witnessPath, err)
+		}
+	}
+	return nil
 }
 
 // finalizeHistory appends every new line from workspace.historyAppends to
