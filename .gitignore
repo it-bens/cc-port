@@ -60,6 +60,7 @@ docs/superpowers/
 
 # Go build artifacts
 /cc-port
+/seed-home
 dist/
 coverage.txt
 
