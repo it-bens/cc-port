@@ -85,6 +85,9 @@ s3-reset: ## Destroy and recreate the dev S3 backend (drops all data)
 	$(MAKE) s3-up
 
 videos: build s3-up ## Re-render all VHS demo tapes (GIF + MP4)
+	@command -v codex >/dev/null 2>&1 || { echo "make videos: codex must be on PATH" >&2; exit 1; }
+	@codex_version="$$(codex --version)"; [ "$$codex_version" = "codex-cli 0.145.0" ] || { echo "make videos: codex 0.145.0 is required; found $$codex_version" >&2; exit 1; }
+	go build -o seed-home ./docs/videos/fixtures/cmd/seed-home
 	PATH="$$PWD:$$PATH" vhs docs/videos/demo-move.tape
 	PATH="$$PWD:$$PATH" vhs docs/videos/demo-export-import.tape
 	PATH="$$PWD:$$PATH" vhs docs/videos/demo-push-pull.tape
