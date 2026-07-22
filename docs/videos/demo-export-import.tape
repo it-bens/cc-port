@@ -36,7 +36,7 @@ Show
 Type 'cc-port export /Users/demo/source-project --output /tmp/cc-port-demo-share/project.zip --all'
 Sleep 500ms
 Enter
-Sleep 4s
+Sleep 2s
 
 # Swap to the teammate HOME and prompt.
 Hide
@@ -52,7 +52,7 @@ Show
 Type 'cc-port import /tmp/cc-port-demo-share/project.zip /Users/demo/teammate-project'
 Sleep 500ms
 Enter
-Sleep 4s
+Sleep 2.5s
 
 # Move to a neutral git repo (Codex refuses to run outside one).
 Hide
@@ -68,7 +68,7 @@ Sleep 500ms
 Type 'codex exec "hello"'
 Sleep 500ms
 Enter
-Sleep 5s
+Sleep 3s
 
 Type 'cc-port stats /Users/demo/teammate-project'
 Sleep 500ms

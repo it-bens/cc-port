@@ -38,7 +38,7 @@ Show
 Type 'cc-port push /Users/demo/source-project --as project --remote "$REMOTE" --apply --all'
 Sleep 500ms
 Enter
-Sleep 5s
+Sleep 3s
 
 # Swap to the teammate HOME and prompt.
 Hide
@@ -54,7 +54,7 @@ Show
 Type 'cc-port pull project --to /Users/demo/teammate-project --remote "$REMOTE" --apply'
 Sleep 500ms
 Enter
-Sleep 5s
+Sleep 3s
 
 # Move to a neutral git repo (Codex refuses to run outside one).
 Hide
@@ -70,7 +70,7 @@ Sleep 500ms
 Type 'codex exec "hello"'
 Sleep 500ms
 Enter
-Sleep 5s
+Sleep 3s
 
 Type 'cc-port stats /Users/demo/teammate-project'
 Sleep 500ms

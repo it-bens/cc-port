@@ -33,12 +33,12 @@ Show
 Type 'cc-port move /Users/demo/old-project /Users/demo/new-project --refs-only'
 Sleep 500ms
 Enter
-Sleep 3s
+Sleep 2s
 
 Type 'cc-port move /Users/demo/old-project /Users/demo/new-project --refs-only --apply'
 Sleep 500ms
 Enter
-Sleep 3s
+Sleep 2s
 
 Type 'cc-port stats /Users/demo/new-project'
 Sleep 500ms
