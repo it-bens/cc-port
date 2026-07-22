@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -113,6 +114,9 @@ func (workspace *Workspace) Stage(
 	switch {
 	case strings.HasPrefix(name, "sessions/"):
 		relative := strings.TrimPrefix(name, "sessions/")
+		if sessionUUID, ok := stagedSessionUUID(relative); ok {
+			workspace.stagedSessionUUIDs[sessionUUID] = struct{}{}
+		}
 		staged, _, err := archive.StageSibling(
 			workspace.home.ProjectDir(project), relative, entry, resolutions, secretFilePerm, entry.Modified,
 		)
@@ -183,6 +187,23 @@ func matchSessionKeyedPrefix(name string) (RegistryEntry, string, bool) {
 	return RegistryEntry{}, "", false
 }
 
+// stagedSessionUUID reports the session UUID a sessions/ archive entry belongs
+// to, given that entry's path relative to the sessions/ prefix: "<uuid>.jsonl"
+// for a transcript, "<uuid>/..." for a session subdirectory. It returns false
+// when the leading path segment is not a session UUID. The path is an archive
+// name, so the separator is always '/', never filepath.Separator.
+func stagedSessionUUID(relative string) (string, bool) {
+	leading := relative
+	if slash := strings.IndexByte(relative, '/'); slash >= 0 {
+		leading = relative[:slash]
+	}
+	sessionUUID := strings.TrimSuffix(leading, ".jsonl")
+	if !uuidPattern.MatchString(sessionUUID) {
+		return "", false
+	}
+	return sessionUUID, true
+}
+
 // Finalize implements tool.Importer: it merges the accumulated history
 // append and config block, each idempotently, so a re-run of the same
 // import never duplicates a history line or re-splices an identical config
@@ -214,30 +235,30 @@ type sessionWitness struct {
 }
 
 // synthesizeWitnesses writes a session witness under ~/.claude/sessions for
-// every session imported into project, so the destination's identity check
+// every session this import staged, so the destination's identity check
 // resolves instead of skipping with a "no witness" note. cc-port never exports
 // the source machine's witnesses (they name a foreign PID and cwd), so a fresh
 // import has none; the reconstruction is truthful because import already
-// rewrote every transcript's cwd to project. PID 0 records the owning process
-// as gone: FindActive skips any witness with pid <= 0, so a synthesized witness
-// can never be mistaken for a live writer. The witness is named by session ID
-// (not PID, as Claude Code names its own), so it never collides with a live
-// Claude-written witness in the same directory.
+// rewrote every staged session's cwd to project. It witnesses only the sessions
+// Stage recorded, never every session already in the encoded directory, so a
+// lossy-encoding collision cannot relabel a co-located prior import's sessions
+// to project. PID 0 records the owning process as gone: FindActive skips any
+// witness with pid <= 0, so a synthesized witness can never be mistaken for a
+// live writer. The witness is named by session ID (not PID, as Claude Code
+// names its own), so it never collides with a live Claude-written witness in
+// the same directory.
 func (workspace *Workspace) synthesizeWitnesses(ctx context.Context, project string) error {
-	projectDir := workspace.home.ProjectDir(project)
-	if _, err := os.Stat(projectDir); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("stat project directory: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	sessionUUIDs, err := collectProjectDirEntries(ctx, &ProjectLocations{}, projectDir)
-	if err != nil {
-		return fmt.Errorf("enumerate imported sessions: %w", err)
-	}
-	if len(sessionUUIDs) == 0 {
+	if len(workspace.stagedSessionUUIDs) == 0 {
 		return nil
 	}
+	sessionUUIDs := make([]string, 0, len(workspace.stagedSessionUUIDs))
+	for sessionUUID := range workspace.stagedSessionUUIDs {
+		sessionUUIDs = append(sessionUUIDs, sessionUUID)
+	}
+	sort.Strings(sessionUUIDs)
 	sessionsDir := workspace.home.SessionsDir()
 	if err := os.MkdirAll(sessionsDir, dirPerm); err != nil {
 		return fmt.Errorf("create sessions directory: %w", err)

@@ -43,14 +43,7 @@ func TestFinalize_SynthesizesWitnessAttributingImportedSessionToDestination(t *t
 	projectPath := "/Users/test/Projects/imported"
 	importedSessionID := "11111111-1111-4111-8111-111111111111"
 	workspace := newMergeTestWorkspace(t)
-
-	projectDir := workspace.home.ProjectDir(projectPath)
-	require.NoError(t, os.MkdirAll(projectDir, 0o750))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(projectDir, importedSessionID+".jsonl"),
-		[]byte(`{"type":"user","cwd":"`+projectPath+`","sessionId":"`+importedSessionID+`"}`+"\n"),
-		0o600,
-	))
+	workspace.stagedSessionUUIDs[importedSessionID] = struct{}{}
 
 	_, err := workspace.Finalize(context.Background(), projectPath, nil)
 	require.NoError(t, err)

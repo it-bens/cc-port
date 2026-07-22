@@ -90,7 +90,12 @@ func NewWorkspaceForTest(home *Home, getenv func(string) string, processLiveness
 }
 
 func newWorkspace(home *Home, getenv func(string) string, processLiveness func(int) bool) *Workspace {
-	return &Workspace{home: home, getenv: getenv, processLiveness: processLiveness}
+	return &Workspace{
+		home:               home,
+		getenv:             getenv,
+		processLiveness:    processLiveness,
+		stagedSessionUUIDs: make(map[string]struct{}),
+	}
 }
 
 // Workspace implements tool.Workspace for one resolved Claude home. A
@@ -108,6 +113,13 @@ type Workspace struct {
 	// promotion, so neither produces an archive.Staged record.
 	historyAppends [][]byte
 	configBlock    []byte
+
+	// stagedSessionUUIDs records the session UUID of every sessions/ entry
+	// Stage routes into the project directory. Finalize witnesses exactly
+	// this set, so a lossy-encoding collision — two real paths sharing one
+	// encoded directory — cannot make an import re-attribute a co-located
+	// prior import's sessions to the current destination.
+	stagedSessionUUIDs map[string]struct{}
 
 	moveWarningMutex sync.Mutex
 	moveWarnings     []string

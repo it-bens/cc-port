@@ -702,10 +702,13 @@ project unwitnessed and its identity check skipped (see §Project enumeration).
 #### Handled
 
 - `synthesizeWitnesses` writes `~/.claude/sessions/<sessionId>.json` for every
-  session in the imported project directory, recording `cwd` as the
-  destination project path — truthful because import already rewrote every
-  transcript's cwd to it. The identity check then resolves rather than
-  skipping.
+  session this import staged, recording `cwd` as the destination project path —
+  truthful because import already rewrote every staged session's cwd to it. The
+  identity check then resolves rather than skipping.
+- It witnesses only the sessions `Stage` recorded, never every session already
+  in the encoded directory, so a lossy-encoding collision — two real paths
+  sharing one encoded directory — cannot relabel a co-located prior import's
+  sessions to this destination.
 - Each witness records `pid` 0, which §Witness liveness treats as no live
   writer, so a synthesized witness can never block a move or import lock check.
 - The witness is named by session ID, not by PID as Claude Code names its own,
@@ -715,8 +718,7 @@ project unwitnessed and its identity check skipped (see §Project enumeration).
 
 #### Refused
 
-- Nothing at runtime. An absent project directory or one holding no sessions
-  writes no witness.
+- Nothing at runtime. An import that stages no sessions writes no witness.
 
 #### Not covered
 
