@@ -4,8 +4,6 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 GOLANGCI    ?= golangci-lint
 GORELEASER  ?= goreleaser
-# Codex binary the `videos` render invokes. Override when the system codex is
-# not the pinned release: make videos CODEX=/path/to/downloaded/codex
 CODEX       ?= codex
 
 .DEFAULT_GOAL := help
