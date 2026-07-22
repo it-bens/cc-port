@@ -65,6 +65,7 @@ func (workspace *Workspace) PreflightDirs(project string) []string {
 		home.ProjectDir(project),
 		filepath.Dir(home.HistoryFile()),
 		filepath.Dir(home.ConfigFile),
+		home.SessionsDir(),
 		home.FileHistoryDir(),
 		home.TodosDir(),
 		filepath.Join(home.UsageDataDir(), "session-meta"),
