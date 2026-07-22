@@ -3,7 +3,7 @@
 ## Purpose
 
 Orchestrates `cc-port push` and `cc-port pull` across every selected tool.
-Owns conflict-detection logic, plan-vs-execute split, and dry-run rendering.
+Owns conflict-detection logic, plan-vs-execute split, and plan-summary rendering.
 This package has no tool-specific knowledge; it drives `internal/export` and
 `internal/importer`, both of which are themselves generic over `tool.Target`.
 
@@ -28,8 +28,10 @@ This package has no tool-specific knowledge; it drives `internal/export` and
   resolution validation.
 - `ExecutePull(ctx, opts, plan, source) (*importer.Result, error)`: runs
   `importer.Run(ctx, opts.AllTools, opts.Targets, ...)` against the source.
-- `(*PushPlan).Render(io.Writer) error`, `(*PullPlan).Render(io.Writer) error`:
-  write the dry-run preview.
+- `(*PushPlan).Render(io.Writer, apply bool) error`,
+  `(*PullPlan).Render(io.Writer, apply bool) error`: write the plan summary;
+  `apply` selects the header ([dry-run] when false, the bare command line when
+  true).
 - Sentinel errors: `ErrCrossMachineConflict`, `ErrRemoteNotFound`,
   `ErrPassphraseRequired`, `ErrUnresolvedPlaceholder`. cmd translates raw
   `remote.ErrNotFound` and `encrypt.ErrPassphraseRequired` into the matching
@@ -57,15 +59,18 @@ Used by `cmd/cc-port` push and pull.
 - Conflict-detection metadata (`SyncPushedBy`, `SyncPushedAt`, encrypted
   flag, size) lives inside `metadata.xml` inside the archive. Bucket-level
   custom metadata is not used; the archive is the single source of truth.
-- `PushPlan.Render` writes the dry-run preview ending after the
-  cross-machine warning (or its absence). The trailing
-  `(no changes; pass --apply to commit)` line is the cmd layer's
-  responsibility, not Render's. The Prior remote section omits when
+- `PushPlan.Render` writes the plan summary ending after the
+  cross-machine warning (or its absence); `apply` selects the header
+  ([dry-run] when false, the bare command line when true). The trailing
+  `(no changes; pass --apply to commit)` line (dry-run) and the `Pushed:`
+  confirmation (apply) are the cmd layer's responsibility, not Render's. The
+  Prior remote section omits when
   `PriorPushedBy` is empty; the cross-machine warning fires only when
   `CrossMachine` is true. Categories print via `selectionSummary`, which
   joins each tool's included categories as `"<tool>: cat1, cat2"` clauses in
   alphabetical tool-name order.
-- `PullPlan.Render` writes the pull dry-run preview: the remote's pushed-by,
+- `PullPlan.Render` writes the pull plan summary (header per `apply`, as
+  above): the remote's pushed-by,
   pushed-at, size, and tool list, then one "Required resolutions" block per
   tool with declared placeholders, marking each as `(resolved)` or
   `MISSING`. The trailing `! N placeholder unresolved` warning fires only
@@ -112,6 +117,6 @@ encrypted-no-passphrase, plaintext-with-passphrase) live in
 owns the dispatch. `render_test.go` covers Render output via substring
 assertions on push (no-prior plaintext, encrypted with prior and
 cross-machine) and pull (with unresolved placeholders, encrypted clean),
-plus `humanizeBytes` boundary cases. File-backed remote (`file://` +
+plus the apply-run header drop and `humanizeBytes` boundary cases. File-backed remote (`file://` +
 `t.TempDir()`) for unit tests; integration round-trips also use `file://`
 and optionally S3.

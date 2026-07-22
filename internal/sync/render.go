@@ -8,11 +8,12 @@ import (
 	"time"
 )
 
-// Render writes the dry-run preview for a push plan to w. The cmd
-// layer adds the trailing "(no changes; pass --apply to commit)" line
-// when --apply is not set; Render itself ends after the
-// cross-machine warning (or its absence).
-func (p *PushPlan) Render(w io.Writer) error {
+// Render writes the push plan summary to w. apply selects the header line:
+// [dry-run] when false, the bare command line when true. The cmd layer adds
+// the trailing "(no changes; pass --apply to commit)" line on dry-run and the
+// "Pushed:" confirmation on apply; Render itself ends after the cross-machine
+// warning (or its absence).
+func (p *PushPlan) Render(w io.Writer, apply bool) error {
 	var b strings.Builder
 
 	pipelineDesc := "export -> "
@@ -26,7 +27,7 @@ func (p *PushPlan) Render(w io.Writer) error {
 		encStatus = "enabled"
 	}
 
-	fmt.Fprintf(&b, "[dry-run] cc-port push %s\n\n", p.Name)
+	fmt.Fprintf(&b, "%s\n\n", planHeader("push", p.Name, apply))
 	fmt.Fprintf(&b, "  Pipeline: %s\n", pipelineDesc)
 	fmt.Fprintf(&b, "  Categories: %s\n", selectionSummary(p.Selected))
 	fmt.Fprintf(&b, "  Encryption: %s\n\n", encStatus)
@@ -51,8 +52,9 @@ func (p *PushPlan) Render(w io.Writer) error {
 	return err
 }
 
-// Render writes the dry-run preview for a pull plan to w.
-func (p *PullPlan) Render(w io.Writer) error {
+// Render writes the pull plan summary to w. apply selects the header line:
+// [dry-run] when false, the bare command line when true.
+func (p *PullPlan) Render(w io.Writer, apply bool) error {
 	var b strings.Builder
 
 	pipelineDesc := "remote source -> "
@@ -66,7 +68,7 @@ func (p *PullPlan) Render(w io.Writer) error {
 		encStatus = "enabled"
 	}
 
-	fmt.Fprintf(&b, "[dry-run] cc-port pull %s\n\n", p.Name)
+	fmt.Fprintf(&b, "%s\n\n", planHeader("pull", p.Name, apply))
 	fmt.Fprintf(&b, "  Pipeline: %s\n", pipelineDesc)
 	fmt.Fprintf(&b, "  Encryption: %s\n\n", encStatus)
 
@@ -105,6 +107,16 @@ func (p *PullPlan) Render(w io.Writer) error {
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// planHeader renders the summary header line for a push or pull plan. A
+// dry-run prefixes [dry-run]; an apply run renders the bare command line,
+// because the summary then serves as the preamble to a committed operation.
+func planHeader(command, name string, apply bool) string {
+	if apply {
+		return fmt.Sprintf("cc-port %s %s", command, name)
+	}
+	return fmt.Sprintf("[dry-run] cc-port %s %s", command, name)
 }
 
 func humanizeBytes(n int64) string {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
+	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/remote"
@@ -183,42 +184,83 @@ func runPushCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 		}()
 	}
 
-	return runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+	var (
+		plan   *syncc.PushPlan
+		result *export.Result
+	)
+	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
 		opts.Reporter = reporter
 
-		plan, err := syncc.PlanPush(ctx, opts, prior)
+		planned, err := syncc.PlanPush(ctx, opts, prior)
 		if err != nil {
 			return err
 		}
-		if err := plan.Render(cmd.OutOrStdout()); err != nil {
-			return fmt.Errorf("render plan: %w", err)
-		}
+		plan = planned
 
 		if !apply {
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); err != nil {
-				return fmt.Errorf("write apply hint: %w", err)
-			}
 			return nil
 		}
 
-		return applyPush(ctx, cmd, r, opts, plan, passphrase)
+		runResult, err := applyPush(ctx, r, opts, planned, passphrase)
+		if err != nil {
+			return err
+		}
+		result = runResult
+		return nil
 	})
+
+	return renderPushOutcome(cmd, r, opts, plan, result, apply, progErr)
 }
 
-// applyPush runs the cross-machine guard, opens the writer pipeline, calls
-// ExecutePush, and prints the confirmation.
+// renderPushOutcome writes the push summary and, on apply, the tool warnings
+// and the "Pushed:" confirmation. It runs after runWithProgress tears down the
+// ledger: the ledger holds the terminal in raw mode, where a bare "\n" moves
+// down without a carriage return, so writing the summary before teardown
+// staircases every line. Any write failure is folded into progErr.
 //
 //nolint:gocritic // hugeParam: by-value PushOptions mirrors the public Plan/Execute contract.
-func applyPush(
-	ctx context.Context,
+func renderPushOutcome(
 	cmd *cobra.Command,
 	r *remote.Remote,
 	opts syncc.PushOptions,
 	plan *syncc.PushPlan,
+	result *export.Result,
+	apply bool,
+	progErr error,
+) error {
+	if plan != nil {
+		if rerr := plan.Render(cmd.OutOrStdout(), apply); rerr != nil {
+			progErr = errors.Join(progErr, fmt.Errorf("render plan: %w", rerr))
+		}
+	}
+	if progErr == nil && !apply {
+		if _, werr := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); werr != nil {
+			progErr = errors.Join(progErr, fmt.Errorf("write apply hint: %w", werr))
+		}
+	}
+	if apply && result != nil {
+		renderToolWarnings(cmd.ErrOrStderr(), opts.Targets, result.ByTool)
+		if _, werr := fmt.Fprintf(cmd.OutOrStdout(), "Pushed: %s/%s\n", r.URL(), opts.Name); werr != nil {
+			progErr = errors.Join(progErr, fmt.Errorf("write push confirmation: %w", werr))
+		}
+	}
+	return progErr
+}
+
+// applyPush runs the cross-machine guard, opens the writer pipeline, and
+// calls ExecutePush. It performs no rendering: the caller writes the summary
+// and confirmation once the progress ledger has torn down.
+//
+//nolint:gocritic // hugeParam: by-value PushOptions mirrors the public Plan/Execute contract.
+func applyPush(
+	ctx context.Context,
+	r *remote.Remote,
+	opts syncc.PushOptions,
+	plan *syncc.PushPlan,
 	passphrase string,
-) (err error) {
+) (result *export.Result, err error) {
 	if plan.CrossMachine && !opts.Force {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w: prior pushed by %s at %s",
 			syncc.ErrCrossMachineConflict,
 			plan.PriorPushedBy,
@@ -231,7 +273,7 @@ func applyPush(
 		&remote.Sink{Remote: r, Key: opts.Name},
 	})
 	if err != nil {
-		return fmt.Errorf("build writer pipeline: %w", err)
+		return nil, fmt.Errorf("build writer pipeline: %w", err)
 	}
 	defer func() {
 		if cerr := writer.Close(); cerr != nil {
@@ -242,15 +284,10 @@ func applyPush(
 	uploadPhase := opts.Reporter.Phase("upload", plan.PriorSize, progress.UnitBytes)
 	countingWriter := progress.CountingWriter(writer, uploadPhase)
 
-	result, err := syncc.ExecutePush(ctx, opts, plan, countingWriter)
+	result, err = syncc.ExecutePush(ctx, opts, plan, countingWriter)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	uploadPhase.End("")
-	renderToolWarnings(cmd.ErrOrStderr(), opts.Targets, result.ByTool)
-
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Pushed: %s/%s\n", r.URL(), opts.Name); err != nil {
-		return fmt.Errorf("write push confirmation: %w", err)
-	}
-	return nil
+	return result, nil
 }

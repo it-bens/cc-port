@@ -17,7 +17,7 @@ func TestPushPlan_RenderNoPriorPlaintext(t *testing.T) {
 		EncryptionEnabled: false,
 	}
 	var buf bytes.Buffer
-	if err := plan.Render(&buf); err != nil {
+	if err := plan.Render(&buf, false); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	got := buf.String()
@@ -50,7 +50,7 @@ func TestPushPlan_RenderEncryptedWithPriorAndCrossMachine(t *testing.T) {
 		CrossMachine:      true,
 	}
 	var buf bytes.Buffer
-	if err := plan.Render(&buf); err != nil {
+	if err := plan.Render(&buf, false); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	got := buf.String()
@@ -71,6 +71,25 @@ func TestPushPlan_RenderEncryptedWithPriorAndCrossMachine(t *testing.T) {
 	}
 }
 
+func TestPushPlan_RenderApplyDropsDryRunPrefix(t *testing.T) {
+	plan := &PushPlan{
+		Name:       "myproj",
+		SelfPusher: "laptop1-alice",
+		Selected:   allSelection(),
+	}
+	var buf bytes.Buffer
+	if err := plan.Render(&buf, true); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, "[dry-run]") {
+		t.Fatalf("apply-run header must not carry the [dry-run] prefix:\n%s", got)
+	}
+	if !strings.Contains(got, "cc-port push myproj") {
+		t.Fatalf("output missing command line:\n%s", got)
+	}
+}
+
 func TestPullPlan_RenderWithUnresolvedPlaceholders(t *testing.T) {
 	plan := &PullPlan{
 		Name:           "myproj",
@@ -84,7 +103,7 @@ func TestPullPlan_RenderWithUnresolvedPlaceholders(t *testing.T) {
 		UnresolvedPlaceholders: map[string][]string{"claude": {"{{CACHE}}"}},
 	}
 	var buf bytes.Buffer
-	if err := plan.Render(&buf); err != nil {
+	if err := plan.Render(&buf, false); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	got := buf.String()
@@ -110,7 +129,7 @@ func TestPullPlan_RenderEncryptedClean(t *testing.T) {
 		RemoteSize:      1024,
 	}
 	var buf bytes.Buffer
-	if err := plan.Render(&buf); err != nil {
+	if err := plan.Render(&buf, false); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	got := buf.String()
@@ -125,6 +144,24 @@ func TestPullPlan_RenderEncryptedClean(t *testing.T) {
 	}
 	if strings.Contains(got, "placeholder unresolved") {
 		t.Fatalf("output should not include unresolved warning when none:\n%s", got)
+	}
+}
+
+func TestPullPlan_RenderApplyDropsDryRunPrefix(t *testing.T) {
+	plan := &PullPlan{
+		Name:  "myproj",
+		Tools: []string{"claude"},
+	}
+	var buf bytes.Buffer
+	if err := plan.Render(&buf, true); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, "[dry-run]") {
+		t.Fatalf("apply-run header must not carry the [dry-run] prefix:\n%s", got)
+	}
+	if !strings.Contains(got, "cc-port pull myproj") {
+		t.Fatalf("output missing command line:\n%s", got)
 	}
 }
 
@@ -145,7 +182,7 @@ func TestPullPlan_RenderHumanizesByteMagnitudes(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			plan := &PullPlan{Name: "x", RemoteSize: testCase.size}
 			var buf bytes.Buffer
-			if err := plan.Render(&buf); err != nil {
+			if err := plan.Render(&buf, false); err != nil {
 				t.Fatalf("Render: %v", err)
 			}
 			got := buf.String()
