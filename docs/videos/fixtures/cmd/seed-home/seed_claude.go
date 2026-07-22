@@ -38,6 +38,16 @@ type claudeHistoryRecord struct {
 	PastedContents map[string]any `json:"pastedContents"`
 }
 
+// claudeSessionWitness is a ~/.claude/sessions/<id>.json record: the file that
+// attributes a session to a cwd, which cc-port's identity check reads. PID 0
+// marks the owning process as gone, so the witness never reads as a live
+// writer during a move or import lock check.
+type claudeSessionWitness struct {
+	SessionID string `json:"sessionId"`
+	CWD       string `json:"cwd"`
+	PID       int    `json:"pid"`
+}
+
 func seedClaude(homePath, projectPath, role string) error {
 	claudePath := filepath.Join(homePath, ".claude")
 	if err := os.MkdirAll(filepath.Join(claudePath, "projects"), 0o700); err != nil {
@@ -99,6 +109,15 @@ func seedClaude(homePath, projectPath, role string) error {
 	transcript = append(transcript, '\n')
 	if err := writeFixtureFile(filepath.Join(projectDirectory, claudeSessionID+".jsonl"), transcript); err != nil {
 		return fmt.Errorf("write Claude transcript: %w", err)
+	}
+
+	sessionsDirectory := filepath.Join(claudePath, "sessions")
+	if err := os.MkdirAll(sessionsDirectory, 0o700); err != nil {
+		return fmt.Errorf("create Claude sessions directory: %w", err)
+	}
+	witness := claudeSessionWitness{SessionID: claudeSessionID, CWD: projectPath, PID: 0}
+	if err := writeJSONFixture(filepath.Join(sessionsDirectory, claudeSessionID+".json"), witness); err != nil {
+		return fmt.Errorf("write Claude session witness: %w", err)
 	}
 
 	history, err := json.Marshal(claudeHistoryRecord{

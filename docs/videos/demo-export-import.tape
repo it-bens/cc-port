@@ -18,10 +18,15 @@ Type 'export SOURCE_HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
 Type 'export TARGET_HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
 Type 'mkdir -p /tmp/cc-port-demo-share' Enter
 Type 'export NEUTRAL_DIR="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
+# TERM_PROGRAM=Apple_Terminal stops the ledger UI's terminal capability query;
+# its reply would otherwise leak onto the next prompt as a "2026;0$y" residue.
+Type 'export TERM_PROGRAM=Apple_Terminal' Enter
 Type 'export HOME="$SOURCE_HOME"' Enter
 Type 'export PS1="me@laptop:~\$ "' Enter
 Type 'clear' Enter
-Type 'seed-home --home "$HOME" --project /Users/demo/source-project --role source >/dev/null' Enter
+# The source omits Codex's rebuildable state-DB cache, so export carries an empty
+# threads sidecar and the teammate rebuilds its thread index from the rollout.
+Type 'seed-home --home "$HOME" --project /Users/demo/source-project --role source --codex-state-db=false >/dev/null' Enter
 Sleep 3s
 Type 'clear' Enter
 Sleep 200ms
@@ -49,7 +54,9 @@ Sleep 500ms
 Enter
 Sleep 4s
 
+# Move to a neutral git repo (Codex refuses to run outside one).
 Hide
+Type 'git init "$NEUTRAL_DIR"' Enter
 Type 'cd "$NEUTRAL_DIR"' Enter
 Show
 

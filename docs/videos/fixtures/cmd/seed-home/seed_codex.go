@@ -67,7 +67,7 @@ type codexResponseContent struct {
 	Text string `json:"text"`
 }
 
-func seedCodex(homePath, projectPath, role string) error {
+func seedCodex(homePath, projectPath, role string, codexStateDB bool) error {
 	codexPath := filepath.Join(homePath, ".codex")
 	if err := os.MkdirAll(codexPath, 0o700); err != nil {
 		return fmt.Errorf("create Codex directory: %w", err)
@@ -124,8 +124,13 @@ func seedCodex(homePath, projectPath, role string) error {
 	if err := writeFixtureFile(filepath.Join(codexPath, "session_index.jsonl"), append(indexRecord, '\n')); err != nil {
 		return fmt.Errorf("write Codex session index: %w", err)
 	}
-	if err := buildStateDatabase(filepath.Join(codexPath, "state_5.sqlite"), projectPath); err != nil {
-		return fmt.Errorf("build Codex state database: %w", err)
+	// The state database is Codex's rebuildable cache: a paired export/import
+	// demo omits it so the teammate rebuilds the thread index from the imported
+	// rollout, and the empty threads sidecar leaves nothing to warn about.
+	if codexStateDB {
+		if err := buildStateDatabase(filepath.Join(codexPath, "state_5.sqlite"), projectPath); err != nil {
+			return fmt.Errorf("build Codex state database: %w", err)
+		}
 	}
 	if err := buildMemoriesDatabase(filepath.Join(codexPath, "memories_1.sqlite"), projectPath); err != nil {
 		return fmt.Errorf("build Codex memories database: %w", err)

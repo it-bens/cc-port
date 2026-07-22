@@ -16,6 +16,9 @@ Set Padding 20
 # Bootstrap: synthetic HOME with seeded Claude Code and Codex state for /Users/demo/old-project.
 Hide
 Type 'export HOME="$(mktemp -d /tmp/ccp.XXXXXX)"' Enter
+# TERM_PROGRAM=Apple_Terminal stops the ledger UI's terminal capability query;
+# its reply would otherwise leak onto the next prompt as a "2026;0$y" residue.
+Type 'export TERM_PROGRAM=Apple_Terminal' Enter
 Type 'export PS1="\$ "' Enter
 Type 'clear' Enter
 Type 'seed-home --home "$HOME" --project /Users/demo/old-project --role source >/dev/null' Enter
