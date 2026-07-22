@@ -2,8 +2,8 @@
 
 `cc-port` ports Claude Code and OpenAI Codex project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into each tool's session, history, and config files. cc-port rewrites the references safely across every installed tool: boundary-aware substring replacement, SQL-level rewriting for Codex's SQLite index, and atomic writes with rollback. Every command that mutates a tool's local state (`move --apply`, `import`, `pull --apply`) locks and refuses while a Claude Code session or Codex process is live, while `export`, `push`, and `stats` read local state without a lock and `push` writes only to the remote you configure, never to local tool state.
 
-> [!CAUTION]
-> cc-port is experimental. Don't use it in production yet. Data loss or corruption may happen. Back up `~/.claude/` and `~/.codex/` before running any mutating command.
+> [!IMPORTANT]
+> Back up `~/.claude/` and `~/.codex/` before running any mutating command, so you can restore them if something goes wrong.
 
 ## Install
 
