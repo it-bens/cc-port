@@ -264,6 +264,9 @@ func (workspace *Workspace) synthesizeWitnesses(ctx context.Context, project str
 		return fmt.Errorf("create sessions directory: %w", err)
 	}
 	for _, sessionUUID := range sessionUUIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		data, err := json.Marshal(sessionWitness{SessionID: sessionUUID, Cwd: project, Pid: 0})
 		if err != nil {
 			return fmt.Errorf("marshal session witness for %s: %w", sessionUUID, err)
