@@ -13,6 +13,25 @@ const (
 	rolloutRelative = "sessions/2026/07/17/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl"
 )
 
+// codexTargetConfig is the teammate machine's keyless Codex config for the
+// paired demo clips. The model turn (the demo's reindex trigger) routes
+// through a custom OpenAI provider with retries disabled so it fails fast on
+// one 401 instead of a ~20s reconnect storm; the built-in openai provider
+// cannot be overridden and keeps its five-retry default. Pinning no model
+// lets Codex use its bundled default, which carries metadata and so avoids
+// the "model metadata not found" warning a synthetic name would trigger.
+const codexTargetConfig = `# Synthetic Codex fixture configuration.
+model_provider = "openai-custom"
+
+[model_providers.openai-custom]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+request_max_retries = 0
+stream_max_retries = 0
+`
+
 type codexHistoryRecord struct {
 	SessionID string `json:"session_id"`
 	Timestamp int64  `json:"ts"`
@@ -79,9 +98,7 @@ func seedCodex(homePath, projectPath, role string, codexStateDB bool) error {
 		if err := os.MkdirAll(filepath.Join(codexPath, "archived_sessions"), 0o700); err != nil {
 			return fmt.Errorf("create empty Codex archived sessions directory: %w", err)
 		}
-		config := "# Synthetic Codex fixture configuration.\n" +
-			"model = \"gpt-5-fixture\"\n"
-		if err := writeFixtureFile(filepath.Join(codexPath, "config.toml"), []byte(config)); err != nil {
+		if err := writeFixtureFile(filepath.Join(codexPath, "config.toml"), []byte(codexTargetConfig)); err != nil {
 			return fmt.Errorf("write Codex target config: %w", err)
 		}
 		return nil

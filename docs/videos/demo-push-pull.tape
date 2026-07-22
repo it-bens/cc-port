@@ -40,7 +40,7 @@ Sleep 500ms
 Enter
 Sleep 5s
 
-# Swap to teammate.
+# Swap to the teammate HOME and prompt.
 Hide
 Type 'export HOME="$TARGET_HOME"' Enter
 Type 'export PS1="teammate@laptop:~\$ "' Enter
@@ -60,6 +60,8 @@ Sleep 5s
 Hide
 Type 'git init "$NEUTRAL_DIR"' Enter
 Type 'cd "$NEUTRAL_DIR"' Enter
+Type 'clear' Enter
+Sleep 200ms
 Show
 
 Type "# Open Codex once so it rebuilds its session index from the imported sessions." Enter
@@ -68,9 +70,7 @@ Sleep 500ms
 Type 'codex exec "hello"'
 Sleep 500ms
 Enter
-Sleep 6s
-Ctrl+C
-Sleep 2s
+Sleep 5s
 
 Type 'cc-port stats /Users/demo/teammate-project'
 Sleep 500ms
