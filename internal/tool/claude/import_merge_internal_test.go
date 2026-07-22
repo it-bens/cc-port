@@ -54,7 +54,7 @@ func TestFinalize_SynthesizesWitnessAttributingImportedSessionToDestination(t *t
 	require.NoError(t, json.Unmarshal(data, &witness))
 	assert.Equal(t, importedSessionID, witness.SessionID)
 	assert.Equal(t, projectPath, witness.Cwd, "witness must attribute the session to the destination project")
-	assert.LessOrEqual(t, witness.Pid, 0, "a synthesized witness must never read as a live writer")
+	assert.Equal(t, 0, witness.Pid, "a synthesized witness records the inert pid 0 documented as its contract")
 }
 
 func TestStagedSessionUUID(t *testing.T) {
