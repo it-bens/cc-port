@@ -95,14 +95,17 @@ videos: build s3-reset ## Re-render all VHS demo tapes (GIF + MP4); override wit
 	go build -o seed-home ./docs/videos/fixtures/cmd/seed-home
 # A relative CODEX must be absolutized before it is symlinked: a symlink target
 # resolves against the link's own dir (the mktemp bindir), so a relative target
-# would dangle and PATH would silently fall through to another codex.
+# would dangle and PATH would silently fall through to another codex. Removing
+# the bindir and stopping S3 run from a trap so a failed or interrupted render
+# still tears both down.
 	@codex_bin="$$(command -v -- '$(CODEX)')"; \
 	  case "$$codex_bin" in /*) ;; *) codex_bin="$$(cd "$$(dirname "$$codex_bin")" && pwd)/$$(basename "$$codex_bin")";; esac; \
-	  bindir="$$(mktemp -d)"; ln -s "$$codex_bin" "$$bindir/codex"; \
+	  bindir="$$(mktemp -d)"; \
+	  trap 'rc=$$?; rm -rf "$$bindir"; $(MAKE) s3-down; exit $$rc' EXIT; \
+	  trap 'exit 130' INT TERM; \
+	  ln -s "$$codex_bin" "$$bindir/codex"; \
 	  status=0; \
 	  for tape in demo-move demo-export-import demo-push-pull; do \
 	    PATH="$$PWD:$$bindir:$$PATH" vhs "docs/videos/$$tape.tape" || { status=1; break; }; \
 	  done; \
-	  rm -rf "$$bindir"; \
-	  [ "$$status" -eq 0 ]
-	@$(MAKE) s3-down
+	  exit "$$status"
