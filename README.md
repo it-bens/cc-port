@@ -54,7 +54,7 @@ Persistent progress flags are available on every subcommand: `--quiet` (`-q`) su
 
 ### `cc-port move`
 
-![cc-port move: rename a project folder, then run cc-port move to update ~/.claude/ references and rename the encoded project directory](docs/images/demo-move.gif)
+![cc-port move: rename a project folder, then run cc-port move to repoint every detected tool's state to the new path](docs/images/demo-move.gif)
 
 `cc-port move <old-path> <new-path> [--apply] [--refs-only] [--deep] [--tool <name>]`
 
