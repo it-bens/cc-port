@@ -4,6 +4,9 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 GOLANGCI    ?= golangci-lint
 GORELEASER  ?= goreleaser
+# Codex binary the `videos` render invokes. Override when the system codex is
+# not the pinned release: make videos CODEX=/path/to/downloaded/codex
+CODEX       ?= codex
 
 .DEFAULT_GOAL := help
 .PHONY: help build install test test-race test-integration test-large test-all \
@@ -84,11 +87,18 @@ s3-reset: ## Destroy and recreate the dev S3 backend (drops all data)
 	docker compose -f dev/s3/docker-compose.yml down -v
 	$(MAKE) s3-up
 
-videos: build s3-up ## Re-render all VHS demo tapes (GIF + MP4)
-	@command -v codex >/dev/null 2>&1 || { echo "make videos: codex must be on PATH" >&2; exit 1; }
-	@codex_version="$$(codex --version)"; [ "$$codex_version" = "codex-cli 0.145.0" ] || { echo "make videos: codex 0.145.0 is required; found $$codex_version" >&2; exit 1; }
+videos: build s3-reset ## Re-render all VHS demo tapes (GIF + MP4); override with CODEX=/path/to/codex
+	@codex_bin="$$(command -v -- '$(CODEX)' 2>/dev/null)"; \
+	  [ -n "$$codex_bin" ] || { echo "make videos: codex binary '$(CODEX)' not found; set CODEX=/path/to/codex-0.145.0" >&2; exit 1; }; \
+	  ver="$$("$$codex_bin" --version)"; \
+	  [ "$$ver" = "codex-cli 0.145.0" ] || { echo "make videos: codex-cli 0.145.0 required; '$(CODEX)' reports '$$ver'" >&2; exit 1; }
 	go build -o seed-home ./docs/videos/fixtures/cmd/seed-home
-	PATH="$$PWD:$$PATH" vhs docs/videos/demo-move.tape
-	PATH="$$PWD:$$PATH" vhs docs/videos/demo-export-import.tape
-	PATH="$$PWD:$$PATH" vhs docs/videos/demo-push-pull.tape
+	@codex_bin="$$(command -v -- '$(CODEX)')"; \
+	  bindir="$$(mktemp -d)"; ln -s "$$codex_bin" "$$bindir/codex"; \
+	  status=0; \
+	  for tape in demo-move demo-export-import demo-push-pull; do \
+	    PATH="$$PWD:$$bindir:$$PATH" vhs "docs/videos/$$tape.tape" || { status=1; break; }; \
+	  done; \
+	  rm -rf "$$bindir"; \
+	  [ "$$status" -eq 0 ]
 	@$(MAKE) s3-down
