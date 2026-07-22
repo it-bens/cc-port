@@ -27,13 +27,15 @@ Type 'clear' Enter
 Sleep 200ms
 Show
 
-# Demo sequence
-Type 'cc-port move /Users/demo/old-project /Users/demo/new-project'
+# Demo sequence. --refs-only repoints tool state without moving the project
+# directory on disk: the folder was already renamed, so only the dangling
+# Claude Code and Codex references need to follow it.
+Type 'cc-port move /Users/demo/old-project /Users/demo/new-project --refs-only'
 Sleep 500ms
 Enter
 Sleep 3s
 
-Type 'cc-port move /Users/demo/old-project /Users/demo/new-project --apply'
+Type 'cc-port move /Users/demo/old-project /Users/demo/new-project --refs-only --apply'
 Sleep 500ms
 Enter
 Sleep 3s
