@@ -65,7 +65,7 @@ See [`dev/s3/README.md`](dev/s3/README.md) for credentials, endpoint conventions
 
 ## Demo videos
 
-`make videos` re-renders the GIF and MP4 clips in `docs/images/` from `docs/videos/*.tape`. It starts the local S3 backend before rendering and stops it afterward.
+`make videos` re-renders the GIF and MP4 clips in `docs/images/` from `docs/videos/*.tape`. It resets the local S3 backend to an empty bucket before rendering — dropping any data already there — and stops it afterward.
 
 It requires `vhs`, Docker, and `codex-cli 0.145.0`, and needs no Codex account. Docker hosts the S3 backend the push/pull clip uses. The paired clips run a keyless `codex` command to rebuild Codex's session index from the imported sessions. With no account configured its model turn cannot complete, but the local reindex commits first, which the closing `cc-port stats` shows.
 
