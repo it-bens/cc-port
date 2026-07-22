@@ -116,7 +116,7 @@ encrypted-no-passphrase, plaintext-with-passphrase) live in
 `cmd/cc-port/pushcmd_test.go` and `cmd/cc-port/pullcmd_test.go` because cmd
 owns the dispatch. `render_test.go` covers Render output via substring
 assertions on push (no-prior plaintext, encrypted with prior and
-cross-machine) and pull (with unresolved placeholders, encrypted clean),
-plus the apply-run header drop and `humanizeBytes` boundary cases. File-backed remote (`file://` +
-`t.TempDir()`) for unit tests; integration round-trips also use `file://`
-and optionally S3.
+cross-machine) and pull (with unresolved placeholders, encrypted clean). It
+also covers the apply-run header drop and `humanizeBytes` boundary cases.
+File-backed remote (`file://` + `t.TempDir()`) for unit tests; integration
+round-trips also use `file://` and optionally S3.
