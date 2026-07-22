@@ -193,15 +193,23 @@ func matchSessionKeyedPrefix(name string) (RegistryEntry, string, bool) {
 // when the leading path segment is not a session UUID. The path is an archive
 // name, so the separator is always '/', never filepath.Separator.
 func stagedSessionUUID(relative string) (string, bool) {
-	leading := relative
 	if slash := strings.IndexByte(relative, '/'); slash >= 0 {
-		leading = relative[:slash]
-	}
-	sessionUUID := strings.TrimSuffix(leading, ".jsonl")
-	if !uuidPattern.MatchString(sessionUUID) {
+		// Session subdirectory entry: the leading segment is the UUID
+		// directory itself. Claude never suffixes a session directory with
+		// .jsonl, so it is matched whole — stripping .jsonl here would coin a
+		// bogus UUID from a directory literally named "<uuid>.jsonl".
+		leading := relative[:slash]
+		if uuidPattern.MatchString(leading) {
+			return leading, true
+		}
 		return "", false
 	}
-	return sessionUUID, true
+	// Transcript file: "<uuid>.jsonl".
+	sessionUUID := strings.TrimSuffix(relative, ".jsonl")
+	if uuidPattern.MatchString(sessionUUID) {
+		return sessionUUID, true
+	}
+	return "", false
 }
 
 // Finalize implements tool.Importer: it merges the accumulated history

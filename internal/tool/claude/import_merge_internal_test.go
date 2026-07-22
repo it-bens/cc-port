@@ -67,6 +67,7 @@ func TestStagedSessionUUID(t *testing.T) {
 	}{
 		{"transcript file", sessionID + ".jsonl", sessionID, true},
 		{"session subdirectory entry", sessionID + "/tool-uses.json", sessionID, true},
+		{"directory named like a transcript", sessionID + ".jsonl/tool-uses.json", "", false},
 		{"non-uuid leading segment", "notes.txt", "", false},
 	}
 	for _, testCase := range cases {
