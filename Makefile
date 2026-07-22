@@ -4,6 +4,7 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 GOLANGCI    ?= golangci-lint
 GORELEASER  ?= goreleaser
+CODEX       ?= codex
 
 .DEFAULT_GOAL := help
 .PHONY: help build install test test-race test-integration test-large test-all \
@@ -84,11 +85,25 @@ s3-reset: ## Destroy and recreate the dev S3 backend (drops all data)
 	docker compose -f dev/s3/docker-compose.yml down -v
 	$(MAKE) s3-up
 
-videos: build s3-up ## Re-render all VHS demo tapes (GIF + MP4)
-	@command -v codex >/dev/null 2>&1 || { echo "make videos: codex must be on PATH" >&2; exit 1; }
-	@codex_version="$$(codex --version)"; [ "$$codex_version" = "codex-cli 0.145.0" ] || { echo "make videos: codex 0.145.0 is required; found $$codex_version" >&2; exit 1; }
+videos: build s3-reset ## Re-render all VHS demo tapes (GIF + MP4); override with CODEX=/path/to/codex
+	@codex_bin="$$(command -v -- '$(CODEX)' 2>/dev/null)"; \
+	  [ -n "$$codex_bin" ] || { echo "make videos: codex binary '$(CODEX)' not found; set CODEX=/path/to/codex-0.145.0" >&2; exit 1; }; \
+	  ver="$$("$$codex_bin" --version)"; \
+	  [ "$$ver" = "codex-cli 0.145.0" ] || { echo "make videos: codex-cli 0.145.0 required; '$(CODEX)' reports '$$ver'" >&2; exit 1; }
 	go build -o seed-home ./docs/videos/fixtures/cmd/seed-home
-	PATH="$$PWD:$$PATH" vhs docs/videos/demo-move.tape
-	PATH="$$PWD:$$PATH" vhs docs/videos/demo-export-import.tape
-	PATH="$$PWD:$$PATH" vhs docs/videos/demo-push-pull.tape
-	@$(MAKE) s3-down
+# A relative CODEX must be absolutized before it is symlinked: a symlink target
+# resolves against the link's own dir (the mktemp bindir), so a relative target
+# would dangle and PATH would silently fall through to another codex. Removing
+# the bindir and stopping S3 run from a trap so a failed or interrupted render
+# still tears both down.
+	@codex_bin="$$(command -v -- '$(CODEX)')"; \
+	  case "$$codex_bin" in /*) ;; *) codex_bin="$$(cd "$$(dirname "$$codex_bin")" && pwd)/$$(basename "$$codex_bin")";; esac; \
+	  bindir="$$(mktemp -d)"; \
+	  trap 'rc=$$?; rm -rf "$$bindir"; $(MAKE) s3-down; exit $$rc' EXIT; \
+	  trap 'exit 130' INT TERM; \
+	  ln -s "$$codex_bin" "$$bindir/codex"; \
+	  status=0; \
+	  for tape in demo-move demo-export-import demo-push-pull; do \
+	    PATH="$$PWD:$$bindir:$$PATH" vhs "docs/videos/$$tape.tape" || { status=1; break; }; \
+	  done; \
+	  exit "$$status"

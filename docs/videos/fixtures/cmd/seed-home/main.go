@@ -21,19 +21,22 @@ func main() {
 	var homePath string
 	var projectPath string
 	var role string
+	var codexStateDB bool
 
 	flag.StringVar(&homePath, "home", "", "existing empty synthetic home directory")
 	flag.StringVar(&projectPath, "project", "", "synthetic demo project path")
 	flag.StringVar(&role, "role", "", "fixture role: source or target")
+	flag.BoolVar(&codexStateDB, "codex-state-db", true,
+		"build the source Codex state database (the rebuildable cache); set false to model a home whose cache is rebuilt after import")
 	flag.Parse()
 
-	if err := seedHome(homePath, projectPath, role); err != nil {
+	if err := seedHome(homePath, projectPath, role, codexStateDB); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func seedHome(homePath, projectPath, role string) (returnError error) {
+func seedHome(homePath, projectPath, role string, codexStateDB bool) (returnError error) {
 	if homePath == "" {
 		return fmt.Errorf("home is required")
 	}
@@ -85,7 +88,7 @@ func seedHome(homePath, projectPath, role string) (returnError error) {
 	if err := seedClaude(stagingPath, projectPath, role); err != nil {
 		return fmt.Errorf("seed Claude home: %w", err)
 	}
-	if err := seedCodex(stagingPath, projectPath, role); err != nil {
+	if err := seedCodex(stagingPath, projectPath, role, codexStateDB); err != nil {
 		return fmt.Errorf("seed Codex home: %w", err)
 	}
 	if err := installStagedHome(stagingPath, homePath); err != nil {
