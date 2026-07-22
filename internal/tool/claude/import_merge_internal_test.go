@@ -57,6 +57,80 @@ func TestFinalize_SynthesizesWitnessAttributingImportedSessionToDestination(t *t
 	assert.LessOrEqual(t, witness.Pid, 0, "a synthesized witness must never read as a live writer")
 }
 
+func TestStagedSessionUUID(t *testing.T) {
+	sessionID := "11111111-1111-4111-8111-111111111111"
+	cases := []struct {
+		name     string
+		relative string
+		want     string
+		wantOK   bool
+	}{
+		{"transcript file", sessionID + ".jsonl", sessionID, true},
+		{"session subdirectory entry", sessionID + "/tool-uses.json", sessionID, true},
+		{"non-uuid leading segment", "notes.txt", "", false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, ok := stagedSessionUUID(testCase.relative)
+			assert.Equal(t, testCase.wantOK, ok)
+			assert.Equal(t, testCase.want, got)
+		})
+	}
+}
+
+func TestFinalize_WithoutStagedSessionsWritesNoWitness(t *testing.T) {
+	workspace := newMergeTestWorkspace(t)
+
+	_, err := workspace.Finalize(context.Background(), "/Users/test/Projects/imported", nil)
+	require.NoError(t, err)
+
+	assert.NoDirExists(t, workspace.home.SessionsDir(),
+		"an import that stages no session must not create the sessions directory")
+}
+
+func TestFinalize_WitnessesOnlyStagedSessionsNotCoLocatedForeignSessions(t *testing.T) {
+	projectPath := "/Users/test/Projects/imported"
+	stagedSessionID := "11111111-1111-4111-8111-111111111111"
+	foreignSessionID := "22222222-2222-4222-8222-222222222222"
+	workspace := newMergeTestWorkspace(t)
+	workspace.stagedSessionUUIDs[stagedSessionID] = struct{}{}
+
+	// A prior import of a different real path that encodes to this same
+	// directory (a lossy-encoding collision) left its own transcript behind.
+	projectDir := workspace.home.ProjectDir(projectPath)
+	require.NoError(t, os.MkdirAll(projectDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, foreignSessionID+".jsonl"), []byte("{}\n"), 0o600))
+
+	_, err := workspace.Finalize(context.Background(), projectPath, nil)
+	require.NoError(t, err)
+
+	assert.FileExists(t, filepath.Join(workspace.home.SessionsDir(), stagedSessionID+".json"))
+	assert.NoFileExists(t, filepath.Join(workspace.home.SessionsDir(), foreignSessionID+".json"),
+		"a co-located session this import did not stage must not be witnessed")
+}
+
+func TestFinalize_LeavesAPreexistingWitnessUntouched(t *testing.T) {
+	projectPath := "/Users/test/Projects/imported"
+	stagedSessionID := "11111111-1111-4111-8111-111111111111"
+	workspace := newMergeTestWorkspace(t)
+	workspace.stagedSessionUUIDs[stagedSessionID] = struct{}{}
+
+	// A live Claude session names its witness by PID; synthesis names by
+	// session UUID, so the two can never share a filename.
+	sessionsDir := workspace.home.SessionsDir()
+	require.NoError(t, os.MkdirAll(sessionsDir, 0o750))
+	liveWitnessPath := filepath.Join(sessionsDir, "4242.json")
+	liveWitness := []byte(`{"cwd":"/Users/test/Projects/other","pid":4242}`)
+	require.NoError(t, os.WriteFile(liveWitnessPath, liveWitness, 0o600))
+
+	_, err := workspace.Finalize(context.Background(), projectPath, nil)
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(liveWitnessPath) //nolint:gosec // G304: path from t.TempDir
+	require.NoError(t, err)
+	assert.Equal(t, liveWitness, got, "synthesis must not overwrite a live Claude-written witness")
+}
+
 func TestFinalizeHistory_EmptyExistingPrependsNothing(t *testing.T) {
 	workspace := newMergeTestWorkspace(t)
 	workspace.historyAppends = [][]byte{[]byte("line1\n"), []byte("line2\n")}
