@@ -55,7 +55,7 @@ func newMoveCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 				}
 				applyResult = result
 				if result.Failed() {
-					return fmt.Errorf("one or more tools failed to move; see the table above")
+					return fmt.Errorf("one or more tools failed to move; see the per-tool results table")
 				}
 				return nil
 			})
