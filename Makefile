@@ -93,7 +93,11 @@ videos: build s3-reset ## Re-render all VHS demo tapes (GIF + MP4); override wit
 	  ver="$$("$$codex_bin" --version)"; \
 	  [ "$$ver" = "codex-cli 0.145.0" ] || { echo "make videos: codex-cli 0.145.0 required; '$(CODEX)' reports '$$ver'" >&2; exit 1; }
 	go build -o seed-home ./docs/videos/fixtures/cmd/seed-home
+# A relative CODEX must be absolutized before it is symlinked: a symlink target
+# resolves against the link's own dir (the mktemp bindir), so a relative target
+# would dangle and PATH would silently fall through to another codex.
 	@codex_bin="$$(command -v -- '$(CODEX)')"; \
+	  case "$$codex_bin" in /*) ;; *) codex_bin="$$(cd "$$(dirname "$$codex_bin")" && pwd)/$$(basename "$$codex_bin")";; esac; \
 	  bindir="$$(mktemp -d)"; ln -s "$$codex_bin" "$$bindir/codex"; \
 	  status=0; \
 	  for tape in demo-move demo-export-import demo-push-pull; do \
