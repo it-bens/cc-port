@@ -692,6 +692,39 @@ read-merge-write against existing content rather than plain promotion.
   lines, but a long history of repeated distinct imports still grows the
   file; there is no compaction.
 
+### Witness synthesis (import)
+
+Export never carries the source machine's `sessions/*.json` witnesses — they
+name a foreign PID and cwd — so a fresh import would leave every imported
+project unwitnessed and its identity check skipped (see §Project enumeration).
+`Finalize` reconstructs the witness instead.
+
+#### Handled
+
+- `synthesizeWitnesses` writes `~/.claude/sessions/<sessionId>.json` for every
+  session this import staged, recording `cwd` as the destination project path —
+  truthful because import already rewrote every staged session's cwd to it. The
+  identity check then resolves rather than skipping.
+- It witnesses only the sessions `Stage` recorded, never every session already
+  in the encoded directory, so a lossy-encoding collision — two real paths
+  sharing one encoded directory — cannot relabel a co-located prior import's
+  sessions to this destination.
+- Each witness records `pid` 0, which §Witness liveness treats as no live
+  writer, so a synthesized witness can never block a move or import lock check.
+- The witness is named by session ID, not by PID as Claude Code names its own,
+  so it never collides with a live Claude-written witness in the same
+  directory. Re-running the same import overwrites each witness with identical
+  content.
+
+#### Refused
+
+- Nothing at runtime. An import that stages no sessions writes no witness.
+
+#### Not covered
+
+- Reconstructing the original owning process. The synthesized witness attests
+  the cwd attribution only; its `pid` is always the inert 0.
+
 ### File-history handling (import)
 
 #### Handled

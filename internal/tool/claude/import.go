@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -64,6 +66,7 @@ func (workspace *Workspace) PreflightDirs(project string) []string {
 		home.ProjectDir(project),
 		filepath.Dir(home.HistoryFile()),
 		filepath.Dir(home.ConfigFile),
+		home.SessionsDir(),
 		home.FileHistoryDir(),
 		home.TodosDir(),
 		filepath.Join(home.UsageDataDir(), "session-meta"),
@@ -111,6 +114,9 @@ func (workspace *Workspace) Stage(
 	switch {
 	case strings.HasPrefix(name, "sessions/"):
 		relative := strings.TrimPrefix(name, "sessions/")
+		if sessionUUID, ok := stagedSessionUUID(relative); ok {
+			workspace.stagedSessionUUIDs[sessionUUID] = struct{}{}
+		}
 		staged, _, err := archive.StageSibling(
 			workspace.home.ProjectDir(project), relative, entry, resolutions, secretFilePerm, entry.Modified,
 		)
@@ -181,12 +187,37 @@ func matchSessionKeyedPrefix(name string) (RegistryEntry, string, bool) {
 	return RegistryEntry{}, "", false
 }
 
+// stagedSessionUUID reports the session UUID a sessions/ archive entry belongs
+// to, given that entry's path relative to the sessions/ prefix: "<uuid>.jsonl"
+// for a transcript, "<uuid>/..." for a session subdirectory. It returns false
+// when the leading path segment is not a session UUID. The path is an archive
+// name, so the separator is always '/', never filepath.Separator.
+func stagedSessionUUID(relative string) (string, bool) {
+	if slash := strings.IndexByte(relative, '/'); slash >= 0 {
+		// Session subdirectory entry: the leading segment is the UUID
+		// directory itself. Claude never suffixes a session directory with
+		// .jsonl, so it is matched whole — stripping .jsonl here would coin a
+		// bogus UUID from a directory literally named "<uuid>.jsonl".
+		leading := relative[:slash]
+		if uuidPattern.MatchString(leading) {
+			return leading, true
+		}
+		return "", false
+	}
+	// Transcript file: "<uuid>.jsonl".
+	sessionUUID := strings.TrimSuffix(relative, ".jsonl")
+	if uuidPattern.MatchString(sessionUUID) {
+		return sessionUUID, true
+	}
+	return "", false
+}
+
 // Finalize implements tool.Importer: it merges the accumulated history
 // append and config block, each idempotently, so a re-run of the same
 // import never duplicates a history line or re-splices an identical config
 // block differently. It also reports rules files that already reference the
 // imported project path.
-func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archive.StagedSet) ([]string, error) {
+func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *archive.StagedSet) ([]string, error) {
 	if len(workspace.historyAppends) > 0 {
 		if err := workspace.finalizeHistory(); err != nil {
 			return nil, err
@@ -197,7 +228,63 @@ func (workspace *Workspace) Finalize(_ context.Context, project string, _ *archi
 			return nil, err
 		}
 	}
+	if err := workspace.synthesizeWitnesses(ctx, project); err != nil {
+		return nil, err
+	}
 	return workspace.rulesWarningsDiagnostic(project), nil
+}
+
+// sessionWitness is the ~/.claude/sessions/<id>.json shape cc-port writes to
+// attribute an imported session to the destination project.
+type sessionWitness struct {
+	SessionID string `json:"sessionId"`
+	Cwd       string `json:"cwd"`
+	Pid       int    `json:"pid"`
+}
+
+// synthesizeWitnesses writes a session witness under ~/.claude/sessions for
+// every session this import staged, so the destination's identity check
+// resolves instead of skipping with a "no witness" note. cc-port never exports
+// the source machine's witnesses (they name a foreign PID and cwd), so a fresh
+// import has none; the reconstruction is truthful because import already
+// rewrote every staged session's cwd to project. It witnesses only the sessions
+// Stage recorded, never every session already in the encoded directory, so a
+// lossy-encoding collision cannot relabel a co-located prior import's sessions
+// to project. PID 0 records the owning process as gone: FindActive skips any
+// witness with pid <= 0, so a synthesized witness can never be mistaken for a
+// live writer. The witness is named by session ID (not PID, as Claude Code
+// names its own), so it never collides with a live Claude-written witness in
+// the same directory.
+func (workspace *Workspace) synthesizeWitnesses(ctx context.Context, project string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(workspace.stagedSessionUUIDs) == 0 {
+		return nil
+	}
+	sessionUUIDs := make([]string, 0, len(workspace.stagedSessionUUIDs))
+	for sessionUUID := range workspace.stagedSessionUUIDs {
+		sessionUUIDs = append(sessionUUIDs, sessionUUID)
+	}
+	sort.Strings(sessionUUIDs)
+	sessionsDir := workspace.home.SessionsDir()
+	if err := os.MkdirAll(sessionsDir, dirPerm); err != nil {
+		return fmt.Errorf("create sessions directory: %w", err)
+	}
+	for _, sessionUUID := range sessionUUIDs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		data, err := json.Marshal(sessionWitness{SessionID: sessionUUID, Cwd: project, Pid: 0})
+		if err != nil {
+			return fmt.Errorf("marshal session witness for %s: %w", sessionUUID, err)
+		}
+		witnessPath := filepath.Join(sessionsDir, sessionUUID+".json")
+		if err := rewrite.SafeWriteFile(witnessPath, data, secretFilePerm); err != nil {
+			return fmt.Errorf("write session witness %s: %w", witnessPath, err)
+		}
+	}
+	return nil
 }
 
 // finalizeHistory appends every new line from workspace.historyAppends to
