@@ -16,6 +16,8 @@ package's types support.
   - `Tool`: `Name`, `DisplayName`, `Categories`, `Detect`, `Open`,
     `ImplicitAnchorKeys`. The tool-level, connection-free half of the
     contract.
+  - `CategoryNames(t Tool) []string`: the wire names of `t`'s declared
+    categories in canonical order.
   - `Workspace`: composes `Mover`, `Exporter`, `Importer`, `Auditor` plus
     `Root`, `LockPath`, `ActiveWriters`. One `Tool.Open` result serves every
     command.

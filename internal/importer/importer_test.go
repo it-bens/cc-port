@@ -425,20 +425,11 @@ func buildClaudeArchiveWithPlaceholders(t *testing.T, entries map[string]string,
 		require.NoError(t, err)
 	}
 	claudeTool := claude.New()
-	categories := manifest.BuildToolCategoryEntries(categoryNames(claudeTool), nil)
+	categories := manifest.BuildToolCategoryEntries(tool.CategoryNames(claudeTool), nil)
 	_, err := archive.WriteMetadata(writer, &manifest.Metadata{Tools: []manifest.Tool{{
 		Name: claudeTool.Name(), Categories: categories, Placeholders: placeholders,
 	}}})
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	return buffer.Bytes()
-}
-
-func categoryNames(claudeTool tool.Tool) []string {
-	categories := claudeTool.Categories()
-	names := make([]string, len(categories))
-	for index, category := range categories {
-		names[index] = category.Name
-	}
-	return names
 }

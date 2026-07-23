@@ -37,6 +37,17 @@ type Tool interface {
 	ImplicitAnchorKeys() []string
 }
 
+// CategoryNames returns the wire names of t's declared categories in
+// canonical order.
+func CategoryNames(t Tool) []string {
+	categories := t.Categories()
+	names := make([]string, len(categories))
+	for i, category := range categories {
+		names[i] = category.Name
+	}
+	return names
+}
+
 // Workspace is a Tool bound to resolved state roots for one command
 // invocation. It composes the four command-facing capabilities so a single
 // Open() result serves move, export, import, and stats alike.

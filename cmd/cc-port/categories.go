@@ -93,14 +93,9 @@ func toolHasCategory(tools []tool.Tool, toolName, categoryName string) bool {
 
 func categoryNamesForTool(tools []tool.Tool, toolName string) string {
 	for _, selectedTool := range tools {
-		if selectedTool.Name() != toolName {
-			continue
+		if selectedTool.Name() == toolName {
+			return strings.Join(tool.CategoryNames(selectedTool), ", ")
 		}
-		names := make([]string, 0, len(selectedTool.Categories()))
-		for _, category := range selectedTool.Categories() {
-			names = append(names, category.Name)
-		}
-		return strings.Join(names, ", ")
 	}
 	return ""
 }

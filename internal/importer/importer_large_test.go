@@ -106,7 +106,7 @@ func TestRun_StagingAggregateCapCountsProductionScaleShrinkingPlaceholderInput(t
 	}
 	claudeTool := claude.New()
 	_, err = archive.WriteMetadata(writer, &manifest.Metadata{Tools: []manifest.Tool{{
-		Name: claudeTool.Name(), Categories: manifest.BuildToolCategoryEntries(categoryNames(claudeTool), nil),
+		Name: claudeTool.Name(), Categories: manifest.BuildToolCategoryEntries(tool.CategoryNames(claudeTool), nil),
 		Placeholders: []manifest.Placeholder{{Key: "{{X}}", Resolve: "/"}},
 	}}})
 	require.NoError(t, err)

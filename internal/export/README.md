@@ -41,7 +41,7 @@ for the per-tool enum validation and write helper.
 #### Handled
 
 Every archive declares every one of a tool's registered category names in
-that tool's `metadata.xml` block, via `manifest.BuildToolCategoryEntries(categoryNames(target.Tool), selected)`.
+that tool's `metadata.xml` block, via `manifest.BuildToolCategoryEntries(tool.CategoryNames(target.Tool), selected)`.
 
 #### Refused
 

@@ -257,15 +257,6 @@ func groupEntriesByTool(entries []archive.RawEntry) map[string][]archive.RawEntr
 	return grouped
 }
 
-func categoryNames(t tool.Tool) []string {
-	categories := t.Categories()
-	names := make([]string, len(categories))
-	for i, category := range categories {
-		names[i] = category.Name
-	}
-	return names
-}
-
 // PreflightBlock runs the per-tool hard gates that import preflight
 // (preflightTargets) and pull planning (sync.PlanPull) must agree on:
 // category validation, implicit-anchor resolution, and resolution merging.
@@ -276,7 +267,7 @@ func PreflightBlock(
 	target tool.Target, block manifest.Tool, fromManifest *manifest.Metadata, targetPath string,
 ) (anchors, resolutions map[string]string, err error) {
 	name := target.Tool.Name()
-	if _, err := manifest.ApplyToolCategories(name, categoryNames(target.Tool), block.Categories); err != nil {
+	if _, err := manifest.ApplyToolCategories(name, tool.CategoryNames(target.Tool), block.Categories); err != nil {
 		return nil, nil, fmt.Errorf("manifest categories for %s: %w", name, err)
 	}
 	anchors, err = target.Workspace.ImplicitAnchors(targetPath)
