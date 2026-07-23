@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "chunkhound": {
+      "command": "chunkhound",
+      "args": ["mcp"]
+    },
+    "chunkhound-codex": {
+      "command": "chunkhound",
+      "args": ["mcp", "--read-only", "--config", ".reference/.chunkhound-codex.json", ".reference/codex"]
+    }
+  }
+}

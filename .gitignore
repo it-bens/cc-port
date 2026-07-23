@@ -58,6 +58,9 @@ docs/superpowers/
 # machine-global ~/.config/chunkhound/chunkhound.json)
 .chunkhound/
 
+# ChunkHound codex reference index (.reference/.chunkhound-codex.json is committed; the DB is local)
+.reference/.chunkhound-codex/
+
 # Go build artifacts
 /cc-port
 /seed-home

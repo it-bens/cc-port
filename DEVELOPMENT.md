@@ -24,6 +24,20 @@ git add .reference/codex
 
 `git submodule status` prints the pinned tag.
 
+### ChunkHound index
+
+Agents consult the submodule through a read-only ChunkHound MCP
+(`chunkhound-codex`) over a local index. Build or refresh that index from the
+repo root:
+
+```
+chunkhound index --config .reference/.chunkhound-codex.json .reference/codex
+```
+
+The index at `.reference/.chunkhound-codex/` is gitignored. Only its config is
+committed. Rebuild it after bumping the submodule so it matches the pinned tag,
+then restart the codex MCP client to serve the refreshed index.
+
 ## Claude Code plugins
 
 Add the marketplaces ([`it-bens/ai-tools`](https://github.com/it-bens/ai-tools) and [`shopwareLabs/ai-coding-tools`](https://github.com/shopwareLabs/ai-coding-tools)):

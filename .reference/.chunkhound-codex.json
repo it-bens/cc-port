@@ -1,0 +1,24 @@
+{
+  "database": {
+    "provider": "duckdb",
+    "path": ".reference/.chunkhound-codex/db"
+  },
+  "llm": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash"
+  },
+  "embedding": {
+    "provider": "voyageai",
+    "model": "voyage-4-lite",
+    "batch_size": 64,
+    "base_url": "https://api.voyageai.com/v1",
+    "rerank_model": "rerank-2.5",
+    "rerank_url": "/rerank",
+    "rerank_batch_size": 100
+  },
+  "indexing": {
+    "exclude_mode": "gitignore_only",
+    "include": ["**/*.rs", "**/*.ts", "**/*.tsx", "**/*.toml", "**/*.md", "**/*.sql"],
+    "per_file_timeout_seconds": 0
+  }
+}
