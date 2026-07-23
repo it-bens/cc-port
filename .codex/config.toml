@@ -1,6 +1,6 @@
-[mcp_servers.chunkhound]
-command = "chunkhound"
-args = ["mcp", "--read-only", "--config", ".chunkhound.json"]
+#[mcp_servers.chunkhound]
+#command = "chunkhound"
+#args = ["mcp", "--read-only", "--config", ".chunkhound.json"]
 
 [mcp_servers.chunkhound-codex]
 command = "chunkhound"
