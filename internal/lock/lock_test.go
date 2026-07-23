@@ -73,6 +73,56 @@ func TestWithLock_AbortsWhenSessionPIDIsAlive(t *testing.T) {
 	assert.ErrorContains(t, err, "live writer process")
 }
 
+func TestRecheckWitnesses_AllQuietReturnsNil(t *testing.T) {
+	require.NoError(t, RecheckWitnesses([]func() ([]tool.ActiveWriter, error){noActive, noActive}))
+}
+
+func TestRecheckWitnesses_AggregatesLiveWritersAcrossTargets(t *testing.T) {
+	first := func() ([]tool.ActiveWriter, error) {
+		return []tool.ActiveWriter{{Pid: 101, Cwd: "/writer/alpha"}}, nil
+	}
+	second := func() ([]tool.ActiveWriter, error) {
+		return []tool.ActiveWriter{{Pid: 202, Cwd: "/writer/beta"}}, nil
+	}
+
+	err := RecheckWitnesses([]func() ([]tool.ActiveWriter, error){first, noActive, second})
+
+	var liveErr *LiveSessionsError
+	require.ErrorAs(t, err, &liveErr)
+	assert.Equal(t,
+		[]tool.ActiveWriter{{Pid: 101, Cwd: "/writer/alpha"}, {Pid: 202, Cwd: "/writer/beta"}},
+		liveErr.Sessions,
+		"live writers from every target must aggregate into one error in witness order")
+}
+
+func TestRecheckWitnesses_PropagatesScanFailure(t *testing.T) {
+	scanFailure := errors.New("witness backend gone")
+	failing := func() ([]tool.ActiveWriter, error) { return nil, scanFailure }
+
+	err := RecheckWitnesses([]func() ([]tool.ActiveWriter, error){failing, noActive})
+
+	require.ErrorIs(t, err, scanFailure)
+}
+
+func TestRecheckWitnesses_ScanFailureDoesNotHideLiveWriters(t *testing.T) {
+	scanFailure := errors.New("witness backend gone")
+	failing := func() ([]tool.ActiveWriter, error) { return nil, scanFailure }
+	live := func() ([]tool.ActiveWriter, error) {
+		return []tool.ActiveWriter{{Pid: 303, Cwd: "/writer/gamma"}}, nil
+	}
+
+	err := RecheckWitnesses([]func() ([]tool.ActiveWriter, error){failing, live})
+
+	require.ErrorIs(t, err, scanFailure)
+	var liveErr *LiveSessionsError
+	require.ErrorAs(t, err, &liveErr)
+	assert.Equal(t, []tool.ActiveWriter{{Pid: 303, Cwd: "/writer/gamma"}}, liveErr.Sessions)
+}
+
+func TestRecheckWitnesses_NilWitnessIsRefused(t *testing.T) {
+	require.Error(t, RecheckWitnesses([]func() ([]tool.ActiveWriter, error){nil}))
+}
+
 func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {
 	lockPath := newTestLockPath(t)
 

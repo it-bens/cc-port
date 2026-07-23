@@ -35,10 +35,10 @@ var ErrConcurrentInvocation = errors.New("another cc-port invocation is operatin
 // unlock cause via %w, so errors.Is matches both this sentinel and the cause.
 var ErrUnlockFailure = errors.New("release cc-port lock")
 
-// LiveSessionsError is returned by WithLock when one or more live writers are
-// detected before the lock is taken. Sessions carries the witness
-// list; callers inspect it via errors.As. WithLock takes the lock only when the
-// list is empty.
+// LiveSessionsError reports one or more detected live writers. Acquire and
+// WithLock return it before taking the lock; RecheckWitnesses returns it,
+// with writers aggregated across all targets, while the locks are held.
+// Sessions carries the witness list; callers inspect it via errors.As.
 type LiveSessionsError struct {
 	Sessions []tool.ActiveWriter
 }
@@ -91,6 +91,33 @@ func Acquire(lockPath string, witness func() ([]tool.ActiveWriter, error)) (*Hel
 		return nil, fmt.Errorf("%w: %s", ErrConcurrentInvocation, lockDir)
 	}
 	return &Held{fileLock: fileLock}, nil
+}
+
+// RecheckWitnesses re-runs one witness per locked target and aggregates the
+// results: every scan failure and, when any target reports live writers, one
+// LiveSessionsError carrying all of them join into the returned error. A
+// caller holding several tools' flocks inserts it immediately before a batch
+// write, because the lock-time witness evidence goes stale while the caller
+// works and the flock does not stop the tools themselves from starting.
+func RecheckWitnesses(witnesses []func() ([]tool.ActiveWriter, error)) error {
+	var sessions []tool.ActiveWriter
+	var errs []error
+	for _, witness := range witnesses {
+		if witness == nil {
+			errs = append(errs, fmt.Errorf("witness is required"))
+			continue
+		}
+		active, err := witness()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("scan active writers: %w", err))
+			continue
+		}
+		sessions = append(sessions, active...)
+	}
+	if len(sessions) > 0 {
+		errs = append(errs, &LiveSessionsError{Sessions: sessions})
+	}
+	return errors.Join(errs...)
 }
 
 // Release unlocks the advisory lock.

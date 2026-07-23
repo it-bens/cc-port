@@ -92,6 +92,13 @@ all-or-nothing batch via `os.Rename`. If any rename fails, every earlier
 rename in the batch (across every tool, not just the one that failed) is
 reversed from the saved pre-promote bytes of each replaced destination.
 
+Between staging and promotion, `runLocked` re-runs every selected target's
+witness once, aggregated, via `lock.RecheckWitnesses`
+(`recheckActiveWriters`). A live writer at the re-check aborts with
+`lock.LiveSessionsError`: staged temps are removed and nothing is promoted
+or finalized. The rationale and the residual window are documented in
+[`internal/lock/README.md`](../lock/README.md) §Concurrency guard.
+
 #### Handled
 
 - Refused import: no write has occurred and the destination is untouched.
@@ -124,6 +131,9 @@ These paths abort before any write:
   the shared caps (see [`internal/archive/README.md`](../archive/README.md)
   §Contracts): rejected by `internal/archive` before any temp file is
   created, with staged temps created so far cleaned up via `cleanupStaged`.
+- A witness that turns live between lock acquisition and promotion: the
+  pre-promotion re-check aborts with `lock.LiveSessionsError`, staged temps
+  are cleaned up via `cleanupStaged`, and no destination is written.
 
 #### Not covered
 
@@ -249,6 +259,9 @@ internal `checkmissing_internal_test.go` and `filehistory_drift_internal_test.go
   shaped like `{{UPPER_SNAKE}}` round-trips byte-for-byte through import.
 - Re-run does not duplicate history or session-index lines (import
   idempotence, verified per adapter).
+- A witness that turns live between lock acquisition and promotion aborts
+  with `lock.LiveSessionsError`, promotes nothing, and leaves no staging
+  temps.
 - Atomic rollback on failure, across every tool's staged files.
 - An unregistered manifest tool name fails hard.
 - Oversized-entry and aggregate-cap rejection, enforced by `internal/archive`'s
