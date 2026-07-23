@@ -5,3 +5,15 @@
 [mcp_servers.chunkhound-codex]
 command = "chunkhound"
 args = ["mcp", "--read-only", "--config", ".reference/.chunkhound-codex.json", ".reference/codex"]
+
+[tool_suggest]
+discoverables = [
+  { type = "plugin", id = "github-mcp@github-agent-tools" },
+
+  { type = "plugin", id = "clipboard-copy@itb-ai-tools" },
+  { type = "plugin", id = "commit-message-writer@itb-ai-tools" },
+  { type = "plugin", id = "file-read@itb-ai-tools" },
+  { type = "plugin", id = "llm-author@itb-ai-tools" },
+  { type = "plugin", id = "software-writer@itb-ai-tools" },
+  { type = "plugin", id = "web-fetching-with-pullmd@itb-ai-tools" },
+]
