@@ -376,3 +376,22 @@ Materialization moved out of `remote.Source` and `encrypt.ReaderStage` into a de
 Future filters (compression, signing) plug in by adding new stage
 types and including them in a command's stage list. The runner does
 not change.
+
+## Codex upstream reference (cross-cutting)
+
+Build and verify the `internal/tool/codex` adapter against upstream Codex
+source, not by inference. That source is vendored at `.reference/codex`, a git
+submodule pinned to a Codex release tag (`rust-v*`). It is the read-only source
+of truth for codex-related code research: how a rollout line is structured, what
+a state-DB column holds, how Codex initializes its memories baseline.
+
+- Consult `.reference/codex` for any Codex behavior question before inferring
+  from cc-port's own adapter code or from memory.
+- Never edit it. It tracks upstream at a fixed tag. A local change desyncs the
+  pin and means nothing to cc-port.
+- It is a reference checkout, not a build input. cc-port neither imports nor
+  compiles it, and the `.reference/` prefix keeps it out of `go ./...` and
+  `golangci-lint run ./...`.
+
+Fetching and bumping the checkout is a dev-setup step:
+DEVELOPMENT.md §Codex reference submodule.

@@ -4,6 +4,26 @@
 
 See [`docs/architecture.md`](docs/architecture.md) for the module layout, contract index, and cross-cutting file-history policy.
 
+## Codex reference submodule
+
+`.reference/codex` is the Codex upstream-source submodule (docs/architecture.md §Codex upstream reference (cross-cutting)).
+
+A plain `git clone` leaves it empty. Populate it after cloning:
+
+```
+git submodule update --init .reference/codex
+```
+
+Bump it to a newer Codex release by moving the pin to the tag and committing the updated gitlink:
+
+```
+git -C .reference/codex fetch --tags --depth 1
+git -C .reference/codex checkout <rust-vX.Y.Z>
+git add .reference/codex
+```
+
+`git submodule status` prints the pinned tag.
+
 ## Claude Code plugins
 
 Add the marketplaces ([`it-bens/ai-tools`](https://github.com/it-bens/ai-tools) and [`shopwareLabs/ai-coding-tools`](https://github.com/shopwareLabs/ai-coding-tools)):

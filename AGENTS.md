@@ -15,6 +15,7 @@ Go CLI that ports Claude Code and OpenAI Codex project state. See `README.md` fo
 - Set an explicit `bufio.Scanner.Buffer` cap on any new line-scanned read over untrusted input. (internal/scan/README.md §Rules files preserved)
 - Cap any `bufio.Scanner` reader of Claude's `history.jsonl` with `claude.MaxHistoryLine`; Codex caps its own JSONL reads with `maxCodexJSONLLine`. (internal/tool/claude/README.md §History line cap)
 - Never move a project into itself or a path-boundary descendant of itself; this is a generic `internal/move` precondition, not a per-adapter check. (internal/move/README.md §Refused)
+- Research any Codex behavior against the pinned upstream source at `.reference/codex`, never from memory; it is read-only, never edit it. (docs/architecture.md §Codex upstream reference (cross-cutting))
 
 ## Navigation
 
