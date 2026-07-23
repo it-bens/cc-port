@@ -39,9 +39,10 @@ logs/
 tmp/
 temp/
 
-# Claude Code local files
+# Local agent instruction files (per-developer, uncommitted)
 CLAUDE.local.md
 AGENTS.local.md
+AGENTS.override.md
 
 # Claude Code local config
 .claude/*
