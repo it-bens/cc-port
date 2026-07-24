@@ -197,11 +197,13 @@ returns. The plan neither gates nor filters what an apply then writes.
 - The classification pass carries its own `archive.AggregateCounter` bounded
   by `Caps.MaxAggregateBytes`, so reading bodies to find definitions is capped
   like every other read.
-- A recognized configuration entry carrying no definitions (the default
-  export shape for a project with no MCP servers). The destination read runs
-  exactly when an apply would splice a recognized entry into the destination
-  configuration, so the unreadable or unparseable destination config that
-  would fail the apply's finalize after promotion fails the plan instead
+- A recognized configuration entry carrying no definitions: Claude's
+  `config.json` (the default export shape for a project with no MCP servers)
+  and the opt-in `config-grants.json`, which never carries one. The
+  destination read runs whenever the archive carries a recognized entry,
+  which covers every apply that would parse the destination configuration,
+  so the unreadable or unparseable destination config that would fail the
+  apply's finalize after promotion fails the plan instead
   (`claude.InvalidConfigJSONError` for Claude). Only an archive with no
   recognized entries (sessions-only, or a tool absent from the archive)
   leaves an unreadable destination configuration unexamined.

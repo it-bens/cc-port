@@ -726,9 +726,13 @@ adapter supplies both halves of that comparison.
   in the `config.json` archive entry, after resolving the entry through the
   import's own resolutions. A `config.json` entry carrying no definitions
   returns an empty non-nil slice (recognized), so the plan runs the same
-  destination read the entry's finalize splice implies. Every other entry
-  name returns nil, so a file-history snapshot body is never opened by this
-  path.
+  destination read the entry's finalize splice implies.
+- `ArchiveMCPServers` recognizes the `config-grants.json` entry on the same
+  ground, always with an empty non-nil result. It carries no MCP
+  definitions, but a staged grants block makes the finalize grants-merge
+  parse the destination configuration, so the plan runs the same read.
+  Every entry name outside these two returns nil, so a file-history
+  snapshot body is never opened by this path.
 - A definition carrying a `command` reports as stdio and its `url`, if any, is
   dropped. The command settles what Claude Code launches.
 
@@ -737,9 +741,10 @@ adapter supplies both halves of that comparison.
 - A `~/.claude.json` that exists but cannot be read or parsed. Reporting it as
   declaring no servers would present every archived definition as new. An
   unparseable file raises the same `InvalidConfigJSONError` the finalize
-  splice raises, so a plan fails exactly where its apply would.
-- A `config.json` archive entry that is not valid JSON, refused by the same
-  check `Stage` applies before promotion.
+  splice raises, so the failure surfaces at plan time instead of after
+  promotion.
+- A `config.json` or `config-grants.json` archive entry that is not valid
+  JSON, refused by the same check `Stage` applies before promotion.
 
 #### Not covered
 

@@ -97,8 +97,8 @@ func DryRun(ctx context.Context, allTools *tool.Set, targets []tool.Target, opti
 // NewMCPServers returns the MCP server definitions target's archive entries
 // carry whose name the destination does not already declare, sorted by name.
 // The destination read runs whenever any entry was recognized, even one
-// carrying no definitions, so a plan fails on the same unreadable or
-// unparseable destination configuration the apply's finalize would fail on.
+// carrying no definitions, so an unreadable or unparseable destination
+// configuration surfaces at plan time instead of after promotion.
 func NewMCPServers(
 	ctx context.Context,
 	target tool.Target,

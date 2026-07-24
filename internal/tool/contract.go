@@ -149,13 +149,14 @@ type Importer interface {
 	// ArchiveMCPServers returns the MCP server definitions one archive entry
 	// carries, resolved through resolutions and sorted by name, so an import
 	// plan can name what an apply would configure. The two empty results are
-	// distinct: nil means this tool does not recognize the entry as one that
-	// can carry definitions, while a recognized entry carrying none returns
-	// an empty non-nil slice — the signal that an apply of this entry would
-	// still parse the destination configuration, so a plan must run the same
-	// read. An entry this tool does recognize but cannot parse is an error,
-	// never an empty result. Routing an entry to its destination remains
-	// Stage's job, not this method's.
+	// distinct: nil means the tool does not recognize the entry, and applying
+	// it never involves the destination configuration; a recognized entry
+	// carrying no definitions returns an empty non-nil slice — the signal
+	// that an apply of this entry would still parse the destination
+	// configuration, so a plan must run the same read. An entry this tool
+	// does recognize but cannot parse is an error, never an empty result.
+	// Routing an entry to its destination remains Stage's job, not this
+	// method's.
 	ArchiveMCPServers(entry archive.Entry, resolutions map[string]string) ([]MCPServer, error)
 
 	// Stage routes one archive entry (already stripped of its tool-prefix

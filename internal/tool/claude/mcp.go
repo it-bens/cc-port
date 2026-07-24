@@ -52,32 +52,42 @@ func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
 // are project-scope but launch with any session opened on the project, so the
 // plan reports them exactly as it reports user-scope ones. A recognized entry
 // carrying no definitions returns an empty non-nil slice, never nil: staging
-// it still makes the apply's finalize parse the destination configuration,
-// and the empty result is what tells a plan to run that parse too.
+// it makes the apply's finalize parse the destination configuration, and the
+// empty result is what tells a plan to run that parse too. The grants entry
+// is recognized on the same ground — finalizeConfigGrants parses the
+// destination for a block carrying allowedTools — though it never carries a
+// definition itself.
 func (workspace *Workspace) ArchiveMCPServers(
 	entry archive.Entry, resolutions map[string]string,
 ) ([]tool.MCPServer, error) {
-	if entry.Name != configEntryName {
+	switch entry.Name {
+	case configEntryName:
+		resolved, err := resolveConfigEntryBytes(entry.Name, entry, resolutions)
+		if err != nil {
+			return nil, err
+		}
+		var block struct {
+			MCPServers map[string]json.RawMessage `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(resolved, &block); err != nil {
+			return nil, fmt.Errorf("unmarshal archive entry %q: %w", entry.Name, err)
+		}
+		servers, err := decodeMCPServers(block.MCPServers, "archive entry "+entry.Name)
+		if err != nil {
+			return nil, err
+		}
+		if servers == nil {
+			servers = []tool.MCPServer{}
+		}
+		return servers, nil
+	case configGrantsEntryName:
+		if _, err := resolveConfigEntryBytes(entry.Name, entry, resolutions); err != nil {
+			return nil, err
+		}
+		return []tool.MCPServer{}, nil
+	default:
 		return nil, nil
 	}
-	resolved, err := resolveConfigEntryBytes(entry.Name, entry, resolutions)
-	if err != nil {
-		return nil, err
-	}
-	var block struct {
-		MCPServers map[string]json.RawMessage `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(resolved, &block); err != nil {
-		return nil, fmt.Errorf("unmarshal archive entry %q: %w", entry.Name, err)
-	}
-	servers, err := decodeMCPServers(block.MCPServers, "archive entry "+entry.Name)
-	if err != nil {
-		return nil, err
-	}
-	if servers == nil {
-		servers = []tool.MCPServer{}
-	}
-	return servers, nil
 }
 
 // decodeMCPServers turns a raw mcpServers map into contract values sorted by

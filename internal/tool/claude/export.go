@@ -364,7 +364,7 @@ func (workspace *Workspace) exportConfigGrants(sink *archive.Sink, result *tool.
 			return fmt.Errorf("extract %s into config-grants.json: %w", allowedToolsKey, err)
 		}
 	}
-	written, err := sink.WriteBytes("config-grants.json", grantsData, time.Time{})
+	written, err := sink.WriteBytes(configGrantsEntryName, grantsData, time.Time{})
 	if err != nil {
 		return fmt.Errorf("write config-grants.json: %w", err)
 	}

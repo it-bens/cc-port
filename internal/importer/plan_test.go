@@ -215,6 +215,28 @@ func TestDryRun_FailsOnACorruptDestinationConfigWhenTheArchiveCarriesAConfigEntr
 		"the plan fails with the same error the apply's finalize would raise after promotion")
 }
 
+// The opt-in config-grants entry carries no MCP definitions, yet applying it
+// still parses the destination configuration in the finalize grants-merge.
+// A grants-only archive therefore preflights the same read.
+func TestDryRun_FailsOnACorruptDestinationConfigWhenTheArchiveCarriesOnlyAGrantsEntry(t *testing.T) {
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/config-grants.json": `{"allowedTools":["Bash"]}`,
+	})
+	home := blankHome(t)
+	require.NoError(t, os.WriteFile(home.ConfigFile, []byte(`{"mcpServers":`), 0o600))
+
+	_, err := importer.DryRun(t.Context(), claudeToolSet(), claudeTargets(home), &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/grants-only",
+		Caps:       archive.DefaultCaps(),
+	})
+
+	var invalidConfig *claude.InvalidConfigJSONError
+	require.ErrorAs(t, err, &invalidConfig,
+		"the plan fails with the same error the apply's grants merge would raise after promotion")
+}
+
 // An archive with no recognized entry leaves the destination configuration
 // unexamined, because its apply would never parse that configuration either.
 func TestDryRun_SessionsOnlyArchivePlansCleanlyAgainstACorruptDestinationConfig(t *testing.T) {
@@ -404,6 +426,21 @@ func TestRenderMCPServers_DistinguishesEmbeddedWhitespaceFromSplitArguments(t *t
 	rendered := out.String()
 	assert.Regexp(t, `embedded\s+run "a b"`, rendered)
 	assert.Regexp(t, `split\s+run a b`, rendered)
+}
+
+// A server name embedding whitespace could absorb the padded launch column:
+// a crafted name ending in "node" paired with command "evil" would render
+// byte-identically to an honest name "safe" launching "node evil". An
+// ambiguous name therefore quotes like a launch part.
+func TestRenderMCPServers_QuotesAServerNameThatEmbedsWhitespace(t *testing.T) {
+	var out bytes.Buffer
+
+	require.NoError(t, importer.RenderMCPServers(&out, []importer.MCPServerSet{{
+		Tool:    "claude",
+		Servers: []tool.MCPServer{{Name: "safe                     node", Command: "evil"}},
+	}}))
+
+	assert.Regexp(t, `"safe\s+node"\s+evil`, out.String())
 }
 
 // A definition naming neither a command nor a URL decodes without error in

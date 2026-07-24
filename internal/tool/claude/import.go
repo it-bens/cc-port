@@ -37,6 +37,11 @@ const projectDirKey = "{{PROJECT_DIR}}"
 // without staging by ArchiveMCPServers.
 const configEntryName = "config.json"
 
+// configGrantsEntryName is the archive entry carrying the project block's
+// allowedTools grants: written by exportConfigGrants, merged back by
+// finalizeConfigGrants, and validated without staging by ArchiveMCPServers.
+const configGrantsEntryName = "config-grants.json"
+
 // filePerm is the mode used for files written during import that carry no
 // secrets. rw-r--r-- matches the permissions Claude Code itself writes for
 // project data files.
@@ -166,7 +171,7 @@ func (workspace *Workspace) Stage(
 		workspace.configBlock = resolved
 		return nil, nil
 
-	case name == "config-grants.json":
+	case name == configGrantsEntryName:
 		resolved, err := resolveConfigEntryBytes(name, entry, resolutions)
 		if err != nil {
 			return nil, err

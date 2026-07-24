@@ -73,15 +73,14 @@ const noLaunchTarget = "(no launch target)"
 
 // LaunchLine renders what the tool would run for this definition: the stdio
 // command with its arguments, the HTTP transport's endpoint, or
-// noLaunchTarget when the definition names neither. A command or argument
-// containing whitespace, quotes, or control characters renders strconv.Quoted;
-// every other value renders verbatim.
+// noLaunchTarget when the definition names neither. Each command and argument
+// renders through QuoteAmbiguous, so argument boundaries stay visible.
 func (server MCPServer) LaunchLine() string {
 	switch {
 	case server.Command != "":
 		parts := make([]string, 0, len(server.Args)+1)
 		for _, part := range append([]string{server.Command}, server.Args...) {
-			parts = append(parts, quoteAmbiguousLaunchPart(part))
+			parts = append(parts, QuoteAmbiguous(part))
 		}
 		return strings.Join(parts, " ")
 	case server.URL != "":
@@ -91,19 +90,23 @@ func (server MCPServer) LaunchLine() string {
 	}
 }
 
-// quoteAmbiguousLaunchPart returns part strconv.Quoted when rendering it
-// verbatim would misrepresent the definition at a consent surface: embedded
-// whitespace makes args:["a b"] read as the two arguments args:["a","b"],
-// and a quote or control character forges structure the definition does not
-// carry. Every other part renders verbatim.
-func quoteAmbiguousLaunchPart(part string) string {
-	ambiguous := strings.ContainsFunc(part, func(r rune) bool {
+// QuoteAmbiguous returns s strconv.Quoted when rendering it verbatim would
+// misrepresent a definition at a consent surface: embedded whitespace makes
+// args:["a b"] read as the two arguments args:["a","b"] and lets a server
+// name absorb the launch column beside it, an empty string renders as
+// nothing at all, and a quote or control character forges structure the
+// value does not carry. Every other value renders verbatim.
+func QuoteAmbiguous(s string) string {
+	if s == "" {
+		return `""`
+	}
+	ambiguous := strings.ContainsFunc(s, func(r rune) bool {
 		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '"' || r == '\''
 	})
 	if !ambiguous {
-		return part
+		return s
 	}
-	return strconv.Quote(part)
+	return strconv.Quote(s)
 }
 
 // EscapeControl renders every control character in s — C0, DEL, and the C1

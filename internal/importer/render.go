@@ -50,7 +50,11 @@ func RenderMCPServers(w io.Writer, sets []MCPServerSet) error {
 	for _, set := range sets {
 		fmt.Fprintf(&b, "  New MCP servers (%s):\n", set.Tool)
 		for _, server := range set.Servers {
-			fmt.Fprintf(&b, "    %-24s %s\n", tool.EscapeControl(server.Name), tool.EscapeControl(server.LaunchLine()))
+			// The name quotes like a launch part: a name embedding whitespace
+			// could otherwise absorb the launch column, rendering a crafted
+			// name-plus-command identically to an honest one.
+			fmt.Fprintf(&b, "    %-24s %s\n",
+				tool.EscapeControl(tool.QuoteAmbiguous(server.Name)), tool.EscapeControl(server.LaunchLine()))
 		}
 		fmt.Fprintln(&b)
 	}

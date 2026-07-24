@@ -51,9 +51,9 @@ package's types support.
   - `MCPServer`: `Name` plus at most one transport, either `Command`+`Args`
     or `URL`. `LaunchLine()` renders whichever the definition carries, and
     reports a definition naming neither as having no launch target rather
-    than rendering a blank line. A command or argument containing whitespace,
-    quotes, or control characters renders `strconv.Quote`d, so `args:["a b"]`
-    and `args:["a","b"]` stay distinguishable at a consent surface.
+    than rendering a blank line. Each command and argument renders through
+    `QuoteAmbiguous`, so `args:["a b"]` and `args:["a","b"]` stay
+    distinguishable at a consent surface.
   - `Surface`: `Name`, `Plan func(ctx) (SurfaceResult, error)`,
     `Apply func(ctx, *Restorer) (SurfaceResult, error)`. One named,
     independently plannable and applicable unit of a move.
@@ -73,6 +73,12 @@ package's types support.
     route every archive- and manifest-controlled string through it, so a
     crafted string reveals its control bytes instead of driving the
     terminal.
+  - `QuoteAmbiguous(s string) string`: returns `s` `strconv.Quote`d when
+    rendering it verbatim would misrepresent it (embedded whitespace,
+    quotes, control characters, or an empty string). Every other value
+    returns verbatim. `LaunchLine` applies it to each command and argument,
+    and the consent renderer to each server name, so a crafted name
+    embedding whitespace cannot absorb the launch column beside it.
 - **Registry**
   - `Set`: the registered collection of tools, built once via `NewSet` and
     read thereafter through `All`, `ByName`, `Detected`.
