@@ -23,7 +23,8 @@ func registerCategoryFlags(cmd *cobra.Command, verb string) {
 
 // resolveSelectionFromCmd reads --all and --include, registered by
 // registerCategoryFlags, into a per-tool category selection. --all selects
-// every category for every target; --include selects only the named
+// every category for every target except those marked
+// tool.Category.ExcludedFromAll; --include selects only the named
 // tool/category pairs (every other target starts from an empty selection).
 // Neither flag present returns nil so callers (export and push, both via
 // applyCategorySelection) fall back to the interactive picker.
