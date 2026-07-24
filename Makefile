@@ -90,6 +90,19 @@ videos: build s3-reset ## Re-render all VHS demo tapes (GIF + MP4); override wit
 	  [ -n "$$codex_bin" ] || { echo "make videos: codex binary '$(CODEX)' not found; set CODEX=/path/to/codex-0.145.0" >&2; exit 1; }; \
 	  ver="$$("$$codex_bin" --version)"; \
 	  [ "$$ver" = "codex-cli 0.145.0" ] || { echo "make videos: codex-cli 0.145.0 required; '$(CODEX)' reports '$$ver'" >&2; exit 1; }
+# Codex's liveness witness scans the whole process table, so any running Codex
+# (a stray codex mcp-server counts) makes the paired tape's `import --apply`
+# refuse, and vhs records that refusal as the demo while still exiting 0. The
+# name set mirrors codexProcessNames in internal/tool/codex/witness.go, so the
+# guard and the witness cannot disagree. Each case pattern opens with '(':
+# an unbalanced ')' inside a command substitution aborts the shell's parse.
+	@live="$$(ps -Ao pid=,comm= | while read -r pid comm; do \
+	    case "$${comm##*/}" in (codex|codex-tui|codex-app-server) printf '%s ' "$$pid";; esac; \
+	  done)"; \
+	  [ -z "$$live" ] || { \
+	    echo "make videos: live Codex process(es) detected (pid: $$live)" >&2; \
+	    echo "  cc-port refuses a mutating apply while one runs, so the render would record the refusal." >&2; \
+	    echo "  Stop them (a codex mcp-server counts) and re-run." >&2; exit 1; }
 	go build -o seed-home ./docs/videos/fixtures/cmd/seed-home
 # A relative CODEX must be absolutized before it is symlinked: a symlink target
 # resolves against the link's own dir (the mktemp bindir), so a relative target
