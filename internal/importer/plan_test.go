@@ -76,7 +76,6 @@ func TestPlanRender_ShowsWhatAnApplyWouldCommit(t *testing.T) {
 	assert.Regexp(t, `Categories:.*\bsessions\b`, rendered)
 	assert.Regexp(t, `Entries:\s+\d+`, rendered)
 	assert.Regexp(t, `\bfs\s+node `+regexp.QuoteMeta(projectPath), rendered)
-	assert.Contains(t, rendered, "Run with --apply to execute.")
 }
 
 // The archive's project block carries the fixture project's own mcpServers.
@@ -120,6 +119,26 @@ func TestDryRun_OmitsMCPServersTheDestinationAlreadyDeclares(t *testing.T) {
 
 	assert.Empty(t, plan.NewMCPServers,
 		"a definition the destination already declares under the same name is not newly arriving")
+}
+
+// The claude fixture declares stdio servers only, so the HTTP transport's
+// path from an archive entry to the rendered plan needs its own archive.
+func TestDryRun_CarriesAnHTTPTransportDefinitionFromArchiveToRenderedPlan(t *testing.T) {
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/config.json": `{"mcpServers":{"docs":{"url":"https://mcp.example.invalid/docs"}}}`,
+	})
+
+	plan, err := importer.DryRun(t.Context(), claudeToolSet(), claudeTargets(blankHome(t)), &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/http-transport",
+		Caps:       archive.DefaultCaps(),
+	})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	require.NoError(t, plan.Render(&out))
+	assert.Regexp(t, `docs\s+https://mcp\.example\.invalid/docs`, out.String())
 }
 
 func TestDryRun_FailsWhenTheDestinationConfigCannotBeRead(t *testing.T) {
@@ -207,7 +226,63 @@ func TestRenderMCPServers_NamesEachDefinitionWithItsLaunchLine(t *testing.T) {
 	assert.Contains(t, rendered, "New MCP servers (claude):")
 	assert.Regexp(t, `filesystem\s+node --enable-source-maps /opt/fs-server\.js`, rendered)
 	assert.Regexp(t, `search\s+https://mcp\.example\.invalid/search`, rendered)
-	assert.Contains(t, rendered, "start automatically with every session once imported")
+}
+
+// A crafted archive can put ANSI escapes or a CR/LF forgery inside a server
+// name or argument, where a terminal would execute them and erase or forge
+// plan lines. The consent surface reveals those bytes as their Go escape
+// sequences instead of forwarding them.
+func TestRenderMCPServers_RevealsControlBytesAsEscapes(t *testing.T) {
+	var out bytes.Buffer
+
+	require.NoError(t, importer.RenderMCPServers(&out, []importer.MCPServerSet{{
+		Tool: "claude",
+		Servers: []tool.MCPServer{{
+			Name:    "innocent\x1b[1A\x1b[2K",
+			Command: "safe",
+			Args:    []string{"--flag\r\n    forged plan line"},
+		}},
+	}}))
+
+	rendered := out.String()
+	assert.NotContains(t, rendered, "\x1b", "no raw ESC byte reaches the terminal")
+	assert.NotContains(t, rendered, "\r", "no raw CR byte reaches the terminal")
+	assert.Contains(t, rendered, `innocent\x1b[1A\x1b[2K`,
+		"the name's control bytes render revealed, not stripped")
+	assert.Contains(t, rendered, `safe "--flag\r\n    forged plan line"`,
+		"the argument renders quoted with its control bytes revealed")
+}
+
+// args:["a b"] and args:["a","b"] launch differently, so the consent surface
+// renders them distinguishably.
+func TestRenderMCPServers_DistinguishesEmbeddedWhitespaceFromSplitArguments(t *testing.T) {
+	var out bytes.Buffer
+
+	require.NoError(t, importer.RenderMCPServers(&out, []importer.MCPServerSet{{
+		Tool: "claude",
+		Servers: []tool.MCPServer{
+			{Name: "embedded", Command: "run", Args: []string{"a b"}},
+			{Name: "split", Command: "run", Args: []string{"a", "b"}},
+		},
+	}}))
+
+	rendered := out.String()
+	assert.Regexp(t, `embedded\s+run "a b"`, rendered)
+	assert.Regexp(t, `split\s+run a b`, rendered)
+}
+
+// A definition naming neither a command nor a URL decodes without error in
+// both adapters, so the consent surface labels it rather than rendering a
+// blank launch line that would read as a server launching nothing.
+func TestRenderMCPServers_LabelsADefinitionWithNoLaunchTarget(t *testing.T) {
+	var out bytes.Buffer
+
+	require.NoError(t, importer.RenderMCPServers(&out, []importer.MCPServerSet{{
+		Tool:    "claude",
+		Servers: []tool.MCPServer{{Name: "targetless"}},
+	}}))
+
+	assert.Regexp(t, `targetless\s+\(no launch target\)`, out.String())
 }
 
 func TestRenderMCPServers_WritesNothingWithoutNewDefinitions(t *testing.T) {

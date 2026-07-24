@@ -47,7 +47,9 @@ package's types support.
   - `MCPServer`: `Name` plus at most one transport, either `Command`+`Args`
     or `URL`. `LaunchLine()` renders whichever the definition carries, and
     reports a definition naming neither as having no launch target rather
-    than rendering a blank line.
+    than rendering a blank line. A command or argument containing whitespace,
+    quotes, or control characters renders `strconv.Quote`d, so `args:["a b"]`
+    and `args:["a","b"]` stay distinguishable at a consent surface.
   - `Surface`: `Name`, `Plan func(ctx) (SurfaceResult, error)`,
     `Apply func(ctx, *Restorer) (SurfaceResult, error)`. One named,
     independently plannable and applicable unit of a move.
@@ -59,6 +61,14 @@ package's types support.
     `Disk`, `Files`, `Bytes`).
   - Sentinel errors `ErrToolAbsent`, `ErrProjectAbsent`, `ErrNoWitness` (see
     `docs/architecture.md` §Sweep semantics).
+- **Consent rendering**
+  - `EscapeControl(s string) string`: returns `s` with every control
+    character (C0, DEL, and the C1 range) replaced by its Go escape
+    sequence (`\x1b`, `\r`, …). Nothing is stripped. The operator sees
+    what the string actually carries. The import and pull plan renderers
+    route every archive- and manifest-controlled string through it, so a
+    crafted string reveals its control bytes instead of driving the
+    terminal.
 - **Registry**
   - `Set`: the registered collection of tools, built once via `NewSet` and
     read thereafter through `All`, `ByName`, `Detected`.

@@ -3,7 +3,11 @@ package tool
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -69,14 +73,64 @@ const noLaunchTarget = "(no launch target)"
 
 // LaunchLine renders what the tool would run for this definition: the stdio
 // command with its arguments, the HTTP transport's endpoint, or
-// noLaunchTarget when the definition names neither.
+// noLaunchTarget when the definition names neither. A command or argument
+// containing whitespace, quotes, or control characters renders strconv.Quoted;
+// every other value renders verbatim.
 func (server MCPServer) LaunchLine() string {
 	switch {
 	case server.Command != "":
-		return strings.Join(append([]string{server.Command}, server.Args...), " ")
+		parts := make([]string, 0, len(server.Args)+1)
+		for _, part := range append([]string{server.Command}, server.Args...) {
+			parts = append(parts, quoteAmbiguousLaunchPart(part))
+		}
+		return strings.Join(parts, " ")
 	case server.URL != "":
 		return server.URL
 	default:
 		return noLaunchTarget
 	}
+}
+
+// quoteAmbiguousLaunchPart returns part strconv.Quoted when rendering it
+// verbatim would misrepresent the definition at a consent surface: embedded
+// whitespace makes args:["a b"] read as the two arguments args:["a","b"],
+// and a quote or control character forges structure the definition does not
+// carry. Every other part renders verbatim.
+func quoteAmbiguousLaunchPart(part string) string {
+	ambiguous := strings.ContainsFunc(part, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '"' || r == '\''
+	})
+	if !ambiguous {
+		return part
+	}
+	return strconv.Quote(part)
+}
+
+// EscapeControl renders every control character in s — C0, DEL, and the C1
+// range — as its Go escape sequence (`\x1b`, `\r`, …). Nothing is stripped:
+// a consent surface shows the operator what an archive-controlled string
+// actually carries instead of letting a terminal execute it.
+func EscapeControl(s string) string {
+	if utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			// A bare byte that is not valid UTF-8 (a 0x9b CSI, for example)
+			// still acts as a control byte in a legacy terminal, so it escapes
+			// instead of passing through.
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case unicode.IsControl(r):
+			quoted := strconv.QuoteRune(r)
+			b.WriteString(quoted[1 : len(quoted)-1])
+		default:
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	return b.String()
 }

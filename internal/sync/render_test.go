@@ -41,6 +41,29 @@ func TestPullPlan_RenderNamesNewMCPServers(t *testing.T) {
 	}
 }
 
+// Tool names, placeholder keys, and the pusher identity travel in the remote
+// archive's own metadata, so a crafted archive can put ANSI escapes in them.
+// The pull summary reveals those bytes as their Go escape sequences instead
+// of forwarding them to the operator's terminal.
+func TestPullPlan_RenderRevealsManifestControlBytesAsEscapes(t *testing.T) {
+	plan := &PullPlan{
+		Name:                   "myproj",
+		RemotePushedBy:         "laptop\x1b[2K-alice",
+		Tools:                  []string{"claude\x1b[1A"},
+		DeclaredPlaceholders:   map[string][]manifest.Placeholder{"claude\x1b[1A": {{Key: "{{HOME\x1b[2K}}"}}},
+		UnresolvedPlaceholders: map[string][]string{},
+	}
+	var buf bytes.Buffer
+
+	require.NoError(t, plan.Render(&buf, false))
+
+	rendered := buf.String()
+	assert.NotContains(t, rendered, "\x1b", "no raw ESC byte reaches the terminal")
+	assert.Contains(t, rendered, `laptop\x1b[2K-alice`, "the pusher identity's control bytes render revealed")
+	assert.Contains(t, rendered, `claude\x1b[1A`, "the tool name's control bytes render revealed")
+	assert.Contains(t, rendered, `{{HOME\x1b[2K}}`, "the placeholder key's control bytes render revealed")
+}
+
 func TestPushPlan_RenderNoPriorPlaintext(t *testing.T) {
 	plan := &PushPlan{
 		Name:              "myproj",

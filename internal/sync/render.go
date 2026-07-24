@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // Render writes the push plan summary to w. apply selects the header line:
@@ -36,7 +37,10 @@ func (p *PushPlan) Render(w io.Writer, apply bool) error {
 
 	if p.PriorPushedBy != "" {
 		fmt.Fprintln(&b, "  Prior remote:")
-		fmt.Fprintf(&b, "    Pushed by:   %s\n", p.PriorPushedBy)
+		// The pusher identity travels in the remote archive's own metadata,
+		// so it renders through tool.EscapeControl like every other
+		// archive-controlled string at a consent surface.
+		fmt.Fprintf(&b, "    Pushed by:   %s\n", tool.EscapeControl(p.PriorPushedBy))
 		fmt.Fprintf(&b, "    Pushed at:   %s\n", p.PriorPushedAt.Format(time.RFC3339))
 		fmt.Fprintf(&b, "    Size:        %s\n", humanizeBytes(p.PriorSize))
 		fmt.Fprintf(&b, "    Encrypted:   %s\n\n", yesNo(p.PriorEncrypted))
@@ -75,10 +79,17 @@ func (p *PullPlan) Render(w io.Writer, apply bool) error {
 	fmt.Fprintf(&b, "  Encryption: %s\n\n", encStatus)
 
 	fmt.Fprintln(&b, "  Remote:")
-	fmt.Fprintf(&b, "    Pushed by:   %s\n", p.RemotePushedBy)
+	fmt.Fprintf(&b, "    Pushed by:   %s\n", tool.EscapeControl(p.RemotePushedBy))
 	fmt.Fprintf(&b, "    Pushed at:   %s\n", p.RemotePushedAt.Format(time.RFC3339))
 	fmt.Fprintf(&b, "    Size:        %s\n", humanizeBytes(p.RemoteSize))
-	fmt.Fprintf(&b, "    Tools:       %s\n\n", strings.Join(p.Tools, ", "))
+	// Tool names and placeholder keys come from the remote archive's own
+	// metadata, so they render through tool.EscapeControl like every other
+	// archive-controlled string at a consent surface.
+	escapedTools := make([]string, len(p.Tools))
+	for i, name := range p.Tools {
+		escapedTools[i] = tool.EscapeControl(name)
+	}
+	fmt.Fprintf(&b, "    Tools:       %s\n\n", strings.Join(escapedTools, ", "))
 
 	totalUnresolved := 0
 	for _, toolName := range p.Tools {
@@ -90,14 +101,15 @@ func (p *PullPlan) Render(w io.Writer, apply bool) error {
 		for _, key := range p.UnresolvedPlaceholders[toolName] {
 			unresolvedSet[key] = true
 		}
-		fmt.Fprintf(&b, "  Required resolutions (%s):\n", toolName)
+		fmt.Fprintf(&b, "  Required resolutions (%s):\n", tool.EscapeControl(toolName))
 		for _, placeholder := range declared {
+			key := tool.EscapeControl(placeholder.Key)
 			if unresolvedSet[placeholder.Key] {
 				fmt.Fprintf(&b, "    %s     <unresolved>        (MISSING; supply --from-manifest with <resolve> for %s)\n",
-					placeholder.Key, placeholder.Key)
+					key, key)
 				totalUnresolved++
 			} else {
-				fmt.Fprintf(&b, "    %s     <provided>          (resolved)\n", placeholder.Key)
+				fmt.Fprintf(&b, "    %s     <provided>          (resolved)\n", key)
 			}
 		}
 		fmt.Fprintln(&b)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // Render writes the import plan summary to w, ending with the --apply hint.
@@ -37,7 +39,9 @@ func (p *Plan) Render(w io.Writer) error {
 // an apply would newly configure, each with the command line the tool would
 // run for it. Nothing is written when sets is empty. This section is where an
 // operator consents to the launch-at-session-start consequence of importing
-// them.
+// them, so the archive-controlled name and launch line render through
+// tool.EscapeControl: a control byte reveals as its escape sequence instead
+// of reaching the operator's terminal.
 func RenderMCPServers(w io.Writer, sets []MCPServerSet) error {
 	if len(sets) == 0 {
 		return nil
@@ -46,7 +50,7 @@ func RenderMCPServers(w io.Writer, sets []MCPServerSet) error {
 	for _, set := range sets {
 		fmt.Fprintf(&b, "  New MCP servers (%s):\n", set.Tool)
 		for _, server := range set.Servers {
-			fmt.Fprintf(&b, "    %-24s %s\n", server.Name, server.LaunchLine())
+			fmt.Fprintf(&b, "    %-24s %s\n", tool.EscapeControl(server.Name), tool.EscapeControl(server.LaunchLine()))
 		}
 		fmt.Fprintln(&b)
 	}
