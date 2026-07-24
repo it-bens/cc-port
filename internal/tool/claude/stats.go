@@ -334,8 +334,8 @@ func sizeDirs(ctx context.Context, dirs []string) (diskUsage, error) {
 }
 
 // orderDisk projects the per-category size map onto categories order,
-// emitting every category (history and config included at zero) so the
-// result always carries the full registry in canonical order.
+// emitting every category (history, config, and config-grants included at
+// zero) so the result always carries the full registry in canonical order.
 func orderDisk(byCategory map[string]diskUsage) []tool.SizeCategory {
 	ordered := make([]tool.SizeCategory, 0, len(categories))
 	for _, category := range categories {
