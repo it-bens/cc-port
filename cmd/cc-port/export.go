@@ -208,7 +208,7 @@ func runExportManifest(cmd *cobra.Command, args []string, toolSet *tool.Set, fla
 		name := target.Tool.Name()
 		metadata.Tools = append(metadata.Tools, manifest.Tool{
 			Name:         name,
-			Categories:   manifest.BuildToolCategoryEntries(categoryNames(target.Tool), selection[name]),
+			Categories:   manifest.BuildToolCategoryEntries(tool.CategoryNames(target.Tool), selection[name]),
 			Placeholders: placeholders[name],
 		})
 	}

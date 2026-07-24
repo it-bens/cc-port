@@ -47,7 +47,7 @@
     "command": "echo myproject"
   },
   "enabledPlugins": {
-    "test-marketplace/sample-plugin": true
+    "sample-plugin@test-marketplace": true
   },
   "extraKnownMarketplaces": {
     "test-marketplace": {

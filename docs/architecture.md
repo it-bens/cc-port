@@ -37,7 +37,7 @@ cc-port/
 
 Each non-trivial directory has a `README.md`. Directories with hard editing rules additionally carry an `AGENTS.md` (loaded by Claude Code via a one-line `CLAUDE.md`). The `README.md` is the developer narrative. The `AGENTS.md` is a pointer-only map into it.
 
-`internal/claude` and `internal/transport` do not exist anymore. The Claude Code adapter moved to `internal/tool/claude` and absorbed `internal/transport`'s archive-layout registry into one merged `claude.Registries` slice (see §Registry source of truth). Command packages (`internal/move`, `internal/export`, `internal/importer`, `internal/stats`, `internal/sync`) import `internal/tool` only; they never import an adapter package. Among code linked into the shipped binary, only `cmd/cc-port` imports `internal/tool/claude` and `internal/tool/codex`, in `cmd/cc-port/tools.go`. The test-support package `internal/testutil` and demo-seed fixture `docs/videos/fixtures/cmd/encode-path` also import the Claude adapter but are not linked into the binary.
+`internal/claude` and `internal/transport` do not exist anymore. The Claude Code adapter moved to `internal/tool/claude` and absorbed `internal/transport`'s archive-layout registry into one merged `claude.Registries` slice (see §Registry source of truth). Command packages (`internal/move`, `internal/export`, `internal/importer`, `internal/stats`, `internal/sync`) import the tool contract plus shared substrate but never import an adapter package (see §Adapter boundaries). Among code linked into the shipped binary, only `cmd/cc-port` imports `internal/tool/claude` and `internal/tool/codex`, in `cmd/cc-port/tools.go`. The test-support package `internal/testutil` and demo-seed fixture `docs/videos/fixtures/cmd/encode-path` also import the Claude adapter but are not linked into the binary.
 
 ## The tool contract
 
@@ -70,9 +70,13 @@ order; `tool.ParseQualified` is a separate package function that parses a
 ### Adapter boundaries
 
 Command packages (`internal/move`, `internal/export`, `internal/importer`,
-`internal/stats`, `internal/sync`) import `internal/tool` and nothing more.
-They drive every tool through the `Tool` and `Workspace` interfaces and
-never branch on which tool they are talking to. Adapters
+`internal/stats`, `internal/sync`) import the tool contract plus the shared
+substrate they need (`internal/archive`, `internal/lock`, `internal/manifest`,
+`internal/pipeline`, `internal/progress`, `internal/rewrite`), never an
+adapter package.
+`internal/sync` additionally composes `internal/export` and
+`internal/importer`. They drive every tool through the `Tool` and
+`Workspace` interfaces and never branch on which tool they are talking to. Adapters
 (`internal/tool/claude`, `internal/tool/codex`) import `internal/tool` plus
 whatever shared substrate they need (`internal/rewrite`, `internal/sqlrewrite`,
 `internal/archive`). Among code linked into the shipped binary, only

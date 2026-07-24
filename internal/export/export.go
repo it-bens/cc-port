@@ -97,7 +97,7 @@ func Run(ctx context.Context, targets []tool.Target, options *Options) (result R
 		result.ByTool[target.Tool.Name()] = exportResult
 		metadata.Tools = append(metadata.Tools, manifest.Tool{
 			Name:         target.Tool.Name(),
-			Categories:   manifest.BuildToolCategoryEntries(categoryNames(target.Tool), selected),
+			Categories:   manifest.BuildToolCategoryEntries(tool.CategoryNames(target.Tool), selected),
 			Placeholders: placeholders,
 		})
 		toolPhase.End("")
@@ -112,13 +112,4 @@ func Run(ctx context.Context, targets []tool.Target, options *Options) (result R
 	result.Metadata = written
 
 	return result, nil
-}
-
-func categoryNames(t tool.Tool) []string {
-	categories := t.Categories()
-	names := make([]string, len(categories))
-	for i, category := range categories {
-		names[i] = category.Name
-	}
-	return names
 }

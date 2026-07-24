@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -57,7 +60,7 @@ func (workspace *Workspace) Placeholders(project string, selected map[string]boo
 
 func gatherDiscoveryContent(locations *ProjectLocations, selected map[string]bool) ([]byte, error) {
 	var content []byte
-	if selected["sessions"] {
+	if selected[categorySessions] {
 		for _, transcriptPath := range locations.SessionTranscripts {
 			data, err := os.ReadFile(transcriptPath) //nolint:gosec // G304: path constructed from trusted internal data
 			if err != nil {
@@ -66,7 +69,7 @@ func gatherDiscoveryContent(locations *ProjectLocations, selected map[string]boo
 			content = append(content, data...)
 		}
 	}
-	if selected["memory"] {
+	if selected[categoryMemory] {
 		for _, memoryFilePath := range locations.MemoryFiles {
 			data, err := os.ReadFile(memoryFilePath) //nolint:gosec // G304: path constructed from trusted internal data
 			if err != nil {
@@ -113,12 +116,12 @@ func (workspace *Workspace) Export(
 		return result, fmt.Errorf("locate project: %w", err)
 	}
 
-	if selected["sessions"] {
+	if selected[categorySessions] {
 		if err := workspace.exportSessions(ctx, sink, &result, locations); err != nil {
 			return result, err
 		}
 	}
-	if selected["memory"] {
+	if selected[categoryMemory] {
 		if err := workspace.exportMemory(ctx, sink, &result, locations); err != nil {
 			return result, err
 		}
@@ -126,24 +129,29 @@ func (workspace *Workspace) Export(
 	if err := workspace.exportSessionKeyed(ctx, sink, &result, locations, selected); err != nil {
 		return result, err
 	}
-	if selected["history"] {
+	if selected[categoryHistory] {
 		if err := workspace.exportHistory(ctx, sink, &result, project); err != nil {
 			return result, err
 		}
 	}
-	if selected["file-history"] {
+	if selected[categoryFileHistory] {
 		if err := workspace.exportFileHistory(ctx, sink, &result, locations); err != nil {
 			return result, err
 		}
 	}
-	if selected["config"] {
+	if selected[categoryConfig] {
 		if err := workspace.exportConfig(sink, &result, project); err != nil {
+			return result, err
+		}
+	}
+	if selected[categoryConfigGrants] {
+		if err := workspace.exportConfigGrants(sink, &result, project); err != nil {
 			return result, err
 		}
 	}
 
 	result.Warnings = append(result.Warnings, workspace.rulesWarningsDiagnostic(project)...)
-	if snapshotCount := len(result.Categories["file-history"]); snapshotCount > 0 {
+	if snapshotCount := len(result.Categories[categoryFileHistory]); snapshotCount > 0 {
 		result.Warnings = append(result.Warnings, fmt.Sprintf(
 			"%d file-history snapshot(s) archived as-is; contents may still reference the original project path "+
 				"(used for in-session rewinds, not persisted data)",
@@ -196,14 +204,14 @@ func (workspace *Workspace) exportSessions(
 		if err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
-		recordEntry(result, "sessions", written)
+		recordEntry(result, categorySessions, written)
 	}
 	for _, subdirPath := range locations.SessionSubdirs {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		zipPrefix := "sessions/" + filepath.Base(subdirPath)
-		if err := workspace.addDirToZip(ctx, sink, result, "sessions", subdirPath, zipPrefix); err != nil {
+		if err := workspace.addDirToZip(ctx, sink, result, categorySessions, subdirPath, zipPrefix); err != nil {
 			return fmt.Errorf("add session subdir %s: %w", subdirPath, err)
 		}
 	}
@@ -244,7 +252,7 @@ func (workspace *Workspace) exportMemory(
 		if err != nil {
 			return fmt.Errorf("write %s: %w", zipName, err)
 		}
-		recordEntry(result, "memory", written)
+		recordEntry(result, categoryMemory, written)
 	}
 	return nil
 }
@@ -302,7 +310,7 @@ func (workspace *Workspace) exportHistory(
 	if err != nil {
 		return fmt.Errorf("write history/history.jsonl: %w", err)
 	}
-	recordEntry(result, "history", written)
+	recordEntry(result, categoryHistory, written)
 	return nil
 }
 
@@ -321,16 +329,46 @@ func (workspace *Workspace) exportFileHistory(
 	return nil
 }
 
+// exportConfig writes the project block minus allowedTools: the grants key
+// travels only in the opt-in config-grants entry, so a config-only archive
+// carries no permission grants (see exportConfigGrants).
 func (workspace *Workspace) exportConfig(sink *archive.Sink, result *tool.ExportResult, project string) error {
 	configData, err := extractProjectConfig(workspace.home.ConfigFile, project)
 	if err != nil {
 		return fmt.Errorf("extract project config: %w", err)
 	}
+	configData, err = sjson.DeleteBytes(configData, allowedToolsKey)
+	if err != nil {
+		return fmt.Errorf("split %s out of config.json: %w", allowedToolsKey, err)
+	}
 	written, err := sink.WriteBytes("config.json", configData, time.Time{})
 	if err != nil {
 		return fmt.Errorf("write config.json: %w", err)
 	}
-	recordEntry(result, "config", written)
+	recordEntry(result, categoryConfig, written)
+	return nil
+}
+
+// exportConfigGrants writes the project block's allowedTools key as its own
+// single-key block-JSON entry. A project without the key exports an empty
+// block, so entry presence tracks category selection, not data presence.
+func (workspace *Workspace) exportConfigGrants(sink *archive.Sink, result *tool.ExportResult, project string) error {
+	configData, err := extractProjectConfig(workspace.home.ConfigFile, project)
+	if err != nil {
+		return fmt.Errorf("extract project config: %w", err)
+	}
+	grantsData := []byte(`{}`)
+	if grants := gjson.GetBytes(configData, allowedToolsKey); grants.Exists() {
+		grantsData, err = sjson.SetRawBytes(grantsData, allowedToolsKey, []byte(grants.Raw))
+		if err != nil {
+			return fmt.Errorf("extract %s into config-grants.json: %w", allowedToolsKey, err)
+		}
+	}
+	written, err := sink.WriteBytes("config-grants.json", grantsData, time.Time{})
+	if err != nil {
+		return fmt.Errorf("write config-grants.json: %w", err)
+	}
+	recordEntry(result, categoryConfigGrants, written)
 	return nil
 }
 
@@ -431,7 +469,7 @@ func (workspace *Workspace) addDirVerbatimToZip(
 		if writeErr != nil {
 			return writeErr
 		}
-		recordEntry(result, "file-history", written)
+		recordEntry(result, categoryFileHistory, written)
 	}
 	return nil
 }

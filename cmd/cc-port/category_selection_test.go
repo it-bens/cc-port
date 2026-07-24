@@ -32,7 +32,7 @@ func TestApplyCategorySelection_FromManifestAloneAccepted(t *testing.T) {
 	metadata := &manifest.Metadata{
 		Tools: []manifest.Tool{{
 			Name:       "claude",
-			Categories: manifest.BuildToolCategoryEntries(categoryNames(targets[0].Tool), selected),
+			Categories: manifest.BuildToolCategoryEntries(tool.CategoryNames(targets[0].Tool), selected),
 		}},
 	}
 	require.NoError(t, manifest.WriteManifest(manifestPath, metadata))

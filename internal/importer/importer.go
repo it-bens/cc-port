@@ -164,6 +164,14 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	}
 	extractPhase.End("")
 
+	// The lock-time witness ran before any archive byte was read, and the
+	// flocks do not stop the tools themselves from launching. Re-check every
+	// selected target once here so a session started since then aborts the
+	// import before promotion and the finalize splices write anything.
+	if err := recheckActiveWriters(targets); err != nil {
+		return nil, cleanupStaged(stagedSet, err)
+	}
+
 	promotePhase := options.Reporter.Phase("promote", int64(len(stagedSet.All())), progress.UnitItems)
 	if err := promoteStaged(stagedSet); err != nil {
 		return nil, err
@@ -249,21 +257,22 @@ func VerifyEntryTools(allTools *tool.Set, entries []archive.RawEntry) error {
 	return nil
 }
 
+// recheckActiveWriters re-runs every selected target's witness, aggregated,
+// immediately before batch promotion.
+func recheckActiveWriters(targets []tool.Target) error {
+	witnesses := make([]func() ([]tool.ActiveWriter, error), len(targets))
+	for i, target := range targets {
+		witnesses[i] = target.Workspace.ActiveWriters
+	}
+	return lock.RecheckWitnesses(witnesses)
+}
+
 func groupEntriesByTool(entries []archive.RawEntry) map[string][]archive.RawEntry {
 	grouped := make(map[string][]archive.RawEntry)
 	for _, raw := range entries {
 		grouped[raw.ToolName] = append(grouped[raw.ToolName], raw)
 	}
 	return grouped
-}
-
-func categoryNames(t tool.Tool) []string {
-	categories := t.Categories()
-	names := make([]string, len(categories))
-	for i, category := range categories {
-		names[i] = category.Name
-	}
-	return names
 }
 
 // PreflightBlock runs the per-tool hard gates that import preflight
@@ -276,7 +285,7 @@ func PreflightBlock(
 	target tool.Target, block manifest.Tool, fromManifest *manifest.Metadata, targetPath string,
 ) (anchors, resolutions map[string]string, err error) {
 	name := target.Tool.Name()
-	if _, err := manifest.ApplyToolCategories(name, categoryNames(target.Tool), block.Categories); err != nil {
+	if _, err := manifest.ApplyToolCategories(name, tool.CategoryNames(target.Tool), block.Categories); err != nil {
 		return nil, nil, fmt.Errorf("manifest categories for %s: %w", name, err)
 	}
 	anchors, err = target.Workspace.ImplicitAnchors(targetPath)

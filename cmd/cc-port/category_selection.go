@@ -95,7 +95,7 @@ func categoriesAndPlaceholdersFromManifest(
 			selection[name], placeholders[name] = manifest.AbsentToolBlock()
 			continue
 		}
-		selected, applyErr := manifest.ApplyToolCategories(name, categoryNames(target.Tool), block.Categories)
+		selected, applyErr := manifest.ApplyToolCategories(name, tool.CategoryNames(target.Tool), block.Categories)
 		if applyErr != nil {
 			return nil, nil, fmt.Errorf("categories from manifest for %s: %w", name, applyErr)
 		}
@@ -103,13 +103,4 @@ func categoriesAndPlaceholdersFromManifest(
 		placeholders[name] = block.Placeholders
 	}
 	return selection, placeholders, nil
-}
-
-func categoryNames(t tool.Tool) []string {
-	categories := t.Categories()
-	names := make([]string, len(categories))
-	for i, category := range categories {
-		names[i] = category.Name
-	}
-	return names
 }

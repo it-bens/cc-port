@@ -16,6 +16,7 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
+	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
@@ -34,7 +35,7 @@ func pushTestManifestPath(t *testing.T) string {
 	metadata := &manifest.Metadata{
 		Tools: []manifest.Tool{{
 			Name:       claudeTool.Name(),
-			Categories: manifest.BuildToolCategoryEntries(categoryNames(claudeTool), selected),
+			Categories: manifest.BuildToolCategoryEntries(tool.CategoryNames(claudeTool), selected),
 		}},
 	}
 	require.NoError(t, manifest.WriteManifest(path, metadata))

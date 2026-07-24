@@ -44,8 +44,11 @@ func TestWithAllLocks_OrdersAndRefuses(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		assert.Equal(t, []string{"witness:alpha", "witness:beta", "witness:gamma"}, events,
-			"withAllLocks must witness each target in registry order")
+		assert.Equal(t, []string{
+			"witness:alpha", "witness:beta", "witness:gamma",
+			"witness:alpha", "witness:beta", "witness:gamma",
+		}, events,
+			"each target must be witnessed in registry order at lock time and again, same order, at the pre-promotion re-check")
 		for _, target := range targets {
 			assertLockFree(t, target.Workspace.LockPath())
 		}

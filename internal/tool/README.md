@@ -16,6 +16,8 @@ package's types support.
   - `Tool`: `Name`, `DisplayName`, `Categories`, `Detect`, `Open`,
     `ImplicitAnchorKeys`. The tool-level, connection-free half of the
     contract.
+  - `CategoryNames(t Tool) []string`: the wire names of `t`'s declared
+    categories in canonical order.
   - `Workspace`: composes `Mover`, `Exporter`, `Importer`, `Auditor` plus
     `Root`, `LockPath`, `ActiveWriters`. One `Tool.Open` result serves every
     command.
@@ -31,7 +33,9 @@ package's types support.
     `DiskCategories(ctx context.Context, project string) ([]SizeCategory, error)`,
     `EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)`.
 - **Contract value types**
-  - `Category`: `Name`, `Description`, `DefaultSelected`.
+  - `Category`: `Name`, `Description`, `DefaultSelected`, `ExcludedFromAll`
+    (kept out of the `--all` sweep and exported only via explicit
+    `--include`, picker selection, or a manifest that marks it included).
   - `Qualified`: `Tool`, `Category` (one `<tool>/<category>` pair).
   - `MoveRequest`: `OldPath`, `NewPath`, `RefsOnly`, `DeepRewrite`.
   - `ActiveWriter`: `Pid`, `Cwd` (one piece of liveness evidence).

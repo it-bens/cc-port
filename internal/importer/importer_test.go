@@ -16,6 +16,7 @@ import (
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/testutil"
@@ -404,6 +405,94 @@ func assertStagingFailureRemovesAllTemporaryFiles(t *testing.T, entries map[stri
 	assert.Empty(t, temps)
 }
 
+func TestRun_AbortsWhenWitnessTurnsLiveBetweenLockAndPromotion(t *testing.T) {
+	sessionID := "11111111-1111-4111-8111-111111111111"
+	projectPath := "/Users/test/Projects/relock"
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/sessions/" + sessionID + ".jsonl": "{}\n",
+		"claude/config.json":                      `{"setting":"ported"}`,
+	})
+	home := blankHome(t)
+
+	// Claude's witness reads sessions/<pid>.json and asks processLiveness per
+	// PID, so this seam reports the writer dead at lock time and alive on the
+	// pre-promotion re-check: a session launched mid-import.
+	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
+	witness := []byte(`{"cwd":"/Users/test/Projects/relock","pid":4242}`)
+	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "4242.json"), witness, 0o600))
+	fakeUserHome := t.TempDir()
+	livenessCalls := 0
+	workspace := claude.NewWorkspaceForTest(home,
+		func(key string) string {
+			if key == "HOME" {
+				return fakeUserHome
+			}
+			return ""
+		},
+		func(int) bool {
+			livenessCalls++
+			return livenessCalls >= 2
+		})
+	toolSet := tool.NewSet(claude.New())
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: workspace}}
+
+	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: projectPath,
+		Caps:       archive.DefaultCaps(),
+	})
+
+	var liveErr *lock.LiveSessionsError
+	require.ErrorAs(t, err, &liveErr, "the pre-promotion re-check must refuse with LiveSessionsError")
+	assert.Equal(t, 2, livenessCalls, "the witness must run once at lock time and once before promotion")
+	assert.NoFileExists(t, filepath.Join(home.ProjectDir(projectPath), sessionID+".jsonl"),
+		"an import aborted by the re-check must promote nothing")
+	assert.NoFileExists(t, home.ConfigFile,
+		"an import aborted by the re-check must never reach the finalize config splice")
+	var temps []string
+	walkErr := filepath.WalkDir(home.Dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && strings.HasSuffix(path, ".cc-port-import.tmp") {
+			temps = append(temps, path)
+		}
+		return nil
+	})
+	require.NoError(t, walkErr)
+	assert.Empty(t, temps, "an import aborted by the re-check must clean up its staging temps")
+}
+
+func TestRun_RejectsMalformedConfigShapedEntryWithoutWriting(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry string
+	}{
+		{"config", "claude/config.json"},
+		{"config-grants", "claude/config-grants.json"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body := buildClaudeArchive(t, map[string]string{testCase.entry: `{"setting":`})
+			home := blankHome(t)
+			toolSet := tool.NewSet(claude.New())
+			targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+
+			_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+				Source:     bytes.NewReader(body),
+				Size:       int64(len(body)),
+				TargetPath: "/Users/test/Projects/malformed",
+				Caps:       archive.DefaultCaps(),
+			})
+
+			require.Error(t, err, "a malformed %s entry must refuse the import at staging", testCase.entry)
+			assert.NoFileExists(t, home.ConfigFile,
+				"an import refused at staging must never reach the finalize splices")
+		})
+	}
+}
+
 func buildClaudeArchive(t *testing.T, entries map[string]string) []byte {
 	return buildClaudeArchiveWithPlaceholders(t, entries, nil)
 }
@@ -425,20 +514,11 @@ func buildClaudeArchiveWithPlaceholders(t *testing.T, entries map[string]string,
 		require.NoError(t, err)
 	}
 	claudeTool := claude.New()
-	categories := manifest.BuildToolCategoryEntries(categoryNames(claudeTool), nil)
+	categories := manifest.BuildToolCategoryEntries(tool.CategoryNames(claudeTool), nil)
 	_, err := archive.WriteMetadata(writer, &manifest.Metadata{Tools: []manifest.Tool{{
 		Name: claudeTool.Name(), Categories: categories, Placeholders: placeholders,
 	}}})
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	return buffer.Bytes()
-}
-
-func categoryNames(claudeTool tool.Tool) []string {
-	categories := claudeTool.Categories()
-	names := make([]string, len(categories))
-	for index, category := range categories {
-		names[index] = category.Name
-	}
-	return names
 }

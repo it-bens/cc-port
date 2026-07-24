@@ -12,7 +12,9 @@ import (
 // registerCategoryFlags registers --all plus the repeatable --include flag
 // on cmd. verb is woven into each flag's help text.
 func registerCategoryFlags(cmd *cobra.Command, verb string) {
-	cmd.Flags().Bool("all", false, fmt.Sprintf("%s every category for every selected tool", verb))
+	cmd.Flags().Bool("all", false, fmt.Sprintf(
+		"%s every category for every selected tool (explicit-selection-only categories excluded)", verb,
+	))
 	cmd.Flags().StringArray(
 		"include", nil,
 		fmt.Sprintf(`%s only "<tool>/<category>" (repeatable; bare category names are rejected)`, verb),
@@ -21,7 +23,8 @@ func registerCategoryFlags(cmd *cobra.Command, verb string) {
 
 // resolveSelectionFromCmd reads --all and --include, registered by
 // registerCategoryFlags, into a per-tool category selection. --all selects
-// every category for every target; --include selects only the named
+// every category for every target except those marked
+// tool.Category.ExcludedFromAll; --include selects only the named
 // tool/category pairs (every other target starts from an empty selection).
 // Neither flag present returns nil so callers (export and push, both via
 // applyCategorySelection) fall back to the interactive picker.
@@ -42,6 +45,9 @@ func resolveSelectionFromCmd(cmd *cobra.Command, tools []tool.Tool) (map[string]
 		for _, t := range tools {
 			selected := make(map[string]bool, len(t.Categories()))
 			for _, category := range t.Categories() {
+				if category.ExcludedFromAll {
+					continue
+				}
 				selected[category.Name] = true
 			}
 			selection[t.Name()] = selected
@@ -93,14 +99,9 @@ func toolHasCategory(tools []tool.Tool, toolName, categoryName string) bool {
 
 func categoryNamesForTool(tools []tool.Tool, toolName string) string {
 	for _, selectedTool := range tools {
-		if selectedTool.Name() != toolName {
-			continue
+		if selectedTool.Name() == toolName {
+			return strings.Join(tool.CategoryNames(selectedTool), ", ")
 		}
-		names := make([]string, 0, len(selectedTool.Categories()))
-		for _, category := range selectedTool.Categories() {
-			names = append(names, category.Name)
-		}
-		return strings.Join(names, ", ")
 	}
 	return ""
 }

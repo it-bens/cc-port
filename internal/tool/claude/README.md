@@ -533,7 +533,7 @@ Called by `cc-port export` for every full export.
 
 - Every body written to the archive passes through `sink.ApplyPlaceholders`
   before hitting the ZIP. This applies to sessions, memory, history, config,
-  and every session-keyed group.
+  config-grants, and every session-keyed group.
 - `{{PROJECT_DIR}}` is declared unconditionally in `Placeholders` from
   `Home.ProjectDir(project)`, not discovered, because the encoded storage
   reference lives in session-subdir bodies that `gatherDiscoveryContent`
@@ -658,9 +658,10 @@ zero and the destination inherits its natural write-time mtime.
 ### Stage and Finalize (import)
 
 `Stage` routes one archive entry (already stripped of the `claude/` prefix)
-to a sibling temp via `archive.StageSibling`, or, for `history/history.jsonl`
-and `config.json`, buffers it for `Finalize` because both need a
-read-merge-write against existing content rather than plain promotion.
+to a sibling temp via `archive.StageSibling`, or, for `history/history.jsonl`,
+`config.json`, and `config-grants.json`, buffers it for `Finalize` because
+each needs a read-merge-write against existing content rather than plain
+promotion.
 
 #### Handled
 
@@ -669,11 +670,20 @@ read-merge-write against existing content rather than plain promotion.
   the same run, so a re-run of the same import never duplicates a line.
 - `finalizeConfig` splices the buffered project block into `~/.claude.json`
   under the target path's key via `sjson.SetRawBytes`, preserving every byte
-  outside the inserted entry. Incoming `hasTrustDialogAccepted`,
-  `hasClaudeMdExternalIncludesApproved`, and
-  `hasClaudeMdExternalIncludesWarningShown` approval gates are dropped and
-  destination values for them preserved. Re-running with the same block
-  against an unchanged destination is naturally idempotent.
+  outside the inserted entry. The destination-owned keys — the
+  `hasTrustDialogAccepted`, `hasClaudeMdExternalIncludesApproved`, and
+  `hasClaudeMdExternalIncludesWarningShown` approval gates plus
+  `allowedTools` — are dropped from the incoming block and destination
+  values for them preserved. Re-running with the same block against an
+  unchanged destination is naturally idempotent.
+- `finalizeConfigGrants` runs after `finalizeConfig` and splices the opt-in
+  `config-grants` entry's `allowedTools` value over the destination's, so a
+  selected grants category ports the grants that the config splice alone
+  treats as destination-owned. Export mirrors the split: `exportConfig`
+  strips `allowedTools` from the config entry and `exportConfigGrants`
+  writes it as its own single-key entry only when the category is selected.
+  `--all` does not select `claude/config-grants` (see
+  `cmd/cc-port/README.md` §Category selection).
 - `ImplicitAnchors` supplies `{{PROJECT_PATH}}` (the import target),
   `{{HOME}}` (the import machine's real home directory, independent of any
   `--claude-home` override), and `{{PROJECT_DIR}}` (the target's encoded
@@ -683,8 +693,11 @@ read-merge-write against existing content rather than plain promotion.
 
 - An archive entry whose Claude-relative name matches no known prefix:
   `UnknownArchiveEntryError`.
-- `mergeProjectConfigBytes` against an existing `.claude.json` that is not
-  valid JSON: `InvalidConfigJSONError`.
+- A splice against an existing `.claude.json` that is not valid JSON:
+  `InvalidConfigJSONError`, from both `mergeProjectConfigBytes` and
+  `finalizeConfigGrants`.
+- A malformed incoming config or config-grants block: refused at staging,
+  before promotion and before any finalize write.
 
 #### Not covered
 
@@ -762,8 +775,9 @@ encodes a path on that surface:
   `/p/myproject`) does not count, because the boundary rule rejects it.
 - `DiskCategories` and `EnumerateProjects` key disk usage by category name
   and order it by `categories` (this package's export-category table), so
-  `history` and `config` (shared globals with no per-project disk footprint)
-  are present in the result at zero rather than omitted.
+  `history`, `config`, and `config-grants` (shared globals with no
+  per-project disk footprint) are present in the result at zero rather than
+  omitted.
 
 #### Refused
 
@@ -807,8 +821,14 @@ path: base64 blobs, GitHub URL and ref fragments, RuboCop cop names, tilde
 paths, pseudo-XML tags, bare filenames in prose, and an assertion that the
 planted project anchor placeholder survives discovery), `import_merge_internal_test.go`
 (`finalizeHistory`'s newline-boundary handling and `mergeProjectConfigBytes`'s
-sibling-key preservation, invalid-JSON refusal, and approval-gate ownership:
-incoming gates dropped, destination values preserved, and fixed point),
+sibling-key preservation, invalid-JSON refusal, and destination-owned-key
+ownership over the three approval gates plus `allowedTools`: incoming values
+dropped, destination values preserved, and fixed point; plus
+`finalizeConfigGrants`'s selected-grants splice, its empty-block no-op, and
+the grants entry winning over the config splice's ownership handling),
+`export_test.go` (the config/config-grants split: `allowedTools` absent from
+the config entry, carried by the grants entry when selected, absent from the
+archive when not, and an empty grants block for a grantless project),
 `session_keyed_groups_drift_test.go` (every `Registries` session-keyed
 entry's `Category` matches a name this adapter's `Categories()` declares),
 and `witness_test.go` (`FindActive` on a live vs. a dead session PID).

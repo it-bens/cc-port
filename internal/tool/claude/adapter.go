@@ -107,12 +107,14 @@ type Workspace struct {
 	getenv          func(string) string
 	processLiveness func(int) bool
 
-	// historyAppends and configBlock accumulate cross-entry merge state for
-	// one import run: Stage appends to them as it sees history.jsonl and
-	// config.json entries; Finalize consumes them. Neither is plain file
-	// promotion, so neither produces an archive.Staged record.
-	historyAppends [][]byte
-	configBlock    []byte
+	// historyAppends, configBlock, and configGrantsBlock accumulate
+	// cross-entry merge state for one import run: Stage appends to them as it
+	// sees history.jsonl, config.json, and config-grants.json entries;
+	// Finalize consumes them. None is plain file promotion, so none produces
+	// an archive.Staged record.
+	historyAppends    [][]byte
+	configBlock       []byte
+	configGrantsBlock []byte
 
 	// stagedSessionUUIDs records the session UUID of every sessions/ entry
 	// Stage routes into the project directory. Finalize witnesses exactly

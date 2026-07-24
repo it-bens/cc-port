@@ -425,6 +425,13 @@ func TestEscapeSJSONKey(t *testing.T) {
 		assert.Equal(t, `a\\b\.c`, rewrite.EscapeSJSONKey(`a\b.c`))
 	})
 
+	t.Run("escapes wildcard and query metacharacters so the key stays literal", func(t *testing.T) {
+		// Unescaped, `*` and `?` wildcard-match sibling keys and `# @ |` route
+		// sjson onto its match-existing-only fallback, which silently drops
+		// the write for a key that does not exist yet.
+		assert.Equal(t, `/a/x\*y\?z\#n\@m\|end`, rewrite.EscapeSJSONKey(`/a/x*y?z#n@m|end`))
+	})
+
 	t.Run("leaves keys without metacharacters untouched", func(t *testing.T) {
 		assert.Equal(t, "/plain/key", rewrite.EscapeSJSONKey("/plain/key"))
 	})
