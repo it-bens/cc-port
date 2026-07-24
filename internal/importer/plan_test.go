@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/archive"
+	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/codex"
@@ -158,8 +161,10 @@ func TestDryRun_FailsWhenTheDestinationConfigCannotBeRead(t *testing.T) {
 }
 
 // Every present target contributes its own plan entry and its own MCP
-// comparison, so a plan over more than one tool exercises each adapter's
-// destination read rather than only the first tool's.
+// comparison. The archive's Claude config entry drives Claude's destination
+// read through the production plan path; Codex's destination read stays
+// adapter-unit-covered only, because no Codex archive entry is recognized
+// until parts 3/4 give it an archive source.
 func TestDryRun_ReportsEveryPresentTool(t *testing.T) {
 	body, projectPath := buildMultiToolArchive(t)
 	claudeTool, codexTool := claude.New(), codex.New()
@@ -182,6 +187,136 @@ func TestDryRun_ReportsEveryPresentTool(t *testing.T) {
 	}
 	assert.Equal(t, []string{"claude", "codex"}, names)
 	assert.Empty(t, plan.SkippedTools)
+	require.Len(t, plan.NewMCPServers, 1,
+		"the Claude config entry's MCP comparison ran against the destination")
+	assert.Equal(t, "claude", plan.NewMCPServers[0].Tool)
+}
+
+// Derived by inversion from the review's corrupt-destination probe. The
+// archive's config entry carries no mcpServers key at all — the default
+// export shape for a project configuring no MCP servers — yet applying it
+// still parses the destination configuration in the finalize splice, after
+// promotion. The plan runs the same read, so the corruption surfaces before
+// anything is written, with the error the finalize itself would raise.
+func TestDryRun_FailsOnACorruptDestinationConfigWhenTheArchiveCarriesAConfigEntry(t *testing.T) {
+	body, projectPath := buildArchiveWithoutMCPServers(t)
+	home := blankHome(t)
+	require.NoError(t, os.WriteFile(home.ConfigFile, []byte(`{"mcpServers":`), 0o600))
+
+	_, err := importer.DryRun(t.Context(), claudeToolSet(), claudeTargets(home), &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: projectPath,
+		Caps:       archive.DefaultCaps(),
+	})
+
+	var invalidConfig *claude.InvalidConfigJSONError
+	require.ErrorAs(t, err, &invalidConfig,
+		"the plan fails with the same error the apply's finalize would raise after promotion")
+}
+
+// An archive with no recognized entry leaves the destination configuration
+// unexamined, because its apply would never parse that configuration either.
+func TestDryRun_SessionsOnlyArchivePlansCleanlyAgainstACorruptDestinationConfig(t *testing.T) {
+	body := buildClaudeArchive(t, map[string]string{
+		"claude/sessions/11111111-1111-4111-8111-111111111111.jsonl": "{}\n",
+	})
+	home := blankHome(t)
+	require.NoError(t, os.WriteFile(home.ConfigFile, []byte(`{"mcpServers":`), 0o600))
+
+	_, err := importer.DryRun(t.Context(), claudeToolSet(), claudeTargets(home), &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/sessions-only",
+		Caps:       archive.DefaultCaps(),
+	})
+
+	require.NoError(t, err,
+		"no recognized entry, so the corrupt destination configuration is never read")
+}
+
+// The README's Refused bullet promises a non-JSON config.json archive entry
+// is refused by the plan, not only by the apply's staging.
+func TestDryRun_RefusesAMalformedConfigEntry(t *testing.T) {
+	body := buildClaudeArchive(t, map[string]string{"claude/config.json": `{"setting":`})
+
+	_, err := importer.DryRun(t.Context(), claudeToolSet(), claudeTargets(blankHome(t)), &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/malformed",
+		Caps:       archive.DefaultCaps(),
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid JSON in archive entry")
+}
+
+// A zip may carry duplicate entry names, and Stage's whole-file overwrite
+// lands only the last config.json. Reporting an earlier duplicate's servers
+// would name a definition the apply never imports.
+func TestDryRun_DuplicateConfigEntriesReportOnlyTheLastEntrysDefinitions(t *testing.T) {
+	body := buildClaudeArchiveFromEntries(t, []archiveEntry{
+		{name: "claude/config.json", content: `{"mcpServers":{"shadowed":{"command":"never-imported"}}}`},
+		{name: "claude/config.json", content: `{"mcpServers":{"kept":{"command":"imported"}}}`},
+	}, nil)
+
+	plan, err := importer.DryRun(t.Context(), claudeToolSet(), claudeTargets(blankHome(t)), &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: "/Users/test/Projects/duplicate-entries",
+		Caps:       archive.DefaultCaps(),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, plan.NewMCPServers, 1)
+	require.Len(t, plan.NewMCPServers[0].Servers, 1)
+	assert.Equal(t, "kept", plan.NewMCPServers[0].Servers[0].Name,
+		"only the last duplicate's definitions reach the plan")
+}
+
+// buildArchiveWithoutMCPServers exports the fixture project after stripping
+// every mcpServers key from the staged home's .claude.json, so the archive's
+// config.json entry carries a project block with no MCP definitions.
+func buildArchiveWithoutMCPServers(t *testing.T) (body []byte, projectPath string) {
+	t.Helper()
+	home := testutil.SetupFixture(t)
+	stripMCPServersKeys(t, home.ConfigFile)
+	claudeTool := claude.New()
+
+	var buf bytes.Buffer
+	_, err := export.Run(t.Context(), []tool.Target{
+		{Tool: claudeTool, Workspace: claude.NewWorkspace(home)},
+	}, &export.Options{
+		ProjectPath: testutil.FixtureProjectPath(),
+		Output:      &buf,
+		Selected:    map[string]map[string]bool{claudeTool.Name(): allSelected(claudeTool)},
+	})
+	require.NoError(t, err)
+	return buf.Bytes(), testutil.FixtureProjectPath()
+}
+
+// stripMCPServersKeys removes the top-level mcpServers key and every project
+// block's mcpServers key from the staged fixture config.
+func stripMCPServersKeys(t *testing.T, configFile string) {
+	t.Helper()
+	data, err := os.ReadFile(configFile) //nolint:gosec // G304: path from the test's own temp tree
+	require.NoError(t, err)
+	var config map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &config))
+	delete(config, "mcpServers")
+
+	var projects map[string]map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(config["projects"], &projects))
+	for _, block := range projects {
+		delete(block, "mcpServers")
+	}
+	raw, err := json.Marshal(projects)
+	require.NoError(t, err)
+	config["projects"] = raw
+
+	rewritten, err := json.Marshal(config)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configFile, rewritten, 0o600))
 }
 
 func codexHomeWithConfig(t *testing.T, config string) *codex.Home {

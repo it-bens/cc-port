@@ -7,6 +7,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
@@ -55,6 +56,9 @@ func DryRun(ctx context.Context, allTools *tool.Set, targets []tool.Target, opti
 	if len(targets) == 0 {
 		return nil, ErrNoTargets
 	}
+	if options.Reporter == nil {
+		options.Reporter = progress.Noop()
+	}
 
 	content, err := readArchive(allTools, options)
 	if err != nil {
@@ -92,6 +96,9 @@ func DryRun(ctx context.Context, allTools *tool.Set, targets []tool.Target, opti
 
 // NewMCPServers returns the MCP server definitions target's archive entries
 // carry whose name the destination does not already declare, sorted by name.
+// The destination read runs whenever any entry was recognized, even one
+// carrying no definitions, so a plan fails on the same unreadable or
+// unparseable destination configuration the apply's finalize would fail on.
 func NewMCPServers(
 	ctx context.Context,
 	target tool.Target,
@@ -107,9 +114,10 @@ func NewMCPServers(
 	// One name can arrive from more than one archive scope. Keying by name
 	// reports it once, carrying the last entry's definition, which is the one
 	// a tool's own last-entry-wins merge leaves on the destination.
+	recognized := false
 	incoming := make(map[string]tool.MCPServer)
 	aggregate := archive.NewAggregateCounter(maxAggregateBytes)
-	for _, raw := range entries {
+	for _, raw := range lastEntryPerName(entries) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -119,14 +127,17 @@ func NewMCPServers(
 		if err != nil {
 			return nil, fmt.Errorf("read archive MCP servers for %s: %w", name, err)
 		}
+		if servers != nil {
+			recognized = true
+		}
 		for _, server := range servers {
 			incoming[server.Name] = server
 		}
 	}
-	// The destination read stays unrun when the archive carries nothing: an
-	// archive with no definitions must not let an unreadable destination
-	// configuration fail a plan the following apply would not fail.
-	if len(incoming) == 0 {
+	// The destination read stays unrun when no entry was recognized: such an
+	// archive must not let an unreadable destination configuration fail a
+	// plan whose apply would never have parsed that configuration.
+	if !recognized {
 		return nil, nil
 	}
 
@@ -151,6 +162,24 @@ func NewMCPServers(
 		servers = append(servers, incoming[serverName])
 	}
 	return servers, nil
+}
+
+// lastEntryPerName drops every archive entry shadowed by a later entry of
+// the same name. A zip may carry duplicate names, and Stage's whole-file
+// overwrite lands only the last one, so reading an earlier duplicate would
+// report definitions an apply never imports.
+func lastEntryPerName(entries []archive.RawEntry) []archive.RawEntry {
+	last := make(map[string]int, len(entries))
+	for i, raw := range entries {
+		last[raw.Entry.Name] = i
+	}
+	deduped := make([]archive.RawEntry, 0, len(last))
+	for i, raw := range entries {
+		if last[raw.Entry.Name] == i {
+			deduped = append(deduped, raw)
+		}
+	}
+	return deduped
 }
 
 // includedCategories returns the names of block's included categories in

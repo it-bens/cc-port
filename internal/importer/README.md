@@ -46,8 +46,10 @@ not satisfy it.
   `--apply` hint.
 - `NewMCPServers(ctx, target, entries, resolutions, maxAggregateBytes) ([]tool.MCPServer, error)`:
   the definitions `entries` carry whose name `target`'s destination does not
-  already declare. The destination is read only when the archive carries at
-  least one definition.
+  already declare. The destination is read exactly when at least one entry
+  was recognized (a non-nil `ArchiveMCPServers` result), even one carrying
+  zero definitions. Duplicate entry names dedup last-entry-wins before
+  extraction, matching `Stage`'s whole-file overwrite.
 - `RenderMCPServers(io.Writer, []MCPServerSet) error`: writes the new-MCP
   section. Writes nothing when the set is empty.
 
@@ -189,19 +191,28 @@ returns. The plan neither gates nor filters what an apply then writes.
   command line is the one the destination would run, not the sender's.
 - A name arriving from more than one archive scope is reported once, carrying
   the last entry's definition.
+- Duplicate archive entries under one name. They dedup last-entry-wins before
+  extraction, matching `Stage`'s whole-file overwrite, so the plan never
+  names a server only a shadowed duplicate defines.
 - The classification pass carries its own `archive.AggregateCounter` bounded
   by `Caps.MaxAggregateBytes`, so reading bodies to find definitions is capped
   like every other read.
-- An archive carrying no definitions at all. The destination is never read,
-  so an unreadable destination configuration cannot fail a plan whose apply
-  would not have touched that configuration either.
+- A recognized configuration entry carrying no definitions (the default
+  export shape for a project with no MCP servers). The destination read runs
+  exactly when an apply would splice a recognized entry into the destination
+  configuration, so the unreadable or unparseable destination config that
+  would fail the apply's finalize after promotion fails the plan instead
+  (`claude.InvalidConfigJSONError` for Claude). Only an archive with no
+  recognized entries (sessions-only, or a tool absent from the archive)
+  leaves an unreadable destination configuration unexamined.
 
 #### Refused
 
 - A destination whose MCP configuration exists but cannot be read or parsed,
-  when the archive does carry definitions. Reporting the destination as
-  declaring none would present every archived definition as new to a
-  destination whose real ones were never read.
+  when the archive carries at least one recognized entry. Reporting the
+  destination as declaring none would present every archived definition as
+  new, and passing the plan would defer the same parse failure to the
+  apply's finalize, after promotion.
 
 #### Not covered
 
@@ -338,7 +349,11 @@ internal `checkmissing_internal_test.go` and `filehistory_drift_internal_test.go
   reporting the target's categories and entry counts.
 - The new-MCP section: an archived definition absent from the destination is
   reported with its launch line, one the destination already declares is not,
-  and an unreadable destination configuration fails the plan.
+  and an unreadable destination configuration fails the plan whenever the
+  archive carries a recognized entry, even one with no definitions, while a
+  sessions-only archive leaves it unread. Duplicate config entries report the
+  last entry only, and control bytes in archive-controlled strings render
+  revealed as escape sequences.
 - The drift guard pins `fileHistoryTool` and `fileHistoryEntryPrefix` to the
   Claude adapter's exported `Name()` and `file-history` category, so an adapter
   rename fails loudly instead of silently refusing imports.

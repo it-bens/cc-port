@@ -33,7 +33,11 @@ package's types support.
     `Finalize(ctx, project string, staged *archive.StagedSet) ([]string, error)`.
     Neither MCP method takes a `project`. `MCPServers` reports the
     workspace-global set the destination declares, and an archive entry
-    carries whatever scope it was exported from.
+    carries whatever scope it was exported from. `ArchiveMCPServers`
+    distinguishes its empty results: nil means the entry is not recognized,
+    while an empty non-nil slice means recognized with nothing declared
+    (the signal that a plan must run the same destination read the entry's
+    apply would).
   - `Auditor`: `ReferenceSurfaces(ctx context.Context, project string) ([]CountSurface, error)`,
     `DiskCategories(ctx context.Context, project string) ([]SizeCategory, error)`,
     `EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)`.
@@ -110,8 +114,9 @@ each an accepted deviation from spec §1.
   construction, and every consumer of `ErrToolAbsent`/`ErrProjectAbsent`/`ErrNoWitness`
   follows those two sections rather than a local rule.
 - An adapter returning no MCP server definitions from either MCP method. A
-  tool that configures none, or whose archives never carry one, says so with
-  an empty result rather than a sentinel.
+  destination that configures none says so with an empty `MCPServers` result
+  rather than a sentinel. `ArchiveMCPServers` says "not my entry" with nil
+  and "recognized, nothing declared" with an empty non-nil slice.
 
 **Refused.**
 

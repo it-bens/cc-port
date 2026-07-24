@@ -25,7 +25,9 @@ type mcpServerDefinition struct {
 // MCPServers implements tool.Importer: the user-scope MCP server definitions
 // ~/.claude.json declares on this machine, sorted by name. A config file that
 // does not exist declares none; one that exists but cannot be read or parsed
-// is an error, never an empty set.
+// is an error, never an empty set. Validity runs through validatedConfigBytes
+// so a corrupt file fails a plan with the same InvalidConfigJSONError the
+// apply's finalize splice would raise after promotion.
 func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
 	data, err := os.ReadFile(workspace.home.ConfigFile)
 	if err != nil {
@@ -34,8 +36,12 @@ func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
 		}
 		return nil, fmt.Errorf("read config file %q: %w", workspace.home.ConfigFile, err)
 	}
+	validated, err := validatedConfigBytes(data, workspace.home.ConfigFile)
+	if err != nil {
+		return nil, err
+	}
 	var userConfig UserConfig
-	if err := json.Unmarshal(data, &userConfig); err != nil {
+	if err := json.Unmarshal(validated, &userConfig); err != nil {
 		return nil, fmt.Errorf("unmarshal config file %q: %w", workspace.home.ConfigFile, err)
 	}
 	return decodeMCPServers(userConfig.MCPServers, workspace.home.ConfigFile)
@@ -44,7 +50,10 @@ func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
 // ArchiveMCPServers implements tool.Importer: the definitions carried by the
 // project block Finalize splices into ~/.claude.json. The block's mcpServers
 // are project-scope but launch with any session opened on the project, so the
-// plan reports them exactly as it reports user-scope ones.
+// plan reports them exactly as it reports user-scope ones. A recognized entry
+// carrying no definitions returns an empty non-nil slice, never nil: staging
+// it still makes the apply's finalize parse the destination configuration,
+// and the empty result is what tells a plan to run that parse too.
 func (workspace *Workspace) ArchiveMCPServers(
 	entry archive.Entry, resolutions map[string]string,
 ) ([]tool.MCPServer, error) {
@@ -61,7 +70,14 @@ func (workspace *Workspace) ArchiveMCPServers(
 	if err := json.Unmarshal(resolved, &block); err != nil {
 		return nil, fmt.Errorf("unmarshal archive entry %q: %w", entry.Name, err)
 	}
-	return decodeMCPServers(block.MCPServers, "archive entry "+entry.Name)
+	servers, err := decodeMCPServers(block.MCPServers, "archive entry "+entry.Name)
+	if err != nil {
+		return nil, err
+	}
+	if servers == nil {
+		servers = []tool.MCPServer{}
+	}
+	return servers, nil
 }
 
 // decodeMCPServers turns a raw mcpServers map into contract values sorted by

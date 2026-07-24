@@ -507,8 +507,10 @@ shapes themselves.
   the user already granted rather than porting or re-establishing it. This is
   a same-machine relocation, distinct from the never-ported cross-machine
   decision below.
-- `ArchiveMCPServers` returns nothing for every archive entry, because no
-  archive entry can carry a Codex MCP server definition.
+- `ArchiveMCPServers` returns nil for every archive entry (none is
+  recognized) because no archive entry can carry a Codex MCP server
+  definition. A plan therefore never runs Codex's destination read on an
+  archive's account.
 
 **Refused.**
 

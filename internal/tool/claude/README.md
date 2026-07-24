@@ -724,15 +724,20 @@ adapter supplies both halves of that comparison.
   round trip.
 - `ArchiveMCPServers` reads the `mcpServers` of the project block travelling
   in the `config.json` archive entry, after resolving the entry through the
-  import's own resolutions. Every other entry name returns nothing, so a
-  file-history snapshot body is never opened by this path.
+  import's own resolutions. A `config.json` entry carrying no definitions
+  returns an empty non-nil slice (recognized), so the plan runs the same
+  destination read the entry's finalize splice implies. Every other entry
+  name returns nil, so a file-history snapshot body is never opened by this
+  path.
 - A definition carrying a `command` reports as stdio and its `url`, if any, is
   dropped. The command settles what Claude Code launches.
 
 #### Refused
 
 - A `~/.claude.json` that exists but cannot be read or parsed. Reporting it as
-  declaring no servers would present every archived definition as new.
+  declaring no servers would present every archived definition as new. An
+  unparseable file raises the same `InvalidConfigJSONError` the finalize
+  splice raises, so a plan fails exactly where its apply would.
 - A `config.json` archive entry that is not valid JSON, refused by the same
   check `Stage` applies before promotion.
 

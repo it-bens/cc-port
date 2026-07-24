@@ -95,9 +95,11 @@ func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
 	return configTOMLMCPServers(filepath.Join(workspace.home.Dir, configTOMLFileName))
 }
 
-// ArchiveMCPServers implements tool.Importer: never any. Codex's MCP server
-// definitions live only in config.toml, which is never exported and never
-// imported, so no archive entry can carry one.
+// ArchiveMCPServers implements tool.Importer: nil for every entry, meaning
+// none is recognized. Codex's MCP server definitions live only in
+// config.toml, which is never exported and never imported, so no archive
+// entry can carry one and no plan runs Codex's destination read on an
+// archive's account.
 func (workspace *Workspace) ArchiveMCPServers(archive.Entry, map[string]string) ([]tool.MCPServer, error) {
 	return nil, nil
 }

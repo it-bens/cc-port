@@ -67,12 +67,14 @@ func TestMCPServersResolvesConflictingTransportToStdio(t *testing.T) {
 // A config file that exists but cannot be parsed must fail rather than report
 // an empty set: an import plan would otherwise present every archived
 // definition as new to a destination whose real declarations it never read.
+// The error is the same InvalidConfigJSONError the apply's finalize splice
+// raises, so a plan surfaces the failure an apply would hit after promotion.
 func TestMCPServersRefusesUnparseableConfig(t *testing.T) {
 	workspace := claude.NewWorkspace(homeWithConfig(t, `{"mcpServers":`))
 
 	_, err := workspace.MCPServers()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unmarshal config file")
+	var invalidConfig *claude.InvalidConfigJSONError
+	require.ErrorAs(t, err, &invalidConfig)
 }
 
 func homeWithConfig(t *testing.T, config string) *claude.Home {

@@ -108,9 +108,9 @@ and run without locking or witness detection):
   push can produce an internally inconsistent archive, but nothing under the
   tool's home changes.
 - `cc-port stats`, `cc-port pull` (dry-run), and `cc-port import` (dry-run):
-  read-only by design. `stats` never locks at all, pull's dry-run only reads
-  the remote manifest, and import's dry-run runs `importer.DryRun`, which
-  reads each destination's configuration without writing to it.
+  read-only by design. `stats` never locks at all. Pull's and import's
+  dry-runs both read each destination's MCP configuration through the same
+  `importer.NewMCPServers` path, without writing to it.
 
 Called by:
 

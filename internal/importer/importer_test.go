@@ -150,7 +150,8 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 // buildMultiToolArchive exports one project both tools know about, so an
 // archive carries a Claude block and a Codex block. It re-keys the Claude
 // fixture onto Codex's fixture project path, which is the only project both
-// staged trees share.
+// staged trees share. The Claude selection includes config, so the archive
+// carries the one entry the plan's destination-configuration read recognizes.
 func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	t.Helper()
 	sharedProject = codex.FixtureProjectPath()
@@ -163,12 +164,13 @@ func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	require.NoError(t, err)
 	require.False(t, moveResult.Failed())
 
-	selection := map[string]bool{"sessions": true}
+	claudeSelection := map[string]bool{"sessions": true, "config": true}
+	codexSelection := map[string]bool{"sessions": true}
 	claudeWorkspace := claude.NewWorkspace(claudeSource)
 	codexWorkspace := quietCodexWorkspace(codex.SetupFixture(t))
-	claudePlaceholders, err := claudeWorkspace.Placeholders(sharedProject, selection)
+	claudePlaceholders, err := claudeWorkspace.Placeholders(sharedProject, claudeSelection)
 	require.NoError(t, err)
-	codexPlaceholders, err := codexWorkspace.Placeholders(sharedProject, selection)
+	codexPlaceholders, err := codexWorkspace.Placeholders(sharedProject, codexSelection)
 	require.NoError(t, err)
 
 	var archiveBytes bytes.Buffer
@@ -179,8 +181,8 @@ func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 		ProjectPath: sharedProject,
 		Output:      &archiveBytes,
 		Selected: map[string]map[string]bool{
-			claudeTool.Name(): selection,
-			codexTool.Name():  selection,
+			claudeTool.Name(): claudeSelection,
+			codexTool.Name():  codexSelection,
 		},
 		Placeholders: map[string][]manifest.Placeholder{
 			claudeTool.Name(): claudePlaceholders,
@@ -508,18 +510,34 @@ func buildClaudeArchive(t *testing.T, entries map[string]string) []byte {
 
 func buildClaudeArchiveWithPlaceholders(t *testing.T, entries map[string]string, placeholders []manifest.Placeholder) []byte {
 	t.Helper()
-	var buffer bytes.Buffer
-	writer := zip.NewWriter(&buffer)
 	names := make([]string, 0, len(entries))
 	for name := range entries {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	ordered := make([]archiveEntry, 0, len(names))
 	for _, name := range names {
-		content := entries[name]
-		entryWriter, err := writer.Create(name)
+		ordered = append(ordered, archiveEntry{name: name, content: entries[name]})
+	}
+	return buildClaudeArchiveFromEntries(t, ordered, placeholders)
+}
+
+// archiveEntry is one named zip entry for a hand-built test archive.
+type archiveEntry struct {
+	name    string
+	content string
+}
+
+// buildClaudeArchiveFromEntries writes the entries in the given order without
+// deduplication, so a test can build a zip carrying duplicate entry names.
+func buildClaudeArchiveFromEntries(t *testing.T, entries []archiveEntry, placeholders []manifest.Placeholder) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, entry := range entries {
+		entryWriter, err := writer.Create(entry.name)
 		require.NoError(t, err)
-		_, err = entryWriter.Write([]byte(content))
+		_, err = entryWriter.Write([]byte(entry.content))
 		require.NoError(t, err)
 	}
 	claudeTool := claude.New()
