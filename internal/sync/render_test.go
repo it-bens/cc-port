@@ -6,8 +6,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool"
 )
+
+// A pulled MCP server definition launches with every session afterwards, so
+// the pull summary names each one the destination does not already declare.
+// The dry run is the summary an operator reads before deciding to apply, so
+// both run modes must carry the section.
+func TestPullPlan_RenderNamesNewMCPServers(t *testing.T) {
+	for name, apply := range map[string]bool{"dry run": false, "apply run": true} {
+		t.Run(name, func(t *testing.T) {
+			plan := &PullPlan{
+				Name:                   "myproj",
+				Tools:                  []string{"claude"},
+				DeclaredPlaceholders:   map[string][]manifest.Placeholder{},
+				UnresolvedPlaceholders: map[string][]string{},
+				NewMCPServers: []importer.MCPServerSet{{
+					Tool:    "claude",
+					Servers: []tool.MCPServer{{Name: "fs", Command: "node", Args: []string{"/opt/fs-server.js"}}},
+				}},
+			}
+			var buf bytes.Buffer
+
+			require.NoError(t, plan.Render(&buf, apply))
+
+			assert.Contains(t, buf.String(), "New MCP servers (claude):")
+			assert.Contains(t, buf.String(), "node /opt/fs-server.js")
+		})
+	}
+}
 
 func TestPushPlan_RenderNoPriorPlaintext(t *testing.T) {
 	plan := &PushPlan{

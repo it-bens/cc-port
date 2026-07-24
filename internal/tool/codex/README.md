@@ -491,8 +491,9 @@ shapes themselves.
 - There is no `config` export category (`categories` declares only
   `sessions` and `history`). `config.toml` and `<profile>.config.toml` are
   never staged by `Stage` and never written by export; the byte-identical
-  guarantee is a round-trip test, not a runtime check, because there is
-  simply no import code path that touches the file's content.
+  guarantee is a round-trip test, not a runtime check, because no import code
+  path writes the file. `MCPServers` reads it (§MCP server definitions), which
+  reports on the destination rather than porting anything to it.
 - Move still rewrites `config.toml`/`*.config.toml` project keys and values
   in place via `rewrite.TOMLPathRewrite` (`toml.go`), because a move renames
   the live machine's own trust decisions to match the renamed project; that
@@ -506,6 +507,8 @@ shapes themselves.
   the user already granted rather than porting or re-establishing it. This is
   a same-machine relocation, distinct from the never-ported cross-machine
   decision below.
+- `ArchiveMCPServers` returns nothing for every archive entry, because no
+  archive entry can carry a Codex MCP server definition.
 
 **Refused.**
 
@@ -522,6 +525,41 @@ shapes themselves.
 
 - Nothing: this is a hard, unconditional exclusion with no partial or
   opt-in path.
+
+### MCP server definitions
+
+Codex constructs a running client for every enabled MCP server at thread
+creation. An import or pull plan therefore names each definition the
+destination does not already declare before it writes (see
+[`internal/importer/README.md`](../../importer/README.md) §Plan surface).
+Reading `config.toml` for that comparison is a read of the local machine's own
+state, distinct from the porting surface §Config never ported refuses.
+
+**Handled.**
+
+- `configTOMLMCPServers` parses the `[mcp_servers]` table of `config.toml`
+  through the TOML structure, the same way `configTOMLProjectKeys` parses
+  `[projects]`, and returns the definitions sorted by name. A table carrying a
+  `command` reports as stdio and one carrying only a `url` as streamable HTTP,
+  following the order Codex tries the two in.
+- A table naming both a `command` and a `url`, which Codex itself refuses
+  outright. cc-port reports the command rather than failing a whole plan over
+  one malformed table.
+- A missing `config.toml` declares no servers.
+- Every declared name is reported, including one whose table sets
+  `enabled = false`. The set answers whether a name already exists here, not
+  whether it would launch.
+
+**Refused.**
+
+- A `config.toml` that exists but cannot be read or parsed. Reporting it as
+  declaring no servers would present every archived definition as new.
+
+**Not covered.**
+
+- `<profile>.config.toml` overlays. Only `config.toml` is read. A definition
+  an unread overlay declares merely reports as new, whereas treating an
+  unmatched overlay as authoritative would hide one that does launch here.
 
 ### Codex-dev refusal semantics
 
@@ -623,6 +661,11 @@ thread the same way `Export` would, `pathMatchesProject` matching a
 symlink-aliased cwd against a real symlink built under `t.TempDir`, and a
 symlink-aliased thread row's dry-run count agreeing with what move
 actually rewrites.
+
+`mcp_test.go` covers `MCPServers`: the fixture's stdio and streamable-HTTP
+tables, a config without an `[mcp_servers]` table, an empty one, an absent
+`config.toml`, a `config.toml` that cannot be parsed, a table naming both a
+command and a url, and a profile overlay whose definitions stay unread.
 
 Fixtures come from `testdata/dotcodex/` staged via `SetupFixture`, following
 the `testutil.SetupFixture` pattern: `SetupFixture` copies the static tree

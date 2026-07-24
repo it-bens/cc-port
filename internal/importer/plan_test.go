@@ -102,8 +102,12 @@ func TestDryRun_ReportsProjectBlockMCPServersAbsentFromTheDestination(t *testing
 func TestDryRun_OmitsMCPServersTheDestinationAlreadyDeclares(t *testing.T) {
 	body, projectPath := buildArchive(t)
 	home := blankHome(t)
-	require.NoError(t, os.WriteFile(home.ConfigFile,
-		[]byte(`{"mcpServers":{"fs":{"command":"node","args":["/opt/fs-server.js"]}},"projects":{}}`), 0o600))
+	// Byte-identical to what the archive's project block resolves to on this
+	// destination, so the omission cannot be read as a near-match slipping
+	// through.
+	require.NoError(t, os.WriteFile(home.ConfigFile, []byte(
+		`{"mcpServers":{"fs":{"command":"node","args":["`+projectPath+`/mcp/fs-server.js"]}},"projects":{}}`,
+	), 0o600))
 
 	plan, err := importer.DryRun(t.Context(), claudeToolSet(), claudeTargets(home), &importer.Options{
 		Source:     bytes.NewReader(body),

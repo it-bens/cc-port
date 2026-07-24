@@ -21,6 +21,7 @@
 - Tool contract: `adapter.go`, `categories.go`.
 - Export: `export.go`, `discover.go`.
 - Import: `import.go`.
+- MCP server definitions (destination and archive): `mcp.go`.
 - Move: `move.go`.
 - Stats: `stats.go`.
 - Tests: `paths_test.go`, `locations_test.go`, `schema_test.go`.

@@ -77,6 +77,9 @@ drive it through the contract without knowing Claude's on-disk shape.
   - `(*Workspace).PreflightDirs`, `(*Workspace).ImplicitAnchors`,
     `(*Workspace).Stage`, `(*Workspace).Finalize` (`import.go`): archive
     staging and merge for `cc-port import`.
+  - `(*Workspace).MCPServers`, `(*Workspace).ArchiveMCPServers` (`mcp.go`):
+    the MCP server definitions an import or pull plan reports (see
+    §MCP server definitions).
   - `(*Workspace).ReferenceSurfaces`, `(*Workspace).DiskCategories`,
     `(*Workspace).EnumerateProjects` (`stats.go`): read-only footprint
     accounting for `cc-port stats`.
@@ -705,6 +708,40 @@ promotion.
   lines, but a long history of repeated distinct imports still grows the
   file; there is no compaction.
 
+### MCP server definitions
+
+Claude Code starts every configured MCP server with the session. An import or
+pull plan therefore names each definition the destination does not already
+declare before it writes (see
+[`internal/importer/README.md`](../../importer/README.md) §Plan surface). This
+adapter supplies both halves of that comparison.
+
+#### Handled
+
+- `MCPServers` reads the top-level `mcpServers` of `~/.claude.json`, which
+  `UserConfig` models (§Schema types), and returns the definitions sorted by
+  name. Each stays raw until read, so keys cc-port does not model survive a
+  round trip.
+- `ArchiveMCPServers` reads the `mcpServers` of the project block travelling
+  in the `config.json` archive entry, after resolving the entry through the
+  import's own resolutions. Every other entry name returns nothing, so a
+  file-history snapshot body is never opened by this path.
+- A definition carrying a `command` reports as stdio and its `url`, if any, is
+  dropped. The command settles what Claude Code launches.
+
+#### Refused
+
+- A `~/.claude.json` that exists but cannot be read or parsed. Reporting it as
+  declaring no servers would present every archived definition as new.
+- A `config.json` archive entry that is not valid JSON, refused by the same
+  check `Stage` applies before promotion.
+
+#### Not covered
+
+- Per-project `mcpServers` already on the destination. Only the top-level set
+  answers "does this name already exist here", so a project-scoped definition
+  the destination already carries still reports as new.
+
 ### Witness synthesis (import)
 
 Export never carries the source machine's `sessions/*.json` witnesses — they
@@ -792,7 +829,8 @@ touch if the flag were set, not a default move.
 
 ## Tests
 
-Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`. Coverage:
+Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`,
+`mcp_test.go`. Coverage:
 
 - encoding round-trips for representative paths.
 - symlink resolution with and without trailing non-existent components.
@@ -803,6 +841,9 @@ Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`. Coverage:
   including the lossy-encoding case, the multi-witness disagreement tie-break,
   the witness-less label fallback, non-directory skip, and the empty projects
   directory.
+- `MCPServers` over the fixture's user-scope block, an absent `mcpServers`
+  key, an empty one, an absent config file, a config that cannot be parsed,
+  and a definition naming both a command and a url.
 
 Fuzz target `FuzzVerifyProjectIdentity` in `locations_fuzz_test.go` asserts
 the identity guard's three-state outcome is deterministic under arbitrary

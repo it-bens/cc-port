@@ -148,6 +148,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | Placeholder resolution composition (implicit anchors strongest, `--from-manifest` next, sender's own resolve weakest) | [`internal/importer/README.md`](../internal/importer/README.md) §Placeholder handling |
 | Every export declares all of a tool's categories; unknown or missing refused | [`internal/manifest/README.md`](../internal/manifest/README.md) §Category manifest |
 | Import writes are atomic with rollback across every tool's staged files | [`internal/importer/README.md`](../internal/importer/README.md) §Atomic staging  |
+| An import or pull plan names every MCP server definition new to the destination, with its launch command line, before anything is written | [`internal/importer/README.md`](../internal/importer/README.md) §Plan surface |
 | A move's per-tool apply is a crash-safe, idempotent bracket; cross-tool rollback does not exist | §Crash and idempotence contract, [`internal/move/README.md`](../internal/move/README.md) §Apply contract |
 | A `.git` object store inside a tool's state is never rewritten at the byte level | §Git-repo-in-state policy (cross-cutting) |
 | Mutating commands lock + refuse during live writer activity | [`internal/lock/README.md`](../internal/lock/README.md)                          |

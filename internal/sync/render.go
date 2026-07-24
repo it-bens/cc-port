@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/it-bens/cc-port/internal/importer"
 )
 
 // Render writes the push plan summary to w. apply selects the header line:
@@ -99,6 +101,10 @@ func (p *PullPlan) Render(w io.Writer, apply bool) error {
 			}
 		}
 		fmt.Fprintln(&b)
+	}
+
+	if err := importer.RenderMCPServers(&b, p.NewMCPServers); err != nil {
+		return err
 	}
 
 	if totalUnresolved > 0 {

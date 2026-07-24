@@ -50,7 +50,7 @@ type ActiveWriter struct {
 }
 
 // MCPServer is one MCP server definition a tool launches at session start,
-// under the key it is registered by. Exactly one transport is populated: a
+// under the key it is registered by. At most one transport is populated: a
 // stdio definition carries Command and Args, an HTTP-transport definition
 // carries URL. Which one a tool's raw definition means is the adapter's
 // decision, so a definition that names both never reaches a consumer as a
@@ -62,11 +62,21 @@ type MCPServer struct {
 	URL     string
 }
 
+// noLaunchTarget stands in for a definition carrying neither transport. A
+// blank line at a consent point would read as a server that launches nothing,
+// when the truth is that cc-port found nothing to report.
+const noLaunchTarget = "(no launch target)"
+
 // LaunchLine renders what the tool would run for this definition: the stdio
-// command with its arguments, or the HTTP transport's endpoint.
+// command with its arguments, the HTTP transport's endpoint, or
+// noLaunchTarget when the definition names neither.
 func (server MCPServer) LaunchLine() string {
-	if server.Command == "" {
+	switch {
+	case server.Command != "":
+		return strings.Join(append([]string{server.Command}, server.Args...), " ")
+	case server.URL != "":
 		return server.URL
+	default:
+		return noLaunchTarget
 	}
-	return strings.Join(append([]string{server.Command}, server.Args...), " ")
 }

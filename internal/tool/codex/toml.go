@@ -104,9 +104,11 @@ func (workspace *Workspace) ArchiveMCPServers(archive.Entry, map[string]string) 
 
 // configTOMLMCPServers parses path's [mcp_servers] table into contract values
 // sorted by name. A missing file contributes none. A command wins over a url,
-// mirroring how Codex itself resolves the transport it will use
-// (config/src/mcp_types.rs, TryFrom for RawMcpServerConfig), so a table naming
-// both is never reported as an HTTP server Codex would not open.
+// following the order Codex tries the two in (config/src/mcp_types.rs, TryFrom
+// for RawMcpServerConfig). Codex refuses a table naming both outright, so no
+// transport report is faithful for one; reporting the command at least names
+// an executable the table asked for, and refusing the whole plan over one
+// malformed table would be a worse answer.
 func configTOMLMCPServers(path string) ([]tool.MCPServer, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled config discovery
 	if err != nil {

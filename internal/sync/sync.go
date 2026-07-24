@@ -89,6 +89,12 @@ type PullPlan struct {
 	Tools                  []string
 	DeclaredPlaceholders   map[string][]manifest.Placeholder
 	UnresolvedPlaceholders map[string][]string
+
+	// NewMCPServers lists, per tool, the archive's MCP server definitions the
+	// destination does not already declare. They start launching with every
+	// session once ExecutePull writes them, so the pull command renders this
+	// plan before it calls ExecutePull.
+	NewMCPServers []importer.MCPServerSet
 }
 
 // PriorRead bundles the pre-opened prior pipeline plus the encrypted-or-not
@@ -262,6 +268,16 @@ func PlanPull(ctx context.Context, opts PullOptions, source pipeline.Source) (*P
 			return nil, fmt.Errorf("sync.PlanPull: unresolved placeholders for %s: %w", block.Name, err)
 		}
 		plan.UnresolvedPlaceholders[block.Name] = unresolved
+
+		servers, err := importer.NewMCPServers(
+			ctx, target, entriesByTool[block.Name], resolutions, caps.MaxAggregateBytes,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("sync.PlanPull: %w", err)
+		}
+		if len(servers) > 0 {
+			plan.NewMCPServers = append(plan.NewMCPServers, importer.MCPServerSet{Tool: block.Name, Servers: servers})
+		}
 	}
 
 	// A manifest with no tool blocks, or where every block's target was

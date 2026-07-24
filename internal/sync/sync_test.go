@@ -303,6 +303,49 @@ func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 	}
 }
 
+// The archive's project block carries the fixture project's own mcpServers.
+// Pull renders the plan before ExecutePull writes, so the plan must carry
+// every definition that would start launching on this machine.
+func TestPlanPull_ReportsMCPServersAbsentFromTheDestination(t *testing.T) {
+	const archiveName = "project-with-mcp-servers"
+	r := newFileRemote(t)
+	injectArchiveWithPusher(t, r, archiveName, "host-user", time.Now().UTC())
+	source := openSourceForTest(t, r, archiveName, "")
+
+	plan, err := PlanPull(context.Background(), PullOptions{
+		AllTools: toolSetForTest(), Targets: targetsFor(buildTestHomeBlank(t)), Name: archiveName, TargetPath: t.TempDir(),
+	}, source)
+	require.NoError(t, err)
+
+	require.Len(t, plan.NewMCPServers, 1)
+	assert.Equal(t, "claude", plan.NewMCPServers[0].Tool)
+	require.Len(t, plan.NewMCPServers[0].Servers, 1)
+	assert.Equal(t, "fs", plan.NewMCPServers[0].Servers[0].Name)
+	assert.Equal(t, "node", plan.NewMCPServers[0].Servers[0].Command)
+}
+
+func TestPlanPull_OmitsMCPServersTheDestinationAlreadyDeclares(t *testing.T) {
+	const archiveName = "project-with-known-mcp-servers"
+	r := newFileRemote(t)
+	injectArchiveWithPusher(t, r, archiveName, "host-user", time.Now().UTC())
+	home := buildTestHomeBlank(t)
+	targetPath := t.TempDir()
+	// Byte-identical to what the archive's project block resolves to on this
+	// destination, so the omission cannot be read as a near-match slipping
+	// through.
+	require.NoError(t, os.WriteFile(home.ConfigFile, []byte(
+		`{"mcpServers":{"fs":{"command":"node","args":["`+targetPath+`/mcp/fs-server.js"]}},"projects":{}}`,
+	), 0o600))
+	source := openSourceForTest(t, r, archiveName, "")
+
+	plan, err := PlanPull(context.Background(), PullOptions{
+		AllTools: toolSetForTest(), Targets: targetsFor(home), Name: archiveName, TargetPath: targetPath,
+	}, source)
+	require.NoError(t, err)
+
+	assert.Empty(t, plan.NewMCPServers)
+}
+
 func TestPullPlanApplyGateParity(t *testing.T) {
 	tests := []struct {
 		name        string

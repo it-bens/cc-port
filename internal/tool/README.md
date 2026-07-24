@@ -27,8 +27,13 @@ package's types support.
     `Export(ctx, project string, selected map[string]bool, sink *archive.Sink) (ExportResult, error)`.
   - `Importer`: `PreflightDirs(project string) []string`,
     `ImplicitAnchors(project string) (map[string]string, error)`,
+    `MCPServers() ([]MCPServer, error)`,
+    `ArchiveMCPServers(entry archive.Entry, resolutions map[string]string) ([]MCPServer, error)`,
     `Stage(ctx, project string, entry archive.Entry, resolutions map[string]string) ([]archive.Staged, error)`,
     `Finalize(ctx, project string, staged *archive.StagedSet) ([]string, error)`.
+    Neither MCP method takes a `project`. `MCPServers` reports the
+    workspace-global set the destination declares, and an archive entry
+    carries whatever scope it was exported from.
   - `Auditor`: `ReferenceSurfaces(ctx context.Context, project string) ([]CountSurface, error)`,
     `DiskCategories(ctx context.Context, project string) ([]SizeCategory, error)`,
     `EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)`.
@@ -39,6 +44,10 @@ package's types support.
   - `Qualified`: `Tool`, `Category` (one `<tool>/<category>` pair).
   - `MoveRequest`: `OldPath`, `NewPath`, `RefsOnly`, `DeepRewrite`.
   - `ActiveWriter`: `Pid`, `Cwd` (one piece of liveness evidence).
+  - `MCPServer`: `Name` plus at most one transport, either `Command`+`Args`
+    or `URL`. `LaunchLine()` renders whichever the definition carries, and
+    reports a definition naming neither as having no launch target rather
+    than rendering a blank line.
   - `Surface`: `Name`, `Plan func(ctx) (SurfaceResult, error)`,
     `Apply func(ctx, *Restorer) (SurfaceResult, error)`. One named,
     independently plannable and applicable unit of a move.
@@ -90,6 +99,9 @@ each an accepted deviation from spec §1.
   and §Sweep semantics; `NewSet` fixes the tool list once, at process
   construction, and every consumer of `ErrToolAbsent`/`ErrProjectAbsent`/`ErrNoWitness`
   follows those two sections rather than a local rule.
+- An adapter returning no MCP server definitions from either MCP method. A
+  tool that configures none, or whose archives never carry one, says so with
+  an empty result rather than a sentinel.
 
 **Refused.**
 
@@ -121,7 +133,8 @@ A third adapter is one new package (`internal/tool/<name>`) plus one line in
   since it stores `cwd` verbatim), `MoveSurfaces` built from the growable
   substrate primitives (`internal/rewrite`, `internal/sqlrewrite`),
   `Placeholders`/`Export` with any tool-declared home anchors,
-  `PreflightDirs`/`ImplicitAnchors`/`Stage`/a deduplicating `Finalize`, the
+  `PreflightDirs`/`ImplicitAnchors`/`MCPServers`/`ArchiveMCPServers`/`Stage`/a
+  deduplicating `Finalize`, the
   three `Auditor` methods, `ActiveWriters`, and round-trip fixtures.
 - Everything else is inherited unchanged: CLI wiring and generated flags
   (`cmd/cc-port/toolselect.go`), locking (`internal/lock`), archive

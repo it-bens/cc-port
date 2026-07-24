@@ -8,7 +8,7 @@
 - Walk both rollout roots (`sessions/`, `archived_sessions/`) in every rollout surface; never assume one. (README §Both-roots coverage)
 - Preserve rollout filenames exactly; `rewriteRolloutLines` rewrites content in place at the same path, never renames. (README §Era-A rollout handling)
 - Append to `history.jsonl` and `session_index.jsonl` with `O_APPEND`, never rename-replace; a replace would invalidate `history.jsonl`'s inode-keyed TUI cache and could drop a concurrent Codex append to either file. (README §History and session-index append-only)
-- Never export or import `config.toml`; trust is a per-machine decision. (README §Config never ported)
+- Never export or import `config.toml`; trust is a per-machine decision. Reading it to report the destination's own MCP server definitions is not porting. (README §Config never ported, §MCP server definitions)
 - Compute a project's stats/export thread-ID set only through `projectThreadIDSet`; never re-derive it from rollouts alone. (README §Reference thread-ID union)
 - Verify Codex behavior against the pinned upstream source at `.reference/codex` (read-only), not from inference. (docs/architecture.md §Codex upstream reference (cross-cutting))
 
@@ -19,4 +19,5 @@
 - Witness: `witness.go`, `process.go`.
 - Rollout JSONL: `rollout.go`.
 - Export/import/stats and the threads sidecar: `export_import_stats.go`.
+- MCP server definitions (destination and archive): `toml.go`.
 - Test fixtures: `fixture.go`.

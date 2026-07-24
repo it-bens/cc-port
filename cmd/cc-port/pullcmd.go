@@ -113,58 +113,82 @@ func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 	}()
 
 	var (
+		source pipeline.Source
 		plan   *syncc.PullPlan
 		result *importer.Result
 	)
-	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) (err error) {
+	// The archive source outlives the first progress run, so it cannot be
+	// closed inside it. This deferred close covers an early return; the
+	// explicit close below is what folds a close failure into the outcome the
+	// trailing hint and confirmation are decided from. Source.Close is
+	// idempotent, so running both is safe.
+	defer func() {
+		if source.Close == nil {
+			return
+		}
+		if cerr := source.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("close source: %w", cerr))
+		}
+	}()
+
+	// Downloading and planning run under their own progress ledger so the plan
+	// can render once that ledger has torn down but before ExecutePull writes.
+	// The ledger holds the terminal in raw mode, where a bare "\n" moves down
+	// without a carriage return, so rendering inside either run staircases
+	// every line.
+	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
 		opts.Reporter = reporter
 
-		source, err := openArchiveSource(ctx, r, opts.Name, passphrase, reporter)
+		opened, err := openArchiveSource(ctx, r, opts.Name, passphrase, reporter)
 		if err != nil {
 			return err
 		}
-		defer func() {
-			if cerr := source.Close(); cerr != nil {
-				err = errors.Join(err, fmt.Errorf("close source: %w", cerr))
-			}
-		}()
+		source = opened
 
 		planned, err := syncc.PlanPull(ctx, opts, source)
 		if err != nil {
 			return err
 		}
 		plan = planned
-
-		if !apply {
-			return nil
-		}
-
-		var allUnresolved []string
-		for _, toolName := range planned.Tools {
-			allUnresolved = append(allUnresolved, planned.UnresolvedPlaceholders[toolName]...)
-		}
-		if len(allUnresolved) > 0 {
-			return fmt.Errorf("%w: %s", syncc.ErrUnresolvedPlaceholder, strings.Join(allUnresolved, ", "))
-		}
-
-		runResult, err := syncc.ExecutePull(ctx, opts, planned, source)
-		if err != nil {
-			return err
-		}
-		result = runResult
 		return nil
 	})
 
-	// Render after runWithProgress tears down the ledger. The ledger holds the
-	// terminal in raw mode, where a bare "\n" moves down without a carriage
-	// return; writing the summary before teardown staircases every line. The
-	// plan's fields are materialized during PlanPull, so rendering it after the
-	// archive source has closed is safe.
 	if plan != nil {
 		if rerr := plan.Render(cmd.OutOrStdout(), apply); rerr != nil {
 			progErr = errors.Join(progErr, fmt.Errorf("render plan: %w", rerr))
 		}
 	}
+
+	if progErr == nil && apply {
+		progErr = runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+			opts.Reporter = reporter
+			runResult, err := applyPull(ctx, opts, plan, source)
+			if err != nil {
+				return err
+			}
+			result = runResult
+			return nil
+		})
+	}
+
+	if source.Close != nil {
+		if cerr := source.Close(); cerr != nil {
+			progErr = errors.Join(progErr, fmt.Errorf("close source: %w", cerr))
+		}
+	}
+
+	return renderPullOutcome(cmd, opts, result, apply, progErr)
+}
+
+// renderPullOutcome writes the trailing dry-run hint or, on apply, the tool
+// warnings and the "Pulled:" confirmation. The plan summary itself has already
+// been written by the time it runs, because an operator must see it before
+// ExecutePull writes rather than after.
+//
+//nolint:gocritic // hugeParam: by-value PullOptions mirrors the public Plan/Execute contract.
+func renderPullOutcome(
+	cmd *cobra.Command, opts syncc.PullOptions, result *importer.Result, apply bool, progErr error,
+) error {
 	if progErr == nil && !apply {
 		if _, werr := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); werr != nil {
 			progErr = errors.Join(progErr, fmt.Errorf("write apply hint: %w", werr))
@@ -183,6 +207,25 @@ func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 		}
 	}
 	return progErr
+}
+
+// applyPull refuses an archive whose declared placeholders are still
+// unresolved, then commits the import. The plan has already rendered by the
+// time it runs, so the refusal reaches an operator who has seen which keys
+// the summary marked MISSING.
+//
+//nolint:gocritic // hugeParam: by-value PullOptions mirrors the public Plan/Execute contract.
+func applyPull(
+	ctx context.Context, opts syncc.PullOptions, plan *syncc.PullPlan, source pipeline.Source,
+) (*importer.Result, error) {
+	var allUnresolved []string
+	for _, toolName := range plan.Tools {
+		allUnresolved = append(allUnresolved, plan.UnresolvedPlaceholders[toolName]...)
+	}
+	if len(allUnresolved) > 0 {
+		return nil, fmt.Errorf("%w: %s", syncc.ErrUnresolvedPlaceholder, strings.Join(allUnresolved, ", "))
+	}
+	return syncc.ExecutePull(ctx, opts, plan, source)
 }
 
 // buildPullOptions validates flags, resolves the target path, opens the
