@@ -49,7 +49,7 @@ Sleep 200ms
 Show
 
 # Teammate machine: import, then let Codex converge its local state.
-Type 'cc-port import /tmp/cc-port-demo-share/project.zip /Users/demo/teammate-project'
+Type 'cc-port import /tmp/cc-port-demo-share/project.zip /Users/demo/teammate-project --apply'
 Sleep 500ms
 Enter
 Sleep 2.5s

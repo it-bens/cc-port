@@ -19,7 +19,7 @@ When the workflow locates the spec paired with a plan:
 Each invariant below is enforced at the cited site; root `AGENTS.md` carries the canonical list. When the workflow discovers invariants and module contracts, treat the named sites as the source of truth instead of re-deriving them. When the plan touches one of these invariants, the cited site is the authority.
 
 - Path rewrites must route through `rewrite.ReplacePathInBytes`. Never `strings.ReplaceAll` on user paths. (`internal/rewrite/README.md` §Boundary rules)
-- Mutating command bodies (`move --apply`, `import`) must wrap in `lock.WithLock` before any write. (`internal/lock/README.md` §Concurrency guard)
+- Mutating command bodies (`move --apply`, `import --apply`) must wrap in `lock.WithLock` before any write; plan paths take no lock. (`internal/lock/README.md` §Concurrency guard)
 - Adversarial archive paths contained with `os.Root`; decompressed reads bounded by `io.LimitReader`. (`internal/importer/README.md` §Import contract)
 - Archive cap-guard edits require `go test -tags large ./internal/importer/...` locally. (`internal/importer/README.md` §Tests)
 - New `bufio.Scanner` over untrusted input requires an explicit `bufio.Scanner.Buffer` cap. (`internal/scan/README.md` §Rules files preserved)

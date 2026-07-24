@@ -20,7 +20,9 @@ to import an adapter package (see `docs/architecture.md` §The tool contract).
   hand-editing.
 - `import`: restores a project from a ZIP archive into a target path across
   every selected tool, resolving non-implicit placeholders via
-  `--from-manifest`.
+  `--from-manifest`. Like `move`, it plans by default and commits only under
+  `--apply`. `importcmd.go:runImportDryRun` renders the plan; only
+  `importcmd.go:runImportApply` runs under `runWithProgress`.
 - `push`: uploads a project archive to a remote under a stable name, with
   cross-machine conflict refusal overridable by `--force`.
 - `pull`: downloads a named archive from a remote and applies it to a target
@@ -168,7 +170,9 @@ with `cmd.SetOut` / `cmd.SetErr` per invocation. Bare `fmt.Printf`,
 ## Tests
 
 `importcmd_test.go` in this package tests cobra wiring on the `import` and
-`import manifest` subcommands (passphrase flags, manifest output guard).
+`import manifest` subcommands (passphrase flags, manifest output guard). It
+also drives the real command twice: a bare `import` must leave the destination
+home untouched, and `--apply` must populate it.
 `category_selection_test.go` pins the `--from-manifest` exclusivity rule
 across `--all` and `--include`. `toolselect_test.go` pins `resolveTargets`'s
 sweep semantics: an explicitly selected but undetected tool hard-fails with

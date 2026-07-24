@@ -50,6 +50,12 @@ func (*codexOnlyWorkspace) PreflightDirs(string) []string { return nil }
 func (*codexOnlyWorkspace) ImplicitAnchors(string) (map[string]string, error) {
 	return nil, assert.AnError
 }
+func (*codexOnlyWorkspace) MCPServers() ([]tool.MCPServer, error) {
+	return nil, assert.AnError
+}
+func (*codexOnlyWorkspace) ArchiveMCPServers(archive.Entry, map[string]string) ([]tool.MCPServer, error) {
+	return nil, assert.AnError
+}
 func (*codexOnlyWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, assert.AnError
 }

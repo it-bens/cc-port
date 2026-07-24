@@ -34,6 +34,24 @@ not satisfy it.
   manifest carried no `<tool>` block: the archive simply has no data for
   them) and `Warnings map[string][]string` (non-fatal `Finalize` notices,
   keyed by tool wire name).
+- `DryRun(ctx, allTools, targets, options) (*Plan, error)`: runs every gate
+  `Run` runs before its first write and reports what an apply would commit.
+  It takes no lock and writes nothing, so `cc-port import` can render a plan
+  the operator approves before `--apply` commits it.
+- `Plan`: `TargetPath`, `Tools []ToolPlan` (`Name`, `Categories`, `Entries`
+  per present target, in registry order), `SkippedTools`, and
+  `NewMCPServers []MCPServerSet`.
+- `MCPServerSet`: `Tool` plus the `[]tool.MCPServer` attributed to it.
+- `(*Plan).Render(io.Writer) error`: writes the plan summary, ending with the
+  `--apply` hint.
+- `NewMCPServers(ctx, target, entries, resolutions, maxAggregateBytes) ([]tool.MCPServer, error)`:
+  the definitions `entries` carry whose name `target`'s destination does not
+  already declare. The destination is read exactly when at least one entry
+  was recognized (a non-nil `ArchiveMCPServers` result), even one carrying
+  zero definitions. Duplicate entry names dedup last-entry-wins before
+  extraction, matching `Stage`'s whole-file overwrite.
+- `RenderMCPServers(io.Writer, []MCPServerSet) error`: writes the new-MCP
+  section. Writes nothing when the set is empty.
 
 ### Errors
 
@@ -148,6 +166,64 @@ These paths abort before any write:
   [`internal/tool/claude/README.md`](../tool/claude/README.md) for the
   Claude instance.
 
+### Plan surface
+
+Caller: `cmd/cc-port`.
+
+`cc-port import` plans by default and commits under `--apply`. `DryRun` runs
+the manifest, entry-tool, category, anchor, resolution, and staging-directory
+gates `runLocked` runs before its first write. An archive those gates refuse
+therefore never reaches an apply. It takes no lock, because it writes nothing.
+
+The plan's new-MCP section is the consent point for the launch consequence of
+an import. An imported MCP server definition starts with every session the
+tool opens afterwards. The plan names each definition the destination does not
+already declare, with the command line the tool would run for it.
+
+"New" compares the definition's name against the set `Workspace.MCPServers`
+returns. The plan neither gates nor filters what an apply then writes.
+
+#### Handled
+
+- Every archive scope a tool's `Workspace.ArchiveMCPServers` recognizes,
+  including a `.claude.json` project block's per-project `mcpServers`.
+- Placeholder resolution runs before a definition is read, so the rendered
+  command line is the one the destination would run, not the sender's.
+- A name arriving from more than one archive scope is reported once, carrying
+  the last entry's definition.
+- Duplicate archive entries under one name. They dedup last-entry-wins before
+  extraction, matching `Stage`'s whole-file overwrite, so the plan never
+  names a server only a shadowed duplicate defines.
+- The classification pass carries its own `archive.AggregateCounter` bounded
+  by `Caps.MaxAggregateBytes`, so reading bodies to find definitions is capped
+  like every other read.
+- A recognized configuration entry carrying no definitions: Claude's
+  `config.json` (the default export shape for a project with no MCP servers)
+  and the opt-in `config-grants.json`, which never carries one. The
+  destination read runs whenever the archive carries a recognized entry,
+  which covers every apply that would parse the destination configuration,
+  so the unreadable or unparseable destination config that would fail the
+  apply's finalize after promotion fails the plan instead
+  (`claude.InvalidConfigJSONError` for Claude). Only an archive with no
+  recognized entries (sessions-only, or a tool absent from the archive)
+  leaves an unreadable destination configuration unexamined.
+
+#### Refused
+
+- A destination whose MCP configuration exists but cannot be read or parsed,
+  when the archive carries at least one recognized entry. Reporting the
+  destination as declaring none would present every archived definition as
+  new, and passing the plan would defer the same parse failure to the
+  apply's finalize, after promotion.
+
+#### Not covered
+
+- A definition whose name the destination already declares with different
+  launch details. The plan reports it as neither new nor changed.
+- Refusals a tool's own `Stage` raises, such as an archive entry name no
+  adapter recognizes. `DryRun` stops at the gates above and never stages, so
+  an archive can pass a plan and still fail its apply.
+
 ### Placeholder handling
 
 The manifest is authoritative, per tool. Every key a tool's export path
@@ -247,7 +323,7 @@ staging-path construction lives in each adapter, driven by
 
 ## Tests
 
-Unit tests in `importer_test.go`, `merge_resolutions_test.go`, and the
+Unit tests in `importer_test.go`, `plan_test.go`, `merge_resolutions_test.go`, and the
 internal `checkmissing_internal_test.go` and `filehistory_drift_internal_test.go`. Coverage:
 
 - Basic round-trip, including a multi-tool archive importing into Claude and
@@ -271,6 +347,15 @@ internal `checkmissing_internal_test.go` and `filehistory_drift_internal_test.go
 - Incoming history line at/over the scanner cap.
 - Progress-phase sequencing (preflight, extract, promote, finalize) and the
   extract phase counting every staged entry.
+- A plan leaves the destination byte-identical, staging temps included, while
+  reporting the target's categories and entry counts.
+- The new-MCP section: an archived definition absent from the destination is
+  reported with its launch line, one the destination already declares is not,
+  and an unreadable destination configuration fails the plan whenever the
+  archive carries a recognized entry, even one with no definitions, while a
+  sessions-only archive leaves it unread. Duplicate config entries report the
+  last entry only, and control bytes in archive-controlled strings render
+  revealed as escape sequences.
 - The drift guard pins `fileHistoryTool` and `fileHistoryEntryPrefix` to the
   Claude adapter's exported `Name()` and `file-history` category, so an adapter
   rename fails loudly instead of silently refusing imports.

@@ -15,6 +15,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/codex"
@@ -96,12 +97,65 @@ func TestImportWarningsNameTheirToolDuringMultiToolImport(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetContext(t.Context())
-	cmd.SetArgs([]string{archivePath, filepath.Join(t.TempDir(), "new-project")})
+	cmd.SetArgs([]string{archivePath, filepath.Join(t.TempDir(), "new-project"), "--apply"})
 
 	require.NoError(t, cmd.Execute())
 
 	assert.Contains(t, stderr.String(), "Warning (OpenAI Codex): 1 threads sidecar row(s) could not be applied "+
 		"because no Codex state database exists yet; start Codex once (any directory), then rerun import\n")
+}
+
+func TestImport_WithoutApplyLeavesTheDestinationUntouched(t *testing.T) {
+	claudeHome, targetPath := filepath.Join(t.TempDir(), "dotclaude"), filepath.Join(t.TempDir(), "new-project")
+	require.NoError(t, os.MkdirAll(claudeHome, 0o750))
+
+	stdout := driveImport(t, testutil.WriteFixtureArchive(t), targetPath, claudeHome)
+
+	assert.Contains(t, stdout, "cc-port import (dry-run)")
+	entries, err := os.ReadDir(claudeHome)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "import without --apply must write nothing into the destination home")
+	// The Claude config file is a sibling of the home directory, not a child,
+	// so the directory listing above cannot see it.
+	assert.NoFileExists(t, claudeHome+".json")
+}
+
+func TestImport_WithApplyCommits(t *testing.T) {
+	claudeHome, targetPath := filepath.Join(t.TempDir(), "dotclaude"), filepath.Join(t.TempDir(), "new-project")
+	require.NoError(t, os.MkdirAll(claudeHome, 0o750))
+
+	stdout := driveImport(t, testutil.WriteFixtureArchive(t), targetPath, claudeHome, "--apply")
+
+	resolvedTarget, err := tool.ResolveProjectPath(targetPath)
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "Imported to "+resolvedTarget)
+	projects, err := os.ReadDir(filepath.Join(claudeHome, "projects"))
+	require.NoError(t, err)
+	assert.NotEmpty(t, projects, "import --apply must populate the destination home")
+}
+
+// driveImport runs the real import command against claudeHome and returns its
+// stdout.
+func driveImport(t *testing.T, archivePath, targetPath, claudeHome string, extraArgs ...string) string {
+	t.Helper()
+	toolSet := newTestToolSet()
+	flags := registerToolFlags(&cobra.Command{}, toolSet)
+	flags.selected = []string{"claude"}
+	*flags.homeOverrides["claude"] = claudeHome
+	redirectProgressSink(t)
+
+	cmd := newImportCmd(toolSet, flags)
+	for _, name := range []string{"quiet", "verbose", "debug", "json"} {
+		cmd.Flags().Bool(name, name == "quiet", "")
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetContext(t.Context())
+	cmd.SetArgs(append([]string{archivePath, targetPath}, extraArgs...))
+	require.NoError(t, cmd.Execute())
+
+	return stdout.String()
 }
 
 // redirectProgressSink swaps the package-level progress output sink to a

@@ -138,6 +138,27 @@ type Importer interface {
 	// resolutions for these keys are refused.
 	ImplicitAnchors(project string) (map[string]string, error)
 
+	// MCPServers returns the MCP server definitions this destination already
+	// configures, sorted by name, so an import plan can report which of an
+	// archive's definitions are new here. A configuration source that is
+	// absent declares none; one that exists but cannot be read or parsed is
+	// an error, never an empty set, because reporting a destination as
+	// declaring nothing presents every archived definition as new.
+	MCPServers() ([]MCPServer, error)
+
+	// ArchiveMCPServers returns the MCP server definitions one archive entry
+	// carries, resolved through resolutions and sorted by name, so an import
+	// plan can name what an apply would configure. The two empty results are
+	// distinct: nil means the tool does not recognize the entry, and applying
+	// it never involves the destination configuration; a recognized entry
+	// carrying no definitions returns an empty non-nil slice — the signal
+	// that an apply of this entry would still parse the destination
+	// configuration, so a plan must run the same read. An entry this tool
+	// does recognize but cannot parse is an error, never an empty result.
+	// Routing an entry to its destination remains Stage's job, not this
+	// method's.
+	ArchiveMCPServers(entry archive.Entry, resolutions map[string]string) ([]MCPServer, error)
+
 	// Stage routes one archive entry (already stripped of its tool-prefix
 	// path segment) to its destination, streaming it through resolutions.
 	// Returns every artifact staged for atomic promotion; an entry whose

@@ -10,6 +10,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
@@ -79,6 +80,74 @@ func configTOMLProjectKeys(path string) ([]string, error) {
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+// MCPServers implements tool.Importer: the MCP server definitions
+// config.toml declares on this machine, sorted by name. A missing config.toml
+// declares none; one that exists but cannot be read or parsed is an error,
+// never an empty set.
+//
+// Only config.toml itself is read, not the <profile>.config.toml overlays
+// discoverConfigTOMLFiles walks. A definition an unread overlay already
+// declares merely reports as new; the opposite error would hide a definition
+// that does launch here.
+func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
+	return configTOMLMCPServers(filepath.Join(workspace.home.Dir, configTOMLFileName))
+}
+
+// ArchiveMCPServers implements tool.Importer: nil for every entry, meaning
+// none is recognized. Codex's MCP server definitions live only in
+// config.toml, which is never exported and never imported, so no archive
+// entry can carry one and no plan runs Codex's destination read on an
+// archive's account.
+func (workspace *Workspace) ArchiveMCPServers(archive.Entry, map[string]string) ([]tool.MCPServer, error) {
+	return nil, nil
+}
+
+// configTOMLMCPServers parses path's [mcp_servers] table into contract values
+// sorted by name. A missing file contributes none. A command wins over a url,
+// following the order Codex tries the two in (config/src/mcp_types.rs, TryFrom
+// for RawMcpServerConfig). Codex refuses a table naming both outright, so no
+// transport report is faithful for one; reporting the command at least names
+// an executable the table asked for, and refusing the whole plan over one
+// malformed table would be a worse answer.
+func configTOMLMCPServers(path string) ([]tool.MCPServer, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled config discovery
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var config struct {
+		MCPServers map[string]struct {
+			Command string   `toml:"command"`
+			Args    []string `toml:"args"`
+			URL     string   `toml:"url"`
+		} `toml:"mcp_servers"`
+	}
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("parse %s mcp_servers: %w", path, err)
+	}
+	if len(config.MCPServers) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(config.MCPServers))
+	for name := range config.MCPServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	servers := make([]tool.MCPServer, 0, len(names))
+	for _, name := range names {
+		definition := config.MCPServers[name]
+		server := tool.MCPServer{Name: name, URL: definition.URL}
+		if definition.Command != "" {
+			server = tool.MCPServer{Name: name, Command: definition.Command, Args: definition.Args}
+		}
+		servers = append(servers, server)
+	}
+	return servers, nil
 }
 
 // configTOMLKnowsProject reports whether any config.toml/profile file has a

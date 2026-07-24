@@ -91,7 +91,7 @@ stale block on the next invocation.
 Guarded commands (these take the lock and run the live-writer check):
 
 - `cc-port move --apply` (direct `Acquire` across selected tools)
-- `cc-port import` (nested `WithLock` across selected tools)
+- `cc-port import --apply` (nested `WithLock` across selected tools)
 - `cc-port pull --apply` (its execute path is `sync.ExecutePull`, which calls
   `importer.Run` and inherits the same nested lock)
 
@@ -107,8 +107,10 @@ and run without locking or witness detection):
   lock of its own. A concurrent write from the tool during a long export or
   push can produce an internally inconsistent archive, but nothing under the
   tool's home changes.
-- `cc-port stats` and `cc-port pull` (dry-run): read-only by design; `stats`
-  never locks at all, and pull's dry-run only reads the remote manifest.
+- `cc-port stats`, `cc-port pull` (dry-run), and `cc-port import` (dry-run):
+  read-only by design. `stats` never locks at all. Pull's and import's
+  dry-runs both read each destination's MCP configuration through the same
+  `importer.NewMCPServers` path, without writing to it.
 
 Called by:
 

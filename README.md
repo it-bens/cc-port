@@ -1,6 +1,6 @@
 ![cc-port banner: two piers labeled with old and new project paths, a gantry crane carrying a container between them](docs/images/banner.png)
 
-`cc-port` ports Claude Code and OpenAI Codex project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into each tool's session, history, and config files. cc-port rewrites the references safely across every installed tool: boundary-aware substring replacement, SQL-level rewriting for Codex's SQLite index, and atomic writes with rollback. Every command that mutates a tool's local state (`move --apply`, `import`, `pull --apply`) locks and refuses while a Claude Code session or Codex process is live, while `export`, `push`, and `stats` read local state without a lock and `push` writes only to the remote you configure, never to local tool state.
+`cc-port` ports Claude Code and OpenAI Codex project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into each tool's session, history, and config files. cc-port rewrites the references safely across every installed tool: boundary-aware substring replacement, SQL-level rewriting for Codex's SQLite index, and atomic writes with rollback. Every command that mutates a tool's local state (`move --apply`, `import --apply`, `pull --apply`) locks and refuses while a Claude Code session or Codex process is live, while `export`, `push`, and `stats` read local state without a lock and `push` writes only to the remote you configure, never to local tool state.
 
 > [!IMPORTANT]
 > Back up `~/.claude/` and `~/.codex/` before running any mutating command, so you can restore them if something goes wrong.
@@ -94,14 +94,18 @@ cc-port export manifest /Users/me/project --output /tmp/project.xml
 
 (See the `cc-port export` section above for an end-to-end export → import demo.)
 
-`cc-port import <archive.zip> <target-path> [--tool <name>]`
+`cc-port import <archive.zip> <target-path> [--apply] [--tool <name>]`
 
-Apply an archive to `<target-path>`, across every tool the archive has data for. Non-implicit placeholders are resolved via `--from-manifest`. Each tool supplies its own implicit keys (Claude: `{{PROJECT_PATH}}`, `{{HOME}}`, `{{PROJECT_DIR}}`; Codex: `{{CODEX_HOME}}`, `{{CODEX_PROJECT_PATH}}`). A user-supplied resolution for an implicit key is refused with `ImplicitKeyOverrideError`.
+Apply an archive to `<target-path>`, across every tool the archive has data for. Dry-run by default; `--apply` commits the import.
+
+Non-implicit placeholders are resolved via `--from-manifest`. Each tool supplies its own implicit keys (Claude: `{{PROJECT_PATH}}`, `{{HOME}}`, `{{PROJECT_DIR}}`; Codex: `{{CODEX_HOME}}`, `{{CODEX_PROJECT_PATH}}`). A user-supplied resolution for an implicit key is refused with `ImplicitKeyOverrideError`.
+
+The dry-run prints the target, each tool's categories and entry counts, and every MCP server definition the archive carries that the destination does not already declare, each with the command line the tool would run for it. Those servers start with every session once imported, so read that list before passing `--apply`.
 
 Optional passphrase decryption via `--passphrase-env` or `--passphrase-file` (mutually exclusive). Plaintext stays the default. The read side detects encryption from the archive's magic bytes.
 
 ```
-cc-port import /tmp/project.zip /Users/teammate/project
+cc-port import /tmp/project.zip /Users/teammate/project --apply
 ```
 
 ### `cc-port import manifest`

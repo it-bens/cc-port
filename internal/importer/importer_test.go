@@ -115,7 +115,46 @@ func TestRun_ReRunDoesNotDuplicateHistoryLines(t *testing.T) {
 // below the CLI. A real Codex CLI process is itself valid witness evidence, so
 // cmd-level Codex import tests must refuse rather than weakening the witness.
 func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
-	sharedProject := codex.FixtureProjectPath()
+	claudeTool, codexTool := claude.New(), codex.New()
+	body, sharedProject := buildMultiToolArchive(t)
+
+	claudeDestination := blankHome(t)
+	codexDestinationDir := filepath.Join(t.TempDir(), "dotcodex")
+	require.NoError(t, os.MkdirAll(codexDestinationDir, 0o750))
+	config := []byte("# recipient config remains local\n[projects.\"/recipient/only\"]\ntrust_level = \"trusted\"\n")
+	require.NoError(t, os.WriteFile(filepath.Join(codexDestinationDir, "config.toml"), config, 0o600))
+	codexDestination := &codex.Home{Dir: codexDestinationDir, SQLiteDir: codexDestinationDir}
+
+	registry := tool.NewSet(claudeTool, codexTool)
+	reader := bytes.NewReader(body)
+	result, err := importer.Run(t.Context(), registry, []tool.Target{
+		{Tool: claudeTool, Workspace: claude.NewWorkspace(claudeDestination)},
+		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
+	}, &importer.Options{Source: reader, Size: int64(reader.Len()), TargetPath: sharedProject, Caps: archive.DefaultCaps()})
+	require.NoError(t, err)
+
+	require.FileExists(t, filepath.Join(
+		claudeDestination.ProjectDir(sharedProject), "a1b2c3d4-0000-0000-0000-000000000001.jsonl",
+	))
+	require.FileExists(t, filepath.Join(
+		codexDestination.Dir, "sessions", "2026", "07", "17",
+		"rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl",
+	))
+	actualConfig, err := os.ReadFile(filepath.Join(codexDestination.Dir, "config.toml"))
+	require.NoError(t, err)
+	assert.Equal(t, config, actualConfig, "Codex config.toml must remain byte-identical")
+	require.NotEmpty(t, result.Warnings[codexTool.Name()])
+	assert.Contains(t, result.Warnings[codexTool.Name()][0], "threads sidecar row(s) could not be applied")
+}
+
+// buildMultiToolArchive exports one project both tools know about, so an
+// archive carries a Claude block and a Codex block. It re-keys the Claude
+// fixture onto Codex's fixture project path, which is the only project both
+// staged trees share. The Claude selection includes config, so the archive
+// carries the one entry the plan's destination-configuration read recognizes.
+func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
+	t.Helper()
+	sharedProject = codex.FixtureProjectPath()
 	claudeSource := testutil.SetupFixture(t)
 	claudeTool, codexTool := claude.New(), codex.New()
 
@@ -125,11 +164,10 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, moveResult.Failed())
 
-	codexSource := codex.SetupFixture(t)
-	claudeSelection := map[string]bool{"sessions": true}
+	claudeSelection := map[string]bool{"sessions": true, "config": true}
 	codexSelection := map[string]bool{"sessions": true}
 	claudeWorkspace := claude.NewWorkspace(claudeSource)
-	codexWorkspace := quietCodexWorkspace(codexSource)
+	codexWorkspace := quietCodexWorkspace(codex.SetupFixture(t))
 	claudePlaceholders, err := claudeWorkspace.Placeholders(sharedProject, claudeSelection)
 	require.NoError(t, err)
 	codexPlaceholders, err := codexWorkspace.Placeholders(sharedProject, codexSelection)
@@ -152,34 +190,7 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-
-	claudeDestination := blankHome(t)
-	codexDestinationDir := filepath.Join(t.TempDir(), "dotcodex")
-	require.NoError(t, os.MkdirAll(codexDestinationDir, 0o750))
-	config := []byte("# recipient config remains local\n[projects.\"/recipient/only\"]\ntrust_level = \"trusted\"\n")
-	require.NoError(t, os.WriteFile(filepath.Join(codexDestinationDir, "config.toml"), config, 0o600))
-	codexDestination := &codex.Home{Dir: codexDestinationDir, SQLiteDir: codexDestinationDir}
-
-	registry := tool.NewSet(claudeTool, codexTool)
-	reader := bytes.NewReader(archiveBytes.Bytes())
-	result, err := importer.Run(t.Context(), registry, []tool.Target{
-		{Tool: claudeTool, Workspace: claude.NewWorkspace(claudeDestination)},
-		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
-	}, &importer.Options{Source: reader, Size: int64(reader.Len()), TargetPath: sharedProject, Caps: archive.DefaultCaps()})
-	require.NoError(t, err)
-
-	require.FileExists(t, filepath.Join(
-		claudeDestination.ProjectDir(sharedProject), "a1b2c3d4-0000-0000-0000-000000000001.jsonl",
-	))
-	require.FileExists(t, filepath.Join(
-		codexDestination.Dir, "sessions", "2026", "07", "17",
-		"rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl",
-	))
-	actualConfig, err := os.ReadFile(filepath.Join(codexDestination.Dir, "config.toml"))
-	require.NoError(t, err)
-	assert.Equal(t, config, actualConfig, "Codex config.toml must remain byte-identical")
-	require.NotEmpty(t, result.Warnings[codexTool.Name()])
-	assert.Contains(t, result.Warnings[codexTool.Name()][0], "threads sidecar row(s) could not be applied")
+	return archiveBytes.Bytes(), sharedProject
 }
 
 func quietCodexWorkspace(home *codex.Home) *codex.Workspace {
@@ -499,18 +510,34 @@ func buildClaudeArchive(t *testing.T, entries map[string]string) []byte {
 
 func buildClaudeArchiveWithPlaceholders(t *testing.T, entries map[string]string, placeholders []manifest.Placeholder) []byte {
 	t.Helper()
-	var buffer bytes.Buffer
-	writer := zip.NewWriter(&buffer)
 	names := make([]string, 0, len(entries))
 	for name := range entries {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	ordered := make([]archiveEntry, 0, len(names))
 	for _, name := range names {
-		content := entries[name]
-		entryWriter, err := writer.Create(name)
+		ordered = append(ordered, archiveEntry{name: name, content: entries[name]})
+	}
+	return buildClaudeArchiveFromEntries(t, ordered, placeholders)
+}
+
+// archiveEntry is one named zip entry for a hand-built test archive.
+type archiveEntry struct {
+	name    string
+	content string
+}
+
+// buildClaudeArchiveFromEntries writes the entries in the given order without
+// deduplication, so a test can build a zip carrying duplicate entry names.
+func buildClaudeArchiveFromEntries(t *testing.T, entries []archiveEntry, placeholders []manifest.Placeholder) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, entry := range entries {
+		entryWriter, err := writer.Create(entry.name)
 		require.NoError(t, err)
-		_, err = entryWriter.Write([]byte(content))
+		_, err = entryWriter.Write([]byte(entry.content))
 		require.NoError(t, err)
 	}
 	claudeTool := claude.New()

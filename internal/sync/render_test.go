@@ -6,8 +6,63 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/tool"
 )
+
+// A pulled MCP server definition launches with every session afterwards, so
+// the pull summary names each one the destination does not already declare.
+// The dry run is the summary an operator reads before deciding to apply, so
+// both run modes must carry the section.
+func TestPullPlan_RenderNamesNewMCPServers(t *testing.T) {
+	for name, apply := range map[string]bool{"dry run": false, "apply run": true} {
+		t.Run(name, func(t *testing.T) {
+			plan := &PullPlan{
+				Name:                   "myproj",
+				Tools:                  []string{"claude"},
+				DeclaredPlaceholders:   map[string][]manifest.Placeholder{},
+				UnresolvedPlaceholders: map[string][]string{},
+				NewMCPServers: []importer.MCPServerSet{{
+					Tool:    "claude",
+					Servers: []tool.MCPServer{{Name: "fs", Command: "node", Args: []string{"/opt/fs-server.js"}}},
+				}},
+			}
+			var buf bytes.Buffer
+
+			require.NoError(t, plan.Render(&buf, apply))
+
+			assert.Contains(t, buf.String(), "New MCP servers (claude):")
+			assert.Contains(t, buf.String(), "node /opt/fs-server.js")
+		})
+	}
+}
+
+// Tool names, placeholder keys, and the pusher identity travel in the remote
+// archive's own metadata, so a crafted archive can put ANSI escapes in them.
+// The pull summary reveals those bytes as their Go escape sequences instead
+// of forwarding them to the operator's terminal.
+func TestPullPlan_RenderRevealsManifestControlBytesAsEscapes(t *testing.T) {
+	plan := &PullPlan{
+		Name:                   "myproj",
+		RemotePushedBy:         "laptop\x1b[2K-alice",
+		Tools:                  []string{"claude\x1b[1A"},
+		DeclaredPlaceholders:   map[string][]manifest.Placeholder{"claude\x1b[1A": {{Key: "{{HOME\x1b[2K}}"}}},
+		UnresolvedPlaceholders: map[string][]string{},
+	}
+	var buf bytes.Buffer
+
+	require.NoError(t, plan.Render(&buf, false))
+
+	rendered := buf.String()
+	assert.NotContains(t, rendered, "\x1b", "no raw ESC byte reaches the terminal")
+	assert.Contains(t, rendered, `laptop\x1b[2K-alice`, "the pusher identity's control bytes render revealed")
+	assert.Contains(t, rendered, `claude\x1b[1A`, "the tool name's control bytes render revealed")
+	assert.Contains(t, rendered, `{{HOME\x1b[2K}}`, "the placeholder key's control bytes render revealed")
+}
 
 func TestPushPlan_RenderNoPriorPlaintext(t *testing.T) {
 	plan := &PushPlan{

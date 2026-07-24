@@ -25,7 +25,11 @@ This package has no tool-specific knowledge; it drives `internal/export` and
   archive's manifest from the pre-opened source. Before rendering, it hard
   refuses through the import preflight gates: `VerifyManifestTools`,
   `VerifyEntryTools`, and per-block `PreflightBlock` category, anchor, and
-  resolution validation.
+  resolution validation. It also fills `PullPlan.NewMCPServers` via
+  `importer.NewMCPServers`, per present target.
+- `PullPlan.NewMCPServers []importer.MCPServerSet`: per tool, the archive's
+  MCP server definitions the destination does not already declare (see
+  [`internal/importer/README.md`](../importer/README.md) §Plan surface).
 - `ExecutePull(ctx, opts, plan, source) (*importer.Result, error)`: runs
   `importer.Run(ctx, opts.AllTools, opts.Targets, ...)` against the source.
 - `(*PushPlan).Render(io.Writer, apply bool) error`,
@@ -73,8 +77,15 @@ Used by `cmd/cc-port` push and pull.
   above): the remote's pushed-by,
   pushed-at, size, and tool list, then one "Required resolutions" block per
   tool with declared placeholders, marking each as `(resolved)` or
-  `MISSING`. The trailing `! N placeholder unresolved` warning fires only
-  when at least one tool has an unresolved key.
+  `MISSING`, then the new-MCP-server section via
+  `importer.RenderMCPServers`. The trailing `! N placeholder unresolved`
+  warning fires only when at least one tool has an unresolved key.
+- Pull renders before it writes. `cmd/cc-port/pullcmd.go` runs the download
+  and `PlanPull` under one progress ledger, renders the plan once that ledger
+  has torn down, and only then runs `ExecutePull` under a second ledger. The
+  archive source stays open across both. Rendering after `ExecutePull` would
+  show an operator the MCP server definitions an import had already
+  configured.
 
 #### Refused
 
@@ -110,13 +121,15 @@ configured machine, refuse-or-platform-fall-back from an empty `$USER`), the
 push-side Plan and Execute paths (no-prior, same-self, cross-machine prior,
 round-trip with sync fields, export-warning propagation), the pull-side Plan paths (declared-placeholder
 discovery across multiple tools, resolution coverage by sender `Resolve` and
-by `--from-manifest`), a push-pull round-trip via `file://`, and the
-sentinel errors. Pipeline-open dispatch tests (remote-not-found,
+by `--from-manifest`, and the new-MCP list against a destination that does
+and does not already declare the archive's definitions), a push-pull
+round-trip via `file://`, and the sentinel errors. Pipeline-open dispatch tests (remote-not-found,
 encrypted-no-passphrase, plaintext-with-passphrase) live in
 `cmd/cc-port/pushcmd_test.go` and `cmd/cc-port/pullcmd_test.go` because cmd
 owns the dispatch. `render_test.go` covers Render output via substring
 assertions on push (no-prior plaintext, encrypted with prior and
-cross-machine) and pull (with unresolved placeholders, encrypted clean). It
+cross-machine) and pull (with unresolved placeholders, encrypted clean, and a
+new MCP server rendered with its launch line). It
 also covers the apply-run header drop and `humanizeBytes` boundary cases.
 File-backed remote (`file://` + `t.TempDir()`) for unit tests; integration
 round-trips also use `file://` and optionally S3.

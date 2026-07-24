@@ -7,10 +7,12 @@
 - Drive all-or-nothing promotion through `rewrite.SafeRenamePromoter` over every tool's staged files as one batch. Do not bypass it on partial failure (README §Import contract and `internal/rewrite/README.md` §Boundary rules).
 - Route manifest category validation through `manifest.ApplyToolCategories`. Hard-fail on an archive entry whose leading path segment names an unregistered tool (README §Import contract and `internal/manifest/README.md` §Category manifest).
 - A registered tool absent from the manifest is reported and skipped; do not treat it as a hard failure (README §Import contract).
+- Keep `DryRun` write-free and lock-free, and route it through the same preflight gates `runLocked` runs (README §Plan surface).
+- Never reach `Stage` or `Finalize` from `DryRun`; both write (README §Plan surface).
 
 ## Navigation
 
-- Entry: `importer.go:Run`.
+- Entry: `importer.go:Run`; plan entry: `plan.go:DryRun`, rendered by `render.go`.
 - Promotion: `promote.go:promoteStaged`.
 - Cap enforcement, containment, and placeholder streaming: `internal/archive`.
 - Tests: `importer_test.go`, `importer_large_test.go` (`-tags large`).

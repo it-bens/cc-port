@@ -75,3 +75,35 @@ func TestUserConfig_RoundTrip(t *testing.T) {
 	assert.Contains(t, projects, "/Users/test/newproj")
 	assert.NotContains(t, projects, "/Users/test/proj")
 }
+
+func TestUserConfig_RoundTripsUserScopeMCPServers(t *testing.T) {
+	input := `{"mcpServers":{"docs":{"type":"http","url":"https://mcp.example.invalid/docs"}},"projects":{}}`
+
+	var userConfig claude.UserConfig
+	require.NoError(t, json.Unmarshal([]byte(input), &userConfig))
+	require.Contains(t, userConfig.MCPServers, "docs")
+
+	out, err := json.Marshal(userConfig)
+	require.NoError(t, err)
+
+	var roundTripped map[string]any
+	require.NoError(t, json.Unmarshal(out, &roundTripped))
+	servers := roundTripped["mcpServers"].(map[string]any)
+	docs := servers["docs"].(map[string]any)
+	assert.Equal(t, "http", docs["type"], "keys cc-port does not model must survive the round trip")
+	assert.Equal(t, "https://mcp.example.invalid/docs", docs["url"])
+}
+
+// A config that never declared user-scope servers must not gain the key, so
+// the field is written only when the source carried one.
+func TestUserConfig_OmitsMCPServersWhenAbsent(t *testing.T) {
+	var userConfig claude.UserConfig
+	require.NoError(t, json.Unmarshal([]byte(`{"theme":"dark","projects":{}}`), &userConfig))
+
+	out, err := json.Marshal(userConfig)
+	require.NoError(t, err)
+
+	var roundTripped map[string]any
+	require.NoError(t, json.Unmarshal(out, &roundTripped))
+	assert.NotContains(t, roundTripped, "mcpServers")
+}

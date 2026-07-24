@@ -27,8 +27,17 @@ package's types support.
     `Export(ctx, project string, selected map[string]bool, sink *archive.Sink) (ExportResult, error)`.
   - `Importer`: `PreflightDirs(project string) []string`,
     `ImplicitAnchors(project string) (map[string]string, error)`,
+    `MCPServers() ([]MCPServer, error)`,
+    `ArchiveMCPServers(entry archive.Entry, resolutions map[string]string) ([]MCPServer, error)`,
     `Stage(ctx, project string, entry archive.Entry, resolutions map[string]string) ([]archive.Staged, error)`,
     `Finalize(ctx, project string, staged *archive.StagedSet) ([]string, error)`.
+    Neither MCP method takes a `project`. `MCPServers` reports the
+    workspace-global set the destination declares, and an archive entry
+    carries whatever scope it was exported from. `ArchiveMCPServers`
+    distinguishes its empty results: nil means the entry is not recognized,
+    while an empty non-nil slice means recognized with nothing declared
+    (the signal that a plan must run the same destination read the entry's
+    apply would).
   - `Auditor`: `ReferenceSurfaces(ctx context.Context, project string) ([]CountSurface, error)`,
     `DiskCategories(ctx context.Context, project string) ([]SizeCategory, error)`,
     `EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)`.
@@ -39,6 +48,12 @@ package's types support.
   - `Qualified`: `Tool`, `Category` (one `<tool>/<category>` pair).
   - `MoveRequest`: `OldPath`, `NewPath`, `RefsOnly`, `DeepRewrite`.
   - `ActiveWriter`: `Pid`, `Cwd` (one piece of liveness evidence).
+  - `MCPServer`: `Name` plus at most one transport, either `Command`+`Args`
+    or `URL`. `LaunchLine()` renders whichever the definition carries, and
+    reports a definition naming neither as having no launch target rather
+    than rendering a blank line. Each command and argument renders through
+    `QuoteAmbiguous`, so `args:["a b"]` and `args:["a","b"]` stay
+    distinguishable at a consent surface.
   - `Surface`: `Name`, `Plan func(ctx) (SurfaceResult, error)`,
     `Apply func(ctx, *Restorer) (SurfaceResult, error)`. One named,
     independently plannable and applicable unit of a move.
@@ -50,6 +65,20 @@ package's types support.
     `Disk`, `Files`, `Bytes`).
   - Sentinel errors `ErrToolAbsent`, `ErrProjectAbsent`, `ErrNoWitness` (see
     `docs/architecture.md` §Sweep semantics).
+- **Consent rendering**
+  - `EscapeControl(s string) string`: returns `s` with every control
+    character (C0, DEL, and the C1 range) replaced by its Go escape
+    sequence (`\x1b`, `\r`, …). Nothing is stripped. The operator sees
+    what the string actually carries. The import and pull plan renderers
+    route every archive- and manifest-controlled string through it, so a
+    crafted string reveals its control bytes instead of driving the
+    terminal.
+  - `QuoteAmbiguous(s string) string`: returns `s` `strconv.Quote`d when
+    rendering it verbatim would misrepresent it (embedded whitespace,
+    quotes, control characters, or an empty string). Every other value
+    returns verbatim. `LaunchLine` applies it to each command and argument,
+    and the consent renderer to each server name, so a crafted name
+    embedding whitespace cannot absorb the launch column beside it.
 - **Registry**
   - `Set`: the registered collection of tools, built once via `NewSet` and
     read thereafter through `All`, `ByName`, `Detected`.
@@ -90,6 +119,10 @@ each an accepted deviation from spec §1.
   and §Sweep semantics; `NewSet` fixes the tool list once, at process
   construction, and every consumer of `ErrToolAbsent`/`ErrProjectAbsent`/`ErrNoWitness`
   follows those two sections rather than a local rule.
+- An adapter returning no MCP server definitions from either MCP method. A
+  destination that configures none says so with an empty `MCPServers` result
+  rather than a sentinel. `ArchiveMCPServers` says "not my entry" with nil
+  and "recognized, nothing declared" with an empty non-nil slice.
 
 **Refused.**
 
@@ -121,7 +154,8 @@ A third adapter is one new package (`internal/tool/<name>`) plus one line in
   since it stores `cwd` verbatim), `MoveSurfaces` built from the growable
   substrate primitives (`internal/rewrite`, `internal/sqlrewrite`),
   `Placeholders`/`Export` with any tool-declared home anchors,
-  `PreflightDirs`/`ImplicitAnchors`/`Stage`/a deduplicating `Finalize`, the
+  `PreflightDirs`/`ImplicitAnchors`/`MCPServers`/`ArchiveMCPServers`/`Stage`/a
+  deduplicating `Finalize`, the
   three `Auditor` methods, `ActiveWriters`, and round-trip fixtures.
 - Everything else is inherited unchanged: CLI wiring and generated flags
   (`cmd/cc-port/toolselect.go`), locking (`internal/lock`), archive

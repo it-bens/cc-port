@@ -97,6 +97,12 @@ func (workspace *preflightWorkspace) PreflightDirs(string) []string { return nil
 func (workspace *preflightWorkspace) ImplicitAnchors(string) (map[string]string, error) {
 	return nil, nil
 }
+func (workspace *preflightWorkspace) MCPServers() ([]tool.MCPServer, error) {
+	return nil, nil
+}
+func (workspace *preflightWorkspace) ArchiveMCPServers(archive.Entry, map[string]string) ([]tool.MCPServer, error) {
+	return nil, nil
+}
 func (workspace *preflightWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, nil
 }
