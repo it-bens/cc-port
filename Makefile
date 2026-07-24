@@ -85,7 +85,7 @@ s3-reset: ## Destroy and recreate the dev S3 backend (drops all data)
 	docker compose -f dev/s3/docker-compose.yml down -v
 	$(MAKE) s3-up
 
-videos: build s3-reset ## Re-render all VHS demo tapes (GIF + MP4); override with CODEX=/path/to/codex
+videos: build ## Re-render all VHS demo tapes (GIF + MP4); override with CODEX=/path/to/codex
 	@codex_bin="$$(command -v -- '$(CODEX)' 2>/dev/null)"; \
 	  [ -n "$$codex_bin" ] || { echo "make videos: codex binary '$(CODEX)' not found; set CODEX=/path/to/codex-0.145.0" >&2; exit 1; }; \
 	  ver="$$("$$codex_bin" --version)"; \
@@ -104,6 +104,9 @@ videos: build s3-reset ## Re-render all VHS demo tapes (GIF + MP4); override wit
 	    echo "  cc-port refuses a mutating apply while one runs, so the render would record the refusal." >&2; \
 	    echo "  Stop them (a codex mcp-server counts) and re-run." >&2; exit 1; }
 	go build -o seed-home ./docs/videos/fixtures/cmd/seed-home
+# s3-reset runs in the recipe body, after every guard, so a refused render
+# leaves the local Garage container untouched instead of reset and running.
+	$(MAKE) s3-reset
 # A relative CODEX must be absolutized before it is symlinked: a symlink target
 # resolves against the link's own dir (the mktemp bindir), so a relative target
 # would dangle and PATH would silently fall through to another codex. Removing
