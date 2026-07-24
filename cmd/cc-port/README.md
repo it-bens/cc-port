@@ -93,6 +93,11 @@ to the interactive `ui.SelectCategories(banner, tools)` prompt when neither
 flag is set, then discovers placeholders per target via
 `Workspace.Placeholders`.
 
+`--all` skips every category whose registry entry sets
+`tool.Category.ExcludedFromAll` (currently `claude/config-grants`).
+Permission grants port only through an explicit `--include`, a picker
+selection, or a manifest that marks the category included.
+
 `runExportManifest` calls `resolveCategoriesAndPlaceholders` directly (it
 skips `applyCategorySelection` because the manifest subcommand registers no
 `--from-manifest` flag, so the exclusivity branch is dead code on that

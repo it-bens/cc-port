@@ -72,7 +72,7 @@ cc-port move /Users/me/old-project /Users/me/new-project --apply
 
 `cc-port export <project-path> --output <archive.zip> [--tool <name>]`
 
-Produce a portable archive of one project, across every detected tool. Use `--all` for every category on every selected tool, or `--include <tool>/<category>` (repeatable) to name specific tool-and-category pairs, for example `--include claude/sessions --include codex/history`. Omit both flags for an interactive picker, grouped by tool.
+Produce a portable archive of one project, across every detected tool. Use `--all` for every category on every selected tool (permission-grant categories such as `claude/config-grants` stay out of the sweep and port only when selected explicitly), or `--include <tool>/<category>` (repeatable) to name specific tool-and-category pairs, for example `--include claude/sessions --include codex/history`. Omit both flags for an interactive picker, grouped by tool.
 
 Optional passphrase encryption via `--passphrase-env` or `--passphrase-file` (mutually exclusive). Plaintext stays the default. The read side detects encryption from the archive's magic bytes.
 

@@ -17,6 +17,13 @@ type Category struct {
 	Name            string
 	Description     string
 	DefaultSelected bool
+
+	// ExcludedFromAll keeps the category out of the --all sweep: it is
+	// exported only via an explicit --include, a picker selection, or a
+	// manifest that marks it included. For permission-grant categories,
+	// whose payload widens what a tool may do on the destination machine,
+	// porting stays a deliberate act.
+	ExcludedFromAll bool
 }
 
 // Qualified identifies a category within a tool.

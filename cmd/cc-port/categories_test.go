@@ -20,7 +20,7 @@ func TestRegisterCategoryFlags_RegistersAllAndInclude(t *testing.T) {
 	require.NotNil(t, cmd.Flag("include"), "--include must be registered")
 }
 
-func TestResolveSelectionFromCmd_AllSetsEveryCategory(t *testing.T) {
+func TestResolveSelectionFromCmd_AllSetsEveryCategoryExceptExcluded(t *testing.T) {
 	cmd := &cobra.Command{}
 	registerCategoryFlags(cmd, "push")
 	require.NoError(t, cmd.Flags().Set("all", "true"))
@@ -30,8 +30,26 @@ func TestResolveSelectionFromCmd_AllSetsEveryCategory(t *testing.T) {
 
 	require.NoError(t, err)
 	for _, category := range claude.New().Categories() {
+		if category.ExcludedFromAll {
+			assert.False(t, selection["claude"][category.Name],
+				"--all must not enable the explicit-selection-only category %s", category.Name)
+			continue
+		}
 		assert.True(t, selection["claude"][category.Name], "--all must enable %s", category.Name)
 	}
+}
+
+func TestResolveSelectionFromCmd_IncludeSelectsExcludedFromAllCategory(t *testing.T) {
+	cmd := &cobra.Command{}
+	registerCategoryFlags(cmd, "push")
+	require.NoError(t, cmd.Flags().Set("include", "claude/config-grants"))
+
+	tools := []tool.Tool{claude.New()}
+	selection, err := resolveSelectionFromCmd(cmd, tools)
+
+	require.NoError(t, err)
+	assert.True(t, selection["claude"]["config-grants"],
+		"explicit --include must select a category --all excludes")
 }
 
 func TestResolveSelectionFromCmd_IncludeSetsOnlyNamedCategory(t *testing.T) {

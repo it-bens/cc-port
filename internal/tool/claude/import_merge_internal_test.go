@@ -207,6 +207,12 @@ func TestMergeProjectConfigBytes_RejectsInvalidJSON(t *testing.T) {
 	assert.Equal(t, "/fake/config", configErr.Path)
 }
 
+func TestMergeProjectConfigBytes_RejectsMalformedIncomingBlock(t *testing.T) {
+	merged, err := mergeProjectConfigBytes(nil, "/fake/config", "/proj", []byte(`{"setting":`))
+	require.Error(t, err, "a malformed archive block must never be spliced into the destination")
+	assert.Nil(t, merged)
+}
+
 func TestMergeProjectConfigBytes_DropsIncomingApprovalGatesOnFreshDestination(t *testing.T) {
 	projectPath := "/fresh/project"
 	block := []byte(`{"hasTrustDialogAccepted":true,` +
@@ -221,14 +227,17 @@ func TestMergeProjectConfigBytes_DropsIncomingApprovalGatesOnFreshDestination(t 
 	for _, key := range destinationOwnedProjectKeys {
 		assert.False(t, gjson.GetBytes(merged, path+"."+key).Exists())
 	}
-	assert.Equal(t, []interface{}{"Bash(ls)"}, gjson.GetBytes(merged, path+".allowedTools").Value())
+	assert.False(t, gjson.GetBytes(merged, path+".allowedTools").Exists(),
+		"incoming allowedTools is destination-owned on the config splice and ports only via config-grants")
 	assert.Equal(t, "enabled", gjson.GetBytes(merged, path+".setting").String())
 }
 
 func TestMergeProjectConfigBytes_PreservesDestinationApprovalGateValues(t *testing.T) {
 	projectPath := "/conflict/project"
-	existing := []byte(`{"projects":{"/conflict/project":{"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":false}}}`)
-	block := []byte(`{"hasTrustDialogAccepted":false,"hasClaudeMdExternalIncludesApproved":true,"setting":"ported"}`)
+	existing := []byte(`{"projects":{"/conflict/project":{"hasTrustDialogAccepted":true,` +
+		`"hasClaudeMdExternalIncludesApproved":false,"allowedTools":["Bash(go:*)"]}}}`)
+	block := []byte(`{"hasTrustDialogAccepted":false,"hasClaudeMdExternalIncludesApproved":true,` +
+		`"allowedTools":["Bash(rm:*)"],"setting":"ported"}`)
 
 	merged, err := mergeProjectConfigBytes(existing, "/fake/config", projectPath, block)
 
@@ -236,6 +245,8 @@ func TestMergeProjectConfigBytes_PreservesDestinationApprovalGateValues(t *testi
 	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
 	assert.True(t, gjson.GetBytes(merged, path+".hasTrustDialogAccepted").Bool())
 	assert.False(t, gjson.GetBytes(merged, path+".hasClaudeMdExternalIncludesApproved").Bool())
+	assert.Equal(t, []interface{}{"Bash(go:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
+		"the destination's allowedTools must survive the config splice")
 	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())
 }
 
@@ -256,14 +267,90 @@ func TestMergeProjectConfigBytes_DropsIncomingApprovalGatesWhenDestinationProjec
 	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())
 }
 
+func TestFinalizeConfigGrants_SplicesIncomingAllowedToolsOverDestination(t *testing.T) {
+	projectPath := "/Users/test/Projects/granted"
+	workspace := newMergeTestWorkspace(t)
+	existing := []byte(`{"projects":{"/Users/test/Projects/granted":{"allowedTools":["Bash(go:*)"],"setting":"kept"}}}`)
+	require.NoError(t, os.WriteFile(workspace.home.ConfigFile, existing, 0o600))
+	workspace.configGrantsBlock = []byte(`{"allowedTools":["Bash(rm:*)"]}`)
+
+	require.NoError(t, workspace.finalizeConfigGrants(projectPath))
+
+	merged, err := os.ReadFile(workspace.home.ConfigFile)
+	require.NoError(t, err)
+	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	assert.Equal(t, []interface{}{"Bash(rm:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
+		"a selected config-grants category must port the incoming grants over the destination's")
+	assert.Equal(t, "kept", gjson.GetBytes(merged, path+".setting").String())
+
+	require.NoError(t, workspace.finalizeConfigGrants(projectPath))
+	rerun, err := os.ReadFile(workspace.home.ConfigFile)
+	require.NoError(t, err)
+	assert.Equal(t, merged, rerun, "re-running the grants splice against an unchanged destination must be byte-identical")
+}
+
+func TestFinalizeConfigGrants_RejectsMalformedGrantsBlock(t *testing.T) {
+	workspace := newMergeTestWorkspace(t)
+	workspace.configGrantsBlock = []byte(`{"allowedTools":[`)
+
+	err := workspace.finalizeConfigGrants("/Users/test/Projects/granted")
+
+	require.Error(t, err, "a malformed grants block must never be spliced into the destination")
+	assert.NoFileExists(t, workspace.home.ConfigFile)
+}
+
+func TestFinalizeConfigGrants_RejectsInvalidExistingConfig(t *testing.T) {
+	workspace := newMergeTestWorkspace(t)
+	require.NoError(t, os.WriteFile(workspace.home.ConfigFile, []byte(`{not valid json`), 0o600))
+	workspace.configGrantsBlock = []byte(`{"allowedTools":["Bash(go:*)"]}`)
+
+	err := workspace.finalizeConfigGrants("/Users/test/Projects/granted")
+
+	var configErr *InvalidConfigJSONError
+	require.ErrorAs(t, err, &configErr)
+	assert.Equal(t, workspace.home.ConfigFile, configErr.Path)
+}
+
+func TestFinalizeConfigGrants_EmptyBlockLeavesDestinationUntouched(t *testing.T) {
+	workspace := newMergeTestWorkspace(t)
+	existing := []byte(`{"projects":{"/Users/test/Projects/granted":{"allowedTools":["Bash(go:*)"]}}}`)
+	require.NoError(t, os.WriteFile(workspace.home.ConfigFile, existing, 0o600))
+	workspace.configGrantsBlock = []byte(`{}`)
+
+	require.NoError(t, workspace.finalizeConfigGrants("/Users/test/Projects/granted"))
+
+	got, err := os.ReadFile(workspace.home.ConfigFile)
+	require.NoError(t, err)
+	assert.Equal(t, existing, got,
+		"a grants block without allowedTools must leave the destination byte-identical")
+}
+
+func TestFinalize_ConfigGrantsSpliceWinsOverDestinationOwnedHandling(t *testing.T) {
+	projectPath := "/Users/test/Projects/granted"
+	workspace := newMergeTestWorkspace(t)
+	workspace.configBlock = []byte(`{"allowedTools":["Bash(incoming:*)"],"setting":"ported"}`)
+	workspace.configGrantsBlock = []byte(`{"allowedTools":["Bash(granted:*)"]}`)
+
+	_, err := workspace.Finalize(context.Background(), projectPath, nil)
+	require.NoError(t, err)
+
+	merged, err := os.ReadFile(workspace.home.ConfigFile)
+	require.NoError(t, err)
+	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	assert.Equal(t, []interface{}{"Bash(granted:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
+		"the grants entry's value must land, not the config block's destination-owned copy")
+	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())
+}
+
 func TestMergeProjectConfigBytes_IsFixedPointAgainstUnchangedDestination(t *testing.T) {
 	projectPath := "/fixed/project"
 	existing := []byte(`{"projects":{"/fixed/project":{"hasTrustDialogAccepted":true,` +
 		`"hasClaudeMdExternalIncludesApproved":false,` +
-		`"hasClaudeMdExternalIncludesWarningShown":true}}}`)
+		`"hasClaudeMdExternalIncludesWarningShown":true,"allowedTools":["Bash(go:*)"]}}}`)
 	block := []byte(`{"hasTrustDialogAccepted":false,` +
 		`"hasClaudeMdExternalIncludesApproved":true,` +
-		`"hasClaudeMdExternalIncludesWarningShown":false,"setting":"ported"}`)
+		`"hasClaudeMdExternalIncludesWarningShown":false,` +
+		`"allowedTools":["Bash(rm:*)"],"setting":"ported"}`)
 
 	result1, err := mergeProjectConfigBytes(existing, "/fake/config", projectPath, block)
 	require.NoError(t, err)

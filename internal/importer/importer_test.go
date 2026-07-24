@@ -464,6 +464,35 @@ func TestRun_AbortsWhenWitnessTurnsLiveBetweenLockAndPromotion(t *testing.T) {
 	assert.Empty(t, temps, "an import aborted by the re-check must clean up its staging temps")
 }
 
+func TestRun_RejectsMalformedConfigShapedEntryWithoutWriting(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry string
+	}{
+		{"config", "claude/config.json"},
+		{"config-grants", "claude/config-grants.json"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body := buildClaudeArchive(t, map[string]string{testCase.entry: `{"setting":`})
+			home := blankHome(t)
+			toolSet := tool.NewSet(claude.New())
+			targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+
+			_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
+				Source:     bytes.NewReader(body),
+				Size:       int64(len(body)),
+				TargetPath: "/Users/test/Projects/malformed",
+				Caps:       archive.DefaultCaps(),
+			})
+
+			require.Error(t, err, "a malformed %s entry must refuse the import at staging", testCase.entry)
+			assert.NoFileExists(t, home.ConfigFile,
+				"an import refused at staging must never reach the finalize splices")
+		})
+	}
+}
+
 func buildClaudeArchive(t *testing.T, entries map[string]string) []byte {
 	return buildClaudeArchiveWithPlaceholders(t, entries, nil)
 }

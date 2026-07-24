@@ -95,9 +95,9 @@ func (workspace *Workspace) ImplicitAnchors(project string) (map[string]string, 
 // Stage implements tool.Importer. It routes one archive entry to its
 // destination: session-keyed groups and plain project files (sessions/,
 // memory/) each stage to a sibling temp beside their final path via
-// archive.StageSibling; history.jsonl and config.json defer to Finalize,
-// since both need a read-merge-write against existing content rather than
-// plain promotion, and return no Staged record.
+// archive.StageSibling; history.jsonl, config.json, and config-grants.json
+// defer to Finalize, since each needs a read-merge-write against existing
+// content rather than plain promotion, and return no Staged record.
 func (workspace *Workspace) Stage(
 	_ context.Context, project string, entry archive.Entry, resolutions map[string]string,
 ) ([]archive.Staged, error) {
@@ -154,16 +154,38 @@ func (workspace *Workspace) Stage(
 		return []archive.Staged{staged}, nil
 
 	case name == "config.json":
-		resolved, err := archive.ResolveEntryBytes(entry, resolutions)
+		resolved, err := resolveConfigEntryBytes(name, entry, resolutions)
 		if err != nil {
 			return nil, err
 		}
 		workspace.configBlock = resolved
 		return nil, nil
 
+	case name == "config-grants.json":
+		resolved, err := resolveConfigEntryBytes(name, entry, resolutions)
+		if err != nil {
+			return nil, err
+		}
+		workspace.configGrantsBlock = resolved
+		return nil, nil
+
 	default:
 		return nil, &UnknownArchiveEntryError{Name: name}
 	}
+}
+
+// resolveConfigEntryBytes resolves a buffered config-shaped entry and
+// refuses malformed JSON at staging, so a bad block aborts the import
+// before promotion instead of after earlier finalize writes have landed.
+func resolveConfigEntryBytes(name string, entry archive.Entry, resolutions map[string]string) ([]byte, error) {
+	resolved, err := archive.ResolveEntryBytes(entry, resolutions)
+	if err != nil {
+		return nil, err
+	}
+	if !gjson.ValidBytes(resolved) {
+		return nil, fmt.Errorf("invalid JSON in archive entry %q", name)
+	}
+	return resolved, nil
 }
 
 func stagedError(staged archive.Staged, err error) ([]archive.Staged, error) {
@@ -213,10 +235,10 @@ func stagedSessionUUID(relative string) (string, bool) {
 }
 
 // Finalize implements tool.Importer: it merges the accumulated history
-// append and config block, each idempotently, so a re-run of the same
-// import never duplicates a history line or re-splices an identical config
-// block differently. It also reports rules files that already reference the
-// imported project path.
+// append, config block, and config-grants block, each idempotently, so a
+// re-run of the same import never duplicates a history line or re-splices
+// an identical block differently. It also reports rules files that already
+// reference the imported project path.
 func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *archive.StagedSet) ([]string, error) {
 	if len(workspace.historyAppends) > 0 {
 		if err := workspace.finalizeHistory(); err != nil {
@@ -225,6 +247,11 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 	}
 	if workspace.configBlock != nil {
 		if err := workspace.finalizeConfig(project); err != nil {
+			return nil, err
+		}
+	}
+	if workspace.configGrantsBlock != nil {
+		if err := workspace.finalizeConfigGrants(project); err != nil {
 			return nil, err
 		}
 	}
@@ -414,6 +441,43 @@ func (workspace *Workspace) finalizeConfig(project string) error {
 	return nil
 }
 
+// finalizeConfigGrants splices the buffered config-grants block's
+// allowedTools value into the target project's ~/.claude.json entry. It runs
+// after finalizeConfig, so a selected grants category overrides the config
+// splice's destination-owned handling of the key. A grants block without the
+// key leaves the destination's value untouched, and re-running with the same
+// block against an unchanged destination is idempotent.
+func (workspace *Workspace) finalizeConfigGrants(project string) error {
+	if !gjson.ValidBytes(workspace.configGrantsBlock) {
+		return fmt.Errorf("invalid JSON in archive config-grants block")
+	}
+	grants := gjson.GetBytes(workspace.configGrantsBlock, allowedToolsKey)
+	if !grants.Exists() {
+		return nil
+	}
+	configPath := workspace.home.ConfigFile
+	existing, err := readExistingOrEmpty(configPath)
+	if err != nil {
+		return fmt.Errorf("read existing config for grants merge: %w", err)
+	}
+	existing, err = validatedConfigBytes(existing, configPath)
+	if err != nil {
+		return err
+	}
+	path := "projects." + rewrite.EscapeSJSONKey(project) + "." + allowedToolsKey
+	merged, err := sjson.SetRawBytes(existing, path, []byte(grants.Raw))
+	if err != nil {
+		return fmt.Errorf("splice %s into config file %q: %w", allowedToolsKey, configPath, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), dirPerm); err != nil {
+		return fmt.Errorf("create directories for %q: %w", configPath, err)
+	}
+	if err := rewrite.SafeWriteFile(configPath, merged, secretFilePerm); err != nil {
+		return fmt.Errorf("write config file: %w", err)
+	}
+	return nil
+}
+
 func readExistingOrEmpty(path string) ([]byte, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: trusted Home-derived path
 	if err != nil {
@@ -425,25 +489,47 @@ func readExistingOrEmpty(path string) ([]byte, error) {
 	return data, nil
 }
 
-// InvalidConfigJSONError reports that mergeProjectConfigBytes rejected
-// existingData because it is not valid JSON.
+// InvalidConfigJSONError reports that a config splice rejected the existing
+// config file because it is not valid JSON.
 type InvalidConfigJSONError struct {
 	Path string
+}
+
+// validatedConfigBytes returns existing ready for a splice: empty input
+// becomes an empty object, and invalid JSON is refused with
+// InvalidConfigJSONError naming configPath.
+func validatedConfigBytes(existing []byte, configPath string) ([]byte, error) {
+	if len(existing) == 0 {
+		return []byte(`{}`), nil
+	}
+	if !gjson.ValidBytes(existing) {
+		return nil, &InvalidConfigJSONError{Path: configPath}
+	}
+	return existing, nil
 }
 
 func (e *InvalidConfigJSONError) Error() string {
 	return fmt.Sprintf("invalid JSON in config file %q", e.Path)
 }
 
-// destinationOwnedProjectKeys are .claude.json project-block keys that record
-// the destination user's answers to Claude Code's approval prompts. Import
-// neither grants nor revokes them: incoming values are dropped and the
-// destination's existing values are preserved. Any approval gate Claude Code
-// adds later must be appended here.
+// allowedToolsKey is the .claude.json project-block key carrying Claude
+// Code's permission grants. Export splits it into the opt-in config-grants
+// entry, and the config splice treats it as destination-owned; only a
+// selected config-grants category ports it (finalizeConfigGrants).
+const allowedToolsKey = "allowedTools"
+
+// destinationOwnedProjectKeys are .claude.json project-block keys the config
+// splice never grants and never revokes: incoming values are dropped and the
+// destination's existing values are preserved. The three approval gates
+// record the destination user's answers to Claude Code's approval prompts;
+// any approval gate Claude Code adds later must be appended here.
+// allowedTools is destination-owned on this path too, and ports only through
+// the opt-in config-grants category's own splice.
 var destinationOwnedProjectKeys = []string{
 	"hasTrustDialogAccepted",
 	"hasClaudeMdExternalIncludesApproved",
 	"hasClaudeMdExternalIncludesWarningShown",
+	allowedToolsKey,
 }
 
 // mergeProjectConfigBytes returns the JSON bytes of existingData with
@@ -452,14 +538,15 @@ var destinationOwnedProjectKeys = []string{
 // three incoming destination-owned approval gates and preserves destination
 // values for them. Re-running against an unchanged destination is idempotent.
 func mergeProjectConfigBytes(existingData []byte, configPath, targetPath string, blockData []byte) ([]byte, error) {
-	if len(existingData) == 0 {
-		existingData = []byte(`{}`)
-	} else if !gjson.ValidBytes(existingData) {
-		return nil, &InvalidConfigJSONError{Path: configPath}
+	existingData, err := validatedConfigBytes(existingData, configPath)
+	if err != nil {
+		return nil, err
+	}
+	if !gjson.ValidBytes(blockData) {
+		return nil, fmt.Errorf("invalid JSON in archive config block for %q", targetPath)
 	}
 
 	path := "projects." + rewrite.EscapeSJSONKey(targetPath)
-	var err error
 	for _, key := range destinationOwnedProjectKeys {
 		blockData, err = sjson.DeleteBytes(blockData, key)
 		if err != nil {
