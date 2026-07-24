@@ -10,6 +10,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
@@ -92,6 +93,13 @@ func configTOMLProjectKeys(path string) ([]string, error) {
 // that does launch here.
 func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
 	return configTOMLMCPServers(filepath.Join(workspace.home.Dir, configTOMLFileName))
+}
+
+// ArchiveMCPServers implements tool.Importer: never any. Codex's MCP server
+// definitions live only in config.toml, which is never exported and never
+// imported, so no archive entry can carry one.
+func (workspace *Workspace) ArchiveMCPServers(archive.Entry, map[string]string) ([]tool.MCPServer, error) {
+	return nil, nil
 }
 
 // configTOMLMCPServers parses path's [mcp_servers] table into contract values

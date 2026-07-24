@@ -341,9 +341,9 @@ func (workspace *Workspace) exportConfig(sink *archive.Sink, result *tool.Export
 	if err != nil {
 		return fmt.Errorf("split %s out of config.json: %w", allowedToolsKey, err)
 	}
-	written, err := sink.WriteBytes("config.json", configData, time.Time{})
+	written, err := sink.WriteBytes(configEntryName, configData, time.Time{})
 	if err != nil {
-		return fmt.Errorf("write config.json: %w", err)
+		return fmt.Errorf("write %s: %w", configEntryName, err)
 	}
 	recordEntry(result, categoryConfig, written)
 	return nil

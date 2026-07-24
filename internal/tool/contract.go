@@ -145,6 +145,13 @@ type Importer interface {
 	// never an empty set.
 	MCPServers() ([]MCPServer, error)
 
+	// ArchiveMCPServers returns the MCP server definitions one archive entry
+	// carries, resolved through resolutions and sorted by name, so an import
+	// plan can name what an apply would configure. An entry that carries no
+	// definitions returns nil, including one this tool does not recognize:
+	// routing an entry to its destination is Stage's job, not this method's.
+	ArchiveMCPServers(entry archive.Entry, resolutions map[string]string) ([]MCPServer, error)
+
 	// Stage routes one archive entry (already stripped of its tool-prefix
 	// path segment) to its destination, streaming it through resolutions.
 	// Returns every artifact staged for atomic promotion; an entry whose

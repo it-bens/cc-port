@@ -81,6 +81,9 @@ func (*applyTestWorkspace) ImplicitAnchors(string) (map[string]string, error) {
 func (*applyTestWorkspace) MCPServers() ([]tool.MCPServer, error) {
 	return nil, errors.New("not exercised")
 }
+func (*applyTestWorkspace) ArchiveMCPServers(archive.Entry, map[string]string) ([]tool.MCPServer, error) {
+	return nil, errors.New("not exercised")
+}
 func (*applyTestWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, errors.New("not exercised")
 }

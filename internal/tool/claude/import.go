@@ -32,6 +32,11 @@ const homePathKey = "{{HOME}}"
 // target's encoded storage directory.
 const projectDirKey = "{{PROJECT_DIR}}"
 
+// configEntryName is the archive entry carrying one project's ~/.claude.json
+// block: written by exportConfig, spliced back by finalizeConfig, and read
+// without staging by ArchiveMCPServers.
+const configEntryName = "config.json"
+
 // filePerm is the mode used for files written during import that carry no
 // secrets. rw-r--r-- matches the permissions Claude Code itself writes for
 // project data files.
@@ -153,7 +158,7 @@ func (workspace *Workspace) Stage(
 		}
 		return []archive.Staged{staged}, nil
 
-	case name == "config.json":
+	case name == configEntryName:
 		resolved, err := resolveConfigEntryBytes(name, entry, resolutions)
 		if err != nil {
 			return nil, err

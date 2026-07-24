@@ -67,6 +67,10 @@ func (w *fakeWorkspace) MCPServers() ([]tool.MCPServer, error) {
 	return nil, errors.New("not exercised")
 }
 
+func (w *fakeWorkspace) ArchiveMCPServers(archive.Entry, map[string]string) ([]tool.MCPServer, error) {
+	return nil, errors.New("not exercised")
+}
+
 func (w *fakeWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, errors.New("not exercised")
 }

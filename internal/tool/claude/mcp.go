@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
@@ -38,6 +39,29 @@ func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
 		return nil, fmt.Errorf("unmarshal config file %q: %w", workspace.home.ConfigFile, err)
 	}
 	return decodeMCPServers(userConfig.MCPServers, workspace.home.ConfigFile)
+}
+
+// ArchiveMCPServers implements tool.Importer: the definitions carried by the
+// project block Finalize splices into ~/.claude.json. The block's mcpServers
+// are project-scope but launch with any session opened on the project, so the
+// plan reports them exactly as it reports user-scope ones.
+func (workspace *Workspace) ArchiveMCPServers(
+	entry archive.Entry, resolutions map[string]string,
+) ([]tool.MCPServer, error) {
+	if entry.Name != configEntryName {
+		return nil, nil
+	}
+	resolved, err := resolveConfigEntryBytes(entry.Name, entry, resolutions)
+	if err != nil {
+		return nil, err
+	}
+	var block struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(resolved, &block); err != nil {
+		return nil, fmt.Errorf("unmarshal archive entry %q: %w", entry.Name, err)
+	}
+	return decodeMCPServers(block.MCPServers, "archive entry "+entry.Name)
 }
 
 // decodeMCPServers turns a raw mcpServers map into contract values sorted by

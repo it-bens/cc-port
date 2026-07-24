@@ -119,9 +119,18 @@ func withAllLocks(targets []tool.Target, fn func() error) error {
 	})
 }
 
-func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, options *Options) (*Result, error) {
-	preflightPhase := options.Reporter.Phase("preflight", 0, progress.UnitItems)
+// archiveContent is one archive's manifest blocks and entries, both grouped
+// by tool and both already verified against the registry.
+type archiveContent struct {
+	entries       []archive.RawEntry
+	entriesByTool map[string][]archive.RawEntry
+	blocksByTool  map[string]manifest.Tool
+}
 
+// readArchive reads the manifest and the entry list and refuses either naming
+// a tool this binary does not register. DryRun and runLocked share it so a
+// plan cannot accept an archive the following apply refuses.
+func readArchive(allTools *tool.Set, options *Options) (*archiveContent, error) {
 	metadata, err := manifest.ReadManifestFromZip(options.Source, options.Size)
 	if err != nil {
 		return nil, fmt.Errorf("read metadata from archive: %w", err)
@@ -145,9 +154,23 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	if err := VerifyEntryTools(allTools, entries); err != nil {
 		return nil, err
 	}
-	entriesByTool := groupEntriesByTool(entries)
+	return &archiveContent{
+		entries:       entries,
+		entriesByTool: groupEntriesByTool(entries),
+		blocksByTool:  blocksByTool,
+	}, nil
+}
 
-	result, present, resolutionsByTool, err := preflightTargets(ctx, targets, options, blocksByTool, entriesByTool)
+func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, options *Options) (*Result, error) {
+	preflightPhase := options.Reporter.Phase("preflight", 0, progress.UnitItems)
+
+	content, err := readArchive(allTools, options)
+	if err != nil {
+		return nil, err
+	}
+	entries, entriesByTool := content.entries, content.entriesByTool
+
+	result, present, resolutionsByTool, err := preflightTargets(ctx, targets, options, content.blocksByTool, entriesByTool)
 	if err != nil {
 		return nil, err
 	}

@@ -22,6 +22,7 @@ import (
 // newImportCmd returns the import subcommand with closure-scoped flag locals.
 func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 	var (
+		apply          bool
 		fromManifest   string
 		passphraseEnv  string
 		passphraseFile string
@@ -29,7 +30,8 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "import <archive.zip> <target-path>",
 		Short: "Import a project from a cc-port ZIP archive",
-		Long:  "Imports project data across every selected tool from a ZIP archive into the given target path.",
+		Long: "Imports project data across every selected tool from a ZIP archive into the given " +
+			"target path. Dry-run by default; pass --apply to commit.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
 				return &usageError{err: err}
@@ -83,35 +85,16 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 				FromManifest: fromManifestMeta,
 			}
 
-			var result *importer.Result
-			if err := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
-				importOptions.Reporter = reporter
-				runResult, runErr := importer.Run(ctx, toolSet, targets, &importOptions)
-				if runErr != nil {
-					return fmt.Errorf("import: %w", runErr)
-				}
-				result = runResult
-				return nil
-			}); err != nil {
-				return err
+			if !apply {
+				return runImportDryRun(cmd, toolSet, targets, &importOptions)
 			}
-
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Imported to %s\n", targetPath); err != nil {
-				return fmt.Errorf("write success line: %w", err)
-			}
-			if len(result.SkippedTools) > 0 {
-				if _, err := fmt.Fprintf(
-					cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "),
-				); err != nil {
-					return fmt.Errorf("write skipped-tools note: %w", err)
-				}
-			}
-			if err := renderImportWarnings(cmd.ErrOrStderr(), targets, result.Warnings); err != nil {
-				return err
-			}
-			return nil
+			return runImportApply(cmd, toolSet, targets, &importOptions)
 		},
 	}
+	cmd.Flags().BoolVar(
+		&apply, "apply", false,
+		"commit the import (default is dry-run)",
+	)
 	cmd.Flags().StringVar(
 		&fromManifest, "from-manifest", "",
 		"path to a manifest XML file with pre-filled resolutions",
@@ -130,6 +113,48 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 
 	cmd.AddCommand(newImportManifestCmd())
 	return cmd
+}
+
+// runImportDryRun renders what an apply would commit and writes nothing. It
+// runs outside runWithProgress: the plan reports the same preflight the apply
+// path reports through its progress phases, and rendering to stdout while the
+// ledger holds the terminal in raw mode staircases every line.
+func runImportDryRun(cmd *cobra.Command, toolSet *tool.Set, targets []tool.Target, options *importer.Options) error {
+	plan, err := importer.DryRun(cmd.Context(), toolSet, targets, options)
+	if err != nil {
+		return fmt.Errorf("import: %w", err)
+	}
+	if err := plan.Render(cmd.OutOrStdout()); err != nil {
+		return fmt.Errorf("render plan: %w", err)
+	}
+	return nil
+}
+
+func runImportApply(cmd *cobra.Command, toolSet *tool.Set, targets []tool.Target, options *importer.Options) error {
+	var result *importer.Result
+	if err := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+		options.Reporter = reporter
+		runResult, runErr := importer.Run(ctx, toolSet, targets, options)
+		if runErr != nil {
+			return fmt.Errorf("import: %w", runErr)
+		}
+		result = runResult
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Imported to %s\n", options.TargetPath); err != nil {
+		return fmt.Errorf("write success line: %w", err)
+	}
+	if len(result.SkippedTools) > 0 {
+		if _, err := fmt.Fprintf(
+			cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "),
+		); err != nil {
+			return fmt.Errorf("write skipped-tools note: %w", err)
+		}
+	}
+	return renderImportWarnings(cmd.ErrOrStderr(), targets, result.Warnings)
 }
 
 func renderImportWarnings(stderr io.Writer, targets []tool.Target, warningsByTool map[string][]string) error {

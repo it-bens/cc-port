@@ -1,7 +1,10 @@
 // Package tool defines shared contracts for supported coding tools.
 package tool
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var (
 	// ErrToolAbsent reports that a tool has no state on this machine.
@@ -57,4 +60,13 @@ type MCPServer struct {
 	Command string
 	Args    []string
 	URL     string
+}
+
+// LaunchLine renders what the tool would run for this definition: the stdio
+// command with its arguments, or the HTTP transport's endpoint.
+func (server MCPServer) LaunchLine() string {
+	if server.Command == "" {
+		return server.URL
+	}
+	return strings.Join(append([]string{server.Command}, server.Args...), " ")
 }

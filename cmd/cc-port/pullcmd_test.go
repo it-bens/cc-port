@@ -234,6 +234,7 @@ func TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts(t *testing.T) {
 	importCmd.SetArgs([]string{
 		"import", archivePath, importTargetPath,
 		"--claude-home", importHomeDir,
+		"--apply",
 	})
 	require.NoError(t, importCmd.Execute(), "import must accept the same declared-but-unused placeholder")
 }

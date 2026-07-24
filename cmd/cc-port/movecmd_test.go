@@ -53,6 +53,9 @@ func (*codexOnlyWorkspace) ImplicitAnchors(string) (map[string]string, error) {
 func (*codexOnlyWorkspace) MCPServers() ([]tool.MCPServer, error) {
 	return nil, assert.AnError
 }
+func (*codexOnlyWorkspace) ArchiveMCPServers(archive.Entry, map[string]string) ([]tool.MCPServer, error) {
+	return nil, assert.AnError
+}
 func (*codexOnlyWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, assert.AnError
 }
