@@ -267,6 +267,26 @@ func TestMergeProjectConfigBytes_DropsIncomingApprovalGatesWhenDestinationProjec
 	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())
 }
 
+func TestMergeProjectConfigBytes_TreatsMetacharacterPathAsLiteralKey(t *testing.T) {
+	projectPath := "/Users/test/Projects/proj?v2"
+	siblingPath := "/Users/test/Projects/projxv2"
+	existing := []byte(`{"projects":{"/Users/test/Projects/projxv2":{"setting":"sibling"}}}`)
+	block := []byte(`{"setting":"ported"}`)
+
+	merged, err := mergeProjectConfigBytes(existing, "/fake/config", projectPath, block)
+
+	require.NoError(t, err)
+	var top struct {
+		Projects map[string]json.RawMessage `json:"projects"`
+	}
+	require.NoError(t, json.Unmarshal(merged, &top))
+	require.Contains(t, top.Projects, projectPath,
+		"a project path carrying a gjson/sjson metacharacter must be created as a literal key")
+	assert.JSONEq(t, `{"setting":"ported"}`, string(top.Projects[projectPath]))
+	assert.JSONEq(t, `{"setting":"sibling"}`, string(top.Projects[siblingPath]),
+		"a sibling project the unescaped wildcard would match must stay untouched")
+}
+
 func TestFinalizeConfigGrants_SplicesIncomingAllowedToolsOverDestination(t *testing.T) {
 	projectPath := "/Users/test/Projects/granted"
 	workspace := newMergeTestWorkspace(t)
@@ -323,6 +343,24 @@ func TestFinalizeConfigGrants_EmptyBlockLeavesDestinationUntouched(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, existing, got,
 		"a grants block without allowedTools must leave the destination byte-identical")
+}
+
+func TestFinalizeConfigGrants_SplicesOntoMetacharacterPath(t *testing.T) {
+	projectPath := "/Users/test/Projects/@scope/issue#42"
+	workspace := newMergeTestWorkspace(t)
+	workspace.configGrantsBlock = []byte(`{"allowedTools":["Bash(go:*)"]}`)
+
+	require.NoError(t, workspace.finalizeConfigGrants(projectPath))
+
+	merged, err := os.ReadFile(workspace.home.ConfigFile)
+	require.NoError(t, err)
+	var top struct {
+		Projects map[string]json.RawMessage `json:"projects"`
+	}
+	require.NoError(t, json.Unmarshal(merged, &top))
+	require.Contains(t, top.Projects, projectPath,
+		"the grants splice must create the literal metacharacter key instead of silently dropping the write")
+	assert.JSONEq(t, `{"allowedTools":["Bash(go:*)"]}`, string(top.Projects[projectPath]))
 }
 
 func TestFinalize_ConfigGrantsSpliceWinsOverDestinationOwnedHandling(t *testing.T) {
