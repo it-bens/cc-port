@@ -115,43 +115,8 @@ func TestRun_ReRunDoesNotDuplicateHistoryLines(t *testing.T) {
 // below the CLI. A real Codex CLI process is itself valid witness evidence, so
 // cmd-level Codex import tests must refuse rather than weakening the witness.
 func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
-	sharedProject := codex.FixtureProjectPath()
-	claudeSource := testutil.SetupFixture(t)
 	claudeTool, codexTool := claude.New(), codex.New()
-
-	moveResult, err := move.Apply(t.Context(), []tool.Target{{
-		Tool: claudeTool, Workspace: claude.NewWorkspace(claudeSource),
-	}}, move.Options{OldPath: testutil.FixtureProjectPath(), NewPath: sharedProject, RefsOnly: true})
-	require.NoError(t, err)
-	require.False(t, moveResult.Failed())
-
-	codexSource := codex.SetupFixture(t)
-	claudeSelection := map[string]bool{"sessions": true}
-	codexSelection := map[string]bool{"sessions": true}
-	claudeWorkspace := claude.NewWorkspace(claudeSource)
-	codexWorkspace := quietCodexWorkspace(codexSource)
-	claudePlaceholders, err := claudeWorkspace.Placeholders(sharedProject, claudeSelection)
-	require.NoError(t, err)
-	codexPlaceholders, err := codexWorkspace.Placeholders(sharedProject, codexSelection)
-	require.NoError(t, err)
-
-	var archiveBytes bytes.Buffer
-	_, err = export.Run(t.Context(), []tool.Target{
-		{Tool: claudeTool, Workspace: claudeWorkspace},
-		{Tool: codexTool, Workspace: codexWorkspace},
-	}, &export.Options{
-		ProjectPath: sharedProject,
-		Output:      &archiveBytes,
-		Selected: map[string]map[string]bool{
-			claudeTool.Name(): claudeSelection,
-			codexTool.Name():  codexSelection,
-		},
-		Placeholders: map[string][]manifest.Placeholder{
-			claudeTool.Name(): claudePlaceholders,
-			codexTool.Name():  codexPlaceholders,
-		},
-	})
-	require.NoError(t, err)
+	body, sharedProject := buildMultiToolArchive(t)
 
 	claudeDestination := blankHome(t)
 	codexDestinationDir := filepath.Join(t.TempDir(), "dotcodex")
@@ -161,7 +126,7 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 	codexDestination := &codex.Home{Dir: codexDestinationDir, SQLiteDir: codexDestinationDir}
 
 	registry := tool.NewSet(claudeTool, codexTool)
-	reader := bytes.NewReader(archiveBytes.Bytes())
+	reader := bytes.NewReader(body)
 	result, err := importer.Run(t.Context(), registry, []tool.Target{
 		{Tool: claudeTool, Workspace: claude.NewWorkspace(claudeDestination)},
 		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
@@ -180,6 +145,50 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 	assert.Equal(t, config, actualConfig, "Codex config.toml must remain byte-identical")
 	require.NotEmpty(t, result.Warnings[codexTool.Name()])
 	assert.Contains(t, result.Warnings[codexTool.Name()][0], "threads sidecar row(s) could not be applied")
+}
+
+// buildMultiToolArchive exports one project both tools know about, so an
+// archive carries a Claude block and a Codex block. It re-keys the Claude
+// fixture onto Codex's fixture project path, which is the only project both
+// staged trees share.
+func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
+	t.Helper()
+	sharedProject = codex.FixtureProjectPath()
+	claudeSource := testutil.SetupFixture(t)
+	claudeTool, codexTool := claude.New(), codex.New()
+
+	moveResult, err := move.Apply(t.Context(), []tool.Target{{
+		Tool: claudeTool, Workspace: claude.NewWorkspace(claudeSource),
+	}}, move.Options{OldPath: testutil.FixtureProjectPath(), NewPath: sharedProject, RefsOnly: true})
+	require.NoError(t, err)
+	require.False(t, moveResult.Failed())
+
+	selection := map[string]bool{"sessions": true}
+	claudeWorkspace := claude.NewWorkspace(claudeSource)
+	codexWorkspace := quietCodexWorkspace(codex.SetupFixture(t))
+	claudePlaceholders, err := claudeWorkspace.Placeholders(sharedProject, selection)
+	require.NoError(t, err)
+	codexPlaceholders, err := codexWorkspace.Placeholders(sharedProject, selection)
+	require.NoError(t, err)
+
+	var archiveBytes bytes.Buffer
+	_, err = export.Run(t.Context(), []tool.Target{
+		{Tool: claudeTool, Workspace: claudeWorkspace},
+		{Tool: codexTool, Workspace: codexWorkspace},
+	}, &export.Options{
+		ProjectPath: sharedProject,
+		Output:      &archiveBytes,
+		Selected: map[string]map[string]bool{
+			claudeTool.Name(): selection,
+			codexTool.Name():  selection,
+		},
+		Placeholders: map[string][]manifest.Placeholder{
+			claudeTool.Name(): claudePlaceholders,
+			codexTool.Name():  codexPlaceholders,
+		},
+	})
+	require.NoError(t, err)
+	return archiveBytes.Bytes(), sharedProject
 }
 
 func quietCodexWorkspace(home *codex.Home) *codex.Workspace {

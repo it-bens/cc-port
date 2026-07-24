@@ -59,8 +59,9 @@ func TestMCPServersRefusesUnparseableConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "mcp_servers")
 }
 
-// Codex resolves a table naming both launch keys to the stdio command, so
-// reporting the url would describe a server it never opens.
+// Codex refuses a table naming both launch keys outright, so no transport
+// report is faithful. cc-port reports the command, the key Codex tries first,
+// rather than failing a whole plan over one malformed table.
 func TestMCPServersResolvesConflictingTransportToStdio(t *testing.T) {
 	workspace := workspaceWithConfig(t, "[mcp_servers.ambiguous]\ncommand = \"node\"\nurl = \"https://mcp.example.invalid/search\"\n")
 

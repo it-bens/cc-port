@@ -128,8 +128,8 @@ type archiveContent struct {
 }
 
 // readArchive reads the manifest and the entry list and refuses either naming
-// a tool this binary does not register. DryRun and runLocked share it so a
-// plan cannot accept an archive the following apply refuses.
+// a tool this binary does not register. DryRun and runLocked share it so both
+// paths refuse the same archives.
 func readArchive(allTools *tool.Set, options *Options) (*archiveContent, error) {
 	metadata, err := manifest.ReadManifestFromZip(options.Source, options.Size)
 	if err != nil {

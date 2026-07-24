@@ -17,6 +17,7 @@ import (
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
 func TestDryRun_LeavesTheDestinationUntouched(t *testing.T) {
@@ -135,6 +136,60 @@ func TestDryRun_FailsWhenTheDestinationConfigCannotBeRead(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read destination MCP servers for claude")
+}
+
+// Every present target contributes its own plan entry and its own MCP
+// comparison, so a plan over more than one tool exercises each adapter's
+// destination read rather than only the first tool's.
+func TestDryRun_ReportsEveryPresentTool(t *testing.T) {
+	body, projectPath := buildMultiToolArchive(t)
+	claudeTool, codexTool := claude.New(), codex.New()
+	codexDestination := codexHomeWithConfig(t, "model = \"gpt-5-fixture\"\n")
+
+	plan, err := importer.DryRun(t.Context(), tool.NewSet(claudeTool, codexTool), []tool.Target{
+		{Tool: claudeTool, Workspace: claude.NewWorkspace(blankHome(t))},
+		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
+	}, &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: projectPath,
+		Caps:       archive.DefaultCaps(),
+	})
+	require.NoError(t, err)
+
+	names := make([]string, 0, len(plan.Tools))
+	for _, toolPlan := range plan.Tools {
+		names = append(names, toolPlan.Name)
+	}
+	assert.Equal(t, []string{"claude", "codex"}, names)
+	assert.Empty(t, plan.SkippedTools)
+}
+
+func codexHomeWithConfig(t *testing.T, config string) *codex.Home {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "dotcodex")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte(config), 0o600))
+	return &codex.Home{Dir: dir, SQLiteDir: dir}
+}
+
+// Scanning archive bodies for MCP definitions is a decompression read like any
+// other, so it counts against the aggregate budget rather than running outside
+// it. A small cap here exercises the same branch the production 4 GiB cap
+// guards.
+func TestDryRun_CountsMCPClassificationReadsAgainstTheAggregateCap(t *testing.T) {
+	body, projectPath := buildArchive(t)
+
+	_, err := importer.DryRun(t.Context(), claudeToolSet(), claudeTargets(blankHome(t)), &importer.Options{
+		Source:     bytes.NewReader(body),
+		Size:       int64(len(body)),
+		TargetPath: projectPath,
+		Caps:       archive.Caps{MaxEntryBytes: archive.DefaultCaps().MaxEntryBytes, MaxAggregateBytes: 64},
+	})
+
+	require.Error(t, err)
+	var capErr *archive.AggregateCapError
+	assert.ErrorAs(t, err, &capErr)
 }
 
 func TestRenderMCPServers_NamesEachDefinitionWithItsLaunchLine(t *testing.T) {

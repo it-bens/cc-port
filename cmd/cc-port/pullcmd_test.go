@@ -134,6 +134,40 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	}
 }
 
+// failingWriter fails every write, standing in for a stdout an operator never
+// sees.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, assert.AnError }
+
+// The plan is the consent point for the MCP server definitions a pull would
+// configure, so it renders before ExecutePull writes. A plan the operator
+// could not be shown must therefore leave the target untouched, which is the
+// one consequence of that ordering an automated run can observe.
+func TestPull_ApplyWritesNothingWhenThePlanCannotRender(t *testing.T) {
+	tmpHome, _ := setupCmdFixture(t)
+	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+
+	rootCmd := newRootCmd(noopBanner{})
+	rootCmd.SetOut(failingWriter{})
+	rootCmd.SetArgs([]string{
+		"pull", "myproj",
+		"--claude-home", claudeFixtureDir,
+		"--to", targetPath,
+		"--remote", url,
+		"--apply",
+	})
+
+	require.Error(t, rootCmd.Execute())
+
+	resolved, err := tool.ResolveProjectPath(targetPath)
+	require.NoError(t, err)
+	assert.NoDirExists(t, filepath.Join(claudeFixtureDir, "projects", claude.EncodePath(resolved)))
+}
+
 func TestPull_ApplyRendersToolWarnings(t *testing.T) {
 	tmpHome, _ := setupCmdFixture(t)
 	claudeFixtureDir := filepath.Join(tmpHome, "dotclaude")

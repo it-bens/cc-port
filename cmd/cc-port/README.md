@@ -170,9 +170,9 @@ with `cmd.SetOut` / `cmd.SetErr` per invocation. Bare `fmt.Printf`,
 ## Tests
 
 `importcmd_test.go` in this package tests cobra wiring on the `import` and
-`import manifest` subcommands (passphrase flags, manifest output guard) and
-drives the real command to pin that a bare `import` leaves the destination
-home untouched while `--apply` populates it.
+`import manifest` subcommands (passphrase flags, manifest output guard). It
+also drives the real command twice: a bare `import` must leave the destination
+home untouched, and `--apply` must populate it.
 `category_selection_test.go` pins the `--from-manifest` exclusivity rule
 across `--all` and `--include`. `toolselect_test.go` pins `resolveTargets`'s
 sweep semantics: an explicitly selected but undetected tool hard-fails with

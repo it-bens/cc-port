@@ -170,16 +170,16 @@ Caller: `cmd/cc-port`.
 
 `cc-port import` plans by default and commits under `--apply`. `DryRun` runs
 the manifest, entry-tool, category, anchor, resolution, and staging-directory
-gates `runLocked` runs before its first write. A plan therefore cannot accept
-an archive the following apply refuses. It takes no lock, because it writes
-nothing.
+gates `runLocked` runs before its first write. An archive those gates refuse
+therefore never reaches an apply. It takes no lock, because it writes nothing.
 
 The plan's new-MCP section is the consent point for the launch consequence of
 an import. An imported MCP server definition starts with every session the
 tool opens afterwards. The plan names each definition the destination does not
-already declare, with the command line the tool would run for it. "New"
-compares the definition's name against the set `Workspace.MCPServers` returns.
-The plan neither gates nor filters what an apply then writes.
+already declare, with the command line the tool would run for it.
+
+"New" compares the definition's name against the set `Workspace.MCPServers`
+returns. The plan neither gates nor filters what an apply then writes.
 
 #### Handled
 
@@ -207,6 +207,9 @@ The plan neither gates nor filters what an apply then writes.
 
 - A definition whose name the destination already declares with different
   launch details. The plan reports it as neither new nor changed.
+- Refusals a tool's own `Stage` raises, such as an archive entry name no
+  adapter recognizes. `DryRun` stops at the gates above and never stages, so
+  an archive can pass a plan and still fail its apply.
 
 ### Placeholder handling
 

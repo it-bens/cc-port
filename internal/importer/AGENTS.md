@@ -8,6 +8,7 @@
 - Route manifest category validation through `manifest.ApplyToolCategories`. Hard-fail on an archive entry whose leading path segment names an unregistered tool (README §Import contract and `internal/manifest/README.md` §Category manifest).
 - A registered tool absent from the manifest is reported and skipped; do not treat it as a hard failure (README §Import contract).
 - Keep `DryRun` write-free and lock-free, and route it through the same preflight gates `runLocked` runs (README §Plan surface).
+- Never reach `Stage` or `Finalize` from `DryRun`; both write (README §Plan surface).
 
 ## Navigation
 

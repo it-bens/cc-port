@@ -141,8 +141,9 @@ type Importer interface {
 	// MCPServers returns the MCP server definitions this destination already
 	// configures, sorted by name, so an import plan can report which of an
 	// archive's definitions are new here. A configuration source that is
-	// absent declares none; one that exists but cannot be read is an error,
-	// never an empty set.
+	// absent declares none; one that exists but cannot be read or parsed is
+	// an error, never an empty set, because reporting a destination as
+	// declaring nothing presents every archived definition as new.
 	MCPServers() ([]MCPServer, error)
 
 	// ArchiveMCPServers returns the MCP server definitions one archive entry
@@ -150,6 +151,8 @@ type Importer interface {
 	// plan can name what an apply would configure. An entry that carries no
 	// definitions returns nil, including one this tool does not recognize:
 	// routing an entry to its destination is Stage's job, not this method's.
+	// An entry this tool does recognize but cannot parse is an error, under
+	// the same rule.
 	ArchiveMCPServers(entry archive.Entry, resolutions map[string]string) ([]MCPServer, error)
 
 	// Stage routes one archive entry (already stripped of its tool-prefix

@@ -96,7 +96,9 @@ cc-port export manifest /Users/me/project --output /tmp/project.xml
 
 `cc-port import <archive.zip> <target-path> [--apply] [--tool <name>]`
 
-Apply an archive to `<target-path>`, across every tool the archive has data for. Dry-run by default. `--apply` commits the import. Non-implicit placeholders are resolved via `--from-manifest`. Each tool supplies its own implicit keys (Claude: `{{PROJECT_PATH}}`, `{{HOME}}`, `{{PROJECT_DIR}}`; Codex: `{{CODEX_HOME}}`, `{{CODEX_PROJECT_PATH}}`). A user-supplied resolution for an implicit key is refused with `ImplicitKeyOverrideError`.
+Apply an archive to `<target-path>`, across every tool the archive has data for. Dry-run by default; `--apply` commits the import.
+
+Non-implicit placeholders are resolved via `--from-manifest`. Each tool supplies its own implicit keys (Claude: `{{PROJECT_PATH}}`, `{{HOME}}`, `{{PROJECT_DIR}}`; Codex: `{{CODEX_HOME}}`, `{{CODEX_PROJECT_PATH}}`). A user-supplied resolution for an implicit key is refused with `ImplicitKeyOverrideError`.
 
 The dry-run prints the target, each tool's categories and entry counts, and every MCP server definition the archive carries that the destination does not already declare, each with the command line the tool would run for it. Those servers start with every session once imported, so read that list before passing `--apply`.
 

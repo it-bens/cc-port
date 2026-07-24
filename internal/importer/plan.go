@@ -40,10 +40,11 @@ type MCPServerSet struct {
 	Servers []tool.MCPServer
 }
 
-// DryRun runs every gate Run runs before its first write — manifest and entry
+// DryRun runs the gates Run runs before its first write — manifest and entry
 // tool verification, per-tool category validation, anchor resolution,
 // resolution merging, and the unresolved-reference check — then reports what
-// an apply would commit. It takes no lock and writes nothing.
+// an apply would commit. It takes no lock and writes nothing, so it never
+// reaches the refusals a tool's own Stage raises.
 func DryRun(ctx context.Context, allTools *tool.Set, targets []tool.Target, options *Options) (*Plan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("canceled: %w", err)
