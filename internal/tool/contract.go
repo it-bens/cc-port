@@ -138,6 +138,13 @@ type Importer interface {
 	// resolutions for these keys are refused.
 	ImplicitAnchors(project string) (map[string]string, error)
 
+	// MCPServers returns the MCP server definitions this destination already
+	// configures, sorted by name, so an import plan can report which of an
+	// archive's definitions are new here. A configuration source that is
+	// absent declares none; one that exists but cannot be read is an error,
+	// never an empty set.
+	MCPServers() ([]MCPServer, error)
+
 	// Stage routes one archive entry (already stripped of its tool-prefix
 	// path segment) to its destination, streaming it through resolutions.
 	// Returns every artifact staged for atomic promotion; an entry whose

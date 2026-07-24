@@ -63,6 +63,10 @@ func (w *fakeWorkspace) ImplicitAnchors(string) (map[string]string, error) {
 	return nil, errors.New("not exercised")
 }
 
+func (w *fakeWorkspace) MCPServers() ([]tool.MCPServer, error) {
+	return nil, errors.New("not exercised")
+}
+
 func (w *fakeWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, errors.New("not exercised")
 }

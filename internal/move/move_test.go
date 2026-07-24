@@ -78,6 +78,9 @@ func (*applyTestWorkspace) PreflightDirs(string) []string { return nil }
 func (*applyTestWorkspace) ImplicitAnchors(string) (map[string]string, error) {
 	return nil, errors.New("not exercised")
 }
+func (*applyTestWorkspace) MCPServers() ([]tool.MCPServer, error) {
+	return nil, errors.New("not exercised")
+}
 func (*applyTestWorkspace) Stage(context.Context, string, archive.Entry, map[string]string) ([]archive.Staged, error) {
 	return nil, errors.New("not exercised")
 }

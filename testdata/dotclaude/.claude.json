@@ -9,6 +9,16 @@
   "lastOnboardingVersion": "2.1.0",
   "numStartups": 42,
   "theme": "dark",
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
+    "docs": {
+      "type": "http",
+      "url": "https://mcp.example.invalid/docs"
+    }
+  },
   "projects": {
     "/Users/test/Projects/myproject": {
       "allowedTools": ["Bash(git:*)", "Bash(go test:*)", "WebFetch(domain:pkg.go.dev)"],

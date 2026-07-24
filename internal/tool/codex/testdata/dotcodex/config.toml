@@ -1,6 +1,15 @@
 # Fixture config.toml — synthetic, not copied from a real ~/.codex.
 model = "gpt-5-fixture"
 
+[mcp_servers.filesystem]
+command = "node"
+args = ["--enable-source-maps", "/opt/mcp/filesystem-server.js"]
+env = { FS_ROOT = "/opt/mcp/root" }
+
+[mcp_servers.search]
+url = "https://mcp.example.invalid/search"
+bearer_token_env_var = "FIXTURE_MCP_TOKEN"
+
 [projects."/Users/fixture/codexproject"]
 trust_level = "trusted"
 

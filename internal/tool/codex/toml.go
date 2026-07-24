@@ -81,6 +81,63 @@ func configTOMLProjectKeys(path string) ([]string, error) {
 	return keys, nil
 }
 
+// MCPServers implements tool.Importer: the MCP server definitions
+// config.toml declares on this machine, sorted by name. A missing config.toml
+// declares none; one that exists but cannot be read or parsed is an error,
+// never an empty set.
+//
+// Only config.toml itself is read, not the <profile>.config.toml overlays
+// discoverConfigTOMLFiles walks. A definition an unread overlay already
+// declares merely reports as new; the opposite error would hide a definition
+// that does launch here.
+func (workspace *Workspace) MCPServers() ([]tool.MCPServer, error) {
+	return configTOMLMCPServers(filepath.Join(workspace.home.Dir, configTOMLFileName))
+}
+
+// configTOMLMCPServers parses path's [mcp_servers] table into contract values
+// sorted by name. A missing file contributes none. A command wins over a url,
+// mirroring how Codex itself resolves the transport it will use
+// (config/src/mcp_types.rs, TryFrom for RawMcpServerConfig), so a table naming
+// both is never reported as an HTTP server Codex would not open.
+func configTOMLMCPServers(path string) ([]tool.MCPServer, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled config discovery
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var config struct {
+		MCPServers map[string]struct {
+			Command string   `toml:"command"`
+			Args    []string `toml:"args"`
+			URL     string   `toml:"url"`
+		} `toml:"mcp_servers"`
+	}
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("parse %s mcp_servers: %w", path, err)
+	}
+	if len(config.MCPServers) == 0 {
+		return nil, nil
+	}
+	names := make([]string, 0, len(config.MCPServers))
+	for name := range config.MCPServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	servers := make([]tool.MCPServer, 0, len(names))
+	for _, name := range names {
+		definition := config.MCPServers[name]
+		server := tool.MCPServer{Name: name, URL: definition.URL}
+		if definition.Command != "" {
+			server = tool.MCPServer{Name: name, Command: definition.Command, Args: definition.Args}
+		}
+		servers = append(servers, server)
+	}
+	return servers, nil
+}
+
 // configTOMLKnowsProject reports whether any config.toml/profile file has a
 // [projects] key matching project, using the same equality-or-/-boundary
 // predicate pathMatchesProject applies to thread and rollout cwds. This

@@ -23,10 +23,15 @@ type SessionFile struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// UserConfig is the top-level structure of ~/.claude.json.
+// UserConfig is the top-level structure of ~/.claude.json. MCPServers holds
+// the user-scope MCP server definitions, keyed by the name Claude Code
+// registers each under; a nil map means the file declares none. Each
+// definition stays raw so a round trip preserves the keys cc-port does not
+// model (env, headers, transport type).
 type UserConfig struct {
-	Projects map[string]json.RawMessage `json:"projects"`
-	Extra    map[string]json.RawMessage `json:"-"`
+	Projects   map[string]json.RawMessage `json:"projects"`
+	MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	Extra      map[string]json.RawMessage `json:"-"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler for HistoryEntry,
@@ -100,16 +105,28 @@ func (userConfig *UserConfig) UnmarshalJSON(data []byte) error {
 		}
 		delete(userConfig.Extra, "projects")
 	}
+	if value, ok := userConfig.Extra["mcpServers"]; ok {
+		if err := json.Unmarshal(value, &userConfig.MCPServers); err != nil {
+			return err
+		}
+		delete(userConfig.Extra, "mcpServers")
+	}
 	return nil
 }
 
 // MarshalJSON implements json.Marshaler for UserConfig,
-// merging Extra fields back into the output.
+// merging Extra fields back into the output. A nil MCPServers is omitted
+// rather than written, normalizing an explicit "mcpServers": null to an
+// absent key — the two say the same thing, and writing the key back onto
+// the far more common config that never had it would be the worse loss.
 func (userConfig UserConfig) MarshalJSON() ([]byte, error) {
-	merged := make(map[string]any, len(userConfig.Extra)+1)
+	merged := make(map[string]any, len(userConfig.Extra)+2)
 	for key, value := range userConfig.Extra {
 		merged[key] = value
 	}
 	merged["projects"] = userConfig.Projects
+	if userConfig.MCPServers != nil {
+		merged["mcpServers"] = userConfig.MCPServers
+	}
 	return json.Marshal(merged)
 }

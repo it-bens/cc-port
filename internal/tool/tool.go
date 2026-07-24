@@ -45,3 +45,16 @@ type ActiveWriter struct {
 	Pid int
 	Cwd string
 }
+
+// MCPServer is one MCP server definition a tool launches at session start,
+// under the key it is registered by. Exactly one transport is populated: a
+// stdio definition carries Command and Args, an HTTP-transport definition
+// carries URL. Which one a tool's raw definition means is the adapter's
+// decision, so a definition that names both never reaches a consumer as a
+// hybrid of the two.
+type MCPServer struct {
+	Name    string
+	Command string
+	Args    []string
+	URL     string
+}
