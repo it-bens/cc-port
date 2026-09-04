@@ -3,25 +3,25 @@ module github.com/it-bens/cc-port
 go 1.26.5
 
 require (
-	charm.land/bubbles/v2 v2.1.1
-	charm.land/bubbletea/v2 v2.0.8
+	charm.land/bubbles/v2 v2.2.1
+	charm.land/bubbletea/v2 v2.0.9
 	charm.land/huh/v2 v2.0.3
-	charm.land/lipgloss/v2 v2.0.5
-	filippo.io/age v1.3.1
-	github.com/aws/aws-sdk-go-v2 v1.43.3
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.33
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.3
-	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260803091719-3755ebad01b1
+	charm.land/lipgloss/v2 v2.0.6
+	filippo.io/age v1.3.2
+	github.com/aws/aws-sdk-go-v2 v1.46.0
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.3
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.111.0
+	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260902165432-6f6ad8b37b0a
 	github.com/charmbracelet/x/term v0.2.2
-	github.com/gofrs/flock v0.13.0
+	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.19.0
 	github.com/tidwall/sjson v1.2.5
 	gocloud.dev v0.46.0
-	modernc.org/sqlite v1.55.0
+	modernc.org/sqlite v1.58.0
 )
 
 require (
