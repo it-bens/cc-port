@@ -26,6 +26,12 @@
       "matchManagers": ["gomod"],
       "matchDepTypes": ["indirect"],
       "enabled": true
+    },
+    {
+      "description": "libc is ccgo's runtime: its version must come from modernc.org/sqlite's go.mod, never from the tag list. Renovate's @v2 probe otherwise offers an abandoned 2024-02 branch as a major upgrade.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["modernc.org/libc", "modernc.org/libc/v2"],
+      "enabled": false
     }
   ]
 }
