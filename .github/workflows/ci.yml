@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
   schedule:
     # Weekly govulncheck canary; skipped per-PR to keep review noise low.
     - cron: "17 6 * * 1"
@@ -48,8 +49,8 @@ jobs:
     # Scan deps against vuln.go.dev on the weekly cron only. Per-PR runs
     # would surface unreachable-vuln false positives and add review noise;
     # the cron is the canary for newly disclosed advisories hitting pinned
-    # deps between pushes.
-    if: github.event_name == 'schedule'
+    # deps between pushes. workflow_dispatch re-checks a bump on demand.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
