@@ -20,6 +20,12 @@
       "matchManagers": ["gomod"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "go modules (non-major)"
+    },
+    {
+      "description": "Indirect updates are off by default; the govulncheck canary scans the linked binary, so a stale indirect module turns it red.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "enabled": true
     }
   ]
 }
