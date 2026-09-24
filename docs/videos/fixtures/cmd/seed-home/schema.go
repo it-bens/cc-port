@@ -37,22 +37,6 @@ CREATE TABLE backfill_state (
 	last_watermark TEXT,
 	last_success_at INTEGER,
 	updated_at INTEGER NOT NULL
-);
-CREATE TABLE agent_jobs (
-	id TEXT PRIMARY KEY,
-	name TEXT NOT NULL,
-	status TEXT NOT NULL,
-	instruction TEXT NOT NULL,
-	output_schema_json TEXT,
-	input_headers_json TEXT NOT NULL,
-	input_csv_path TEXT NOT NULL,
-	output_csv_path TEXT NOT NULL,
-	auto_export INTEGER NOT NULL DEFAULT 1,
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL,
-	started_at INTEGER,
-	completed_at INTEGER,
-	last_error TEXT
 );`
 
 const memoriesDatabaseSchema = `
@@ -117,15 +101,6 @@ func insertStateRows(database *sql.DB, projectPath string, now int64) error {
 	if _, err := database.ExecContext(context.Background(), `INSERT INTO backfill_state (id, status, last_watermark, last_success_at, updated_at)
 		VALUES (?, ?, ?, ?, ?)`, 1, "complete", rolloutRelative, backfillEpoch, backfillEpoch); err != nil {
 		return fmt.Errorf("insert backfill state row: %w", err)
-	}
-	inputCSVPath := projectPath + "/data/input.csv"
-	outputCSVPath := projectPath + "/data/output.csv"
-	if _, err := database.ExecContext(context.Background(), `INSERT INTO agent_jobs
-		(id, name, status, instruction, input_headers_json, input_csv_path, output_csv_path, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		"job-1", "fixture-job", "completed", "process rows", `["col"]`,
-		inputCSVPath, outputCSVPath, now, now); err != nil {
-		return fmt.Errorf("insert agent jobs row: %w", err)
 	}
 	return nil
 }

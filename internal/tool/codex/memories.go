@@ -91,7 +91,7 @@ func countMemoriesDBReadOnly(database *sql.DB, oldPath string) (int, error) {
 // rewriteStage1TextColumns matches startDatabaseRewrites' shared callback
 // signature (ctx, path); neither is used here since sqlrewrite.RewriteTextColumn
 // takes no context and stage1_outputs' free-text columns carry no cwd
-// canonicalization concern (unlike threads.cwd, see rewriteThreadsAndAgentJobsWithPlan).
+// canonicalization concern (unlike threads.cwd, see rewriteThreadsWithPlan).
 func rewriteStage1TextColumns(
 	_ context.Context, _ string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string,
 ) (int, error) {

@@ -37,8 +37,8 @@ func startStateDBRewritesWithPlan(
 	ctx context.Context, sqliteDir, oldPath, newPath string, plans stateDBRewritePlans, undo *tool.Restorer,
 ) (databaseRewrites, int, error) {
 	return startDatabaseRewrites(ctx, sqliteDir, stateDBGlob, oldPath, newPath,
-		func(ctx context.Context, path string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string) (int, error) {
-			return rewriteThreadsAndAgentJobsWithPlan(ctx, database, transaction, plans[path], oldPath, newPath)
+		func(ctx context.Context, path string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, _, _ string) (int, error) {
+			return rewriteThreadsWithPlan(ctx, database, transaction, plans[path])
 		}, undo)
 }
 

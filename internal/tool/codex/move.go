@@ -178,8 +178,8 @@ func sqlDatabaseSurface(
 
 func (workspace *Workspace) stateDBSurfaceWithPlans(req tool.MoveRequest, pending *pendingMoveDatabases, plans stateDBRewritePlans) tool.Surface {
 	return sqlDatabaseSurface("state-db", req,
-		func(ctx context.Context, oldPath, newPath string) (int, error) {
-			return countStateDB(ctx, workspace.home.SQLiteDir, oldPath, newPath)
+		func(ctx context.Context, oldPath, _ string) (int, error) {
+			return countStateDB(ctx, workspace.home.SQLiteDir, oldPath)
 		},
 		func(ctx context.Context, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
 			return startStateDBRewritesWithPlan(ctx, workspace.home.SQLiteDir, oldPath, newPath, plans, undo)
