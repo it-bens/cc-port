@@ -29,9 +29,7 @@ func TestCountStateDBReadOnlyUsesByteExactThreadPredicate(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
 	transaction, err := rewriter.Begin()
 	require.NoError(t, err)
-	applied, err := rewriteThreadsAndAgentJobsWithPlan(
-		context.Background(), rewriter, transaction, rewrites, FixtureProjectPath(), "/Users/fixture/renamed-project",
-	)
+	applied, err := rewriteThreadsWithPlan(context.Background(), rewriter, transaction, rewrites)
 	require.NoError(t, err)
 	require.NoError(t, transaction.Commit())
 
@@ -45,13 +43,12 @@ func TestCountStateDBReadOnlyUsesByteExactThreadPredicate(t *testing.T) {
 // row alongside a byte-different, collation-equal upper-case row, so a
 // predicate that trusted the column's declared collation instead of forcing
 // COLLATE BINARY would wrongly count or rewrite both. id is a declared
-// primary key because rewriteThreadsAndAgentJobsWithPlan now rewrites
-// matched rows by primary key (spec §5.1), matching the real threads schema
+// primary key because rewriteThreadsWithPlan rewrites matched rows by
+// primary key (spec §5.1), matching the real threads schema
 // (buildFixtureStateDB), which always declares one.
 func createStateDBNoCaseFixture(database *sql.DB, oldPath string) error {
 	if _, err := database.ExecContext(context.Background(), `
 		CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT COLLATE NOCASE);
-		CREATE TABLE agent_jobs (id INTEGER PRIMARY KEY, input_csv_path TEXT, output_csv_path TEXT);
 	`); err != nil {
 		return err
 	}

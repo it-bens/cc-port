@@ -14,23 +14,16 @@ import (
 // rollout_path, archived_at, title. Only cwd is rewritten by move; archived_at
 // and title are read-only context the threads sidecar exports alongside them.
 const (
-	threadsTable             = "threads"
-	threadsCwdColumn         = "cwd"
-	threadsIDColumn          = "id"
-	agentJobsTable           = "agent_jobs"
-	agentJobsIDColumn        = "id"
-	agentJobsInputCSVColumn  = "input_csv_path"
-	agentJobsOutputCSVColumn = "output_csv_path"
+	threadsTable     = "threads"
+	threadsCwdColumn = "cwd"
+	threadsIDColumn  = "id"
 )
 
 // stateDBKnowsProject reports whether any discovered state_*.sqlite
 // database has a thread whose cwd canonically matches oldPath (see
-// matchingThreadCWDs). agent_jobs free-text columns use
-// sqlrewrite.CountTextColumnRO for boundary-aware path counting. This runs
-// from MoveSurfaces's project-identity preflight (move.go's projectKnown),
-// which tool.Mover.MoveSurfaces receives no context for, so the scan below
-// is not cancellable;
-// see README §cwd matching.
+// matchingThreadCWDs). This runs from MoveSurfaces's project-identity
+// preflight (move.go's projectKnown), which tool.Mover.MoveSurfaces receives
+// no context for, so the scan below is not cancellable.
 func stateDBKnowsProject(sqliteDir, oldPath string) (bool, error) {
 	databases, err := discoverDatabases(sqliteDir, stateDBGlob)
 	if err != nil {
@@ -63,14 +56,12 @@ func stateDBFileKnowsProject(path, oldPath string) (bool, error) {
 }
 
 // countStateDB reports how many occurrences a move would rewrite across
-// every discovered state_*.sqlite database: threads.cwd plus any
-// agent_jobs path column that references the project path. threads.cwd goes
-// through the same matchingThreadCWDs computation Apply's rewrite uses, so
-// the two can never disagree; the free-text agent_jobs columns are scanned
-// through sqlrewrite.CountTextColumnRO so their boundary-aware path matches
-// agree with Apply's rewrite logic. ctx comes from the stateDBSurfaceWithPlans
-// Plan closure (move.go), so this path is cancellable.
-func countStateDB(ctx context.Context, sqliteDir, oldPath, newPath string) (int, error) {
+// every discovered state_*.sqlite database: the threads rows whose cwd
+// references the project path. The count goes through the same
+// matchingThreadCWDs computation Apply's rewrite uses, so the two can never
+// disagree. ctx comes from the stateDBSurfaceWithPlans Plan closure
+// (move.go), so this path is cancellable.
+func countStateDB(ctx context.Context, sqliteDir, oldPath string) (int, error) {
 	databases, err := discoverDatabases(sqliteDir, stateDBGlob)
 	if err != nil {
 		return 0, err
@@ -80,7 +71,7 @@ func countStateDB(ctx context.Context, sqliteDir, oldPath, newPath string) (int,
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		count, err := countStateDBFile(ctx, path, oldPath, newPath)
+		count, err := countStateDBFile(ctx, path, oldPath)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", path, err)
 		}
@@ -89,7 +80,7 @@ func countStateDB(ctx context.Context, sqliteDir, oldPath, newPath string) (int,
 	return total, nil
 }
 
-func countStateDBFile(ctx context.Context, path, oldPath, _ string) (int, error) {
+func countStateDBFile(ctx context.Context, path, oldPath string) (int, error) {
 	database, err := openReadOnlyDatabase(path)
 	if err != nil {
 		return 0, err
@@ -104,16 +95,6 @@ func countStateDBReadOnly(ctx context.Context, database *sql.DB, oldPath string)
 	if err != nil {
 		return 0, fmt.Errorf("count threads.cwd: %w", err)
 	}
-	for _, column := range []string{agentJobsInputCSVColumn, agentJobsOutputCSVColumn} {
-		if err := ctx.Err(); err != nil {
-			return 0, err
-		}
-		count, err := sqlrewrite.CountTextColumnRO(database, agentJobsTable, column, oldPath)
-		if err != nil {
-			return 0, fmt.Errorf("count agent_jobs.%s: %w", column, err)
-		}
-		total += count
-	}
 	return total, nil
 }
 
@@ -122,7 +103,7 @@ func countStateDBReadOnly(ctx context.Context, database *sql.DB, oldPath string)
 // paths_match_after_normalization comparator (spec §5.1), mirrored in Go
 // because symlink resolution cannot be expressed as a SQL predicate. This
 // applies only to a column holding a single verbatim cwd value per row;
-// agent_jobs' and automations' free-text or multi-value columns stay on
+// automations.cwds, a multi-value column, stays on
 // sqlrewrite.CountTextColumnRO's boundary-aware substring scan instead.
 // DISTINCT is forced to COLLATE BINARY so a column declared with a
 // case-insensitive collation cannot fold two byte-different stored values
@@ -359,13 +340,12 @@ func matchingThreadRewrites(ctx context.Context, path, oldPath, newPath string) 
 	return rewrites, nil
 }
 
-// rewriteThreadsAndAgentJobsWithPlan rewrites threads.cwd for every row in
-// rewrites — a canonical-match plan stateDBRewritePlansForProject captured
-// during preflight, before any selected tool's apply could have removed
-// oldPath from disk (spec §5.1) — by primary key through UpdateColumnsByKey,
-// plus agent_jobs' free-text path columns.
-func rewriteThreadsAndAgentJobsWithPlan(
-	ctx context.Context, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, rewrites []threadCWDRewrite, oldPath, newPath string,
+// rewriteThreadsWithPlan rewrites threads.cwd for every row in rewrites — a
+// canonical-match plan stateDBRewritePlansForProject captured during
+// preflight, before any selected tool's apply could have removed oldPath from
+// disk (spec §5.1) — by primary key through UpdateColumnsByKey.
+func rewriteThreadsWithPlan(
+	ctx context.Context, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, rewrites []threadCWDRewrite,
 ) (int, error) {
 	count := 0
 	for _, threadRewrite := range rewrites {
@@ -378,13 +358,6 @@ func rewriteThreadsAndAgentJobsWithPlan(
 			return 0, fmt.Errorf("rewrite %s.%s for id %s: %w", threadsTable, threadsCwdColumn, threadRewrite.id, err)
 		}
 		count += updated
-	}
-	for _, column := range []string{agentJobsInputCSVColumn, agentJobsOutputCSVColumn} {
-		rewritten, err := database.RewriteTextColumn(transaction, agentJobsTable, agentJobsIDColumn, column, oldPath, newPath)
-		if err != nil {
-			return 0, fmt.Errorf("rewrite agent_jobs.%s: %w", column, err)
-		}
-		count += rewritten
 	}
 	return count, nil
 }

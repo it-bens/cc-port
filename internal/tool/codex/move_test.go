@@ -769,25 +769,16 @@ func createCodexDevDatabase(t *testing.T, home *Home, insertStatement string) {
 	require.NoError(t, err)
 }
 
-func TestCountStateDBReadOnlyFailsForMissingAgentJobsColumn(t *testing.T) {
+func TestCountStateDBReadOnlyFailsForMissingThreadsCwdColumn(t *testing.T) {
 	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "state.sqlite"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = database.Close() })
-	_, err = database.ExecContext(context.Background(), `
-		CREATE TABLE threads (cwd TEXT NOT NULL);
-		CREATE TABLE agent_jobs (id INTEGER PRIMARY KEY, input_csv_path TEXT);
-	`)
+	_, err = database.ExecContext(context.Background(), `CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT);`)
 	require.NoError(t, err)
 
 	_, err = countStateDBReadOnly(context.Background(), database, FixtureProjectPath())
 
-	require.Error(t, err)
-	// sqlrewrite.CountTextColumnRO now performs this schema check (previously
-	// the codex-local countTextRows/requireTableColumn did), so the failure
-	// carries sqlrewrite's schema-error shape: table name, missing column,
-	// and the observed schema with types and primary-key markers.
-	require.ErrorContains(t, err, `unexpected schema for table "agent_jobs": missing column "output_csv_path"`)
-	require.ErrorContains(t, err, "observed id INTEGER primary-key-1, input_csv_path TEXT")
+	require.ErrorContains(t, err, "count threads.cwd: required column threads.cwd is missing (observed columns: id, title)")
 }
 
 func TestFinalDatabaseSurfaceLeavesBackupAsWarningWhenCleanupFails(t *testing.T) {

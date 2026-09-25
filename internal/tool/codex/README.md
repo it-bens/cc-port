@@ -332,8 +332,8 @@ shapes themselves.
   when either side's `canonicalize()` fails, with no lexical-clean step.
   cc-port resolves its project argument via
   `fsutil.ResolveExistingAncestor`, a full `filepath.EvalSymlinks`;
-  without it, a symlink-aliased project directory left its rollout, thread
-  row, and agent-job references invisible to export, stats, and move.
+  without it, a symlink-aliased project directory left its rollout and
+  thread row invisible to export, stats, and move.
   cc-port's own comparator, `canonicalizePath`, resolves symlinks when a
   path exists and falls back to `filepath.Clean` otherwise (spec §5.1); a
   stored cwd with unresolved `..` can therefore compare differently under
@@ -621,8 +621,7 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
 
 ## Quirks
 
-- `agent_jobs`' `input_csv_path`/`output_csv_path` columns and
-  `stage1_outputs`' `raw_memory`/`rollout_summary` columns are free-text
+- `stage1_outputs`' `raw_memory`/`rollout_summary` columns are free-text
   prose, not path-shaped columns, so they route through
   `sqlrewrite.RewriteTextColumn` (boundary-aware byte rewrite per row).
   `threads.cwd` is matched and rewritten differently: see §cwd matching.
