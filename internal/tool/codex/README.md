@@ -42,7 +42,7 @@ shapes themselves.
   reports `tool.ErrToolAbsent` for a missing default location rather than
   fabricating a `Workspace` over state that was never written.
 - `Home.SQLiteDir` mirrors Codex's three-tier resolution
-  (`core/src/config/mod.rs:3669-3674`): the `sqlite_home` key in
+  (`core/src/config/mod.rs:3996-4001`): the `sqlite_home` key in
   `config.toml`, then `$CODEX_SQLITE_HOME`, then the home directory itself.
   A relative `sqlite_home` value resolves against the home directory; a
   relative `$CODEX_SQLITE_HOME` resolves against the process's current
@@ -88,14 +88,14 @@ shapes themselves.
   missing directory as "no databases found," not an error.
 - Resolving `Home.SQLiteDir` against the profile a past Codex session
   actually used. Codex selects a profile-v2 overlay only from the runtime
-  `--profile` flag (`config/src/state.rs:38-53`,
-  `core/src/config/mod.rs:1755-1763`, `resolve_profile_v2_config_path`) and
+  `--profile` flag (`cli/src/main.rs:2354-2381`,
+  `core/src/config/mod.rs:1979-1987`, `resolve_profile_v2_config_path`) and
   persists neither the profile name nor its resolved `sqlite_home` anywhere
   Codex itself reads back: not in `config.toml`'s own `profile` key, an
-  unrelated legacy mechanism Codex 0.144.5 refuses to start with at all
-  when present (`core/src/config/mod.rs:3047-3054`); not in any
+  unrelated legacy mechanism Codex refuses to start with at all
+  when present (`core/src/config/mod.rs:3319-3326`); not in any
   `state/migrations/*.sql` column; and not in `SessionMeta` or
-  `TurnContextItem` (`protocol/src/protocol.rs:3014-3062,3209-3252`). No
+  `TurnContextItem` (`protocol/src/protocol.rs:3117-3186,3287-3344`). No
   later tool can determine which profile, if any, wrote the state on disk,
   so `Home.SQLiteDir` always resolves against base `config.toml`, matching
   Codex's own behavior with no `--profile` flag.
@@ -133,7 +133,7 @@ shapes themselves.
   (`state_*.sqlite`, `memories_*.sqlite`, `goals_*.sqlite`, `logs_*.sqlite`)
   rather than a literal filename, because Codex's own generation suffix can
   bump (`state_5.sqlite` today; a future binary may write `state_6.sqlite`,
-  per `state/src/lib.rs:97-100`). `discoverDatabases` returns every match in
+  per `state/src/sqlite.rs:29-33`). `discoverDatabases` returns every match in
   sorted order; every move surface, count, and stats method iterates that
   full match set rather than assuming exactly one file per family.
 - The fixture builder deliberately writes `state_5.sqlite` and
@@ -158,16 +158,16 @@ shapes themselves.
 **Handled.**
 
 - Rollouts live under two physical roots: `sessions/YYYY/MM/DD/` and the flat
-  `archived_sessions/` (`rollout/src/lib.rs:21-22`); archiving physically
+  `archived_sessions/` (`rollout/src/lib.rs:84-85`); archiving physically
   renames the file from one root to the other
-  (`thread-store/src/local/archive_thread.rs:41-53`). `rolloutRoots` walks
+  (`thread-store/src/local/archive_thread.rs:118-131`). `rolloutRoots` walks
   both roots for `discoverRolloutFiles`, so every rollout surface (move
   rewrite, export, residual scanning) sees the same combined file set
   regardless of which root a given rollout currently sits under.
 - `discoverRolloutFiles` returns one file per LOGICAL rollout: when both
   `X.jsonl` and a crash-window `X.jsonl.zst` sibling exist, only the plain
   file is kept, mirroring Codex's own walker
-  (`rollout/src/compression.rs:141-163,941-943`). Move rewrite, export,
+  (`rollout/src/compression.rs:201-229,1284-1286`). Move rewrite, export,
   `projectRollouts`, `knowsProject`, and stats all consume this deduplicated
   form.
 - After sibling suppression, `discoverRolloutFiles` refuses every remaining
@@ -243,7 +243,7 @@ shapes themselves.
   `O_APPEND` (`os.O_RDWR|os.O_CREATE|os.O_APPEND`) and never renames or
   replaces it. `appendUniqueHistory` deduplicates by `(session_id,
   timestamp, text)`. Codex timestamps `history.jsonl` at whole-second
-  precision (`message-history/src/lib.rs:121-125`), so two distinct prompts
+  precision (`message-history/src/lib.rs:127-131`), so two distinct prompts
   submitted to one thread within the same wall-clock second need `text` in
   the key to survive as separate lines instead of collapsing into one on
   import. `appendUniqueExact` deduplicates by exact line match. Both
@@ -258,7 +258,7 @@ shapes themselves.
   mid-session.
 - For `session_index.jsonl`, the inode-cache rationale does not apply:
   Codex's own writer holds only a process-local mutex, not a file lock
-  (`SESSION_INDEX_LOCK`, `rollout/src/session_index.rs:20`), and its reader
+  (`SESSION_INDEX_LOCK`, `rollout/src/session_index.rs:22`), and its reader
   re-opens the file and scans from the end on every lookup, with no
   persisted offset to invalidate. Appending in place still matters here for
   a different reason: with no shared lock, a temp-and-rename rewrite built

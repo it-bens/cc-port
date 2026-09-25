@@ -178,7 +178,7 @@ func TestProfileSQLiteHomeWarning_EmptyWhenNoOverlayDeclaresSQLiteHome(t *testin
 
 // TestProfileSQLiteHomeWarning_ReportsDivergentOverlay guards the fail-loud
 // path for finding H2: Codex's active --profile selection is a runtime CLI
-// argument never recorded in config.toml (core/src/config/mod.rs:3047-3054
+// argument never recorded in config.toml (core/src/config/mod.rs:3319-3326
 // refuses to start Codex at all when a legacy `profile` key is present), so
 // resolveSQLiteDir can never determine which profile, if any, was active
 // for the state currently on disk and always resolves against base

@@ -8,7 +8,7 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
-// Rollout root subdirectories (rollout/src/lib.rs:21-22).
+// Rollout root subdirectories (rollout/src/lib.rs:84-85).
 const (
 	sessionsSubdir         = "sessions"
 	archivedSessionsSubdir = "archived_sessions"

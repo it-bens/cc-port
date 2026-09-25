@@ -16,7 +16,8 @@ import (
 )
 
 // configProfileSuffix names a per-profile config overlay, which can carry
-// its own [projects] table (core/src/config/mod.rs:273, 1757-1763).
+// its own [projects] table (core/src/config/mod.rs:265, 1979-1987,
+// config/src/config_toml.rs:455).
 const configProfileSuffix = ".config.toml"
 
 // discoverConfigTOMLFiles returns config.toml (if present) followed by
