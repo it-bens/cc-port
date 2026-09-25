@@ -190,8 +190,8 @@ func (workspace *Workspace) stateDBSurfaceWithPlans(req tool.MoveRequest, pendin
 
 func (workspace *Workspace) memoriesDBSurface(req tool.MoveRequest, pending *pendingMoveDatabases) tool.Surface {
 	return sqlDatabaseSurface("memories-db", req,
-		func(ctx context.Context, oldPath, newPath string) (int, error) {
-			return countMemoriesDB(ctx, workspace.home.SQLiteDir, oldPath, newPath)
+		func(ctx context.Context, oldPath, _ string) (int, error) {
+			return countMemoriesDB(ctx, workspace.home.SQLiteDir, oldPath)
 		},
 		func(ctx context.Context, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
 			return startMemoriesDBRewrites(ctx, workspace.home.SQLiteDir, oldPath, newPath, undo)
@@ -276,51 +276,63 @@ func (workspace *Workspace) rolloutsSurfaceWithPlans(req tool.MoveRequest, plans
 	}
 }
 
+// memoriesWorktreeSurface covers every root in memoriesWorktreeSubdirs under
+// one "memories-worktree" surface, summing counts and staging one backup per
+// root that needs its git baseline invalidated (sibling roots, per
+// memory_version.rs:16, keep independent rollback).
 func (workspace *Workspace) memoriesWorktreeSurface(req tool.MoveRequest, pending *pendingMoveDatabases) tool.Surface {
-	root := filepath.Join(workspace.home.Dir, memoriesWorktreeSubdir)
+	var roots []string
+	for _, subdir := range memoriesWorktreeSubdirs {
+		roots = append(roots, filepath.Join(workspace.home.Dir, subdir))
+	}
 	return tool.Surface{
 		Name: "memories-worktree",
 		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
 			if err := ctx.Err(); err != nil {
 				return tool.SurfaceResult{}, err
 			}
-			count, err := planMemoriesWorktree(root, req.OldPath)
-			return tool.SurfaceResult{Count: count}, err
+			total := 0
+			for _, root := range roots {
+				count, err := planMemoriesWorktree(root, req.OldPath)
+				if err != nil {
+					return tool.SurfaceResult{}, err
+				}
+				total += count
+			}
+			return tool.SurfaceResult{Count: total}, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
-			if err := reconcileStrandedGitBackup(root); err != nil {
-				return tool.SurfaceResult{}, err
+			total := 0
+			var backups []string
+			for _, root := range roots {
+				if err := reconcileStrandedGitBackup(root); err != nil {
+					return tool.SurfaceResult{Count: total}, err
+				}
+				count, err := applyMemoriesWorktree(ctx, root, req.OldPath, req.NewPath, undo)
+				if err != nil {
+					return tool.SurfaceResult{Count: total}, err
+				}
+				total += count
+				backup, err := moveGitBaselineToBackup(root, req.NewPath, undo)
+				if err != nil {
+					return tool.SurfaceResult{Count: total}, err
+				}
+				if backup != "" {
+					backups = append(backups, backup)
+				}
 			}
-			count, err := applyMemoriesWorktree(ctx, root, req.OldPath, req.NewPath, undo)
-			if err != nil {
-				return tool.SurfaceResult{}, err
-			}
-			// Gate baseline invalidation on the PERSISTENT post-rewrite worktree
-			// state, not this run's transient rewrite count (finding A6): on a
-			// convergent re-run the worktree already holds newPath from an
-			// earlier, interrupted apply, so this run's own count is zero even
-			// though the baseline is still stale relative to newPath.
-			reflectsNewPath, err := worktreeReferences(root, req.NewPath)
-			if err != nil {
-				return tool.SurfaceResult{Count: count}, err
-			}
-			if !reflectsNewPath {
-				return tool.SurfaceResult{Count: count}, nil
-			}
-			backup, err := moveGitBaselineToBackup(root, undo)
-			if err != nil {
-				return tool.SurfaceResult{Count: count}, err
-			}
-			pending.gitBackup = backup
-			return tool.SurfaceResult{Count: count}, nil
+			pending.gitBackup = backups
+			return tool.SurfaceResult{Count: total}, nil
 		},
 	}
 }
 
 // moveGitBaselineToBackup renames root/.git to a sibling backup only when
-// hasNoRemoteGitBaseline confirms the shape probe. commitSurface removes the
-// backup after every database transaction commits.
-func moveGitBaselineToBackup(root string, undo *tool.Restorer) (string, error) {
+// hasNoRemoteGitBaseline confirms the shape probe and the rewritten worktree
+// references newPath. It returns "" when either gate leaves the baseline in
+// place. commitSurface removes the backup after every database transaction
+// commits.
+func moveGitBaselineToBackup(root, newPath string, undo *tool.Restorer) (string, error) {
 	if _, err := os.Stat(filepath.Join(root, gitDirName)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil
@@ -332,6 +344,19 @@ func moveGitBaselineToBackup(root string, undo *tool.Restorer) (string, error) {
 		return "", err
 	}
 	if !safe {
+		return "", nil
+	}
+	// Gate on the PERSISTENT post-rewrite worktree state, not this run's
+	// transient rewrite count (finding A6): on a convergent re-run the
+	// worktree already holds newPath from an earlier, interrupted apply, so
+	// this run's own count is zero even though the baseline is still stale
+	// relative to newPath. The walk reads every worktree file, so it sits
+	// behind the cheap probe above.
+	reflectsNewPath, err := worktreeReferences(root, newPath)
+	if err != nil {
+		return "", err
+	}
+	if !reflectsNewPath {
 		return "", nil
 	}
 	gitPath := filepath.Join(root, gitDirName)
@@ -400,12 +425,14 @@ func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, er
 		warnings = append(warnings, agentsWarning)
 	}
 
-	gitWarning, err := memoriesGitBaselineWarning(filepath.Join(workspace.home.Dir, memoriesWorktreeSubdir))
-	if err != nil {
-		return warnings, err
-	}
-	if gitWarning != "" {
-		warnings = append(warnings, gitWarning)
+	for _, subdir := range memoriesWorktreeSubdirs {
+		gitWarning, err := memoriesGitBaselineWarning(filepath.Join(workspace.home.Dir, subdir), req.OldPath, req.NewPath)
+		if err != nil {
+			return warnings, err
+		}
+		if gitWarning != "" {
+			warnings = append(warnings, gitWarning)
+		}
 	}
 
 	goalsWarning, err := goalsWarning(workspace.home.SQLiteDir)
@@ -424,12 +451,14 @@ func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, er
 		warnings = append(warnings, codexDevWarning)
 	}
 
-	backupWarning, err := gitBackupWarning(filepath.Join(workspace.home.Dir, memoriesWorktreeSubdir, gitDirName+gitBackupSuffix))
-	if err != nil {
-		return warnings, err
-	}
-	if backupWarning != "" {
-		warnings = append(warnings, backupWarning)
+	for _, subdir := range memoriesWorktreeSubdirs {
+		backupWarning, err := gitBackupWarning(filepath.Join(workspace.home.Dir, subdir, gitDirName+gitBackupSuffix))
+		if err != nil {
+			return warnings, err
+		}
+		if backupWarning != "" {
+			warnings = append(warnings, backupWarning)
+		}
 	}
 
 	sqliteHomeWarning, err := profileSQLiteHomeWarning(workspace.home, workspace.getenv)
@@ -580,7 +609,15 @@ func marketplaceUnparseableWarning(agentsDir string) (string, error) {
 	return "~/.agents/plugins/marketplace.json is not valid JSON; left untouched", nil
 }
 
-func memoriesGitBaselineWarning(root string) (string, error) {
+// memoriesGitBaselineWarning reports whether root's remote-carrying .git
+// baseline was left in place. ResidualWarnings runs both before Apply (a
+// dry-run preview) and after, so the worktree clause depends on which path
+// the worktree holds: newPath means a rewrite landed (post-apply, including
+// a convergent re-run whose earlier interrupted apply already wrote newPath —
+// see worktreeReferences), oldPath alone means the rewrite is still pending
+// (pre-apply). A root the moved project never touched, in either phase, gets
+// the shorter warning.
+func memoriesGitBaselineWarning(root, oldPath, newPath string) (string, error) {
 	if _, err := os.Stat(filepath.Join(root, gitDirName)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil
@@ -594,5 +631,23 @@ func memoriesGitBaselineWarning(root string) (string, error) {
 	if safe {
 		return "", nil
 	}
-	return "memories/.git carries a remote and was left in place; its worktree contents were rewritten", nil
+	rewritten, err := worktreeReferences(root, newPath)
+	if err != nil {
+		return "", err
+	}
+	if rewritten {
+		return fmt.Sprintf(
+			"%s/.git carries a remote and was left in place; its worktree contents were rewritten", filepath.Base(root),
+		), nil
+	}
+	pending, err := worktreeReferences(root, oldPath)
+	if err != nil {
+		return "", err
+	}
+	if pending {
+		return fmt.Sprintf(
+			"%s/.git carries a remote and was left in place; its worktree contents are still to be rewritten", filepath.Base(root),
+		), nil
+	}
+	return fmt.Sprintf("%s/.git carries a remote and was left in place", filepath.Base(root)), nil
 }

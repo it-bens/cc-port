@@ -69,6 +69,40 @@ func TestMoveSurfacesDryRunApplyCountParity(t *testing.T) {
 	assert.Positive(t, planCounts["agents-marketplace"])
 }
 
+// TestMoveSurfacesRewritesBothMemoryWorktreeRoots guards that the
+// "memories-worktree" surface covers memories_v2/ alongside memories/: both
+// roots carry the fixture's project reference, so both must be rewritten to
+// newPath and neither may retain oldPath.
+func TestMoveSurfacesRewritesBothMemoryWorktreeRoots(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project", DeepRewrite: true}
+
+	planAndApply(t, workspace, req)
+
+	v1Data, err := os.ReadFile(filepath.Join(home.Dir, memoriesWorktreeSubdir, "raw_memories.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(v1Data), req.NewPath)
+	assert.NotContains(t, string(v1Data), req.OldPath)
+
+	v2SummaryData, err := os.ReadFile(
+		filepath.Join(home.Dir, memoriesWorktreeV2Subdir, "rollout_summaries", "2026-07-17T10-00-00-a1b2.md"),
+	)
+	require.NoError(t, err)
+	assert.Contains(t, string(v2SummaryData), req.NewPath, "the memories_v2 worktree root must be rewritten alongside memories/")
+	assert.NotContains(t, string(v2SummaryData), req.OldPath)
+
+	v2MemorySummaryData, err := os.ReadFile(filepath.Join(home.Dir, memoriesWorktreeV2Subdir, "memory_summary.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(v2MemorySummaryData), req.NewPath)
+	assert.NotContains(t, string(v2MemorySummaryData), req.OldPath)
+
+	// v2 never writes raw_memories.md: memories/write/src/phase2.rs's
+	// sync_phase2_workspace_inputs calls rebuild_raw_memories_file_from_memories
+	// only for MemoryVersion::V1.
+	_, statErr := os.Stat(filepath.Join(home.Dir, memoriesWorktreeV2Subdir, "raw_memories.md"))
+	assert.True(t, os.IsNotExist(statErr), "memories_v2/ must never carry raw_memories.md")
+}
+
 func TestMoveSurfacesRolloutPlanApplyCountParity(t *testing.T) {
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project", DeepRewrite: true}
@@ -322,6 +356,50 @@ func TestMemoriesWorktreeGitBaselineRestoresAfterLaterFailure(t *testing.T) {
 	assert.NoDirExists(t, gitDir+".cc-port-rollback.tmp")
 }
 
+// TestMemoriesWorktreeSurfaceApply_V2FailureRestoresBothRoots guards
+// cross-root rollback: memories/ is rewritten and its baseline moved to
+// backup first (it sorts before memories_v2 in memoriesWorktreeSubdirs),
+// then memories_v2/'s apply fails partway through its own worktree walk.
+// Restoring after that failure must put BOTH roots back exactly as found:
+// memories/'s rewritten file and its invalidated baseline, and
+// memories_v2/'s own already-rewritten file, not just the root that failed.
+func TestMemoriesWorktreeSurfaceApply_V2FailureRestoresBothRoots(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	v1RawMemories := filepath.Join(home.Dir, memoriesWorktreeSubdir, "raw_memories.md")
+	originalV1, err := os.ReadFile(v1RawMemories) //nolint:gosec // G304: fixture path is test-controlled
+	require.NoError(t, err)
+	v1GitDir := filepath.Join(home.Dir, memoriesWorktreeSubdir, gitDirName)
+
+	v2MemorySummary := filepath.Join(home.Dir, memoriesWorktreeV2Subdir, "memory_summary.md")
+	originalV2, err := os.ReadFile(v2MemorySummary) //nolint:gosec // G304: fixture path is test-controlled
+	require.NoError(t, err)
+	// worktreeFiles walks memory_summary.md before rollout_summaries/ (lexical
+	// order), so making the rollout summary unreadable lets memory_summary.md
+	// get rewritten first, leaving real partial state in memories_v2/ to roll
+	// back once the walk fails on this file.
+	unreadable := filepath.Join(home.Dir, memoriesWorktreeV2Subdir, "rollout_summaries", "2026-07-17T10-00-00-a1b2.md")
+	require.NoError(t, os.Chmod(unreadable, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
+
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	undo := tool.NewRestorer()
+	pending := &pendingMoveDatabases{removeAll: os.RemoveAll}
+
+	_, err = workspace.memoriesWorktreeSurface(req, pending).Apply(context.Background(), undo)
+	require.Error(t, err, "the unreadable memories_v2 file must fail the surface apply")
+
+	require.NoError(t, undo.Restore())
+
+	restoredV1, err := os.ReadFile(v1RawMemories) //nolint:gosec // G304: fixture path is test-controlled
+	require.NoError(t, err)
+	assert.Equal(t, originalV1, restoredV1, "memories/'s rewritten file must be restored")
+	assert.DirExists(t, v1GitDir, "memories/'s invalidated baseline must be restored back in place")
+
+	restoredV2, err := os.ReadFile(v2MemorySummary) //nolint:gosec // G304: fixture path is test-controlled
+	require.NoError(t, err)
+	assert.Equal(t, originalV2, restoredV2, "memories_v2/'s already-rewritten file must be restored too")
+}
+
 func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
 	homeDir := filepath.Join(t.TempDir(), "dotcodex")
 	root := filepath.Join(homeDir, memoriesWorktreeSubdir)
@@ -338,6 +416,30 @@ func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
 	assert.DirExists(t, gitDir)
 }
 
+// TestMemoriesWorktreeSurface_AbsentV2RootTreatedLikeAbsentSurface guards
+// that an absent memories_v2/ root is tolerated exactly like an absent
+// memories/ root is today: a legitimate "surface not present", never an
+// error, and never fabricated on disk.
+func TestMemoriesWorktreeSurface_AbsentV2RootTreatedLikeAbsentSurface(t *testing.T) {
+	homeDir := filepath.Join(t.TempDir(), "dotcodex")
+	root := filepath.Join(homeDir, memoriesWorktreeSubdir)
+	require.NoError(t, os.MkdirAll(root, 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "raw_memories.md"), []byte("Notes about "+FixtureProjectPath()+".\n"), 0o600,
+	))
+	workspace := NewWorkspace(&Home{Dir: homeDir, SQLiteDir: homeDir}, fakeGetenv(nil), noProcesses)
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	undo := tool.NewRestorer()
+	pending := &pendingMoveDatabases{removeAll: os.RemoveAll}
+
+	count, err := workspace.memoriesWorktreeSurface(req, pending).Apply(context.Background(), undo)
+
+	require.NoError(t, err, "an absent memories_v2/ root must not error")
+	assert.Equal(t, 1, count.Count, "only the present memories/ root contributes to the count")
+	_, statErr := os.Stat(filepath.Join(homeDir, memoriesWorktreeV2Subdir))
+	assert.True(t, os.IsNotExist(statErr), "no memories_v2/ directory is fabricated for an absent root")
+}
+
 // TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline guards finding
 // A6: a convergent re-run whose rewrite already happened in an earlier,
 // interrupted apply has THIS run's own rewrite count at zero (the
@@ -350,8 +452,7 @@ func TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline(t *testing.T) {
 	homeDir := filepath.Join(t.TempDir(), "dotcodex")
 	root := filepath.Join(homeDir, memoriesWorktreeSubdir)
 	gitDir := filepath.Join(root, gitDirName)
-	require.NoError(t, os.MkdirAll(gitDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n\trepositoryformatversion = 0\n"), 0o600))
+	buildFixtureMemoriesGitBaseline(t, root, fixtureGitConfigNoRemote)
 	newPath := "/Users/fixture/renamed-project"
 	// A local-only (no remote) baseline, and a worktree file already
 	// rewritten by an earlier, interrupted apply: it holds newPath, not
@@ -374,31 +475,122 @@ func TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline(t *testing.T) {
 func TestMemoriesWorktreeGitBaselineLeftInPlaceWithRemote(t *testing.T) {
 	root := t.TempDir()
 	gitDir := filepath.Join(root, gitDirName)
-	require.NoError(t, os.MkdirAll(gitDir, 0o750))
-	configWithRemote := "[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = https://example.invalid/repo.git\n"
-	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte(configWithRemote), 0o600))
+	buildFixtureMemoriesGitBaseline(t, root, fixtureGitConfigWithRemote)
+	newPath := "/Users/fixture/renamed-project"
+	// The worktree already references newPath, so the remote is the only
+	// gate that can keep the baseline in place.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "raw_memories.md"), []byte("Notes about "+newPath+".\n"), 0o600))
 
 	safe, err := hasNoRemoteGitBaseline(root)
 
 	require.NoError(t, err)
 	assert.False(t, safe)
 
-	_, err = moveGitBaselineToBackup(root, tool.NewRestorer())
+	_, err = moveGitBaselineToBackup(root, newPath, tool.NewRestorer())
 	require.NoError(t, err)
 	assert.DirExists(t, gitDir, "a git baseline carrying a remote must never be deleted")
 
-	warning, err := memoriesGitBaselineWarning(root)
+	warning, err := memoriesGitBaselineWarning(root, FixtureProjectPath(), newPath)
 	require.NoError(t, err)
 	assert.NotEmpty(t, warning)
 }
 
+// TestMemoriesWorktreeGitBaselineRefusalIsPerRoot guards that the
+// remote-carrying refusal rule evaluates each memory worktree root
+// independently: memories/.git carrying a remote must stay in place while
+// memories_v2/.git, still the fixture's default no-remote baseline, is
+// still invalidated.
+func TestMemoriesWorktreeGitBaselineRefusalIsPerRoot(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	buildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, memoriesWorktreeSubdir), fixtureGitConfigWithRemote)
+
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	planAndApply(t, workspace, req)
+
+	assert.DirExists(t, filepath.Join(home.Dir, memoriesWorktreeSubdir, gitDirName),
+		"memories/.git carries a remote and must be left in place")
+	_, statErr := os.Stat(filepath.Join(home.Dir, memoriesWorktreeV2Subdir, gitDirName))
+	assert.True(t, os.IsNotExist(statErr),
+		"memories_v2/.git has no remote and must still be invalidated independently of memories/.git's refusal")
+
+	warnings, err := workspace.ResidualWarnings(req)
+	require.NoError(t, err)
+	assert.Contains(t, warnings, "memories/.git carries a remote and was left in place; its worktree contents were rewritten",
+		"the warning must name the root that actually kept its baseline, not memories_v2")
+}
+
+// TestMemoriesWorktreeGitBaselineWarningNamesV2Root is the symmetric case of
+// TestMemoriesWorktreeGitBaselineRefusalIsPerRoot: a remote in
+// memories_v2/.git must be preserved and its warning must name memories_v2,
+// not memories.
+func TestMemoriesWorktreeGitBaselineWarningNamesV2Root(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	buildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, memoriesWorktreeV2Subdir), fixtureGitConfigWithRemote)
+
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	planAndApply(t, workspace, req)
+
+	assert.DirExists(t, filepath.Join(home.Dir, memoriesWorktreeV2Subdir, gitDirName),
+		"memories_v2/.git carries a remote and must be left in place")
+	_, statErr := os.Stat(filepath.Join(home.Dir, memoriesWorktreeSubdir, gitDirName))
+	assert.True(t, os.IsNotExist(statErr), "memories/.git has no remote and must still be invalidated")
+
+	warnings, err := workspace.ResidualWarnings(req)
+	require.NoError(t, err)
+	assert.Contains(t, warnings, "memories_v2/.git carries a remote and was left in place; its worktree contents were rewritten",
+		"the warning must name memories_v2, not memories")
+}
+
+// TestMemoriesWorktreeGitBaselineWarningOmitsRewriteClauseWithZeroOccurrences
+// guards against a false "worktree contents were rewritten" claim: a root
+// whose remote-carrying baseline is left in place, but whose worktree never
+// referenced the moved project at all, must get the shorter warning.
+func TestMemoriesWorktreeGitBaselineWarningOmitsRewriteClauseWithZeroOccurrences(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	v2Root := filepath.Join(home.Dir, memoriesWorktreeV2Subdir)
+	buildFixtureMemoriesGitBaseline(t, v2Root, fixtureGitConfigWithRemote)
+	// Replace the fixture's default v2 content (which references
+	// FixtureProjectPath()) with content about an unrelated project, so this
+	// root carries zero occurrences of the moved project either way.
+	require.NoError(t, os.RemoveAll(filepath.Join(v2Root, "rollout_summaries")))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(v2Root, "memory_summary.md"), []byte("v1\n\nNotes about /Users/fixture/unrelated-project.\n"), 0o600,
+	))
+
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	planAndApply(t, workspace, req)
+
+	assert.DirExists(t, filepath.Join(v2Root, gitDirName), "memories_v2/.git carries a remote and must be left in place")
+	warnings, err := workspace.ResidualWarnings(req)
+	require.NoError(t, err)
+	assert.Contains(t, warnings, "memories_v2/.git carries a remote and was left in place",
+		"a remote-carrying root with zero project occurrences must still be reported")
+	assert.NotContains(t, warnings, "memories_v2/.git carries a remote and was left in place; its worktree contents were rewritten",
+		"but must not falsely claim its worktree contents were rewritten")
+}
+
+// TestMemoriesWorktreeGitBaselineWarningReportsPendingRewriteBeforeApply
+// guards the dry-run preview: ResidualWarnings runs before Apply, when the
+// remote-carrying root's worktree still holds oldPath, so the warning must
+// state the rewrite is still to come rather than claim it already happened.
+func TestMemoriesWorktreeGitBaselineWarningReportsPendingRewriteBeforeApply(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	buildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, memoriesWorktreeSubdir), fixtureGitConfigWithRemote)
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+
+	warnings, err := workspace.ResidualWarnings(req)
+
+	require.NoError(t, err)
+	assert.Contains(t, warnings, "memories/.git carries a remote and was left in place; its worktree contents are still to be rewritten")
+	assert.NotContains(t, warnings, "memories/.git carries a remote and was left in place; its worktree contents were rewritten",
+		"a dry run must not claim a rewrite that has not happened")
+}
+
 func TestMemoriesWorktreeGitBaselineWarningEmptyWhenSafeToDelete(t *testing.T) {
 	root := t.TempDir()
-	gitDir := filepath.Join(root, gitDirName)
-	require.NoError(t, os.MkdirAll(gitDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n\trepositoryformatversion = 0\n"), 0o600))
+	buildFixtureMemoriesGitBaseline(t, root, fixtureGitConfigNoRemote)
 
-	warning, err := memoriesGitBaselineWarning(root)
+	warning, err := memoriesGitBaselineWarning(root, FixtureProjectPath(), "/Users/fixture/renamed-project")
 
 	require.NoError(t, err)
 	assert.Empty(t, warning)
@@ -408,17 +600,36 @@ func TestResidualWarningsReportsEraAAndGitBaselineLeftInPlace(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	// Force the git baseline into the "leave in place" shape so both
 	// warning kinds are exercised by one ResidualWarnings call.
-	configWithRemote := "[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = https://example.invalid/repo.git\n"
-	require.NoError(t, os.WriteFile(
-		filepath.Join(home.Dir, memoriesWorktreeSubdir, gitDirName, "config"),
-		[]byte(configWithRemote), 0o600,
-	))
+	buildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, memoriesWorktreeSubdir), fixtureGitConfigWithRemote)
 
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	warnings, err := workspace.ResidualWarnings(req)
 
 	require.NoError(t, err)
 	assert.Len(t, warnings, 3, "era-A, marketplace residual, and git-baseline-left-in-place warnings: %v", warnings)
+}
+
+// TestResidualWarningsReportsBackupWarningPerRoot guards that a stranded
+// git-baseline backup under EACH memory worktree root is reported: the two
+// roots keep independent rollback (memory_version.rs:16), so a leftover
+// backup under one must not mask a leftover backup under the other.
+func TestResidualWarningsReportsBackupWarningPerRoot(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	for _, subdir := range memoriesWorktreeSubdirs {
+		require.NoError(t, os.MkdirAll(filepath.Join(home.Dir, subdir, gitDirName+gitBackupSuffix), 0o700))
+	}
+
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	warnings, err := workspace.ResidualWarnings(req)
+
+	require.NoError(t, err)
+	found := 0
+	for _, warning := range warnings {
+		if strings.Contains(warning, gitBackupSuffix) {
+			found++
+		}
+	}
+	assert.Equal(t, 2, found, "a stranded backup under each memory worktree root must be reported: %v", warnings)
 }
 
 // TestResidualWarnings_WarnsOnDivergentProfileSQLiteHome guards the wiring
@@ -653,7 +864,7 @@ func TestFinalDatabaseSurfaceReportsSecondCommitPartialStateAndRerunConverges(t 
 	assert.Contains(t, err.Error(), "partial database commit")
 	assert.Contains(t, err.Error(), "re-running the move converges")
 	require.NoError(t, undo.Restore())
-	memoriesCount, countErr := countMemoriesDB(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
+	memoriesCount, countErr := countMemoriesDB(context.Background(), workspace.home.SQLiteDir, req.OldPath)
 	require.NoError(t, countErr)
 	assert.Zero(t, memoriesCount, "the first memories commit must persist before state fails")
 	_, err = workspace.MoveSurfaces(req)
@@ -784,7 +995,7 @@ func TestCountStateDBReadOnlyFailsForMissingThreadsCwdColumn(t *testing.T) {
 func TestFinalDatabaseSurfaceLeavesBackupAsWarningWhenCleanupFails(t *testing.T) {
 	backup := filepath.Join(t.TempDir(), "git.cc-port-rollback.tmp")
 	require.NoError(t, os.Mkdir(backup, 0o700))
-	pending := &pendingMoveDatabases{gitBackup: backup, removeAll: func(string) error { return assert.AnError }}
+	pending := &pendingMoveDatabases{gitBackup: []string{backup}, removeAll: func(string) error { return assert.AnError }}
 
 	_, err := pending.commitSurface().Apply(context.Background(), tool.NewRestorer())
 
@@ -793,6 +1004,28 @@ func TestFinalDatabaseSurfaceLeavesBackupAsWarningWhenCleanupFails(t *testing.T)
 	warning, err := gitBackupWarning(backup)
 	require.NoError(t, err)
 	assert.Contains(t, warning, backup)
+}
+
+// TestFinalDatabaseSurfaceAttemptsSecondBackupCleanupAfterFirstFails guards
+// that a cleanup failure on one root's backup does not stop the commit
+// surface from attempting the other root's backup.
+func TestFinalDatabaseSurfaceAttemptsSecondBackupCleanupAfterFirstFails(t *testing.T) {
+	backupV1 := filepath.Join(t.TempDir(), "memories-git.cc-port-rollback.tmp")
+	backupV2 := filepath.Join(t.TempDir(), "memories-v2-git.cc-port-rollback.tmp")
+	var attempted []string
+	pending := &pendingMoveDatabases{
+		gitBackup: []string{backupV1, backupV2},
+		removeAll: func(path string) error {
+			attempted = append(attempted, path)
+			return assert.AnError
+		},
+	}
+
+	_, err := pending.commitSurface().Apply(context.Background(), tool.NewRestorer())
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{backupV1, backupV2}, attempted,
+		"cleanup must be attempted for every root's backup, not stop after the first failure")
 }
 
 func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupBeforeRewrite(t *testing.T) {

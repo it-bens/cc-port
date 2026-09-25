@@ -15,9 +15,23 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
-// memoriesWorktreeSubdir is $CODEX_HOME/memories (memories/write/src/lib.rs:118,
-// memory_root).
+// memoriesWorktreeSubdir is the v1 memory worktree root, $CODEX_HOME/memories
+// (protocol/src/memory_version.rs:19, MemoryVersion::V1.directory_name()).
 const memoriesWorktreeSubdir = "memories"
+
+// memoriesWorktreeV2Subdir is the v2 memory worktree root,
+// $CODEX_HOME/memories_v2 (protocol/src/memory_version.rs:20,
+// MemoryVersion::V2.directory_name()). Codex writes it when
+// config.memories.version = "v2" or config.memories.dual_write = true
+// (memories/write/src/start.rs:40-48).
+const memoriesWorktreeV2Subdir = "memories_v2"
+
+// memoriesWorktreeSubdirs is every memory worktree root move surfaces walk,
+// sibling roots kept independent per memory_version.rs:16's own rationale
+// ("Sibling roots keep v1 cleanup and rollback independent of v2
+// artifacts"). Each root is optional: an absent one is a legitimate
+// "surface not present", exactly as an absent v1 memories/ is handled today.
+var memoriesWorktreeSubdirs = []string{memoriesWorktreeSubdir, memoriesWorktreeV2Subdir}
 
 // gitDirName is the git-baseline metadata directory move must never
 // rewrite bytes inside, and may move to a rollback backup only behind the probe in
@@ -47,7 +61,7 @@ const (
 // so sqlrewrite.CountTextColumnRO performs the same boundary-aware path scan
 // as Apply's RewriteTextColumn logic rather than the exact/prefix predicate
 // used for path-shaped columns.
-func countMemoriesDB(ctx context.Context, sqliteDir, oldPath, newPath string) (int, error) {
+func countMemoriesDB(ctx context.Context, sqliteDir, oldPath string) (int, error) {
 	databases, err := discoverDatabases(sqliteDir, memoriesDBGlob)
 	if err != nil {
 		return 0, err
@@ -57,7 +71,7 @@ func countMemoriesDB(ctx context.Context, sqliteDir, oldPath, newPath string) (i
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		count, err := countMemoriesDBFile(path, oldPath, newPath)
+		count, err := countMemoriesDBFile(path, oldPath)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", path, err)
 		}
@@ -66,7 +80,7 @@ func countMemoriesDB(ctx context.Context, sqliteDir, oldPath, newPath string) (i
 	return total, nil
 }
 
-func countMemoriesDBFile(path, oldPath, _ string) (int, error) {
+func countMemoriesDBFile(path, oldPath string) (int, error) {
 	database, err := openReadOnlyDatabase(path)
 	if err != nil {
 		return 0, err
@@ -143,7 +157,7 @@ func worktreeFiles(root string) ([]string, error) {
 }
 
 // planMemoriesWorktree reports how many bounded occurrences a move would
-// rewrite across every memories/ worktree file (raw_memories.md,
+// rewrite across every worktree file under root (raw_memories.md,
 // rollout_summaries/*.md, extensions/…), outside .git.
 func planMemoriesWorktree(root, oldPath string) (int, error) {
 	files, err := worktreeFiles(root)
@@ -161,9 +175,9 @@ func planMemoriesWorktree(root, oldPath string) (int, error) {
 	return total, nil
 }
 
-// worktreeReferences reports whether any memories/ worktree file, outside
+// worktreeReferences reports whether any worktree file under root, outside
 // .git and cc-port's own artifacts, carries a bounded occurrence of path.
-// memoriesWorktreeSurface.Apply calls this on the POST-rewrite worktree
+// moveGitBaselineToBackup calls this on the POST-rewrite worktree
 // (finding A6) to decide whether the .git baseline still needs
 // invalidating: unlike this run's own applyMemoriesWorktree count, this
 // reflects the worktree's persistent state and stays true across a
@@ -186,7 +200,7 @@ func worktreeReferences(root, path string) (bool, error) {
 	return false, nil
 }
 
-// applyMemoriesWorktree rewrites every memories/ worktree file in place.
+// applyMemoriesWorktree rewrites every worktree file under root in place.
 func applyMemoriesWorktree(ctx context.Context, root, oldPath, newPath string, undo *tool.Restorer) (int, error) {
 	files, err := worktreeFiles(root)
 	if err != nil {
@@ -201,15 +215,15 @@ func applyMemoriesWorktree(ctx context.Context, root, oldPath, newPath string, u
 		if err != nil {
 			return 0, fmt.Errorf("stat %s: %w", path, err)
 		}
-		if err := undo.RegisterFile(path); err != nil {
-			return 0, fmt.Errorf("back up %s: %w", path, err)
-		}
 		data, err := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled worktree walk
 		if err != nil {
 			return 0, fmt.Errorf("read %s: %w", path, err)
 		}
 		rewritten, count := rewrite.ReplacePathInBytes(data, oldPath, newPath)
 		if count > 0 {
+			if err := undo.RegisterFile(path); err != nil {
+				return 0, fmt.Errorf("back up %s: %w", path, err)
+			}
 			if err := rewrite.SafeWriteFile(path, rewritten, info.Mode()); err != nil {
 				return 0, fmt.Errorf("write %s: %w", path, err)
 			}
@@ -230,7 +244,8 @@ func reconcileStrandedGitBackup(root string) error {
 	return nil
 }
 
-// hasNoRemoteGitBaseline implements the §4.4 shape probe: memories/.git/config
+// hasNoRemoteGitBaseline implements the shape probe from
+// docs/architecture.md §Git-repo-in-state policy (cross-cutting): root/.git/config
 // exists and contains no "[remote" section. This is cc-port's own heuristic
 // for "Codex provably re-initializes a missing .git" — the underlying fact
 // it stands in for is ensure_git_baseline_repository unconditionally
