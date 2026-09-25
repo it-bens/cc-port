@@ -52,29 +52,107 @@ type codexRolloutRecord struct {
 	Payload   any    `json:"payload"`
 }
 
+// The rollout record shapes below mirror what Codex writes today
+// (protocol/src/protocol.rs SessionMeta, TurnContextItem, ThreadSettings) and
+// the test fixture at internal/tool/codex/testdata/dotcodex/sessions, so the
+// demo exercises every path field the move surfaces rewrite.
 type codexSessionMeta struct {
-	SessionID        string `json:"session_id"`
-	ID               string `json:"id"`
-	Timestamp        string `json:"timestamp"`
-	CWD              string `json:"cwd"`
-	FreeText         string `json:"free_text"`
-	Originator       string `json:"originator"`
-	CLIVersion       string `json:"cli_version"`
-	Source           string `json:"source"`
-	ModelProvider    string `json:"model_provider"`
-	BaseInstructions any    `json:"base_instructions"`
+	SessionID             string   `json:"session_id"`
+	ID                    string   `json:"id"`
+	Timestamp             string   `json:"timestamp"`
+	CWD                   string   `json:"cwd"`
+	RuntimeWorkspaceRoots []string `json:"runtime_workspace_roots"`
+	FreeText              string   `json:"free_text"`
+	Originator            string   `json:"originator"`
+	CLIVersion            string   `json:"cli_version"`
+	Source                string   `json:"source"`
+	ModelProvider         string   `json:"model_provider"`
+	BaseInstructions      any      `json:"base_instructions"`
+}
+
+type codexThreadSettingsApplied struct {
+	Type           string              `json:"type"`
+	ThreadID       string              `json:"thread_id"`
+	ThreadSettings codexThreadSettings `json:"thread_settings"`
+}
+
+type codexThreadSettings struct {
+	Model                 string                 `json:"model"`
+	ModelProviderID       string                 `json:"model_provider_id"`
+	ApprovalPolicy        string                 `json:"approval_policy"`
+	ApprovalsReviewer     string                 `json:"approvals_reviewer"`
+	PermissionProfile     codexPermissionProfile `json:"permission_profile"`
+	CWD                   string                 `json:"cwd"`
+	RuntimeWorkspaceRoots []string               `json:"runtime_workspace_roots"`
+	CollaborationMode     codexCollaborationMode `json:"collaboration_mode"`
+	DisabledPluginIDs     []string               `json:"disabled_plugin_ids"`
+}
+
+type codexCollaborationMode struct {
+	Mode     string                         `json:"mode"`
+	Settings codexCollaborationModeSettings `json:"settings"`
+}
+
+type codexCollaborationModeSettings struct {
+	Model                 string `json:"model"`
+	ReasoningEffort       any    `json:"reasoning_effort"`
+	DeveloperInstructions any    `json:"developer_instructions"`
 }
 
 type codexTurnContext struct {
-	TurnID         string             `json:"turn_id"`
-	CWD            string             `json:"cwd"`
-	WorkspaceRoots []string           `json:"workspace_roots"`
-	ApprovalPolicy string             `json:"approval_policy"`
-	SandboxPolicy  codexSandboxPolicy `json:"sandbox_policy"`
+	TurnID                  string                 `json:"turn_id"`
+	CWD                     string                 `json:"cwd"`
+	WorkspaceRoots          []string               `json:"workspace_roots"`
+	ApprovalPolicy          string                 `json:"approval_policy"`
+	SandboxPolicy           codexSandboxPolicy     `json:"sandbox_policy"`
+	PermissionProfile       codexPermissionProfile `json:"permission_profile"`
+	FileSystemSandboxPolicy codexFileSystemSandbox `json:"file_system_sandbox_policy"`
+	Model                   string                 `json:"model"`
+	Summary                 string                 `json:"summary"`
 }
 
 type codexSandboxPolicy struct {
-	Mode string `json:"mode"`
+	Type                string   `json:"type"`
+	WritableRoots       []string `json:"writable_roots"`
+	NetworkAccess       bool     `json:"network_access"`
+	ExcludeTmpdirEnvVar bool     `json:"exclude_tmpdir_env_var"`
+	ExcludeSlashTmp     bool     `json:"exclude_slash_tmp"`
+}
+
+type codexPermissionProfile struct {
+	Type       string               `json:"type"`
+	FileSystem codexFileSystemRules `json:"file_system"`
+	Network    string               `json:"network"`
+}
+
+type codexFileSystemRules struct {
+	Type    string                 `json:"type"`
+	Entries []codexFileSystemEntry `json:"entries"`
+}
+
+type codexFileSystemSandbox struct {
+	Kind    string                 `json:"kind"`
+	Entries []codexFileSystemEntry `json:"entries"`
+}
+
+type codexFileSystemEntry struct {
+	Path   codexFileSystemPath `json:"path"`
+	Access string              `json:"access"`
+}
+
+// codexFileSystemPath is the tagged path union: `special` entries carry a
+// symbolic `value`, `path` entries an absolute `path`.
+type codexFileSystemPath struct {
+	Type  string `json:"type"`
+	Value any    `json:"value,omitempty"`
+	Path  string `json:"path,omitempty"`
+}
+
+func codexProjectEntries(projectPath string) []codexFileSystemEntry {
+	return []codexFileSystemEntry{
+		{Path: codexFileSystemPath{Type: "special", Value: map[string]string{"kind": "root"}}, Access: "read"},
+		{Path: codexFileSystemPath{Type: "path", Path: projectPath}, Access: "write"},
+	}
 }
 
 type codexResponseItem struct {
@@ -162,21 +240,48 @@ func seedCodex(homePath, projectPath, role string, codexStateDB bool) error {
 
 func codexRollout(projectPath string) []byte {
 	const rolloutTimestamp = "2026-07-17T10:00:00Z"
+	const model = "gpt-5-fixture"
+	const restricted = "restricted"
+	profile := codexPermissionProfile{
+		Type:       "managed",
+		FileSystem: codexFileSystemRules{Type: restricted, Entries: codexProjectEntries(projectPath)},
+		Network:    restricted,
+	}
 	records := []codexRolloutRecord{
 		{
 			Timestamp: rolloutTimestamp,
 			Type:      "session_meta",
 			Payload: codexSessionMeta{
-				SessionID:        codexThreadID,
-				ID:               codexThreadID,
-				Timestamp:        rolloutTimestamp,
-				CWD:              projectPath,
-				FreeText:         "keep " + projectPath + " verbatim unless deep",
-				Originator:       "codex_cli_rs",
-				CLIVersion:       "0.144.5-fixture",
-				Source:           "cli",
-				ModelProvider:    "openai",
-				BaseInstructions: nil,
+				SessionID:             codexThreadID,
+				ID:                    codexThreadID,
+				Timestamp:             rolloutTimestamp,
+				CWD:                   projectPath,
+				RuntimeWorkspaceRoots: []string{projectPath},
+				FreeText:              "keep " + projectPath + " verbatim unless deep",
+				Originator:            "codex_cli_rs",
+				CLIVersion:            "0.144.5-fixture",
+				Source:                "cli",
+				ModelProvider:         "openai",
+				BaseInstructions:      nil,
+			},
+		},
+		{
+			Timestamp: rolloutTimestamp,
+			Type:      "event_msg",
+			Payload: codexThreadSettingsApplied{
+				Type:     "thread_settings_applied",
+				ThreadID: codexThreadID,
+				ThreadSettings: codexThreadSettings{
+					Model:                 model,
+					ModelProviderID:       "openai",
+					ApprovalPolicy:        "on-request",
+					ApprovalsReviewer:     userValue,
+					PermissionProfile:     profile,
+					CWD:                   projectPath,
+					RuntimeWorkspaceRoots: []string{projectPath},
+					CollaborationMode:     codexCollaborationMode{Mode: "default", Settings: codexCollaborationModeSettings{Model: model}},
+					DisabledPluginIDs:     []string{},
+				},
 			},
 		},
 		{
@@ -188,8 +293,13 @@ func codexRollout(projectPath string) []byte {
 				WorkspaceRoots: []string{projectPath},
 				ApprovalPolicy: "on-request",
 				SandboxPolicy: codexSandboxPolicy{
-					Mode: "workspace-write",
+					Type:          "workspace-write",
+					WritableRoots: []string{projectPath + "/build"},
 				},
+				PermissionProfile:       profile,
+				FileSystemSandboxPolicy: codexFileSystemSandbox{Kind: restricted, Entries: codexProjectEntries(projectPath)},
+				Model:                   model,
+				Summary:                 "auto",
 			},
 		},
 		{
