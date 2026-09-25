@@ -686,9 +686,10 @@ func TestCodexStageRejectsHostileRolloutNamesAndAcceptsRecorderNames(t *testing.
 // ReferenceSurfaces used to build its history/session-index id set from
 // projectRollouts alone, so a thread with a state-db row but no matching
 // rollout file showed zero history and session-index counts even though
-// countThreadRows counted it and Export (which seeds from projectThreadIDs
-// and unions rollout IDs) would have included it. projectThreadIDSet must
-// now give ReferenceSurfaces the same union Export uses.
+// the threads-rows count included it and Export (which seeds from
+// projectThreadIDs and unions rollout IDs) would have included it.
+// projectThreadIDSet must now give ReferenceSurfaces the same union Export
+// uses.
 func TestReferenceSurfaces_CountsStateDBOnlyThread(t *testing.T) {
 	home := SetupFixture(t)
 	const stateOnlyThread = "00000000-0000-4000-8000-000000000099"
@@ -763,6 +764,100 @@ func TestKnowsProjectHonorsConfigOnlyProjects(t *testing.T) {
 			assert.Equal(t, testCase.want, known)
 		})
 	}
+}
+
+func TestReferenceSurfacesKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
+	home := SetupFixture(t)
+	workspace := quietTestWorkspace(home)
+	const rootOnlyProject = "/Users/test/Projects/root-only"
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	require.NoError(t, err)
+	_, err = database.ExecContext(t.Context(),
+		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`, fixtureProjectID, 1, rootOnlyProject)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+
+	references, err := workspace.ReferenceSurfaces(t.Context(), rootOnlyProject)
+
+	require.NoError(t, err, "a project Codex holds only as a project root is known to stats")
+	for _, surface := range references {
+		if surface.Name == "project roots" {
+			assert.Equal(t, 1, surface.Count, "the inserted project_roots row is counted")
+			continue
+		}
+		assert.Zero(t, surface.Count, "surface %s", surface.Name)
+	}
+}
+
+func TestEnumerateProjectsListsProjectHeldOnlyAsProjectRoot(t *testing.T) {
+	home := SetupFixture(t)
+	workspace := quietTestWorkspace(home)
+	const rootOnlyProject = "/Users/test/Projects/root-only"
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	require.NoError(t, err)
+	_, err = database.ExecContext(t.Context(),
+		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`, fixtureProjectID, 1, rootOnlyProject)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+
+	projects, err := workspace.EnumerateProjects(t.Context())
+
+	require.NoError(t, err)
+	labels := make([]string, 0, len(projects))
+	for _, project := range projects {
+		labels = append(labels, project.Label)
+	}
+	assert.Contains(t, labels, rootOnlyProject)
+}
+
+func TestEnumerateProjectsListsCanonicallyEqualStateDBPathsOnceAcrossDatabases(t *testing.T) {
+	home := SetupFixture(t)
+	workspace := quietTestWorkspace(home)
+	tempRoot := t.TempDir()
+	realProject := filepath.Join(tempRoot, "real", "project")
+	require.NoError(t, os.MkdirAll(realProject, 0o750))
+	require.NoError(t, os.Symlink(filepath.Join(tempRoot, "real"), filepath.Join(tempRoot, "link")))
+	aliasedProject := filepath.Join(tempRoot, "link", "project")
+	InsertThreadRow(t, home, "orphaned-session", aliasedProject)
+	secondDatabase := filepath.Join(home.SQLiteDir, "state_6.sqlite")
+	buildFixtureStateDB(t, secondDatabase)
+	database, err := sql.Open("sqlite", secondDatabase)
+	require.NoError(t, err)
+	_, err = database.ExecContext(t.Context(),
+		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`, fixtureProjectID, 1, realProject)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+
+	projects, err := workspace.EnumerateProjects(t.Context())
+
+	require.NoError(t, err)
+	var labels []string
+	for _, project := range projects {
+		if project.Label == aliasedProject || project.Label == realProject {
+			labels = append(labels, project.Label)
+		}
+	}
+	assert.Equal(t, []string{aliasedProject}, labels, "the lexically smaller of two canonically equal values is listed once")
+}
+
+func TestStatsAndExportIdentityFailForPre0049DatabaseEvenWhenARolloutMatches(t *testing.T) {
+	home := SetupFixture(t)
+	workspace := quietTestWorkspace(home)
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	require.NoError(t, err)
+	_, err = database.ExecContext(t.Context(), `DROP TABLE project_roots`)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+	rollouts, _, err := workspace.projectRollouts(t.Context(), FixtureProjectPath())
+	require.NoError(t, err)
+	require.NotEmpty(t, rollouts, "precondition: a rollout alone would identify the project")
+	const schemaErr = `unexpected schema for table "project_roots": table is missing; observed no columns`
+
+	_, statsErr := workspace.ReferenceSurfaces(t.Context(), FixtureProjectPath())
+	_, exportErr := workspace.Placeholders(FixtureProjectPath(), nil)
+
+	require.ErrorContains(t, statsErr, schemaErr)
+	require.ErrorContains(t, exportErr, schemaErr)
 }
 
 // TestEnumerateProjectsIncludesConfigOnlyProjectWithZeroFootprint is the

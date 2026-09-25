@@ -295,7 +295,7 @@ func guardSubstitutionOrder(line []byte, substitutions []pathSubstitution, deep 
 // with the value Apply must write: newPath for the literal oldPath source,
 // or newPath with whatever suffix the source's canonicalized form carried
 // past oldPath's canonical form for a symlink-aliased source — the same
-// suffix-preservation matchingThreadRewrites uses for threads.cwd.
+// suffix-preservation matchingPathRewrites uses for threads.cwd.
 func rolloutSubstitutions(sources []string, oldPath, newPath string) ([]pathSubstitution, error) {
 	canonicalOldPath, err := canonicalizePath(oldPath)
 	if err != nil {

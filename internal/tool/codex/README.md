@@ -112,16 +112,17 @@ shapes themselves.
   cases as long as the project stays otherwise known.
 - `EnumerateProjects` carries the same base-only resolution limit in a
   worse shape. It builds its candidate project set from
-  `discoverDatabases(Home.SQLiteDir, ...)` thread cwds,
+  `discoverDatabases(Home.SQLiteDir, ...)` project paths
+  (`stateDBProjectPaths`: `threads.cwd` and `project_roots.path`, one value
+  per canonical path),
   `discoverConfigTOMLFiles` project keys, and rollout
   `session_meta`/`turn_context` cwd values. A project known only through a
   thread row under a divergent profile's `sqlite_home` never becomes a
   candidate. It is missing from the listing entirely, not reported
   incomplete. `EnumerateProjects` also forwards whatever error
-  `DiskCategories` returns for any one candidate project
-  (`export_import_stats.go:1130`) without scoping the failure to that
-  project, so one project's lower-level read failure aborts the whole
-  listing. All three cases above are a deliberate residual, not an
+  `DiskCategories` returns for any one candidate project without scoping
+  the failure to that project, so one project's lower-level read failure
+  aborts the whole listing. All three cases above are a deliberate residual, not an
   oversight: inferring the active profile instead (the sole overlay, or
   the most recently modified one) would silently inspect a directory that
   may be wrong, the exact failure this section exists to avoid.
@@ -344,22 +345,59 @@ shapes themselves.
   equality-or-`/`-boundary-prefix rule, fixing every rollout- and
   config-key-matching call site at once: `identityMatchesProject` and
   `configTOMLKnowsProject` both route through it.
-- `threads.cwd` matching moves the same rule into Go, since symlink
-  resolution cannot run as a SQL predicate: `matchingThreadCWDs` fetches
+- The state database holds two single-value project-path columns, both
+  listed in `stateDBPathColumns`: `threads.cwd` and `project_roots.path`.
+  `project_roots` comes from `state/migrations/0049_projects.sql`; Codex's
+  `replace_roots` (`state/src/runtime/projects.rs`) inserts each root's
+  path as given, and the app-server type behind it is
+  `ProjectRoot { path: AbsolutePathBuf }`
+  (`app-server-protocol/src/protocol/v2/project.rs`), the same kind of
+  absolute project directory `threads.cwd` holds.
+- Matching both columns moves the same rule into Go, since symlink
+  resolution cannot run as a SQL predicate: `matchingColumnValues` fetches
   every distinct stored value under `COLLATE BINARY` (blocking a
   case-insensitive collation from folding byte-different values together)
-  and canonicalizes each. `stateDBFileKnowsProject`,
-  `countStateDBReadOnly`, `countThreadRows`, `projectThreadIDs`, and the
-  move rewrite all derive their matched-value set from this one function,
-  so a dry-run count and an apply never diverge; parity is algorithmic,
-  not temporal, since count and rewrite open separate connections at
-  separate times and a concurrent writer or a retargeted symlink can still
-  shift the matched set between them. `COLLATE BINARY` equality or prefix
-  SQL alone cannot drive the rewrite either: `matchingThreadRewrites`
-  computes the canonical match in Go, and `sqlrewrite.UpdateColumnsByKey`
-  rewrites each matched row by primary key, preserving the original
-  suffix, the path past the project boundary, from the canonical forms
-  rather than literal byte offsets.
+  and canonicalizes each. `matchingPathRewrites` ranges over
+  `stateDBPathColumns` during `MoveSurfaces`' preflight and captures one
+  plan per database. The state-db surface's Plan count is that plan's row
+  count (`stateDBRewritePlans.rowCount`), and Apply writes that same plan.
+  State-database identity (`stateDBKnowsProject`, called by move's
+  `projectKnown` and by stats/export's `knowsProject`) ranges over the same
+  list, so a project Codex holds only in `project_roots`, which the
+  app-server's `project/create`
+  (`app-server/src/request_processors/projects.rs`) creates with no thread,
+  still counts as known. It requires every `stateDBPathColumns` column in
+  every discovered state database before matching any, and `knowsProject`
+  runs it before the rollout and config checks, so a schema error is never
+  masked by a match elsewhere. `ReferenceSurfaces` counts each column as
+  its own surface, `threads rows` for `threads.cwd` and `project roots` for
+  `project_roots.path`. Both go through `countStateDBColumnRows`, which sums
+  `countMatchingColumnRows` across the discovered databases. A project known
+  only through a project root is therefore not silent in stats, even though
+  move's own `state-db` surface counts both columns together as one number
+  (`stateDBPathColumns`, statedb.go). `projectThreadIDs` calls
+  `matchingColumnValues` on `threads.cwd` alone. `COLLATE BINARY`
+  equality or prefix SQL alone cannot drive the rewrite either:
+  `matchingPathRewrites` computes the canonical match in Go and records
+  each matched row's key, preserving the original suffix, the path past the
+  project boundary, from the canonical forms rather than literal byte
+  offsets. Apply writes `threads` rows by their `id` primary key through
+  `sqlrewrite.UpdateColumnsByKey`, and `project_roots` rows by rowid through
+  `sqlrewrite.UpdateColumnsByRowID`, because the table's declared primary
+  key `(project_id, position)` is composite.
+- Apply writes a planned row only while it still holds the value the plan
+  matched: both keyed updates receive that value as the expected `cwd` or
+  `path`. `MoveSurfaces` captures the plan before the writer witness and
+  flock run, and Codex's `replace_roots` deletes and re-inserts a project's
+  rows on every root edit, so SQLite can hand a freed rowid to a new row. A
+  planned row that updates nothing fails Apply with an error naming the
+  table, column, key, and planned value and stating that the state database
+  changed after the plan; the surface's undo then rolls back the
+  transaction.
+- Apply also requires the state databases it discovers to be exactly the
+  planned ones (`stateDBRewritePlans.requirePlannedDatabases`). A database
+  added or removed between preflight and the witness and flock fails Apply
+  with an error naming the added and removed paths.
 - A rollout's own recorded `payload.cwd` needs the same fix:
   `rewriteRolloutLine` matches literal bytes via `internal/rewrite`, so a
   symlink-aliased rollout's stored cwd never contained oldPath's literal
@@ -372,14 +410,13 @@ shapes themselves.
   derive their source list from the same function on their own read of the
   rollout, so a symlink-aliased rollout gets rewritten instead of left
   stale.
-- `matchingThreadCWDs` and `countMatchingThreadRows` are `threads.cwd`'s
-  instances of `matchingColumnValues` and `countMatchingColumnRows`;
-  `codexDevWarning` reuses those generic functions for `codex-dev.db`'s
-  `local_thread_catalog.cwd` and `automation_runs.source_cwd`. Two call
-  sites carry a real request context rather than `context.Background()`
-  and check `ctx.Err()` per row: the `stateDBSurfaceWithPlans` Plan path
-  (`countStateDB`) and the export/stats path (`countThreadRows`,
-  `projectThreadIDs`, `projectThreadIDSet`). `matchingThreadRewrites`
+- `codexDevWarning` reuses `countMatchingColumnRows`, and through it
+  `matchingColumnValues`, for `codex-dev.db`'s `local_thread_catalog.cwd`
+  and `automation_runs.source_cwd`. The
+  export/stats path (`countStateDBColumnRows`, `projectThreadIDs`,
+  `projectThreadIDSet`, and `knowsProject` → `stateDBKnowsProject` outside
+  `Placeholders`) carries a real request context rather than
+  `context.Background()` and checks `ctx.Err()` per row. `matchingPathRewrites`
   checks `ctx.Err()` too, but its sole caller,
   `stateDBRewritePlansForProject`, runs from `MoveSurfaces`' own preflight
   with `context.Background()` (`MoveSurfaces` itself takes no context), so
@@ -387,6 +424,19 @@ shapes themselves.
 
 **Refused.**
 
+- A state database missing `threads.cwd` or `project_roots.path`, or
+  either table: plan capture fails with the observed columns in the error
+  rather than skipping the column, so `MoveSurfaces` refuses a pre-0049
+  state database as a schema error.
+- A state database whose `threads` does not declare `id` as its single-column
+  primary key, or whose `project_roots` is not an ordinary rowid table (a
+  `WITHOUT ROWID` declaration, or a column named `rowid`). `moveIdentity`
+  runs `requireStateDBPathColumns` against every discovered database before
+  `captureMovePreflight`, and that check now runs the same
+  `sqlrewrite.RequirePrimaryKeyAndColumns` and
+  `sqlrewrite.RequireRowIDTableAndColumns` schema checks `update` would run
+  at Apply, so a dry run and an Apply refuse the same malformed schema
+  identically, even when no row in that database matches the moved project.
 - Widening the match breadth beyond the existing
   equality-or-`/`-boundary-prefix rule. cc-port already matches
   subdirectories under a project's cwd, a documented deviation from
@@ -430,13 +480,15 @@ shapes themselves.
   cwd for a since-deleted project falls back to `filepath.Clean` and
   compares lexically (see Handled: `canonicalizePath`), narrower than
   Codex's own `paths_match_after_normalization`.
+- A state-database row matching the project that Codex writes after the
+  plan is captured: move does not rewrite it.
 - Cancellation on every call path whose entry point carries no context,
   since the interface it implements declares no `context.Context`
-  parameter. Two chains reach `matchingThreadCWDs` via
+  parameter. Two chains reach `matchingColumnValues` via
   `context.Background()`: `MoveSurfaces` → `projectKnown` →
   `stateDBKnowsProject` → `stateDBFileKnowsProject` (statedb.go), and
-  `Placeholders` → `knowsProject` → `countThreadRows` →
-  `countMatchingThreadRows` (export_import_stats.go). Neither is
+  `Placeholders` → `knowsProject` → `stateDBKnowsProject`
+  (export_import_stats.go). Neither is
   cancellable mid-scan or bounded, so a scan over a corrupt or hostile own
   state database runs to completion.
 - Occurrence counts, not identity (byte positions): a step that introduces
@@ -477,7 +529,7 @@ shapes themselves.
 **Refused.**
 
 - Deriving a project's thread-ID set from rollouts alone anywhere in this
-  package. A rollout-only set undercounts relative to `countThreadRows` and
+  package. A rollout-only set undercounts relative to the `threads rows` count and
   to what `Export` archives.
 
 **Not covered.**
@@ -630,7 +682,8 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
 - `stage1_outputs`' `raw_memory`/`rollout_summary` columns are free-text
   prose, not path-shaped columns, so they route through
   `sqlrewrite.RewriteTextColumn` (boundary-aware byte rewrite per row).
-  `threads.cwd` is matched and rewritten differently: see §cwd matching.
+  `threads.cwd` and `project_roots.path` are matched and rewritten
+  differently: see §cwd matching.
 - Move commits the memories and state databases as two separate serial
   transactions, not one joint transaction, because SQLite cannot commit two
   databases atomically, an accepted deviation from spec §6.3 (see
@@ -654,8 +707,9 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
 
 ## Tests
 
-Unit tests across `move_test.go`, `witness_test.go`, `process_test.go`,
-`home_test.go`, `rollout_test.go`, and `export_import_stats_test.go`. Coverage: three-tier `sqlite_home` resolution,
+Unit tests across `move_test.go`, `statedb_test.go`, `witness_test.go`,
+`process_test.go`, `home_test.go`, `rollout_test.go`, and
+`export_import_stats_test.go`. Coverage: three-tier `sqlite_home` resolution,
 glob-based discovery against generation-suffixed fixture filenames, both
 rollout roots, era-A skip behavior under plain and `--deep` rewrite, the
 process-table and busy-probe witness sources driven through the injected
@@ -668,7 +722,17 @@ distinct `text`, `ReferenceSurfaces` counting a state-database-only
 thread the same way `Export` would, `pathMatchesProject` matching a
 symlink-aliased cwd against a real symlink built under `t.TempDir`, and a
 symlink-aliased thread row's dry-run count agreeing with what move
-actually rewrites.
+actually rewrites, `project_roots.path` rewritten alongside `threads.cwd`
+with equal plan and apply counts, `COLLATE BINARY` holding against a
+`COLLATE NOCASE` declaration on both columns, the schema error for a
+state database missing `project_roots` or its `path` column, project
+identity from a `project_roots` row alone, Apply failing and rolling
+back when a planned `threads` or `project_roots` row changed after the
+plan, `stateDBKnowsProject` refusing a `WITHOUT ROWID` `project_roots` table
+and a composite-primary-key `threads` table with the same error
+`UpdateColumnsByRowID`/`UpdateColumnsByKey` would give at Apply, and stats
+treating a project held only as a project root as known and counting it in
+`ReferenceSurfaces`' `project roots` surface.
 
 `mcp_test.go` covers `MCPServers`: the fixture's stdio and streamable-HTTP
 tables, a config without an `[mcp_servers]` table, an empty one, an absent

@@ -129,8 +129,8 @@ func TestMoveSurfacesRefusesCompressedOnlyRollout(t *testing.T) {
 // thread row recorded through a symlink-aliased cwd (Codex stores
 // config.cwd() verbatim, uncanonicalized) must still be matched and rewritten
 // by move, and the dry-run count must equal the number of rows apply
-// actually rewrites, since countStateDB and matchingThreadRewrites now
-// both derive their row set from the same canonical-match computation.
+// actually rewrites, since the state-db Plan counts the plan
+// matchingPathRewrites captured and Apply writes that same plan.
 func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	tempRoot := t.TempDir()
@@ -980,16 +980,17 @@ func createCodexDevDatabase(t *testing.T, home *Home, insertStatement string) {
 	require.NoError(t, err)
 }
 
-func TestCountStateDBReadOnlyFailsForMissingThreadsCwdColumn(t *testing.T) {
-	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "state.sqlite"))
+func TestStateDBPlanFailsForMissingThreadsCwdColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = database.Close() })
 	_, err = database.ExecContext(context.Background(), `CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT);`)
 	require.NoError(t, err)
 
-	_, err = countStateDBReadOnly(context.Background(), database, FixtureProjectPath())
+	_, err = matchingPathRewrites(context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project")
 
-	require.ErrorContains(t, err, "count threads.cwd: required column threads.cwd is missing (observed columns: id, title)")
+	require.EqualError(t, err, "required column threads.cwd is missing (observed columns: id, title)")
 }
 
 func TestFinalDatabaseSurfaceLeavesBackupAsWarningWhenCleanupFails(t *testing.T) {
@@ -1072,8 +1073,10 @@ func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testin
 		context.Background(), workspace.home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project", plans, undo,
 	)
 	require.NoError(t, err)
+	memoriesPaths, err := discoverDatabases(workspace.home.SQLiteDir, memoriesDBGlob)
+	require.NoError(t, err)
 	_, _, err = startDatabaseRewrites(
-		context.Background(), workspace.home.SQLiteDir, memoriesDBGlob, FixtureProjectPath(), "/Users/fixture/renamed-project",
+		context.Background(), memoriesPaths, FixtureProjectPath(), "/Users/fixture/renamed-project",
 		func(_ context.Context, _ string, database *sqlrewrite.DB, _ *sqlrewrite.Tx, _, _ string) (int, error) {
 			require.NoError(t, database.Close())
 			return 0, assert.AnError

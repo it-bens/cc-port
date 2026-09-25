@@ -33,28 +33,39 @@ type pendingMoveDatabases struct {
 	reportWarning func(string)
 }
 
+// startStateDBRewritesWithPlan applies plans, captured in MoveSurfaces'
+// preflight, to the state databases. Apply runs under the writer witness and
+// flock that preflight predates, so it first requires the discovered
+// databases to be exactly the planned ones.
 func startStateDBRewritesWithPlan(
 	ctx context.Context, sqliteDir, oldPath, newPath string, plans stateDBRewritePlans, undo *tool.Restorer,
 ) (databaseRewrites, int, error) {
-	return startDatabaseRewrites(ctx, sqliteDir, stateDBGlob, oldPath, newPath,
+	paths, err := discoverDatabases(sqliteDir, stateDBGlob)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := plans.requirePlannedDatabases(paths); err != nil {
+		return nil, 0, err
+	}
+	return startDatabaseRewrites(ctx, paths, oldPath, newPath,
 		func(ctx context.Context, path string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, _, _ string) (int, error) {
-			return rewriteThreadsWithPlan(ctx, database, transaction, plans[path])
+			return rewriteStateDBPathsWithPlan(ctx, database, transaction, plans[path])
 		}, undo)
 }
 
 func startMemoriesDBRewrites(ctx context.Context, sqliteDir, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
-	return startDatabaseRewrites(ctx, sqliteDir, memoriesDBGlob, oldPath, newPath, rewriteStage1TextColumns, undo)
-}
-
-func startDatabaseRewrites(
-	ctx context.Context, sqliteDir, pattern, oldPath, newPath string,
-	rewrite func(ctx context.Context, path string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string) (int, error),
-	undo *tool.Restorer,
-) (databaseRewrites, int, error) {
-	paths, err := discoverDatabases(sqliteDir, pattern)
+	paths, err := discoverDatabases(sqliteDir, memoriesDBGlob)
 	if err != nil {
 		return nil, 0, err
 	}
+	return startDatabaseRewrites(ctx, paths, oldPath, newPath, rewriteStage1TextColumns, undo)
+}
+
+func startDatabaseRewrites(
+	ctx context.Context, paths []string, oldPath, newPath string,
+	rewrite func(ctx context.Context, path string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string) (int, error),
+	undo *tool.Restorer,
+) (databaseRewrites, int, error) {
 	var rewrites databaseRewrites
 	total := 0
 	for _, path := range paths {

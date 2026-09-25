@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -239,40 +240,125 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 }
 
 // UpdateColumnsByKey updates columns on an existing row identified by its
-// declared single-column primary key. It never inserts a row; callers use it
-// for foreign derived stores where reconstitution belongs to the owner.
-func (database *DB) UpdateColumnsByKey(transaction *Tx, table, primaryKeyColumn string, primaryKey any, values map[string]any) (int, error) {
+// declared single-column primary key, and only while every column in
+// expected still holds its expected value byte for byte. A nil or empty
+// expected adds no predicate. A row that does not match counts as zero. It
+// never inserts a row; callers use it for foreign derived stores where
+// reconstitution belongs to the owner.
+func (database *DB) UpdateColumnsByKey(
+	transaction *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any,
+) (int, error) {
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("update SQLite columns by key: transaction is nil")
 	}
 	if len(values) == 0 {
 		return 0, fmt.Errorf("update SQLite columns by key: no columns supplied")
 	}
+	if err := refuseNilExpectedValues("update SQLite columns by key", expected); err != nil {
+		return 0, err
+	}
+	columns := sortedColumns(values)
+	required := append(sortedColumns(expected), columns...)
+	if err := requirePrimaryKeyAndColumns(transaction.transaction, table, primaryKeyColumn, required...); err != nil {
+		return 0, err
+	}
+	return updateColumnsWhere(transaction, table, quoteIdentifier(primaryKeyColumn), primaryKey, columns, values, expected)
+}
+
+// UpdateColumnsByRowID updates columns on an existing row identified by its
+// SQLite rowid, for a table whose declared primary key is composite, and only
+// while every column in expected still holds its expected value byte for
+// byte. expected must name at least one column: SQLite can hand a freed
+// rowid to a different row. A row that does not match counts as zero. It
+// refuses a WITHOUT ROWID table and a table declaring a column named rowid,
+// and never inserts a row.
+func (database *DB) UpdateColumnsByRowID(transaction *Tx, table string, rowID int64, values, expected map[string]any) (int, error) {
+	if transaction == nil || transaction.transaction == nil {
+		return 0, fmt.Errorf("update SQLite columns by rowid: transaction is nil")
+	}
+	if len(values) == 0 {
+		return 0, fmt.Errorf("update SQLite columns by rowid: no columns supplied")
+	}
+	if len(expected) == 0 {
+		return 0, fmt.Errorf("update SQLite columns by rowid: no expected values supplied")
+	}
+	if err := refuseNilExpectedValues("update SQLite columns by rowid", expected); err != nil {
+		return 0, err
+	}
+	columns := sortedColumns(values)
+	required := append(sortedColumns(expected), columns...)
+	if err := requireRowIDTableAndColumns(transaction.transaction, table, required...); err != nil {
+		return 0, err
+	}
+	return updateColumnsWhere(transaction, table, "rowid", rowID, columns, values, expected)
+}
+
+// refuseNilExpectedValues rejects a nil expected value, untyped or a typed
+// nil such as a nil pointer: either binds SQL NULL, and = NULL never
+// matches, so the guarded update would silently write nothing.
+func refuseNilExpectedValues(operation string, expected map[string]any) error {
+	for _, column := range sortedColumns(expected) {
+		if isNil(expected[column]) {
+			return fmt.Errorf("%s: expected value for column %q is nil", operation, column)
+		}
+	}
+	return nil
+}
+
+func isNil(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Interface, reflect.Func, reflect.Chan:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
+
+func sortedColumns(values map[string]any) []string {
 	columns := make([]string, 0, len(values))
 	for column := range values {
 		columns = append(columns, column)
 	}
 	sort.Strings(columns)
-	if err := requirePrimaryKeyAndColumns(transaction.transaction, table, primaryKeyColumn, columns...); err != nil {
-		return 0, err
-	}
+	return columns
+}
 
+// updateColumnsWhere runs one UPDATE keyed on keyExpression. keyExpression is
+// either a quoted identifier or the literal rowid, never a caller value. Each
+// expected column adds a COLLATE BINARY equality predicate, so a column
+// declared with a case-insensitive collation cannot let a byte-different
+// current value pass the guard.
+func updateColumnsWhere(
+	transaction *Tx, table, keyExpression string, key any, columns []string, values, expected map[string]any,
+) (int, error) {
 	assignments := make([]string, 0, len(columns))
-	arguments := make([]any, 0, len(columns)+1)
+	arguments := make([]any, 0, len(columns)+1+len(expected))
 	for _, column := range columns {
 		assignments = append(assignments, quoteIdentifier(column)+" = ?")
 		arguments = append(arguments, values[column])
 	}
-	arguments = append(arguments, primaryKey)
+	predicates := []string{keyExpression + " = ?"}
+	arguments = append(arguments, key)
+	for _, column := range sortedColumns(expected) {
+		predicates = append(predicates, quoteIdentifier(column)+" COLLATE BINARY = ?")
+		arguments = append(arguments, expected[column])
+	}
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
-	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?", quoteIdentifier(table), strings.Join(assignments, ", "), quoteIdentifier(primaryKeyColumn))
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s WHERE %s",
+		quoteIdentifier(table), strings.Join(assignments, ", "), strings.Join(predicates, " AND "),
+	)
 	result, err := transaction.transaction.ExecContext(context.Background(), query, arguments...)
 	if err != nil {
-		return 0, fmt.Errorf("update columns in %s by %s: %w", table, primaryKeyColumn, err)
+		return 0, fmt.Errorf("update columns in %s by %s: %w", table, keyExpression, err)
 	}
 	count, err := result.RowsAffected()
 	if err != nil {
-		return 0, fmt.Errorf("count updated rows in %s by %s: %w", table, primaryKeyColumn, err)
+		return 0, fmt.Errorf("count updated rows in %s by %s: %w", table, keyExpression, err)
 	}
 	return int(count), nil
 }
@@ -359,6 +445,30 @@ func requireColumns(querier schemaQuerier, table string, columns ...string) erro
 	return nil
 }
 
+// RequirePrimaryKeyAndColumns checks, on the caller's read-only connection,
+// that table declares primaryKeyColumn as its single-column primary key and
+// carries every column, failing with the observed schema exactly as
+// UpdateColumnsByKey does. A read-only plan calls it so a dry run refuses the
+// schema its apply would refuse.
+func RequirePrimaryKeyAndColumns(database *sql.DB, table, primaryKeyColumn string, columns ...string) error {
+	if database == nil {
+		return fmt.Errorf("require SQLite schema: database is nil")
+	}
+	return requirePrimaryKeyAndColumns(database, table, primaryKeyColumn, columns...)
+}
+
+// RequireRowIDTableAndColumns checks, on the caller's read-only connection,
+// that table is an ordinary rowid table (not WITHOUT ROWID, and declaring no
+// column that shadows rowid) and carries every column, failing with the
+// observed schema exactly as UpdateColumnsByRowID does. A read-only plan
+// calls it so a dry run refuses the schema its apply would refuse.
+func RequireRowIDTableAndColumns(database *sql.DB, table string, columns ...string) error {
+	if database == nil {
+		return fmt.Errorf("require SQLite schema: database is nil")
+	}
+	return requireRowIDTableAndColumns(database, table, columns...)
+}
+
 func requirePrimaryKeyAndColumn(querier schemaQuerier, table, primaryKeyColumn, column string) error {
 	return requirePrimaryKeyAndColumns(querier, table, primaryKeyColumn, column)
 }
@@ -376,6 +486,55 @@ func requirePrimaryKeyAndColumns(querier schemaQuerier, table, primaryKeyColumn 
 		if name != primaryKeyColumn && definition.primaryKey != 0 {
 			return fmt.Errorf("unexpected schema for table %q: composite primary keys are unsupported; observed %s", table, formatSchema(observed))
 		}
+	}
+	for _, column := range columns {
+		if _, ok := observed[column]; !ok {
+			return fmt.Errorf("unexpected schema for table %q: missing column %q; observed %s", table, column, formatSchema(observed))
+		}
+	}
+	return nil
+}
+
+// requireRowIDTableAndColumns reads the table's wr flag from pragma_table_list,
+// which SQLite sets from the parsed schema, rather than matching "WITHOUT
+// ROWID" in the stored CREATE text or probing SELECT rowid: a declared column
+// named rowid answers that probe on a WITHOUT ROWID table and shadows the
+// real rowid in WHERE rowid = ? on a rowid table, so such a column is
+// refused. A column named oid or _rowid_ shadows only its own name.
+func requireRowIDTableAndColumns(querier schemaQuerier, table string, columns ...string) error {
+	observed, err := schema(querier, table)
+	if err != nil {
+		return err
+	}
+	for name := range observed {
+		if strings.EqualFold(name, "rowid") {
+			return fmt.Errorf("unexpected schema for table %q: declared column %q shadows the rowid; observed %s", table, name, formatSchema(observed))
+		}
+	}
+	rows, err := querier.QueryContext(context.Background(), "SELECT type, wr FROM pragma_table_list(?)", table)
+	if err != nil {
+		return fmt.Errorf("inspect SQLite table kind for table %q: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var kinds []string
+	withoutRowID := false
+	for rows.Next() {
+		var kind string
+		var wr int
+		if err := rows.Scan(&kind, &wr); err != nil {
+			return fmt.Errorf("read SQLite table kind for table %q: %w", table, err)
+		}
+		kinds = append(kinds, kind)
+		withoutRowID = withoutRowID || wr != 0
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect SQLite table kind for table %q: %w", table, err)
+	}
+	if len(kinds) != 1 || kinds[0] != "table" || withoutRowID {
+		return fmt.Errorf(
+			"unexpected schema for table %q: an ordinary rowid table is required; observed kinds %v, without rowid %t",
+			table, kinds, withoutRowID,
+		)
 	}
 	for _, column := range columns {
 		if _, ok := observed[column]; !ok {
