@@ -63,6 +63,7 @@ func TestMoveSurfacesDryRunApplyCountParity(t *testing.T) {
 	assert.Equal(t, planCounts, applyCounts, "dry-run and apply must agree exactly on every surface's count")
 	assert.Positive(t, planCounts["state-db"])
 	assert.Positive(t, planCounts["memories-db"])
+	assert.Positive(t, planCounts["queue-db"])
 	assert.Positive(t, planCounts["config"])
 	assert.Positive(t, planCounts[categorySessions])
 	assert.Positive(t, planCounts["memories-worktree"])
@@ -1073,10 +1074,8 @@ func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testin
 		context.Background(), workspace.home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project", plans, undo,
 	)
 	require.NoError(t, err)
-	memoriesPaths, err := discoverDatabases(workspace.home.SQLiteDir, memoriesDBGlob)
-	require.NoError(t, err)
 	_, _, err = startDatabaseRewrites(
-		context.Background(), memoriesPaths, FixtureProjectPath(), "/Users/fixture/renamed-project",
+		context.Background(), workspace.home.SQLiteDir, memoriesDBGlob, nil, FixtureProjectPath(), "/Users/fixture/renamed-project",
 		func(_ context.Context, _ string, database *sqlrewrite.DB, _ *sqlrewrite.Tx, _, _ string) (int, error) {
 			require.NoError(t, database.Close())
 			return 0, assert.AnError

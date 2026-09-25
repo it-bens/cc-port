@@ -115,3 +115,27 @@ func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, active)
 }
+
+func TestActiveWritersDetectsBusyQueueAndThreadHistoryDatabases(t *testing.T) {
+	for _, fileName := range []string{"queue_1.sqlite", "thread_history_1.sqlite"} {
+		t.Run(fileName, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "dotcodex")
+			require.NoError(t, os.MkdirAll(dir, 0o750))
+			dbPath := filepath.Join(dir, fileName)
+			blocker, err := sql.Open("sqlite", dbPath)
+			require.NoError(t, err)
+			defer func() { _ = blocker.Close() }()
+			_, err = blocker.ExecContext(context.Background(), "CREATE TABLE marker (value INTEGER)")
+			require.NoError(t, err)
+			_, err = blocker.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+			require.NoError(t, err)
+			defer func() { _, _ = blocker.ExecContext(context.Background(), "ROLLBACK") }()
+			workspace := newWorkspace(&Home{Dir: dir, SQLiteDir: dir}, fakeGetenv(nil), noProcesses)
+
+			active, err := workspace.ActiveWriters()
+
+			require.NoError(t, err)
+			assert.NotEmpty(t, active)
+		})
+	}
+}

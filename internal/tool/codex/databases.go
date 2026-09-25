@@ -28,15 +28,17 @@ func openReadOnlyDatabase(path string) (*sql.DB, error) {
 // Database filename glob patterns. Codex's generation suffix can bump
 // (state_5.sqlite today; a future binary may write state_6.sqlite), so
 // every discovery site globs rather than pinning a literal filename
-// (state/src/sqlite.rs:29-33).
+// (state/src/sqlite.rs:29-34).
 const (
-	stateDBGlob    = "state_*.sqlite"
-	memoriesDBGlob = "memories_*.sqlite"
-	goalsDBGlob    = "goals_*.sqlite"
-	logsDBGlob     = "logs_*.sqlite"
-	sqliteBusyCode = 5 // SQLite's stable, documented SQLITE_BUSY result code.
-	walSuffix      = "-wal"
-	shmSuffix      = "-shm"
+	stateDBGlob         = "state_*.sqlite"
+	memoriesDBGlob      = "memories_*.sqlite"
+	goalsDBGlob         = "goals_*.sqlite"
+	logsDBGlob          = "logs_*.sqlite"
+	queueDBGlob         = "queue_*.sqlite"
+	threadHistoryDBGlob = "thread_history_*.sqlite"
+	sqliteBusyCode      = 5 // SQLite's stable, documented SQLITE_BUSY result code.
+	walSuffix           = "-wal"
+	shmSuffix           = "-shm"
 )
 
 // discoverDatabases globs sqliteDir for every file matching pattern,
@@ -66,12 +68,12 @@ func discoverDatabases(sqliteDir, pattern string) ([]string, error) {
 	return matches, nil
 }
 
-// allDatabasePaths returns every discovered database file across all four
+// allDatabasePaths returns every discovered database file across the
 // generation-suffixed families, in a stable order (state, memories, goals,
-// logs, each internally sorted).
+// logs, queue, thread_history, each internally sorted).
 func (workspace *Workspace) allDatabasePaths() ([]string, error) {
 	var all []string
-	for _, pattern := range []string{stateDBGlob, memoriesDBGlob, goalsDBGlob, logsDBGlob} {
+	for _, pattern := range []string{stateDBGlob, memoriesDBGlob, goalsDBGlob, logsDBGlob, queueDBGlob, threadHistoryDBGlob} {
 		matches, err := discoverDatabases(workspace.home.SQLiteDir, pattern)
 		if err != nil {
 			return nil, err

@@ -23,7 +23,7 @@ func FixtureProjectPath() string {
 }
 
 // SetupFixture stages testdata/dotcodex under t.TempDir() and builds
-// fixture state_5.sqlite and memories_1.sqlite databases, plus a no-remote
+// fixture state_5.sqlite, memories_1.sqlite, and queue_1.sqlite databases, plus a no-remote
 // .git baseline under each memory worktree root (memories/ and
 // memories_v2/), alongside it — SQLite files are binary and nested .git
 // directories are untrackable by the outer repo, so all of it is built by
@@ -42,6 +42,7 @@ func SetupFixture(t *testing.T) *Home {
 
 	buildFixtureStateDB(t, filepath.Join(codexDir, stateDBFileName))
 	buildFixtureMemoriesDB(t, filepath.Join(codexDir, memoriesDBFileName))
+	buildFixtureQueueDB(t, filepath.Join(codexDir, queueDBFileName))
 	buildFixtureMemoriesGitBaseline(t, filepath.Join(codexDir, memoriesWorktreeSubdir), fixtureGitConfigNoRemote)
 	buildFixtureMemoriesV2Worktree(t, filepath.Join(codexDir, memoriesWorktreeV2Subdir))
 
@@ -128,12 +129,13 @@ func findFixtureDir(t *testing.T) string {
 	}
 }
 
-// stateDBFileName and memoriesDBFileName are the generation-suffixed
-// filenames SetupFixture writes; production code never pins these and
-// always globs (databases.go).
+// stateDBFileName, memoriesDBFileName, and queueDBFileName are the
+// generation-suffixed filenames SetupFixture writes; production code never
+// pins these and always globs (databases.go).
 const (
 	stateDBFileName    = "state_5.sqlite"
 	memoriesDBFileName = "memories_1.sqlite"
+	queueDBFileName    = "queue_1.sqlite"
 )
 
 // fixtureGitConfigNoRemote is a local-only baseline config, the shape
@@ -353,5 +355,96 @@ CREATE TABLE stage1_outputs (
 	)
 	if err != nil {
 		t.Fatalf("insert fixture stage1 output: %v", err)
+	}
+}
+
+// fixtureQueuedItemID and fixtureQueuedMentionItemID are the queued_items
+// rows SetupFixture seeds.
+const (
+	fixtureQueuedItemID        = "fixture-queued-skill-item"
+	fixtureQueuedMentionItemID = "fixture-queued-mention-item"
+)
+
+// fixtureQueueSchema is state/queue_migrations/0001_queued_items.sql followed
+// by 0002_queued_thread_revisions.sql, verbatim.
+const fixtureQueueSchema = `
+CREATE TABLE queued_items (
+    id TEXT PRIMARY KEY NOT NULL,
+    thread_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    queue_order INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX queued_items_thread_order_idx
+    ON queued_items(thread_id, queue_order);
+CREATE TABLE queued_thread_revisions (
+    revision INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL UNIQUE
+);
+
+INSERT INTO queued_thread_revisions (thread_id)
+SELECT DISTINCT thread_id FROM queued_items ORDER BY thread_id;
+
+CREATE TRIGGER queued_items_revision_after_insert
+AFTER INSERT ON queued_items
+BEGIN
+    INSERT INTO queued_thread_revisions (thread_id)
+    VALUES (NEW.thread_id)
+    ON CONFLICT(thread_id) DO UPDATE
+    SET revision = (SELECT COALESCE(MAX(revision), 0) + 1 FROM queued_thread_revisions);
+END;
+
+CREATE TRIGGER queued_items_revision_after_update
+AFTER UPDATE ON queued_items
+BEGIN
+    INSERT INTO queued_thread_revisions (thread_id)
+    VALUES (NEW.thread_id)
+    ON CONFLICT(thread_id) DO UPDATE
+    SET revision = (SELECT COALESCE(MAX(revision), 0) + 1 FROM queued_thread_revisions);
+END;
+
+CREATE TRIGGER queued_items_revision_after_delete
+AFTER DELETE ON queued_items
+BEGIN
+    INSERT INTO queued_thread_revisions (thread_id)
+    VALUES (OLD.thread_id)
+    ON CONFLICT(thread_id) DO UPDATE
+    SET revision = (SELECT COALESCE(MAX(revision), 0) + 1 FROM queued_thread_revisions);
+END;`
+
+// buildFixtureQueueDB writes two queued turns whose payload_json is the
+// serde_json shape of TurnInput::UserInput: one carrying a UserInput::Skill
+// that points into the fixture project, one carrying a UserInput::Mention of
+// a SKILL.md file in the fixture project.
+func buildFixtureQueueDB(t *testing.T, path string) {
+	t.Helper()
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open fixture queue db: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	if _, err := database.ExecContext(context.Background(), fixtureQueueSchema); err != nil {
+		t.Fatalf("create fixture queue schema: %v", err)
+	}
+
+	payloads := []struct{ id, payload string }{
+		{fixtureQueuedItemID, `{"UserInput":{"content":[{"type":"skill","name":"deploy","path":"` +
+			FixtureProjectPath() + `/.codex/skills/deploy/SKILL.md"}],"client_id":"fixture-client"}}`},
+		{fixtureQueuedMentionItemID, `{"UserInput":{"content":[{"type":"mention","name":"release","path":"` +
+			FixtureProjectPath() + `/.codex/skills/release/SKILL.md"}],"client_id":"fixture-client"}}`},
+	}
+	now := time.Now().UnixMilli()
+	for order, item := range payloads {
+		_, err = database.ExecContext(context.Background(),
+			`INSERT INTO queued_items (id, thread_id, payload_json, queue_order, created_at_ms, updated_at_ms)
+				VALUES (?, ?, ?, ?, ?, ?)`,
+			item.id, "00000000-0000-4000-8000-000000000001", item.payload, order, now, now,
+		)
+		if err != nil {
+			t.Fatalf("insert fixture queued item %s: %v", item.id, err)
+		}
 	}
 }

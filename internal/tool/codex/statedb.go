@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
-	"strings"
 
+	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/sqlrewrite"
 )
 
@@ -442,31 +442,6 @@ func (plans stateDBRewritePlans) rowCount() int {
 	return total
 }
 
-// requirePlannedDatabases fails unless discovered names exactly the
-// databases the plan was captured from. A database added since the plan was
-// never matched, and one removed would leave its planned rows unwritten.
-func (plans stateDBRewritePlans) requirePlannedDatabases(discovered []string) error {
-	current := make(map[string]struct{}, len(discovered))
-	var added []string
-	for _, path := range discovered {
-		current[path] = struct{}{}
-		if _, planned := plans[path]; !planned {
-			added = append(added, path)
-		}
-	}
-	var removed []string
-	for path := range plans {
-		if _, present := current[path]; !present {
-			removed = append(removed, path)
-		}
-	}
-	if len(added) == 0 && len(removed) == 0 {
-		return nil
-	}
-	sort.Strings(removed)
-	return fmt.Errorf("state databases changed after the plan: added %v, removed %v", added, removed)
-}
-
 func stateDBRewritePlansForProject(ctx context.Context, sqliteDir, oldPath, newPath string) (stateDBRewritePlans, error) {
 	paths, err := discoverDatabases(sqliteDir, stateDBGlob)
 	if err != nil {
@@ -526,7 +501,13 @@ func matchingPathRewrites(ctx context.Context, path, oldPath, newPath string) ([
 			if err != nil {
 				return nil, err
 			}
-			newValue := newPath + strings.TrimPrefix(canonicalStoredValue, canonicalOldPath)
+			newValue, ok := rewrite.ReplaceBoundedPrefix(canonicalStoredValue, canonicalOldPath, newPath)
+			if !ok {
+				return nil, fmt.Errorf(
+					"%s.%s value %q canonicalizes to %q, not a path-boundary descendant of %q",
+					target.table, target.column, storedValue, canonicalStoredValue, canonicalOldPath,
+				)
+			}
 			keys, err := rowKeysForColumnValue(ctx, database, target, storedValue)
 			if err != nil {
 				return nil, err

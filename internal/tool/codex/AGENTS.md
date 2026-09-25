@@ -15,7 +15,7 @@
 ## Navigation
 
 - Home and SQLite-dir resolution: `home.go`, `databases.go`.
-- Move surfaces: `move.go`, `databaseapply.go`, `statedb.go`, `memories.go`, `toml.go`, `agents.go`.
+- Move surfaces: `move.go`, `databaseapply.go`, `statedb.go`, `queue.go`, `memories.go`, `toml.go`, `agents.go`.
 - Witness: `witness.go`, `process.go`.
 - Rollout JSONL: `rollout.go`.
 - Export/import/stats and the threads sidecar: `export_import_stats.go`.
