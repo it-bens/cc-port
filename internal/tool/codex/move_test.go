@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -112,6 +113,31 @@ func TestMoveSurfacesRolloutPlanApplyCountParity(t *testing.T) {
 
 	require.Contains(t, planCounts, categorySessions)
 	assert.Equal(t, planCounts[categorySessions], applyCounts[categorySessions])
+}
+
+func TestMoveSurfacesDefaultModeRolloutPlanPredictsApply(t *testing.T) {
+	workspace, _ := fixtureWorkspace(t)
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+
+	planCounts, applyCounts := planAndApply(t, workspace, req)
+
+	assert.Equal(t, 12, planCounts[categorySessions], "ten era-C structured fields plus session_meta.cwd in the era-B and archived rollouts")
+	assert.Equal(t, planCounts[categorySessions], applyCounts[categorySessions])
+}
+
+func TestMoveSurfacesDefaultModeRewritesRuntimeRootsAndThreadSettings(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	newPath := "/Users/fixture/renamed-project"
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: newPath}
+
+	planAndApply(t, workspace, req)
+
+	lines, err := readRolloutLines(rolloutFixturePath(home, eraCPath))
+	require.NoError(t, err)
+	require.Len(t, lines, 5)
+	assert.Equal(t, newPath, gjson.GetBytes(lines[0], "payload.runtime_workspace_roots.0").String())
+	assert.Equal(t, newPath, gjson.GetBytes(lines[1], "payload.thread_settings.cwd").String())
+	assert.Equal(t, newPath, gjson.GetBytes(lines[1], "payload.thread_settings.runtime_workspace_roots.0").String())
 }
 
 func TestMoveSurfacesRefusesCompressedOnlyRollout(t *testing.T) {
