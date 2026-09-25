@@ -39,10 +39,7 @@ type shortWriter struct {
 }
 
 func (writer *shortWriter) Write(p []byte) (int, error) {
-	written := writer.accept
-	if written > len(p) {
-		written = len(p)
-	}
+	written := min(writer.accept, len(p))
 	return written, writer.err
 }
 
@@ -53,10 +50,7 @@ type shortReader struct {
 }
 
 func (reader *shortReader) Read(p []byte) (int, error) {
-	read := reader.deliver
-	if read > len(p) {
-		read = len(p)
-	}
+	read := min(reader.deliver, len(p))
 	return read, reader.err
 }
 

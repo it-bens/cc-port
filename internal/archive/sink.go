@@ -144,10 +144,7 @@ func (sink *Sink) WriteJSONL(
 	if err != nil {
 		return WrittenEntry{}, err
 	}
-	initialBufSize := int64(64 << 10)
-	if maxLineBytes < initialBufSize {
-		initialBufSize = maxLineBytes
-	}
+	initialBufSize := min(maxLineBytes, int64(64<<10))
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, int(initialBufSize)), int(maxLineBytes))
 	scanner.Split(scanJSONLTokens)

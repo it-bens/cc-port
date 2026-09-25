@@ -51,15 +51,17 @@ func buildStateDatabase(path, projectPath string) (returnError error) {
 }
 
 func insertStateRows(database *sql.DB, projectPath string, now int64) error {
-	if _, err := database.ExecContext(context.Background(), `INSERT INTO threads
+	_, err := database.ExecContext(context.Background(), `INSERT INTO threads
 		(id, rollout_path, created_at, updated_at, source, model_provider, cwd, title, sandbox_policy, approval_mode)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		codexThreadID, rolloutRelative, now, now, "cli", "openai", projectPath, "fix login bug", "workspace-write", "on-request"); err != nil {
+		codexThreadID, rolloutRelative, now, now, "cli", "openai", projectPath, "fix login bug", "workspace-write", "on-request")
+	if err != nil {
 		return fmt.Errorf("insert threads row: %w", err)
 	}
 	const backfillEpoch = 1_752_137_200
-	if _, err := database.ExecContext(context.Background(), `INSERT INTO backfill_state (id, status, last_watermark, last_success_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)`, 1, "complete", rolloutRelative, backfillEpoch, backfillEpoch); err != nil {
+	_, err = database.ExecContext(context.Background(), `INSERT INTO backfill_state (id, status, last_watermark, last_success_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)`, 1, "complete", rolloutRelative, backfillEpoch, backfillEpoch)
+	if err != nil {
 		return fmt.Errorf("insert backfill state row: %w", err)
 	}
 	return nil
@@ -90,13 +92,14 @@ func buildMemoriesDatabase(path, projectPath string) (returnError error) {
 	now := time.Now().Unix()
 	rawMemory := "Fixed a bug in " + projectPath + "/src/main.py."
 	rolloutSummary := "Summary: fixed a bug in " + projectPath + "/src/main.py."
-	if _, err := database.ExecContext(
+	_, err = database.ExecContext(
 		context.Background(),
 		`INSERT INTO stage1_outputs
 			(thread_id, source_updated_at, raw_memory, rollout_summary, rollout_slug, generated_at)
 			VALUES (?, ?, ?, ?, ?, ?)`,
 		codexThreadID, now, rawMemory, rolloutSummary, "fix-login-bug", now,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("insert stage1 outputs row: %w", err)
 	}
 	if err := database.Close(); err != nil {

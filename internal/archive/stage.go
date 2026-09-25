@@ -96,7 +96,7 @@ func validArchiveEntryName(relativePath string) bool {
 	if filepath.IsAbs(relativePath) {
 		return false
 	}
-	for _, segment := range strings.Split(filepath.ToSlash(relativePath), "/") {
+	for segment := range strings.SplitSeq(filepath.ToSlash(relativePath), "/") {
 		if segment == "" || segment == "." || segment == ".." {
 			return false
 		}

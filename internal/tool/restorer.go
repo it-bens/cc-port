@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/it-bens/cc-port/internal/rewrite"
@@ -133,8 +134,8 @@ func (restorer *Restorer) RegisterUndo(fn func() error) {
 // joining any errors encountered along the way.
 func (restorer *Restorer) Restore() error {
 	var errs []error
-	for index := len(restorer.restores) - 1; index >= 0; index-- {
-		if err := restorer.restores[index](); err != nil {
+	for _, restore := range slices.Backward(restorer.restores) {
+		if err := restore(); err != nil {
 			errs = append(errs, err)
 		}
 	}

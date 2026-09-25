@@ -3,6 +3,7 @@ package progress
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -108,8 +109,8 @@ func (active *activePhase) advance(event PhaseAdvance) {
 }
 
 func (active *activePhase) end(event PhaseEnd) {
-	for index := len(active.stack) - 1; index >= 0; index-- {
-		if pathEqual(active.stack[index].path, event.Path) {
+	for index, state := range slices.Backward(active.stack) {
+		if pathEqual(state.path, event.Path) {
 			active.stack = append(active.stack[:index], active.stack[index+1:]...)
 			return
 		}
@@ -136,9 +137,9 @@ func (active *activePhase) name() string {
 
 // totalOf returns the total of the open phase at path, or 0 when not found.
 func (active *activePhase) totalOf(path []string) int64 {
-	for index := len(active.stack) - 1; index >= 0; index-- {
-		if pathEqual(active.stack[index].path, path) {
-			return active.stack[index].total
+	for _, state := range slices.Backward(active.stack) {
+		if pathEqual(state.path, path) {
+			return state.total
 		}
 	}
 	return 0

@@ -69,8 +69,7 @@ func TestPush_RejectsMissingAsFlag(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.Error(t, err)
-	var u *usageError
-	if !errors.As(err, &u) {
+	if _, ok := errors.AsType[*usageError](err); !ok {
 		t.Fatalf("err = %v, want *usageError", err)
 	}
 }
@@ -82,8 +81,7 @@ func TestPush_RejectsMissingRemoteFlag(t *testing.T) {
 	err := rootCmd.Execute()
 
 	require.Error(t, err)
-	var u *usageError
-	if !errors.As(err, &u) {
+	if _, ok := errors.AsType[*usageError](err); !ok {
 		t.Fatalf("err = %v, want *usageError", err)
 	}
 }

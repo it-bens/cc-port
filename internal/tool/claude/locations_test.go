@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -200,7 +201,7 @@ func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
 	result, err := workspace.Export(t.Context(), testProjectPath, selected, archive.NewSink(writer, "claude", nil))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
-	allArtifacts := append(append([]string{}, pluginArtifacts...), taskArtifacts...)
+	allArtifacts := slices.Concat(pluginArtifacts, taskArtifacts)
 	for _, entry := range append(result.Categories["plugins-data"], result.Categories["tasks"]...) {
 		for _, artifact := range allArtifacts {
 			assert.NotContains(t, entry.ArchivePath, filepath.Base(artifact))

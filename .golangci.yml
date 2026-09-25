@@ -23,6 +23,7 @@ linters:
     - intrange
     - lll
     - misspell
+    - modernize
     - nakedret
     - noctx
     - nolintlint
@@ -63,6 +64,14 @@ linters:
         - performance
         - style
         - opinionated
+    revive:
+      # Naming a rule replaces revive's default set rather than extending it,
+      # which would drop the default `exported` rule. Keep the defaults on.
+      enable-default-rules: true
+      rules:
+        - name: marshal-receiver
+        - name: multiline-if-init
+        - name: use-slices-concat
 
 formatters:
   enable:

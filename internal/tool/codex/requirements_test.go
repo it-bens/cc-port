@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -725,9 +726,7 @@ func TestResolveSQLiteDirWarnsWhenCodexCannotLoadAuthJSON(t *testing.T) {
 				"id_token": idToken, "access_token": "secret-marker", "refresh_token": "secret-marker", "account_id": "secret-marker",
 			},
 		}
-		for key, value := range extra {
-			auth[key] = value
-		}
+		maps.Copy(auth, extra)
 		encoded, err := json.Marshal(auth)
 		require.NoError(t, err)
 		return encoded
@@ -1034,9 +1033,7 @@ func TestOpenRejectsExplicitSQLiteHomeThatDoesNotExist(t *testing.T) {
 			require.NoError(t, err)
 			missing := filepath.Join(t.TempDir(), "missing-sqlite")
 			environment := map[string]string{"HOME": t.TempDir()}
-			for key, value := range testCase.arrange(t, codexHome, missing) {
-				environment[key] = value
-			}
+			maps.Copy(environment, testCase.arrange(t, codexHome, missing))
 			adapter := NewAdapter(fakeGetenv(environment), noProcesses)
 
 			_, err = adapter.Open(codexHome)

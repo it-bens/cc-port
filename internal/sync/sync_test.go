@@ -106,11 +106,12 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 		t.Fatalf("PlanPush A: %v", err)
 	}
 	writerA := openWriterForTest(t, r, "k", "")
-	if _, err := ExecutePush(context.Background(), PushOptions{
+	_, err = ExecutePush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
 		Hostname: testHostname, Getenv: testGetenv, CurrentUser: testCurrentUser,
-	}, planA, writerA); err != nil {
+	}, planA, writerA)
+	if err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
 	if err := writerA.Close(); err != nil {
@@ -206,10 +207,11 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 	t.Cleanup(func() { now = time.Now })
 
 	writer := openWriterForTest(t, r, "k", "")
-	if _, err := ExecutePush(context.Background(), PushOptions{
+	_, err = ExecutePush(context.Background(), PushOptions{
 		Targets: targets, ProjectPath: projectPath, Name: "k",
 		Selected: allSelection(),
-	}, plan, writer); err != nil {
+	}, plan, writer)
+	if err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
 	if err := writer.Close(); err != nil {
@@ -541,10 +543,11 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 		t.Fatalf("PlanPush: %v", err)
 	}
 	writerA := openWriterForTest(t, r, "k", "")
-	if _, err := ExecutePush(context.Background(), PushOptions{
+	_, err = ExecutePush(context.Background(), PushOptions{
 		Targets: targetsA, ProjectPath: projectPathA, Name: "k",
 		Selected: allSelection(),
-	}, planA, writerA); err != nil {
+	}, planA, writerA)
+	if err != nil {
 		t.Fatalf("ExecutePush: %v", err)
 	}
 	if err := writerA.Close(); err != nil {
@@ -565,9 +568,10 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	if len(planB.UnresolvedPlaceholders["claude"]) != 0 {
 		t.Fatalf("unresolved: %v", planB.UnresolvedPlaceholders["claude"])
 	}
-	if _, err := ExecutePull(context.Background(), PullOptions{
+	_, err = ExecutePull(context.Background(), PullOptions{
 		AllTools: toolSetForTest(), Targets: targetsB, Name: "k", TargetPath: targetPath,
-	}, planB, source); err != nil {
+	}, planB, source)
+	if err != nil {
 		t.Fatalf("ExecutePull: %v", err)
 	}
 

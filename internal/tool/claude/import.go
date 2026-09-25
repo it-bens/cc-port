@@ -212,8 +212,8 @@ func matchSessionKeyedPrefix(name string) (RegistryEntry, string, bool) {
 		if target.ZipPrefix == "" {
 			continue
 		}
-		if strings.HasPrefix(name, target.ZipPrefix) {
-			return target, strings.TrimPrefix(name, target.ZipPrefix), true
+		if after, ok := strings.CutPrefix(name, target.ZipPrefix); ok {
+			return target, after, true
 		}
 	}
 	return RegistryEntry{}, "", false
@@ -225,12 +225,12 @@ func matchSessionKeyedPrefix(name string) (RegistryEntry, string, bool) {
 // when the leading path segment is not a session UUID. The path is an archive
 // name, so the separator is always '/', never filepath.Separator.
 func stagedSessionUUID(relative string) (string, bool) {
-	if slash := strings.IndexByte(relative, '/'); slash >= 0 {
+	if before, _, ok := strings.Cut(relative, "/"); ok {
 		// Session subdirectory entry: the leading segment is the UUID
 		// directory itself. Claude never suffixes a session directory with
 		// .jsonl, so it is matched whole — stripping .jsonl here would coin a
 		// bogus UUID from a directory literally named "<uuid>.jsonl".
-		leading := relative[:slash]
+		leading := before
 		if uuidPattern.MatchString(leading) {
 			return leading, true
 		}
@@ -402,7 +402,7 @@ func splitNonEmptyLines(data []byte) [][]byte {
 		return nil
 	}
 	var lines [][]byte
-	for _, line := range bytes.Split(trimmed, []byte("\n")) {
+	for line := range bytes.SplitSeq(trimmed, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}

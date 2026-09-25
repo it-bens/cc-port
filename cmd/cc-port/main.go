@@ -116,8 +116,7 @@ func run() int {
 	rootCmd := newRootCmd(bannerImpl)
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		var usage *usageError
-		if errors.As(err, &usage) {
+		if _, ok := errors.AsType[*usageError](err); ok {
 			return 2
 		}
 		return 1

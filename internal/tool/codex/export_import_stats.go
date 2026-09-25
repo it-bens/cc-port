@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -569,9 +570,7 @@ func (workspace *Workspace) Stage(_ context.Context, project string, entry archi
 
 func codexImportResolutions(project string, resolutions map[string]string) map[string]string {
 	resolved := make(map[string]string, len(resolutions)+1)
-	for key, value := range resolutions {
-		resolved[key] = value
-	}
+	maps.Copy(resolved, resolutions)
 	resolved[codexProjectPathKey] = project
 	return resolved
 }
