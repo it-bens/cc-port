@@ -15,7 +15,7 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
-// memoriesWorktreeSubdir is $CODEX_HOME/memories (memories/write/src/lib.rs:117,
+// memoriesWorktreeSubdir is $CODEX_HOME/memories (memories/write/src/lib.rs:118,
 // memory_root).
 const memoriesWorktreeSubdir = "memories"
 
@@ -235,7 +235,7 @@ func reconcileStrandedGitBackup(root string) error {
 // for "Codex provably re-initializes a missing .git" — the underlying fact
 // it stands in for is ensure_git_baseline_repository unconditionally
 // resetting a missing or unusable baseline (git-utils/src/baseline.rs:78-92,
-// invoked from memories/write/src/workspace.rs:18) — not something Codex's
+// invoked from memories/write/src/workspace.rs:21) — not something Codex's
 // own source encodes as a "[remote" check itself.
 func hasNoRemoteGitBaseline(root string) (bool, error) {
 	configPath := filepath.Join(root, gitDirName, "config")
