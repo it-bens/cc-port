@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
 
 // FixtureProjectPath returns the canonical project path the fixture tree
@@ -40,9 +41,9 @@ func SetupFixture(t *testing.T) *Home {
 		t.Fatalf("copy fixture directory: %v", err)
 	}
 
-	buildFixtureStateDB(t, filepath.Join(codexDir, stateDBFileName))
-	buildFixtureMemoriesDB(t, filepath.Join(codexDir, memoriesDBFileName))
-	buildFixtureQueueDB(t, filepath.Join(codexDir, queueDBFileName))
+	buildFixtureStateDB(t, filepath.Join(codexDir, codexschema.StateDBFileName))
+	buildFixtureMemoriesDB(t, filepath.Join(codexDir, codexschema.MemoriesDBFileName))
+	buildFixtureQueueDB(t, filepath.Join(codexDir, codexschema.QueueDBFileName))
 	buildFixtureMemoriesGitBaseline(t, filepath.Join(codexDir, memoriesWorktreeSubdir), fixtureGitConfigNoRemote)
 	buildFixtureMemoriesV2Worktree(t, filepath.Join(codexDir, memoriesWorktreeV2Subdir))
 
@@ -55,7 +56,7 @@ func SetupFixture(t *testing.T) *Home {
 // cwd built under t.TempDir() by a cross-package end-to-end move test.
 func InsertThreadRow(t *testing.T, home *Home, id, cwd string) {
 	t.Helper()
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	if err != nil {
 		t.Fatalf("open fixture state db: %v", err)
 	}
@@ -77,7 +78,7 @@ func InsertThreadRow(t *testing.T, home *Home, id, cwd string) {
 // database, for tests asserting a move rewrote it.
 func ThreadCWD(t *testing.T, home *Home, id string) string {
 	t.Helper()
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	if err != nil {
 		t.Fatalf("open fixture state db: %v", err)
 	}
@@ -128,15 +129,6 @@ func findFixtureDir(t *testing.T) string {
 		currentDir = parentDir
 	}
 }
-
-// stateDBFileName, memoriesDBFileName, and queueDBFileName are the
-// generation-suffixed filenames SetupFixture writes; production code never
-// pins these and always globs (databases.go).
-const (
-	stateDBFileName    = "state_5.sqlite"
-	memoriesDBFileName = "memories_1.sqlite"
-	queueDBFileName    = "queue_1.sqlite"
-)
 
 // fixtureGitConfigNoRemote is a local-only baseline config, the shape
 // hasNoRemoteGitBaseline accepts.
@@ -211,36 +203,6 @@ func buildFixtureMemoriesV2Worktree(t *testing.T, root string) {
 // whose single project_roots row holds FixtureProjectPath.
 const fixtureProjectID = "primary-project"
 
-// stateDBProjectsSchema is the table DDL of Codex's
-// state/migrations/0049_projects.sql, verbatim. The migration's two indexes
-// are omitted: idx_threads_project_id covers threads columns the fixture's
-// reduced threads table does not declare.
-const stateDBProjectsSchema = `
-CREATE TABLE projects (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    metadata TEXT NOT NULL DEFAULT '{}',
-    position INTEGER NOT NULL,
-    created_at_ms INTEGER NOT NULL,
-    updated_at_ms INTEGER NOT NULL
-);
-
-CREATE TABLE project_roots (
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
-    path TEXT NOT NULL,
-    PRIMARY KEY (project_id, position)
-);
-
-CREATE TABLE project_idempotency_keys (
-    key TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    created_at_ms INTEGER NOT NULL
-);
-
-ALTER TABLE threads ADD COLUMN project_id TEXT
-    REFERENCES projects(id) ON DELETE SET NULL;`
-
 func buildFixtureStateDB(t *testing.T, path string) {
 	t.Helper()
 	database, err := sql.Open("sqlite", path)
@@ -249,34 +211,7 @@ func buildFixtureStateDB(t *testing.T, path string) {
 	}
 	defer func() { _ = database.Close() }()
 
-	const schema = `
-CREATE TABLE threads (
-	id TEXT PRIMARY KEY,
-	rollout_path TEXT NOT NULL,
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL,
-	source TEXT NOT NULL,
-	model_provider TEXT NOT NULL,
-	cwd TEXT NOT NULL,
-	title TEXT NOT NULL,
-	sandbox_policy TEXT NOT NULL,
-	approval_mode TEXT NOT NULL,
-	tokens_used INTEGER NOT NULL DEFAULT 0,
-	has_user_event INTEGER NOT NULL DEFAULT 0,
-	archived INTEGER NOT NULL DEFAULT 0,
-	archived_at INTEGER,
-	git_sha TEXT,
-	git_branch TEXT,
-	git_origin_url TEXT
-);
-CREATE TABLE backfill_state (
-	id INTEGER PRIMARY KEY CHECK (id = 1),
-	status TEXT NOT NULL,
-	last_watermark TEXT,
-	last_success_at INTEGER,
-	updated_at INTEGER NOT NULL
-);` + stateDBProjectsSchema
-	if _, err := database.ExecContext(context.Background(), schema); err != nil {
+	if _, err := database.ExecContext(context.Background(), codexschema.StateDBSchema); err != nil {
 		t.Fatalf("create fixture state schema: %v", err)
 	}
 
@@ -327,20 +262,7 @@ func buildFixtureMemoriesDB(t *testing.T, path string) {
 	}
 	defer func() { _ = database.Close() }()
 
-	const schema = `
-CREATE TABLE stage1_outputs (
-	thread_id TEXT PRIMARY KEY,
-	source_updated_at INTEGER NOT NULL,
-	raw_memory TEXT NOT NULL,
-	rollout_summary TEXT NOT NULL,
-	rollout_slug TEXT,
-	generated_at INTEGER NOT NULL,
-	usage_count INTEGER,
-	last_usage INTEGER,
-	selected_for_phase2 INTEGER NOT NULL DEFAULT 0,
-	selected_for_phase2_source_updated_at INTEGER
-);`
-	if _, err := database.ExecContext(context.Background(), schema); err != nil {
+	if _, err := database.ExecContext(context.Background(), codexschema.MemoriesDBSchema); err != nil {
 		t.Fatalf("create fixture memories schema: %v", err)
 	}
 
@@ -365,55 +287,6 @@ const (
 	fixtureQueuedMentionItemID = "fixture-queued-mention-item"
 )
 
-// fixtureQueueSchema is state/queue_migrations/0001_queued_items.sql followed
-// by 0002_queued_thread_revisions.sql, verbatim.
-const fixtureQueueSchema = `
-CREATE TABLE queued_items (
-    id TEXT PRIMARY KEY NOT NULL,
-    thread_id TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    queue_order INTEGER NOT NULL,
-    created_at_ms INTEGER NOT NULL,
-    updated_at_ms INTEGER NOT NULL
-);
-
-CREATE UNIQUE INDEX queued_items_thread_order_idx
-    ON queued_items(thread_id, queue_order);
-CREATE TABLE queued_thread_revisions (
-    revision INTEGER PRIMARY KEY AUTOINCREMENT,
-    thread_id TEXT NOT NULL UNIQUE
-);
-
-INSERT INTO queued_thread_revisions (thread_id)
-SELECT DISTINCT thread_id FROM queued_items ORDER BY thread_id;
-
-CREATE TRIGGER queued_items_revision_after_insert
-AFTER INSERT ON queued_items
-BEGIN
-    INSERT INTO queued_thread_revisions (thread_id)
-    VALUES (NEW.thread_id)
-    ON CONFLICT(thread_id) DO UPDATE
-    SET revision = (SELECT COALESCE(MAX(revision), 0) + 1 FROM queued_thread_revisions);
-END;
-
-CREATE TRIGGER queued_items_revision_after_update
-AFTER UPDATE ON queued_items
-BEGIN
-    INSERT INTO queued_thread_revisions (thread_id)
-    VALUES (NEW.thread_id)
-    ON CONFLICT(thread_id) DO UPDATE
-    SET revision = (SELECT COALESCE(MAX(revision), 0) + 1 FROM queued_thread_revisions);
-END;
-
-CREATE TRIGGER queued_items_revision_after_delete
-AFTER DELETE ON queued_items
-BEGIN
-    INSERT INTO queued_thread_revisions (thread_id)
-    VALUES (OLD.thread_id)
-    ON CONFLICT(thread_id) DO UPDATE
-    SET revision = (SELECT COALESCE(MAX(revision), 0) + 1 FROM queued_thread_revisions);
-END;`
-
 // buildFixtureQueueDB writes two queued turns whose payload_json is the
 // serde_json shape of TurnInput::UserInput: one carrying a UserInput::Skill
 // that points into the fixture project, one carrying a UserInput::Mention of
@@ -426,7 +299,7 @@ func buildFixtureQueueDB(t *testing.T, path string) {
 	}
 	defer func() { _ = database.Close() }()
 
-	if _, err := database.ExecContext(context.Background(), fixtureQueueSchema); err != nil {
+	if _, err := database.ExecContext(context.Background(), codexschema.QueueDBSchema); err != nil {
 		t.Fatalf("create fixture queue schema: %v", err)
 	}
 

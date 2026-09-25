@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
 
 const (
@@ -145,11 +147,11 @@ func seedCodex(homePath, projectPath, role string, codexStateDB bool) error {
 	// demo omits it so the teammate rebuilds the thread index from the imported
 	// rollout, and the empty threads sidecar leaves nothing to warn about.
 	if codexStateDB {
-		if err := buildStateDatabase(filepath.Join(codexPath, "state_5.sqlite"), projectPath); err != nil {
+		if err := buildStateDatabase(filepath.Join(codexPath, codexschema.StateDBFileName), projectPath); err != nil {
 			return fmt.Errorf("build Codex state database: %w", err)
 		}
 	}
-	if err := buildMemoriesDatabase(filepath.Join(codexPath, "memories_1.sqlite"), projectPath); err != nil {
+	if err := buildMemoriesDatabase(filepath.Join(codexPath, codexschema.MemoriesDBFileName), projectPath); err != nil {
 		return fmt.Errorf("build Codex memories database: %w", err)
 	}
 	if err := seedCodexMemories(codexPath, projectPath); err != nil {

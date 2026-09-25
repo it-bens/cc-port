@@ -12,6 +12,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
 
 func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
@@ -22,7 +23,7 @@ func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
 
 	assert.Equal(t, 2, planCounts["state-db"], "one threads row and one project_roots row reference the fixture project")
 	assert.Equal(t, planCounts["state-db"], applyCounts["state-db"])
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	var rootPath string
@@ -34,7 +35,7 @@ func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
 func TestStateDBKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
 	home := SetupFixture(t)
 	const rootOnlyProject = "/Users/test/Projects/root-only"
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	_, err = database.ExecContext(context.Background(),
@@ -53,7 +54,7 @@ func TestMove_StateDBApplyFailsWhenProjectRootChangedAfterPlan(t *testing.T) {
 	surfaces, err := workspace.MoveSurfaces(req)
 	require.NoError(t, err)
 	require.Equal(t, "state-db", surfaces[0].Name)
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	_, err = database.ExecContext(context.Background(),
@@ -78,7 +79,7 @@ func TestMove_StateDBApplyFailsWhenThreadCwdChangedAfterPlan(t *testing.T) {
 	surfaces, err := workspace.MoveSurfaces(req)
 	require.NoError(t, err)
 	require.Equal(t, "state-db", surfaces[0].Name)
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	_, err = database.ExecContext(context.Background(),
@@ -119,10 +120,10 @@ func TestMove_StateDBApplyFailsWhenStateDatabasesChangedAfterPlan(t *testing.T) 
 			name: "database removed",
 			change: func(t *testing.T, home *Home) {
 				t.Helper()
-				require.NoError(t, os.Remove(filepath.Join(home.SQLiteDir, stateDBFileName)))
+				require.NoError(t, os.Remove(filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)))
 			},
 			wantErr: func(home *Home) string {
-				return "state databases changed after the plan: added [], removed [" + filepath.Join(home.SQLiteDir, stateDBFileName) + "]"
+				return "state databases changed after the plan: added [], removed [" + filepath.Join(home.SQLiteDir, codexschema.StateDBFileName) + "]"
 			},
 		},
 	}
@@ -144,7 +145,7 @@ func TestMove_StateDBApplyFailsWhenStateDatabasesChangedAfterPlan(t *testing.T) 
 
 func TestStateDBIdentityFailsForPre0049DatabaseEvenWhenAThreadMatches(t *testing.T) {
 	home := SetupFixture(t)
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	_, err = database.ExecContext(context.Background(), `DROP TABLE project_roots`)
 	require.NoError(t, err)
@@ -152,7 +153,7 @@ func TestStateDBIdentityFailsForPre0049DatabaseEvenWhenAThreadMatches(t *testing
 
 	_, err = stateDBKnowsProject(context.Background(), home.SQLiteDir, FixtureProjectPath())
 
-	require.EqualError(t, err, filepath.Join(home.SQLiteDir, stateDBFileName)+
+	require.EqualError(t, err, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)+
 		`: unexpected schema for table "project_roots": table is missing; observed no columns`)
 }
 
@@ -170,7 +171,7 @@ func TestStateDBIdentityFailsForPre0049DatabaseEvenWhenAThreadMatches(t *testing
 func TestStateDBKnowsProjectFailsWhenProjectRootsIsWithoutRowID(t *testing.T) {
 	home := SetupFixture(t)
 	const unrelatedProject = "/Users/test/Projects/unrelated"
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	_, err = database.ExecContext(context.Background(), `
@@ -184,7 +185,7 @@ func TestStateDBKnowsProjectFailsWhenProjectRootsIsWithoutRowID(t *testing.T) {
 
 	_, err = stateDBKnowsProject(context.Background(), home.SQLiteDir, unrelatedProject)
 
-	require.EqualError(t, err, filepath.Join(home.SQLiteDir, stateDBFileName)+
+	require.EqualError(t, err, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)+
 		`: unexpected schema for table "project_roots": an ordinary rowid table is required; observed kinds [table], without rowid true`)
 }
 
@@ -198,7 +199,7 @@ func TestStateDBKnowsProjectFailsWhenProjectRootsIsWithoutRowID(t *testing.T) {
 func TestStateDBKnowsProjectFailsWhenThreadsHasACompositePrimaryKey(t *testing.T) {
 	home := SetupFixture(t)
 	const unrelatedProject = "/Users/test/Projects/unrelated"
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	_, err = database.ExecContext(context.Background(), `

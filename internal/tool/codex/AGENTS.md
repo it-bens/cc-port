@@ -22,4 +22,4 @@
 - Rollout JSONL: `rollout.go`.
 - Export/import/stats and the threads sidecar: `export_import_stats.go`.
 - MCP server definitions (destination and archive): `toml.go`.
-- Test fixtures: `fixture.go`.
+- Test fixtures: `fixture.go`; their SQLite DDL and file names, shared with the demo seeder: `codexschema/`.
