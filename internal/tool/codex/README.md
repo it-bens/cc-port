@@ -132,14 +132,15 @@ shapes themselves.
 **Handled.**
 
 - Every database discovery site globs a generation-suffixed pattern
-  (`state_*.sqlite`, `memories_*.sqlite`, `goals_*.sqlite`, `logs_*.sqlite`)
-  rather than a literal filename, because Codex's own generation suffix can
-  bump (`state_5.sqlite` today; a future binary may write `state_6.sqlite`,
-  per `state/src/sqlite.rs:29-33`). `discoverDatabases` returns every match in
+  (`state_*.sqlite`, `memories_*.sqlite`, `goals_*.sqlite`, `logs_*.sqlite`,
+  `queue_*.sqlite`, `thread_history_*.sqlite`) rather than a literal
+  filename, because Codex's own generation suffix can bump
+  (`state_5.sqlite` today; a future binary may write `state_6.sqlite`, per
+  the filename constants at `state/src/sqlite.rs:29-34`). `discoverDatabases` returns every match in
   sorted order; every move surface, count, and stats method iterates that
   full match set rather than assuming exactly one file per family.
-- The fixture builder deliberately writes `state_5.sqlite` and
-  `memories_1.sqlite` (see §Tests) specifically so a test that pinned a
+- The fixture builder deliberately writes `state_5.sqlite`,
+  `memories_1.sqlite`, and `queue_1.sqlite` (see §Tests) specifically so a test that pinned a
   filename would still pass by coincidence while a real drift would not; the
   discovery code path is what globs, not the fixture name.
 
@@ -199,7 +200,11 @@ shapes themselves.
 - `ActiveWriters` collects both sources regardless of either outcome, so a
   dry-run reports every signal at once: a process-table match for `codex`,
   `codex-tui`, or `codex-app-server`; and `SQLITE_BUSY` on a `BEGIN
-  IMMEDIATE` probe against each discovered database.
+  IMMEDIATE` probe against each discovered database. `allDatabasePaths`
+  probes every file matching the state, memories, goals, logs, queue, and
+  thread_history globs (§Glob, don't pin). `thread_history_*.sqlite` is
+  probed only; no move surface reads or rewrites it, although it holds byte
+  offsets into the rollouts a move rewrites (§cwd matching, Not covered).
 - If either source cannot be consulted, `ActiveWriters` returns an error
   wrapping `tool.ErrNoWitness`. Mutation treats that failure like positive
   liveness evidence rather than assuming there are no writers.
@@ -208,6 +213,94 @@ shapes themselves.
 
 - A cooperative shutdown protocol. Detection is evidence only; the actual
   database write is separately protected by `sqlrewrite`'s `busy_timeout=0`.
+
+### Queue database
+
+**Handled.**
+
+- The `queue-db` move surface rewrites skill paths inside
+  `queued_items.payload_json` across every `queue_*.sqlite` file. Codex's
+  runtime lists `queue_1.sqlite` among its databases alongside state, goals,
+  and memories (`state/src/sqlite.rs:32,105-113`) and opens it in its SQLite
+  home (`state/src/sqlite.rs:46-48,174-176,233-240`). The
+  table schema is `state/queue_migrations/0001_queued_items.sql`.
+- `payload_json` is `serde_json::to_string` of a queued `TurnInput`
+  (`ext/queue/src/service.rs:271,322`). `TurnInput` is externally tagged and
+  its `UserInput` variant holds a `content` array
+  (`protocol/src/turn_input.rs:32-39`); each item is tagged by `type`
+  (`protocol/src/user_input.rs:15`). A skill item's path is at
+  `UserInput.content.<i>.path` where that item's `type` is `skill`
+  (`protocol/src/user_input.rs:48-51`).
+- A `mention` item whose `path` names a `SKILL.md` file is a skill path too.
+  Codex selects a `UserInput::Mention` as a skill when `path_is_skill`
+  holds (`ext/skills/src/selection.rs:35-37`): the path starts with
+  `skill://`, or its last `/`- or `\`-separated segment equals `SKILL.md`
+  ignoring ASCII case (`ext/skills/src/selection.rs:116-122`). The queue
+  stores client input as sent: the app-server maps each `Mention` to the
+  core `Mention` unchanged (`app-server-protocol/src/protocol/v2/turn.rs:482`,
+  `app-server/src/request_processors/thread_queue_processor.rs:311-318`),
+  and `prepare_queued_user_input` rewrites only local image and audio items
+  (`ext/queue/src/service.rs:493-531`). `hasSkillFileName` applies the
+  file-name test; a mention path passing it is matched and rewritten like a
+  skill item's, at the same `UserInput.content.<i>.path` field path. A
+  `skill://` path never starts with the absolute project path, so the match
+  leaves it alone.
+- The rewrite is structured, like the state-db surface. Move preflight
+  reads every `id, payload_json` row read-only, decodes each skill path with
+  `gjson`, and plans a rewrite for every path that is the old project path
+  or a path-boundary descendant of it (`rewrite.IsBoundaryDescendant`).
+  Preflight also computes each rewritten payload, setting every planned
+  path through `sjson`, so JSON escaping is `sjson`'s and a path containing
+  `"` or `\` keeps the payload valid JSON. The plan count is the number of
+  planned paths.
+- Apply writes each captured payload with `sqlrewrite.UpdateColumnsByKey`,
+  keyed by `id`, only while `payload_json` still holds the payload the plan
+  read. Apply does not re-read the queue; this expected payload is its only
+  check on a planned row. Plan and apply report the same count.
+- The queue rewrite joins `pendingMoveDatabases` like the memories rewrite:
+  its transaction stays open until `commit-databases`, and a failure before
+  that surface rolls it back.
+- No `queue_*.sqlite` file means the surface counts zero.
+
+**Refused.**
+
+- A queue database whose `queued_items` lacks `payload_json` or does not
+  declare `id` as its single-column primary key. Preflight's scan checks
+  with `sqlrewrite.RequirePrimaryKeyAndColumns` before reading rows.
+- A `payload_json` that is not valid JSON, has no `UserInput.content`
+  array, or holds a skill or mention item whose `path` is not a string. The
+  queue accepts only `TurnInput::UserInput` with a non-empty `content`
+  (`protocol/src/turn_input.rs:32-36`, `ext/queue/src/service.rs:493-499`).
+  The error names the row id.
+- A planned row that changed or was deleted after the plan, as when Codex
+  dispatches the item and deletes it (`ext/queue/src/service.rs:400`):
+  apply fails and rolls back the queue transaction.
+- A `queue_*.sqlite` added or removed after the plan: apply fails, naming
+  the added and removed files, before it opens any queue database.
+- `queued_thread_revisions` is never rewritten. It holds only
+  `revision` and `thread_id` (`0002_queued_thread_revisions.sql`), no
+  path. Its `AFTER UPDATE` trigger bumps the revision of every thread whose
+  queued item the move rewrote, as for any other `queued_items` update.
+
+**Not covered.**
+
+- `UserInput::Text` is not rewritten, even when its `text` names the
+  project. Its `text_elements[].byte_range` are byte offsets into `text`
+  (`protocol/src/user_input.rs:17-24,62,112-117`), so changing the text's
+  length would point every later element at the wrong bytes.
+- A `UserInput::Mention` whose path is not a `SKILL.md` path is not
+  rewritten. Upstream defines its path as the mention target and gives
+  `app://<connector-id>` and `plugin://<plugin-name>@<marketplace-name>` as
+  examples (`protocol/src/user_input.rs:52-56`), not a project path.
+- A queued item Codex writes after the plan is captured: move does not
+  rewrite it.
+- A project referenced only by a queued skill path is reported absent.
+  Project identity comes from the state database (`threads.cwd`,
+  `project_roots.path`), rollouts, and config; a transient queued item is not
+  an identity signal.
+- A queued skill path recorded through a symlink alias of the project. The
+  queue plan matches stored skill paths literally against `oldPath`
+  (`rewrite.ReplaceBoundedPrefix`), so such a path is not rewritten.
 
 ### Era-A rollout handling
 
@@ -395,7 +488,8 @@ shapes themselves.
   changed after the plan; the surface's undo then rolls back the
   transaction.
 - Apply also requires the state databases it discovers to be exactly the
-  planned ones (`stateDBRewritePlans.requirePlannedDatabases`). A database
+  planned ones (`plannedDatabases.requireDiscovered`, which
+  `startDatabaseRewrites` runs for the state and queue surfaces). A database
   added or removed between preflight and the witness and flock fails Apply
   with an error naming the added and removed paths.
 - A rollout's own recorded `payload.cwd` needs the same fix:
@@ -482,6 +576,26 @@ shapes themselves.
   Codex's own `paths_match_after_normalization`.
 - A state-database row matching the project that Codex writes after the
   plan is captured: move does not rewrite it.
+- Thread-history byte offsets into a rewritten rollout. Codex's
+  `thread_history_*.sqlite` stores byte offsets into rollout files:
+  `thread_history_projection_state.next_rollout_byte_offset`
+  (`state/thread_history_migrations/0001_thread_history.sql:36`) and
+  `thread_turns.rollout_byte_offset` and `rollout_end_byte_offset`
+  (`0003_turn_rollout_positions.sql:1,3`). Projection reads the first
+  (`thread-store/src/local/thread_history.rs:72,122`); fork boundaries read
+  the other two (`thread-store/src/local/paginated_fork.rs:123-150`). The
+  rollout rewrite changes line lengths whenever `newPath` and `oldPath`
+  differ in length, so the offsets stop marking record boundaries. A file
+  that shrinks below the stored offset fails projection with "durable
+  rollout shrank before projection"
+  (`thread-store/src/local/thread_history_materialization.rs:107-112`). In a
+  longer file, projection skips the leading fragment as malformed JSON and
+  the already-projected lines as regressed ordinals, logging an anomaly
+  warning for each (`:148-164,206-220`). When appends later grow a shrunk
+  file past the stored offset, the records appended before that offset are
+  skipped as a forward ordinal gap and lost (`:268-285`). Codex resets the
+  offsets only by deleting the thread's history
+  (`delete_thread`, `thread-store/src/local/thread_history.rs:244-281`).
 - Cancellation on every call path whose entry point carries no context,
   since the interface it implements declares no `context.Context`
   parameter. Two chains reach `matchingColumnValues` via
@@ -684,10 +798,12 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
   `sqlrewrite.RewriteTextColumn` (boundary-aware byte rewrite per row).
   `threads.cwd` and `project_roots.path` are matched and rewritten
   differently: see §cwd matching.
-- Move commits the memories and state databases as two separate serial
-  transactions, not one joint transaction, because SQLite cannot commit two
-  databases atomically, an accepted deviation from spec §6.3 (see
-  `databaseapply.go:commitSurface`).
+- Move commits the memories, queue, and state databases as separate serial
+  transactions, in that order, not one joint transaction, because SQLite
+  cannot commit several databases atomically, an accepted deviation from
+  spec §6.3 (see `databaseapply.go:commitSurface`). State commits last
+  because it is the identity source: a state commit failure leaves the
+  project discoverable, and re-running the move converges.
 - `stage1_outputs.rollout_slug` is deliberately never rewritten: it is an
   algorithmically derived filename slug (thread id, timestamp, hash), never
   the raw project path, so a path-boundary rewrite would never match it and
@@ -707,7 +823,7 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
 
 ## Tests
 
-Unit tests across `move_test.go`, `statedb_test.go`, `witness_test.go`,
+Unit tests across `move_test.go`, `queue_test.go`, `statedb_test.go`, `witness_test.go`,
 `process_test.go`, `home_test.go`, `rollout_test.go`, and
 `export_import_stats_test.go`. Coverage: three-tier `sqlite_home` resolution,
 glob-based discovery against generation-suffixed fixture filenames, both
@@ -730,9 +846,17 @@ identity from a `project_roots` row alone, Apply failing and rolling
 back when a planned `threads` or `project_roots` row changed after the
 plan, `stateDBKnowsProject` refusing a `WITHOUT ROWID` `project_roots` table
 and a composite-primary-key `threads` table with the same error
-`UpdateColumnsByRowID`/`UpdateColumnsByKey` would give at Apply, and stats
+`UpdateColumnsByRowID`/`UpdateColumnsByKey` would give at Apply, stats
 treating a project held only as a project root as known and counting it in
-`ReferenceSurfaces`' `project roots` surface.
+`ReferenceSurfaces`' `project roots` surface, a
+queued skill path rewritten inside `payload_json` with the JSON still valid
+(including a path containing `"`), a queued mention of a `SKILL.md` file
+rewritten while a mention of any other file stays untouched (including
+upstream's ASCII-only case folding), a queued text item and its byte ranges
+left untouched, a prefix-sharing skill path left alone, apply failing when a
+planned payload changed after the plan, the queue rewrite rolling back
+before `commit-databases`, the queue schema and payload errors in preflight,
+and the busy probe covering `queue_*.sqlite` and `thread_history_*.sqlite`.
 
 `mcp_test.go` covers `MCPServers`: the fixture's stdio and streamable-HTTP
 tables, a config without an `[mcp_servers]` table, an empty one, an absent
@@ -741,7 +865,9 @@ command and a url, and a profile overlay whose definitions stay unread.
 
 Fixtures come from `testdata/dotcodex/` staged via `SetupFixture`, following
 the `testutil.SetupFixture` pattern. `SetupFixture` copies the static tree
-and then builds `state_5.sqlite`, `memories_1.sqlite`, a `memories/.git`
+and then builds `state_5.sqlite`, `memories_1.sqlite`, `queue_1.sqlite`
+(the verbatim upstream queue DDL plus one queued skill item and one queued
+mention of a `SKILL.md` file), a `memories/.git`
 no-remote baseline, and a `memories_v2/` worktree at test runtime, because
 SQLite files are binary and a nested `.git` directory is untrackable by the
 outer repository. The `memories_v2/` worktree carries its own per-version

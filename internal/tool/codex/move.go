@@ -44,6 +44,7 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	return append(surfaces,
 		workspace.stateDBSurfaceWithPlans(req, pending, preflight.state),
 		workspace.memoriesDBSurface(req, pending),
+		workspace.queueDBSurfaceWithPlans(req, pending, preflight.queue),
 		workspace.configSurface(req, preflight.config),
 		workspace.rolloutsSurfaceWithPlans(req, preflight.rollouts),
 		workspace.memoriesWorktreeSurface(req, pending),
@@ -61,6 +62,7 @@ type rolloutRewritePlan struct {
 
 type moveRewritePreflight struct {
 	state    stateDBRewritePlans
+	queue    queueDBRewritePlans
 	config   map[string][]string
 	rollouts map[string]rolloutRewritePlan
 }
@@ -71,6 +73,10 @@ type moveRewritePreflight struct {
 // preceding tool has applied its own directory move.
 func (workspace *Workspace) captureMovePreflight(req tool.MoveRequest) (moveRewritePreflight, error) {
 	state, err := stateDBRewritePlansForProject(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
+	if err != nil {
+		return moveRewritePreflight{}, err
+	}
+	queue, err := queueDBRewritePlansForProject(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
 	if err != nil {
 		return moveRewritePreflight{}, err
 	}
@@ -97,7 +103,7 @@ func (workspace *Workspace) captureMovePreflight(req tool.MoveRequest) (moveRewr
 		}
 		rollouts[path] = rolloutRewritePlan{substitutions: substitutions, eraA: eraA, count: count, warnings: rolloutMalformedWarnings(path, lines)}
 	}
-	return moveRewritePreflight{state: state, config: config, rollouts: rollouts}, nil
+	return moveRewritePreflight{state: state, queue: queue, config: config, rollouts: rollouts}, nil
 }
 
 // moveIdentity reports whether Codex has a record of req.OldPath.
@@ -198,6 +204,18 @@ func (workspace *Workspace) memoriesDBSurface(req tool.MoveRequest, pending *pen
 			return startMemoriesDBRewrites(ctx, workspace.home.SQLiteDir, oldPath, newPath, undo)
 		},
 		func(rewrites databaseRewrites) { pending.memories = rewrites },
+	)
+}
+
+func (workspace *Workspace) queueDBSurfaceWithPlans(req tool.MoveRequest, pending *pendingMoveDatabases, plans queueDBRewritePlans) tool.Surface {
+	return sqlDatabaseSurface("queue-db", req,
+		func(context.Context, string, string) (int, error) {
+			return plans.valueCount(), nil
+		},
+		func(ctx context.Context, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
+			return startQueueDBRewritesWithPlan(ctx, workspace.home.SQLiteDir, oldPath, newPath, plans, undo)
+		},
+		func(rewrites databaseRewrites) { pending.queue = rewrites },
 	)
 }
 

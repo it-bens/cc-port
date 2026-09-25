@@ -141,6 +141,35 @@ func TestIsBoundaryDescendant_RootParent(t *testing.T) {
 	}
 }
 
+func TestReplaceBoundedPrefix(t *testing.T) {
+	tests := []struct {
+		name          string
+		value         string
+		oldPath       string
+		newPath       string
+		wantRewritten string
+		wantOK        bool
+	}{
+		{name: "equal", value: "/a/proj", oldPath: "/a/proj", newPath: "/x/renamed", wantRewritten: "/x/renamed", wantOK: true},
+		{
+			name: "nested descendant preserves suffix", value: "/a/proj/sub", oldPath: "/a/proj", newPath: "/x/renamed",
+			wantRewritten: "/x/renamed/sub", wantOK: true,
+		},
+		{name: "continuation byte is not a descendant", value: "/a/proj-backup", oldPath: "/a/proj", newPath: "/x/renamed", wantOK: false},
+		{name: "unrelated path is not a descendant", value: "/a/other", oldPath: "/a/proj", newPath: "/x/renamed", wantOK: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rewritten, ok := rewrite.ReplaceBoundedPrefix(test.value, test.oldPath, test.newPath)
+			assert.Equal(t, test.wantOK, ok)
+			if test.wantOK {
+				assert.Equal(t, test.wantRewritten, rewritten)
+			}
+		})
+	}
+}
+
 func TestReplacePathInBytesWithJSONEscape_RewritesBothForms(t *testing.T) {
 	input := []byte(`{"a":"/Users/me/foo","b":"\/Users\/me\/foo\/bar"}`)
 	got, count := rewrite.ReplacePathInBytesWithJSONEscape(input, "/Users/me/foo", "/Users/me/bar")

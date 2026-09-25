@@ -311,8 +311,11 @@ func rolloutSubstitutions(sources []string, oldPath, newPath string) ([]pathSubs
 		if err != nil {
 			return nil, err
 		}
-		suffix := strings.TrimPrefix(canonicalSource, canonicalOldPath)
-		substitutions = append(substitutions, pathSubstitution{old: source, new: newPath + suffix})
+		rewritten, ok := rewrite.ReplaceBoundedPrefix(canonicalSource, canonicalOldPath, newPath)
+		if !ok {
+			return nil, fmt.Errorf("rollout substitution source %q does not canonicalize to a path-boundary descendant of %q", source, oldPath)
+		}
+		substitutions = append(substitutions, pathSubstitution{old: source, new: rewritten})
 	}
 	return substitutions, nil
 }

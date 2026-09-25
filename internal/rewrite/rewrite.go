@@ -299,6 +299,29 @@ func IsBoundaryDescendant(parent, candidate string) bool {
 	return !isPathContinuationByte(next)
 }
 
+// ReplaceBoundedPrefix returns value with its oldPath prefix replaced by
+// newPath, when value is oldPath itself or a path-boundary descendant of it
+// (IsBoundaryDescendant); otherwise it returns ok=false. The replacement
+// keeps whatever suffix value carries past oldPath, the same
+// suffix-preserving splice a SQL boundary-prefix predicate would produce.
+//
+// oldPath must be a clean absolute path without a trailing separator, as
+// every caller's is: the splice starts at len(oldPath), so a trailing
+// separator would be dropped from the result ("/a/b" with oldPath "/a/" and
+// newPath "/x" gives "/xb").
+//
+// Exported so every call site that first confirms IsBoundaryDescendant and
+// then slices past len(oldPath) — a queued skill path, a state-db row's
+// canonical value, a rollout's canonical cwd source — shares one
+// implementation of the boundary check and the splice, rather than each
+// re-deriving the slice offset.
+func ReplaceBoundedPrefix(value, oldPath, newPath string) (rewritten string, ok bool) {
+	if !IsBoundaryDescendant(oldPath, value) {
+		return "", false
+	}
+	return newPath + value[len(oldPath):], true
+}
+
 // CountPathInBytes returns how many times path occurs in data as a bounded
 // reference, using the same right-boundary rule as ReplacePathInBytes. It scans
 // without materializing a rewritten copy, so stats can count occurrences across
