@@ -87,9 +87,9 @@ s3-reset: ## Destroy and recreate the dev S3 backend (drops all data)
 
 videos: build ## Re-render all VHS demo tapes (GIF + MP4); override with CODEX=/path/to/codex
 	@codex_bin="$$(command -v -- '$(CODEX)' 2>/dev/null)"; \
-	  [ -n "$$codex_bin" ] || { echo "make videos: codex binary '$(CODEX)' not found; set CODEX=/path/to/codex-0.145.0" >&2; exit 1; }; \
+	  [ -n "$$codex_bin" ] || { echo "make videos: codex binary '$(CODEX)' not found; set CODEX=/path/to/codex-0.156.1" >&2; exit 1; }; \
 	  ver="$$("$$codex_bin" --version)"; \
-	  [ "$$ver" = "codex-cli 0.145.0" ] || { echo "make videos: codex-cli 0.145.0 required; '$(CODEX)' reports '$$ver'" >&2; exit 1; }
+	  [ "$$ver" = "codex-cli 0.156.1" ] || { echo "make videos: codex-cli 0.156.1 required; '$(CODEX)' reports '$$ver'" >&2; exit 1; }
 # Codex's liveness witness scans the whole process table, so any running Codex
 # (a stray codex mcp-server counts) makes the paired tape's `import --apply`
 # refuse, and vhs records that refusal as the demo while still exiting 0. The

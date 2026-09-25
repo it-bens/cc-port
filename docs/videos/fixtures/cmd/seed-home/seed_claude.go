@@ -12,6 +12,7 @@ import (
 const (
 	claudeSessionID = "00000000-0000-0000-0000-000000000001"
 	assistantValue  = "assistant"
+	userValue       = "user"
 )
 
 type claudeTranscriptRecord struct {
@@ -74,11 +75,11 @@ func seedClaude(homePath, projectPath, role string) error {
 	}
 
 	userRecord, err := json.Marshal(claudeTranscriptRecord{
-		Type:      "user",
+		Type:      userValue,
 		CWD:       projectPath,
 		SessionID: claudeSessionID,
 		Message: claudeTranscriptMessage{
-			Role: "user",
+			Role: userValue,
 			Content: []claudeTranscriptContent{{
 				Type: "text",
 				Text: "hello from " + projectPath,
