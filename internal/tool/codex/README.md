@@ -1111,7 +1111,9 @@ and then builds `state_5.sqlite`, `memories_1.sqlite`, `queue_1.sqlite`
 mention of a `SKILL.md` file), a `memories/.git`
 no-remote baseline, and a `memories_v2/` worktree at test runtime, because
 SQLite files are binary and a nested `.git` directory is untrackable by the
-outer repository. The `memories_v2/` worktree carries its own per-version
+outer repository. The database file names and DDL come from
+`codexschema`, shared with the demo seeder (see
+`internal/tool/codex/codexschema/README.md`). The `memories_v2/` worktree carries its own per-version
 file set, not a copy of `memories/`'s: `rollout_summaries/*.md` and
 `memory_summary.md`, never `raw_memories.md` — `sync_phase2_workspace_inputs`
 (`memories/write/src/phase2.rs:196-206`) calls

@@ -21,6 +21,7 @@ import (
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
 
 const (
@@ -542,7 +543,7 @@ func TestAppendLinesToFileSeparatesTornPriorRecord(t *testing.T) {
 func TestCodexSidecarRerunAppliesThreadCreatedAfterFirstImport(t *testing.T) {
 	sourceHome := SetupFixture(t)
 	writeRoundTripLineStores(t, sourceHome)
-	insertThreadRow(t, filepath.Join(sourceHome.SQLiteDir, stateDBFileName), fixtureThreadTwo, threadRowMetadata{
+	insertThreadRow(t, filepath.Join(sourceHome.SQLiteDir, codexschema.StateDBFileName), fixtureThreadTwo, threadRowMetadata{
 		Title: "archived fixture", ArchivedAt: 1_752_137_200, GitSHA: "deadbeef",
 		GitBranch: "main", GitOriginURL: "https://example.invalid/fixture.git",
 	})
@@ -555,13 +556,13 @@ func TestCodexSidecarRerunAppliesThreadCreatedAfterFirstImport(t *testing.T) {
 		"1 threads sidecar row(s) could not be applied because Codex has not created their thread rows yet; " +
 			"the session backfill was re-armed — start Codex once (any directory), then rerun import",
 	}, first.Warnings[toolName])
-	assertBackfillState(t, filepath.Join(destinationHome.SQLiteDir, stateDBFileName), "pending", nil)
-	insertThreadRow(t, filepath.Join(destinationHome.SQLiteDir, stateDBFileName), fixtureThreadTwo, threadRowMetadata{})
+	assertBackfillState(t, filepath.Join(destinationHome.SQLiteDir, codexschema.StateDBFileName), "pending", nil)
+	insertThreadRow(t, filepath.Join(destinationHome.SQLiteDir, codexschema.StateDBFileName), fixtureThreadTwo, threadRowMetadata{})
 
 	second := importFixtureArchive(t, archiveBytes, destinationHome)
 
 	assert.Empty(t, second.Warnings)
-	assertThreadMetadata(t, filepath.Join(destinationHome.SQLiteDir, stateDBFileName), fixtureThreadTwo, threadRowMetadata{
+	assertThreadMetadata(t, filepath.Join(destinationHome.SQLiteDir, codexschema.StateDBFileName), fixtureThreadTwo, threadRowMetadata{
 		Title: "archived fixture", ArchivedAt: 1_752_137_200, GitSHA: "deadbeef",
 		GitBranch: "main", GitOriginURL: "https://example.invalid/fixture.git",
 	})
@@ -571,7 +572,7 @@ func TestCodexImportRearmLeavesAbsentBackfillStateRowAbsent(t *testing.T) {
 	sourceHome := SetupFixture(t)
 	archiveBytes := exportFixtureArchive(t, sourceHome)
 	destinationHome, _ := setupImportDestination(t)
-	destinationDatabase := filepath.Join(destinationHome.SQLiteDir, stateDBFileName)
+	destinationDatabase := filepath.Join(destinationHome.SQLiteDir, codexschema.StateDBFileName)
 	deleteBackfillStateRow(t, destinationDatabase)
 
 	importFixtureArchive(t, archiveBytes, destinationHome)
@@ -583,7 +584,7 @@ func TestCodexImportRearmFailsWithoutBackfillStateTable(t *testing.T) {
 	sourceHome := SetupFixture(t)
 	archiveBytes := exportFixtureArchive(t, sourceHome)
 	destinationHome, _ := setupImportDestination(t)
-	destinationDatabase := filepath.Join(destinationHome.SQLiteDir, stateDBFileName)
+	destinationDatabase := filepath.Join(destinationHome.SQLiteDir, codexschema.StateDBFileName)
 	dropBackfillStateTable(t, destinationDatabase)
 
 	err := importFixtureArchiveError(t, archiveBytes, destinationHome)
@@ -596,7 +597,7 @@ func TestCodexImportWithoutRolloutsDoesNotRearmBackfillState(t *testing.T) {
 	sourceHome := SetupFixture(t)
 	require.NoError(t, os.RemoveAll(filepath.Join(sourceHome.Dir, sessionsSubdir)))
 	require.NoError(t, os.RemoveAll(filepath.Join(sourceHome.Dir, archivedSessionsSubdir)))
-	insertThreadRow(t, filepath.Join(sourceHome.SQLiteDir, stateDBFileName), fixtureThreadTwo, threadRowMetadata{})
+	insertThreadRow(t, filepath.Join(sourceHome.SQLiteDir, codexschema.StateDBFileName), fixtureThreadTwo, threadRowMetadata{})
 	archiveBytes := exportFixtureArchive(t, sourceHome)
 	destinationHome, _ := setupImportDestination(t)
 
@@ -607,7 +608,7 @@ func TestCodexImportWithoutRolloutsDoesNotRearmBackfillState(t *testing.T) {
 			"archive carries no rollout files to rebuild them from",
 	}, result.Warnings[toolName])
 	watermark := "sessions/2026/07/17/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl"
-	assertBackfillState(t, filepath.Join(destinationHome.SQLiteDir, stateDBFileName), "complete", &watermark)
+	assertBackfillState(t, filepath.Join(destinationHome.SQLiteDir, codexschema.StateDBFileName), "complete", &watermark)
 }
 
 // TestCodexFinalizeWithoutSidecarsOrRolloutsSkipsStateDBDiscovery guards the
@@ -643,7 +644,7 @@ func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
 
 func TestCodexSidecarExportKeepsNewestStateGenerationForDuplicateThread(t *testing.T) {
 	home := SetupFixture(t)
-	setThreadTitle(t, filepath.Join(home.SQLiteDir, "state_5.sqlite"), fixtureThreadOne, "older title")
+	setThreadTitle(t, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName), fixtureThreadOne, "older title")
 	buildFixtureStateDB(t, filepath.Join(home.SQLiteDir, "state_12.sqlite"))
 	setThreadTitle(t, filepath.Join(home.SQLiteDir, "state_12.sqlite"), fixtureThreadOne, "newer title")
 
@@ -693,7 +694,7 @@ func TestCodexStageRejectsHostileRolloutNamesAndAcceptsRecorderNames(t *testing.
 func TestReferenceSurfaces_CountsStateDBOnlyThread(t *testing.T) {
 	home := SetupFixture(t)
 	const stateOnlyThread = "00000000-0000-4000-8000-000000000099"
-	insertThreadRow(t, filepath.Join(home.SQLiteDir, stateDBFileName), stateOnlyThread, threadRowMetadata{})
+	insertThreadRow(t, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName), stateOnlyThread, threadRowMetadata{})
 	history := []byte(`{"session_id":"` + stateOnlyThread + `","ts":100,"text":"state-db only"}` + "\n")
 	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, codexHistoryFile), history, 0o600))
 	index := []byte(`{"id":"` + stateOnlyThread + `","thread_name":"state-db only"}` + "\n")
@@ -719,7 +720,7 @@ func TestReferenceSurfaces_CountsStateDBOnlyThread(t *testing.T) {
 func TestCodexAuditsRejectUnknownProjectsAndDoNotAttributeSharedHistoryBytes(t *testing.T) {
 	home := SetupFixture(t)
 	secondProject := "/Users/fixture/second-project"
-	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, stateDBFileName), "second-thread", secondProject, threadRowMetadata{})
+	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName), "second-thread", secondProject, threadRowMetadata{})
 	history := []byte(
 		`{"session_id":"` + fixtureThreadOne + `","ts":1}` + "\n" +
 			`{"session_id":"second-thread","ts":2}` + "\n",
@@ -770,7 +771,7 @@ func TestReferenceSurfacesKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) 
 	home := SetupFixture(t)
 	workspace := quietTestWorkspace(home)
 	const rootOnlyProject = "/Users/test/Projects/root-only"
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	_, err = database.ExecContext(t.Context(),
 		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`, fixtureProjectID, 1, rootOnlyProject)
@@ -793,7 +794,7 @@ func TestEnumerateProjectsListsProjectHeldOnlyAsProjectRoot(t *testing.T) {
 	home := SetupFixture(t)
 	workspace := quietTestWorkspace(home)
 	const rootOnlyProject = "/Users/test/Projects/root-only"
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	_, err = database.ExecContext(t.Context(),
 		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`, fixtureProjectID, 1, rootOnlyProject)
@@ -843,7 +844,7 @@ func TestEnumerateProjectsListsCanonicallyEqualStateDBPathsOnceAcrossDatabases(t
 func TestStatsAndExportIdentityFailForPre0049DatabaseEvenWhenARolloutMatches(t *testing.T) {
 	home := SetupFixture(t)
 	workspace := quietTestWorkspace(home)
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	_, err = database.ExecContext(t.Context(), `DROP TABLE project_roots`)
 	require.NoError(t, err)
@@ -1199,7 +1200,7 @@ func setupImportDestination(t *testing.T) (home *Home, config []byte) {
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	config = []byte("# recipient trust stays local\n[projects.\"/recipient/only\"]\ntrust_level = \"trusted\"\n")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), config, 0o600))
-	buildFixtureStateDB(t, filepath.Join(dir, stateDBFileName))
+	buildFixtureStateDB(t, filepath.Join(dir, codexschema.StateDBFileName))
 	return &Home{Dir: dir, SQLiteDir: dir}, config
 }
 

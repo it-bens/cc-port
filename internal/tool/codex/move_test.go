@@ -16,6 +16,7 @@ import (
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
 
 func fixtureWorkspace(t *testing.T) (*Workspace, *Home) {
@@ -168,7 +169,7 @@ func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
 	newPath := filepath.Join(tempRoot, "real", "renamed-project")
 
 	const aliasedThreadID = "00000000-0000-4000-8000-0000000000aa"
-	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, stateDBFileName), aliasedThreadID, aliasedCWD, threadRowMetadata{})
+	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName), aliasedThreadID, aliasedCWD, threadRowMetadata{})
 
 	req := tool.MoveRequest{OldPath: realProject, NewPath: newPath}
 	planCounts, applyCounts := planAndApply(t, workspace, req)
@@ -177,7 +178,7 @@ func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
 	assert.Equal(t, planCounts["state-db"], applyCounts["state-db"],
 		"dry-run count and apply must consume the same canonical-match computation (spec §5.1)")
 
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, database.Close()) }()
 	var storedCWD string
@@ -196,7 +197,7 @@ func TestMoveSurfaces_UsesPreflightThreadMatchesAfterSourceRemoved(t *testing.T)
 	aliasedCWD := filepath.Join(tempRoot, "link", "project")
 	newPath := filepath.Join(tempRoot, "renamed-project")
 	const threadID = "00000000-0000-4000-8000-0000000000dd"
-	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, stateDBFileName), threadID, aliasedCWD, threadRowMetadata{})
+	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName), threadID, aliasedCWD, threadRowMetadata{})
 
 	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: realProject, NewPath: newPath})
 	require.NoError(t, err)
@@ -208,7 +209,7 @@ func TestMoveSurfaces_UsesPreflightThreadMatchesAfterSourceRemoved(t *testing.T)
 	}
 	undo.Cleanup()
 
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, database.Close()) }()
 	var cwd string
@@ -846,7 +847,7 @@ func TestDatabaseTransactionsRollBackBeforeFinalSurface(t *testing.T) {
 	}
 
 	require.NoError(t, undo.Restore())
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	defer func() { _ = database.Close() }()
 	var cwd string
@@ -858,13 +859,13 @@ func TestFinalDatabaseSurfaceCommitsAndCheckpoints(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	planAndApply(t, workspace, req)
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	defer func() { _ = database.Close() }()
 	var cwd string
 	require.NoError(t, database.QueryRowContext(context.Background(), `SELECT cwd FROM threads LIMIT 1`).Scan(&cwd))
 	assert.Equal(t, req.NewPath, cwd)
-	if info, statErr := os.Stat(filepath.Join(home.SQLiteDir, stateDBFileName+walSuffix)); statErr == nil {
+	if info, statErr := os.Stat(filepath.Join(home.SQLiteDir, codexschema.StateDBFileName+walSuffix)); statErr == nil {
 		assert.Zero(t, info.Size(), "final checkpoint truncates the state database WAL")
 	} else {
 		assert.True(t, os.IsNotExist(statErr))
@@ -1114,7 +1115,7 @@ func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testin
 
 	require.Error(t, restoreErr)
 	assert.Contains(t, restoreErr.Error(), "rollback")
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, stateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	defer func() { _ = database.Close() }()
 	var cwd string
@@ -1124,7 +1125,7 @@ func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testin
 
 func TestPlanningLeavesDatabaseAndWALBytesUntouched(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	path := filepath.Join(home.SQLiteDir, stateDBFileName)
+	path := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
 	writer, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	defer func() { _ = writer.Close() }()

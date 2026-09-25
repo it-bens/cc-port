@@ -9,70 +9,9 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
-
-const stateDatabaseSchema = `
-CREATE TABLE threads (
-	id TEXT PRIMARY KEY,
-	rollout_path TEXT NOT NULL,
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL,
-	source TEXT NOT NULL,
-	model_provider TEXT NOT NULL,
-	cwd TEXT NOT NULL,
-	title TEXT NOT NULL,
-	sandbox_policy TEXT NOT NULL,
-	approval_mode TEXT NOT NULL,
-	tokens_used INTEGER NOT NULL DEFAULT 0,
-	has_user_event INTEGER NOT NULL DEFAULT 0,
-	archived INTEGER NOT NULL DEFAULT 0,
-	archived_at INTEGER,
-	git_sha TEXT,
-	git_branch TEXT,
-	git_origin_url TEXT
-);
-CREATE TABLE backfill_state (
-	id INTEGER PRIMARY KEY CHECK (id = 1),
-	status TEXT NOT NULL,
-	last_watermark TEXT,
-	last_success_at INTEGER,
-	updated_at INTEGER NOT NULL
-);
-CREATE TABLE projects (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    metadata TEXT NOT NULL DEFAULT '{}',
-    position INTEGER NOT NULL,
-    created_at_ms INTEGER NOT NULL,
-    updated_at_ms INTEGER NOT NULL
-);
-CREATE TABLE project_roots (
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
-    path TEXT NOT NULL,
-    PRIMARY KEY (project_id, position)
-);
-CREATE TABLE project_idempotency_keys (
-    key TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    created_at_ms INTEGER NOT NULL
-);
-ALTER TABLE threads ADD COLUMN project_id TEXT
-    REFERENCES projects(id) ON DELETE SET NULL;`
-
-const memoriesDatabaseSchema = `
-CREATE TABLE stage1_outputs (
-	thread_id TEXT PRIMARY KEY,
-	source_updated_at INTEGER NOT NULL,
-	raw_memory TEXT NOT NULL,
-	rollout_summary TEXT NOT NULL,
-	rollout_slug TEXT,
-	generated_at INTEGER NOT NULL,
-	usage_count INTEGER,
-	last_usage INTEGER,
-	selected_for_phase2 INTEGER NOT NULL DEFAULT 0,
-	selected_for_phase2_source_updated_at INTEGER
-);`
 
 func buildStateDatabase(path, projectPath string) (returnError error) {
 	database, err := sql.Open("sqlite", path)
@@ -93,7 +32,7 @@ func buildStateDatabase(path, projectPath string) (returnError error) {
 	if err := database.PingContext(context.Background()); err != nil {
 		return fmt.Errorf("connect state database %q: %w", path, err)
 	}
-	if _, err := database.ExecContext(context.Background(), stateDatabaseSchema); err != nil {
+	if _, err := database.ExecContext(context.Background(), codexschema.StateDBSchema); err != nil {
 		return fmt.Errorf("create state database schema: %w", err)
 	}
 	now := time.Now().Unix()
@@ -145,7 +84,7 @@ func buildMemoriesDatabase(path, projectPath string) (returnError error) {
 	if err := database.PingContext(context.Background()); err != nil {
 		return fmt.Errorf("connect memories database %q: %w", path, err)
 	}
-	if _, err := database.ExecContext(context.Background(), memoriesDatabaseSchema); err != nil {
+	if _, err := database.ExecContext(context.Background(), codexschema.MemoriesDBSchema); err != nil {
 		return fmt.Errorf("create memories database schema: %w", err)
 	}
 	now := time.Now().Unix()

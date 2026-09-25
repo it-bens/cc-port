@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
 
 const queuedThreadID = "00000000-0000-4000-8000-000000000001"
@@ -37,10 +38,10 @@ type queuedPayload struct {
 func newQueueHome(t *testing.T, payloads map[string]string) *Home {
 	t.Helper()
 	dir := t.TempDir()
-	database, err := sql.Open("sqlite", filepath.Join(dir, queueDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(dir, codexschema.QueueDBFileName))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, database.Close()) }()
-	_, err = database.ExecContext(context.Background(), fixtureQueueSchema)
+	_, err = database.ExecContext(context.Background(), codexschema.QueueDBSchema)
 	require.NoError(t, err)
 	order := 0
 	for id, payload := range payloads {
@@ -55,7 +56,7 @@ func newQueueHome(t *testing.T, payloads map[string]string) *Home {
 
 func readQueuedPayloadByID(t *testing.T, home *Home, id string) string {
 	t.Helper()
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, queueDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.QueueDBFileName))
 	require.NoError(t, err)
 	defer func() { _ = database.Close() }()
 	var payload string
@@ -209,7 +210,7 @@ func TestQueueDBApplyFailsWhenPlannedPayloadChangedAfterPlan(t *testing.T) {
 	const release = `{"UserInput":{"content":[{"type":"skill","name":"release",` +
 		`"path":"/Users/test/Projects/app/.codex/skills/release/SKILL.md"}],"client_id":"c"}}`
 	home := newQueueHome(t, map[string]string{"planned-skill": deploy})
-	queuePath := filepath.Join(home.SQLiteDir, queueDBFileName)
+	queuePath := filepath.Join(home.SQLiteDir, codexschema.QueueDBFileName)
 	req := tool.MoveRequest{OldPath: "/Users/test/Projects/app", NewPath: "/Users/test/Projects/renamed"}
 	plans, err := queueDBRewritePlansForProject(context.Background(), home.SQLiteDir, req.OldPath, req.NewPath)
 	require.NoError(t, err)
@@ -249,7 +250,7 @@ func TestQueueDBRewriteRollsBackBeforeFinalSurface(t *testing.T) {
 
 func TestQueueDBPlanCountsZeroWhenQueueDatabaseAbsent(t *testing.T) {
 	_, home := fixtureWorkspace(t)
-	require.NoError(t, os.Remove(filepath.Join(home.SQLiteDir, queueDBFileName)))
+	require.NoError(t, os.Remove(filepath.Join(home.SQLiteDir, codexschema.QueueDBFileName)))
 
 	plans, err := queueDBRewritePlansForProject(context.Background(), home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project")
 
@@ -289,7 +290,7 @@ func TestQueueDBRefusesSchemaWithoutIDKeyOrPayload(t *testing.T) {
 
 func writeQueueSchema(t *testing.T, schema string) string {
 	t.Helper()
-	queuePath := filepath.Join(t.TempDir(), queueDBFileName)
+	queuePath := filepath.Join(t.TempDir(), codexschema.QueueDBFileName)
 	database, err := sql.Open("sqlite", queuePath)
 	require.NoError(t, err)
 	_, err = database.ExecContext(context.Background(), schema)
@@ -307,7 +308,7 @@ func TestQueueDBApplyFailsWhenQueueDatabasesChangedAfterPlan(t *testing.T) {
 		wantRemovedFile string
 	}{
 		{name: "database added", addedFile: "queue_2.sqlite", wantAdded: "queue_2.sqlite"},
-		{name: "database removed", removePlanned: true, wantRemovedFile: queueDBFileName},
+		{name: "database removed", removePlanned: true, wantRemovedFile: codexschema.QueueDBFileName},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, home := fixtureWorkspace(t)
@@ -318,7 +319,7 @@ func TestQueueDBApplyFailsWhenQueueDatabasesChangedAfterPlan(t *testing.T) {
 				writeQueueDatabase(t, filepath.Join(home.SQLiteDir, testCase.addedFile))
 			}
 			if testCase.removePlanned {
-				require.NoError(t, os.Remove(filepath.Join(home.SQLiteDir, queueDBFileName)))
+				require.NoError(t, os.Remove(filepath.Join(home.SQLiteDir, codexschema.QueueDBFileName)))
 			}
 			workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses)
 			undo := tool.NewRestorer()
@@ -343,7 +344,7 @@ func writeQueueDatabase(t *testing.T, path string) {
 	t.Helper()
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	_, err = database.ExecContext(context.Background(), fixtureQueueSchema)
+	_, err = database.ExecContext(context.Background(), codexschema.QueueDBSchema)
 	require.NoError(t, err)
 	require.NoError(t, database.Close())
 }
@@ -358,7 +359,7 @@ func TestQueueDBRefusesPayloadWithoutContentArray(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			home := newQueueHome(t, map[string]string{"malformed-item": testCase.payload})
-			queuePath := filepath.Join(home.SQLiteDir, queueDBFileName)
+			queuePath := filepath.Join(home.SQLiteDir, codexschema.QueueDBFileName)
 
 			_, err := queueDBRewritePlansForProject(context.Background(), home.SQLiteDir, "/Users/test/Projects/app", "/Users/test/Projects/renamed")
 
