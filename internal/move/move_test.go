@@ -100,6 +100,8 @@ func (*applyTestWorkspace) EnumerateProjects(context.Context) ([]tool.ProjectInf
 	return nil, errors.New("not exercised")
 }
 
+func (*applyTestWorkspace) AuditWarnings(context.Context) ([]string, error) { return nil, nil }
+
 func applyTestTarget(t *testing.T, workspace *applyTestWorkspace) []tool.Target {
 	t.Helper()
 	workspace.lockPath = filepath.Join(t.TempDir(), ".cc-port.lock")

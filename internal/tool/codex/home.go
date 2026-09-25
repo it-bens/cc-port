@@ -7,22 +7,21 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/pelletier/go-toml/v2"
+	"time"
 
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // ErrProjectAbsenceUnresolved reports that a project was not found under
-// this adapter's base-resolved Home.SQLiteDir while a discovered profile
-// overlay declares a different sqlite_home this adapter has no way to
-// resolve against (see profileSQLiteHomeWarning). It is distinct from
-// tool.ErrProjectAbsent, which means every source this adapter can check
-// agrees the project is unknown: it does not match
-// errors.Is(err, tool.ErrProjectAbsent), so move/export/stats sweep
-// semantics correctly treat it as a hard failure instead of silently
-// skipping Codex the way a genuine absence would.
-var ErrProjectAbsenceUnresolved = errors.New("project absence could not be established: a profile overlay declares a divergent sqlite_home")
+// this adapter's resolved Home.SQLiteDir while Codex may keep its state in a
+// directory this adapter cannot establish: a discovered profile overlay
+// declares a different sqlite_home, or a cloud bundle could not be checked
+// (see projectAbsenceError). It is distinct from tool.ErrProjectAbsent,
+// which means every source this adapter can check agrees the project is
+// unknown: it does not match errors.Is(err, tool.ErrProjectAbsent), so
+// move/export/stats sweep semantics treat it as a hard failure instead of
+// silently skipping Codex the way a genuine absence would.
+var ErrProjectAbsenceUnresolved = errors.New("project absence could not be established: the sqlite_home Codex uses is uncertain")
 
 // configTOMLFileName is Codex's top-level configuration file, flat under the
 // home directory (core/src/config/mod.rs:264, CONFIG_TOML_FILE).
@@ -33,13 +32,47 @@ const configTOMLFileName = "config.toml"
 const sqliteHomeEnv = "CODEX_SQLITE_HOME"
 
 // Home is Codex's resolved state root for one Workspace: the primary
-// directory, the resolved SQLite database directory (three-tier
-// resolution, see resolveSQLiteDir), and the optional shared ~/.agents
-// directory.
+// directory, the resolved SQLite database directory (see resolveSQLiteDir),
+// and the optional shared ~/.agents directory.
 type Home struct {
 	Dir       string
 	SQLiteDir string
 	AgentsDir string
+
+	// sqliteSource records which resolution tier produced SQLiteDir. Its
+	// zero value is the codex-home default, which is what a Home built
+	// directly from Dir and SQLiteDir gets.
+	sqliteSource sqliteHomeSource
+	// resolutionWarnings name the machine-level sources that exist but could
+	// not be checked while resolving SQLiteDir.
+	resolutionWarnings []string
+}
+
+// sqliteHomeTier is one tier of Codex's sqlite-home resolution, lowest
+// precedence first.
+type sqliteHomeTier int
+
+const (
+	sqliteHomeFromCodexHome sqliteHomeTier = iota
+	sqliteHomeFromEnvironment
+	sqliteHomeFromMachineConfig
+	sqliteHomeFromConfigTOML
+	sqliteHomeFromManagedConfig
+	sqliteHomeFromRequirement
+)
+
+// sqliteHomeSource names the tier that won and, for an explicit tier, where
+// its value came from, so errors and warnings can point at it.
+type sqliteHomeSource struct {
+	tier sqliteHomeTier
+	name string
+}
+
+// sqliteHomeResolution is resolveSQLiteDir's result.
+type sqliteHomeResolution struct {
+	dir      string
+	source   sqliteHomeSource
+	warnings []string
 }
 
 // newHome resolves sqliteDir and agentsDir for an already-validated dir.
@@ -47,47 +80,136 @@ type Home struct {
 // seams): real Open calls pass os.Getenv, tests pass a fake so HOME and
 // CODEX_SQLITE_HOME are controllable without mutating process-wide state.
 func newHome(dir string, getenv func(string) string) (*Home, error) {
-	sqliteDir, err := resolveSQLiteDir(dir, getenv)
+	sources, err := machineManagedSources(dir)
 	if err != nil {
+		return nil, err
+	}
+	resolution, err := resolveSQLiteDir(dir, getenv, &sources, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if err := requireExplicitSQLiteDir(resolution); err != nil {
 		return nil, err
 	}
 	var agentsDir string
 	if homeDir := getenv("HOME"); homeDir != "" {
 		agentsDir = filepath.Join(homeDir, ".agents")
 	}
-	return &Home{Dir: dir, SQLiteDir: sqliteDir, AgentsDir: agentsDir}, nil
+	return &Home{
+		Dir:                dir,
+		SQLiteDir:          resolution.dir,
+		AgentsDir:          agentsDir,
+		sqliteSource:       resolution.source,
+		resolutionWarnings: resolution.warnings,
+	}, nil
 }
 
-// resolveSQLiteDir mirrors Codex's three-tier sqlite-home resolution
-// (core/src/config/mod.rs:3996-4001): the sqlite_home key in config.toml,
-// then $CODEX_SQLITE_HOME, then the home directory itself.
-func resolveSQLiteDir(dir string, getenv func(string) string) (string, error) {
+// resolveSQLiteDir mirrors Codex's sqlite-home resolution. A managed
+// requirement replaces the configured value outright
+// (core/src/config/requirements.rs:35, 76-101, applied before resolution at
+// core/src/config/mod.rs:3219-3224), and it also outranks
+// $CODEX_SQLITE_HOME (core/src/config/requirements.rs:131-157). The
+// configured value is the highest config layer that sets sqlite_home
+// (config/src/config_layer_source.rs:33-51): managed config above
+// config.toml, then config.toml, then the machine config below it.
+// core/src/config/mod.rs:3996-4001 falls back to $CODEX_SQLITE_HOME, then
+// the home directory itself.
+func resolveSQLiteDir(dir string, getenv func(string) string, sources *managedSources, now time.Time) (sqliteHomeResolution, error) {
+	managed, err := resolveManagedSQLiteHome(dir, sources, getenv("HOME"), now)
+	if err != nil {
+		return sqliteHomeResolution{}, err
+	}
+	resolution := sqliteHomeResolution{warnings: managed.warnings}
+	userConfig, err := userConfigSQLiteHome(dir, getenv("HOME"))
+	if err != nil {
+		return sqliteHomeResolution{}, err
+	}
+	for _, candidate := range []struct {
+		setting *sqliteHomeSetting
+		tier    sqliteHomeTier
+	}{
+		{managed.requirement, sqliteHomeFromRequirement},
+		{managed.managedConfig, sqliteHomeFromManagedConfig},
+		{userConfig, sqliteHomeFromConfigTOML},
+		{managed.machineConfig, sqliteHomeFromMachineConfig},
+	} {
+		if candidate.setting != nil {
+			resolution.dir = candidate.setting.path
+			resolution.source = sqliteHomeSource{tier: candidate.tier, name: candidate.setting.source}
+			return resolution, nil
+		}
+	}
+
+	// Codex trims the value, treats a blank one as unset, and resolves the
+	// rest like any other AbsolutePathBuf against its working directory
+	// (core/src/config/mod.rs:267-277, resolve_sqlite_home_env).
+	if envValue := strings.TrimSpace(getenv(sqliteHomeEnv)); envValue != "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return sqliteHomeResolution{}, fmt.Errorf("resolve $%s: %w", sqliteHomeEnv, err)
+		}
+		resolved, err := resolveAgainstHome(cwd, envValue, getenv("HOME"))
+		if err != nil {
+			return sqliteHomeResolution{}, fmt.Errorf("resolve $%s: %w", sqliteHomeEnv, err)
+		}
+		resolution.dir = resolved
+		resolution.source = sqliteHomeSource{tier: sqliteHomeFromEnvironment, name: "$" + sqliteHomeEnv}
+		return resolution, nil
+	}
+	resolution.dir = dir
+	return resolution, nil
+}
+
+// userConfigSQLiteHome reads sqlite_home from config.toml; a relative value
+// resolves against the codex home.
+func userConfigSQLiteHome(dir, osHome string) (*sqliteHomeSetting, error) {
 	configPath := filepath.Join(dir, configTOMLFileName)
 	data, err := os.ReadFile(configPath) //nolint:gosec // G304: path constructed from the resolved codex home
-	switch {
-	case err == nil:
-		var probe struct {
-			SQLiteHome string `toml:"sqlite_home"`
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
 		}
-		if unmarshalErr := toml.Unmarshal(data, &probe); unmarshalErr != nil {
-			return "", fmt.Errorf("parse %s for sqlite_home: %w", configPath, unmarshalErr)
-		}
-		if probe.SQLiteHome != "" {
-			return resolveAgainstHome(dir, probe.SQLiteHome, getenv("HOME"))
-		}
-	case errors.Is(err, os.ErrNotExist):
-		// No config.toml yet: fall through to the environment tier.
-	default:
-		return "", fmt.Errorf("read %s: %w", configPath, err)
+		return nil, fmt.Errorf("read %s: %w", configPath, err)
 	}
-
-	if envValue := getenv(sqliteHomeEnv); envValue != "" {
-		return resolveAgainstCWD(envValue)
-	}
-	return dir, nil
+	return sqliteHomeFromTOML(data, "sqlite_home in "+configPath, dir, osHome)
 }
 
-// profileSQLiteHomeWarning inspects every discovered profile overlay
+// requireExplicitSQLiteDir refuses an explicitly chosen sqlite_home that is
+// not an existing directory. Database discovery reads a missing directory as
+// "no databases", so without this a mistyped sqlite_home would report every
+// project as unknown to Codex. The codex-home default is exempt: Open already
+// requires that directory to exist.
+func requireExplicitSQLiteDir(resolution sqliteHomeResolution) error {
+	if resolution.source.tier == sqliteHomeFromCodexHome {
+		return nil
+	}
+	info, err := os.Stat(resolution.dir)
+	if err != nil {
+		return fmt.Errorf("sqlite_home %s from %s: %w", resolution.dir, resolution.source.name, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("sqlite_home %s from %s is not a directory", resolution.dir, resolution.source.name)
+	}
+	return nil
+}
+
+// sqliteHomeWarnings returns the caveats on home.SQLiteDir that move
+// (ResidualWarnings), export, and import (Finalize) report: the machine-level
+// sources recorded as unchecked while resolving it, then any profile overlay
+// whose sqlite_home diverges from it (see profileSQLiteHomeDivergence).
+func sqliteHomeWarnings(home *Home, getenv func(string) string) ([]string, error) {
+	divergence, err := profileSQLiteHomeDivergence(home, getenv)
+	if err != nil {
+		return nil, err
+	}
+	warnings := append([]string(nil), home.resolutionWarnings...)
+	if divergence != "" {
+		warnings = append(warnings, divergence)
+	}
+	return warnings, nil
+}
+
+// profileSQLiteHomeDivergence inspects every discovered profile overlay
 // (<profile>.config.toml) for a sqlite_home declaration that resolves to a
 // directory other than home.SQLiteDir. Codex's profile-v2 selection
 // (the --profile CLI flag) is a runtime argument, never recorded in
@@ -96,12 +218,16 @@ func resolveSQLiteDir(dir string, getenv func(string) string) (string, error) {
 // is no on-disk record of which profile, if any, was active for the
 // sessions currently on disk. resolveSQLiteDir therefore always resolves
 // against base config.toml, matching Codex's own behavior with no
-// --profile flag; this warns rather than silently trusting that
+// --profile flag; this reports rather than silently trusting that
 // resolution whenever a profile overlay declares a sqlite_home that
-// disagrees with it. On its own this only warns a known project's state
-// may be incomplete; projectAbsenceError uses the same check to stop an
-// unknown project from being reported as flatly absent.
-func profileSQLiteHomeWarning(home *Home, getenv func(string) string) (string, error) {
+// disagrees with it. A managed requirement overrides every overlay's
+// sqlite_home (core/src/config/requirements.rs:35), and managed config
+// layers outrank profiles (config/src/config_layer_source.rs:33-51), so no
+// overlay can diverge once either set SQLiteDir.
+func profileSQLiteHomeDivergence(home *Home, getenv func(string) string) (string, error) {
+	if home.sqliteSource.tier >= sqliteHomeFromManagedConfig {
+		return "", nil
+	}
 	files, err := discoverConfigTOMLFiles(home)
 	if err != nil {
 		return "", err
@@ -118,20 +244,14 @@ func profileSQLiteHomeWarning(home *Home, getenv func(string) string) (string, e
 			}
 			return "", fmt.Errorf("read %s: %w", path, err)
 		}
-		var probe struct {
-			SQLiteHome string `toml:"sqlite_home"`
+		setting, err := sqliteHomeFromTOML(data, path, home.Dir, getenv("HOME"))
+		if err != nil {
+			return "", err
 		}
-		if unmarshalErr := toml.Unmarshal(data, &probe); unmarshalErr != nil {
-			return "", fmt.Errorf("parse %s for sqlite_home: %w", path, unmarshalErr)
-		}
-		if probe.SQLiteHome == "" {
+		if setting == nil {
 			continue
 		}
-		resolved, err := resolveAgainstHome(home.Dir, probe.SQLiteHome, getenv("HOME"))
-		if err != nil {
-			return "", fmt.Errorf("resolve sqlite_home in %s: %w", path, err)
-		}
-		if resolved != home.SQLiteDir {
+		if setting.path != home.SQLiteDir {
 			divergent = append(divergent, filepath.Base(path))
 		}
 	}
@@ -148,34 +268,37 @@ func profileSQLiteHomeWarning(home *Home, getenv func(string) string) (string, e
 
 // projectAbsenceError decides what "not found under every source this
 // adapter checks" means once knowsProject or projectKnown reports false.
-// Reporting a confident tool.ErrProjectAbsent derived only from the
-// base-resolved SQLiteDir is a best-guess answer presented as fact
-// whenever a profile overlay might hold the project's real state under a
-// directory this adapter never looked in; fail-hard forbids that, so this
-// returns ErrProjectAbsenceUnresolved instead whenever a divergent overlay
-// exists. When no overlay diverges, the overwhelmingly common case, this
-// returns the ordinary tool.ErrProjectAbsent and every caller's behavior
-// is unchanged.
+// Reporting a confident tool.ErrProjectAbsent derived from Home.SQLiteDir is
+// a best-guess answer presented as fact whenever Codex may keep the
+// project's state somewhere else: a profile overlay declaring a different
+// sqlite_home, or a cloud bundle cc-port could not check. Fail-hard forbids
+// that, so this returns ErrProjectAbsenceUnresolved carrying every
+// sqliteHomeWarnings entry instead. With no such caveat it returns the
+// ordinary tool.ErrProjectAbsent.
 func (workspace *Workspace) projectAbsenceError() error {
-	warning, err := profileSQLiteHomeWarning(workspace.home, workspace.getenv)
+	warnings, err := sqliteHomeWarnings(workspace.home, workspace.getenv)
 	if err != nil {
 		return err
 	}
-	if warning == "" {
+	if len(warnings) == 0 {
 		return tool.ErrProjectAbsent
 	}
 	return fmt.Errorf(
-		"%w: not found in the base-resolved sqlite directory %s; %s",
-		ErrProjectAbsenceUnresolved, workspace.home.SQLiteDir, warning,
+		"%w: not found in the resolved sqlite directory %s; %s",
+		ErrProjectAbsenceUnresolved, workspace.home.SQLiteDir, strings.Join(warnings, "; "),
 	)
 }
 
-func resolveAgainstHome(home, path, osHome string) (string, error) {
+// resolveAgainstHome mirrors AbsolutePathBuf::resolve_path_against_base
+// (utils/absolute-path/src/lib.rs:45-56): expand a leading ~, join a
+// relative value onto base, and normalize. An empty value therefore resolves
+// to base itself.
+func resolveAgainstHome(base, path, osHome string) (string, error) {
 	path = expandHomeDirectory(path, osHome)
 	if filepath.IsAbs(path) {
-		return path, nil
+		return filepath.Clean(path), nil
 	}
-	return filepath.Abs(filepath.Join(home, path))
+	return filepath.Abs(filepath.Join(base, path))
 }
 
 // expandHomeDirectory mirrors AbsolutePathBuf: only ~ and ~/... expand, and
@@ -191,17 +314,6 @@ func expandHomeDirectory(path, home string) string {
 		return filepath.Join(home, path[2:])
 	}
 	return path
-}
-
-// resolveAgainstCWD makes path absolute against the current process's
-// working directory, matching Codex's own resolve_sqlite_home_env
-// behavior for a relative $CODEX_SQLITE_HOME (core/src/config/mod.rs:267-277).
-func resolveAgainstCWD(path string) (string, error) {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("absolute path for %q: %w", path, err)
-	}
-	return absPath, nil
 }
 
 // canonicalizeExistingDir validates that path exists, is a directory, and

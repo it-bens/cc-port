@@ -206,6 +206,8 @@ func (workspace *lockOrderWorkspace) EnumerateProjects(context.Context) ([]tool.
 	return nil, nil
 }
 
+func (*lockOrderWorkspace) AuditWarnings(context.Context) ([]string, error) { return nil, nil }
+
 // buildEmptyManifestArchive returns a well-formed archive with no <tool>
 // blocks and no entries. Every target this test registers is then absent
 // from the manifest, so runLocked reports them as skipped and never calls

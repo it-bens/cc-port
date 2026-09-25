@@ -92,7 +92,7 @@ lazily created) and returns a `Workspace` bound to them, composing the four
 command-facing capabilities so one `Open` result serves every command (see
 [`internal/tool/README.md`](../internal/tool/README.md) §Public API for the
 full `Tool`/`Workspace`/`Mover`/`Exporter`/`Importer`/`Auditor` method
-lists). Auditor's three methods take `context.Context` first, so cancelling
+lists). Auditor's methods take `context.Context` first, so cancelling
 the context stops a running scan. A move's per-surface work is a `Surface`: a `Name`, a `Plan` that
 returns `SurfaceResult` without writing, and an `Apply` that performs the
 rewrite and registers its rollback with a `Restorer`. `SurfaceResult.Warnings`

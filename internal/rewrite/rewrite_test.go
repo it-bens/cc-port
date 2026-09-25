@@ -50,7 +50,7 @@ func TestPromoteDir(t *testing.T) {
 			func(_ context.Context, from, to string, _ func()) error {
 				data, readErr := os.ReadFile(filepath.Join(from, "source.txt")) //nolint:gosec // G304: t.TempDir() path
 				require.NoError(t, readErr)
-				return os.WriteFile(filepath.Join(to, "source.txt"), data, 0o600) //nolint:gosec // G304: t.TempDir() path
+				return os.WriteFile(filepath.Join(to, "source.txt"), data, 0o600)
 			})
 
 		require.NoError(t, err)

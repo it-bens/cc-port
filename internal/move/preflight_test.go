@@ -118,3 +118,5 @@ func (workspace *preflightWorkspace) DiskCategories(context.Context, string) ([]
 func (workspace *preflightWorkspace) EnumerateProjects(context.Context) ([]tool.ProjectInfo, error) {
 	return nil, nil
 }
+
+func (*preflightWorkspace) AuditWarnings(context.Context) ([]string, error) { return nil, nil }

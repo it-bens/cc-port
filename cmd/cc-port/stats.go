@@ -74,7 +74,7 @@ func runStatsAll(ctx context.Context, stdout io.Writer, targets []tool.Target, a
 	if asJSON {
 		return writeStatsJSON(stdout, footprints)
 	}
-	return renderAllFootprints(stdout, footprints)
+	return renderAllFootprints(stdout, targets, footprints)
 }
 
 // writeStatsJSON emits the DTO as indented JSON with HTML escaping off so paths
@@ -118,6 +118,7 @@ func renderFootprint(stdout io.Writer, footprint *stats.Footprint) error {
 			}
 			fmt.Fprintf(&builder, "      %-16s %4d files  %s\n", usage.Name, usage.Files, humanizeBytes(usage.Bytes))
 		}
+		writeStatsWarnings(&builder, toolFootprint.Warnings)
 		fmt.Fprintln(&builder)
 	}
 
@@ -125,11 +126,11 @@ func renderFootprint(stdout io.Writer, footprint *stats.Footprint) error {
 	return err
 }
 
-func renderAllFootprints(stdout io.Writer, footprints []stats.ProjectFootprint) error {
+func renderAllFootprints(stdout io.Writer, targets []tool.Target, footprints *stats.AllFootprints) error {
 	var builder strings.Builder
 
-	fmt.Fprintf(&builder, "cc-port stats: %d known projects (ranked by disk footprint)\n\n", len(footprints))
-	for _, footprint := range footprints {
+	fmt.Fprintf(&builder, "cc-port stats: %d known projects (ranked by disk footprint)\n\n", len(footprints.Projects))
+	for _, footprint := range footprints.Projects {
 		label := footprint.Label
 		if !footprint.Resolved {
 			label += " (no session witness)"
@@ -137,9 +138,25 @@ func renderAllFootprints(stdout io.Writer, footprints []stats.ProjectFootprint) 
 		fmt.Fprintf(&builder, "  [%-8s] %10s  %4d files  %s\n",
 			footprint.Tool, humanizeBytes(footprint.Bytes), footprint.Files, label)
 	}
+	for _, target := range targets {
+		warnings := footprints.Warnings[target.Tool.Name()]
+		if len(warnings) == 0 {
+			continue
+		}
+		fmt.Fprintf(&builder, "\n  [%s]\n", target.Tool.Name())
+		writeStatsWarnings(&builder, warnings)
+	}
 
 	_, err := io.WriteString(stdout, builder.String())
 	return err
+}
+
+// writeStatsWarnings prints one tool's audit warnings inside its block, in
+// the "    ! " form the move plan uses.
+func writeStatsWarnings(builder *strings.Builder, warnings []string) {
+	for _, warning := range warnings {
+		fmt.Fprintf(builder, "    ! %s\n", warning)
+	}
 }
 
 // humanizeBytes renders a byte count as a human-readable size. The stats table

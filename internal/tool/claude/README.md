@@ -82,7 +82,8 @@ drive it through the contract without knowing Claude's on-disk shape.
     §MCP server definitions).
   - `(*Workspace).ReferenceSurfaces`, `(*Workspace).DiskCategories`,
     `(*Workspace).EnumerateProjects` (`stats.go`): read-only footprint
-    accounting for `cc-port stats`.
+    accounting for `cc-port stats`. `(*Workspace).AuditWarnings` returns
+    none, because Claude's state locations resolve without caveats.
 
 ## Contracts
 

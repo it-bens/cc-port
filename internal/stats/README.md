@@ -17,14 +17,19 @@ example `internal/tool/claude`).
   `tool.ErrProjectAbsent` from either `ReferenceSurfaces` or `DiskCategories`
   contributes a zero `ToolFootprint` (`Absent: true`) rather than failing the
   whole call.
-- `ComputeAllFootprints(ctx context.Context, targets []tool.Target) ([]ProjectFootprint, error)`:
+- `ComputeAllFootprints(ctx context.Context, targets []tool.Target) (*AllFootprints, error)`:
   every target's known projects (via `Workspace.EnumerateProjects`), flattened
   into one list and ranked by total bytes descending across every tool
-  combined (ties broken by label).
+  combined (ties broken by label), plus every target's audit warnings.
 - `Footprint`: `ProjectPath`, `ByTool []ToolFootprint` (one per target, in
   registration order).
 - `ToolFootprint`: `Tool`, `Absent`, `References []tool.CountSurface`,
-  `ReferenceTotal`, `Disk []tool.SizeCategory`, `DiskFiles`, `DiskBytes`.
+  `ReferenceTotal`, `Disk []tool.SizeCategory`, `DiskFiles`, `DiskBytes`,
+  `Warnings []string` (the target's `Auditor.AuditWarnings`, set even when
+  `Absent`).
+- `AllFootprints`: `Projects []ProjectFootprint` (the ranking) and
+  `Warnings map[string][]string` (each target's `Auditor.AuditWarnings`,
+  keyed by tool name; a target with none has no key).
 - `ProjectFootprint`: `Tool` plus an embedded `tool.ProjectInfo` (`Label`,
   `Resolved`, `Disk`, `Files`, `Bytes`), one row of the all-projects ranking.
 
@@ -53,6 +58,10 @@ approximation.
   target still computes normally.
 - All-projects enumeration flattens every target's `EnumerateProjects` result
   into one combined ranking rather than reporting one ranking per tool.
+- Both modes carry each target's `Auditor.AuditWarnings`: per `ToolFootprint`
+  in single-project mode, per tool name in `AllFootprints.Warnings` in
+  all-projects mode. An `AuditWarnings` error fails the call, like any other
+  `Auditor` error.
 
 #### Refused
 
@@ -72,8 +81,9 @@ Unit tests in `stats_test.go` and `boundary_test.go`. Coverage: one
 `ToolFootprint` entry per target, the `tool.ErrProjectAbsent` not-found path
 reported as `Absent` rather than an error, the disk-footprint and
 reference-total aggregation across a target's `SizeCategory`/`CountSurface`
-rows, and the all-projects ranking sorted by bytes descending with a
-deterministic label tie-break.
+rows, the all-projects ranking sorted by bytes descending with a
+deterministic label tie-break, and audit warnings in both modes (none from
+Claude, a divergent-profile warning from Codex).
 
 Per-adapter reference-counting and disk-sizing behavior (which surfaces
 exist, which count variant each uses, boundary-aware exclusion of prefix

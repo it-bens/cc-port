@@ -128,12 +128,15 @@ Per-tool warnings (rules-file matches surfaced by the Claude adapter's
 export, residual-content notices from a move or import) travel as plain
 `[]string` fields on the generic result types
 (`tool.ExportResult.Warnings`, `move.ToolResult.Warnings`,
-`importer.Result.Warnings`) rather than a dedicated report type. Each command
-renders its own warnings after the run: `export.go:renderToolWarnings`,
+`importer.Result.Warnings`, `stats.ToolFootprint.Warnings`,
+`stats.AllFootprints.Warnings`) rather than a dedicated report type. Each
+command renders its own warnings after the run: `export.go:renderToolWarnings`,
 `move.go:renderApplyResult`, `importcmd.go:renderImportWarnings` (which
-`pullcmd.go` reuses for pull's apply path). Every
-renderer prefixes a warning with the tool's `DisplayName` only when more
-than one target ran this invocation.
+`pullcmd.go` reuses for pull's apply path), and `stats.go:writeStatsWarnings`.
+The export and import renderers write to stderr and prefix a warning with
+the tool's `DisplayName` only when more than one target ran this
+invocation. Move and stats print warnings as `    ! ` lines inside the
+tool's `[<tool>]` block on stdout instead.
 
 ## Stream routing
 

@@ -72,6 +72,8 @@ func (*codexOnlyWorkspace) EnumerateProjects(context.Context) ([]tool.ProjectInf
 	return nil, assert.AnError
 }
 
+func (*codexOnlyWorkspace) AuditWarnings(context.Context) ([]string, error) { return nil, nil }
+
 func TestParseMoveOptions_ResolvesPaths(t *testing.T) {
 	cmd := newMoveCmdForTest(t)
 

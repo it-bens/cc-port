@@ -480,13 +480,11 @@ func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, er
 		}
 	}
 
-	sqliteHomeWarning, err := profileSQLiteHomeWarning(workspace.home, workspace.getenv)
+	homeWarnings, err := sqliteHomeWarnings(workspace.home, workspace.getenv)
 	if err != nil {
 		return warnings, err
 	}
-	if sqliteHomeWarning != "" {
-		warnings = append(warnings, sqliteHomeWarning)
-	}
+	warnings = append(warnings, homeWarnings...)
 
 	return warnings, nil
 }

@@ -33,6 +33,14 @@ linters:
     - unparam
     - unused
     - whitespace
+  exclusions:
+    rules:
+      # gosec's G703 taint analysis is nondeterministic across runs on the
+      # same tree; test helpers only write under t.TempDir().
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G703"
   settings:
     dogsled:
       max-blank-identifiers: 3

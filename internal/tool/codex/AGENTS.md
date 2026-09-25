@@ -2,6 +2,8 @@
 
 ## Before editing
 
+- Resolve `Home.SQLiteDir` as requirement > managed config > `config.toml` > machine config > `$CODEX_SQLITE_HOME` > codex home, and refuse a non-default tier whose directory is missing. (README §Home resolution)
+- Read from `auth.json` only what the cloud-config gate compares, and never put an `auth.json` value or managed-preference payload text in an error or warning. (README §Home resolution)
 - Glob every database discovery (`state_*.sqlite`, `memories_*.sqlite`, ...); never pin a generation-suffixed filename. (README §Glob, don't pin)
 - Mutate SQLite databases only through `internal/sqlrewrite`; a read-only `BEGIN IMMEDIATE` lock probe may open a write connection and must roll back without row mutation. (README §Witness evidence order)
 - Never `INSERT` into the state database; it is a foreign, self-healing cache Codex's own reconciler owns. (README §Sidecar update-only rationale)
@@ -14,7 +16,7 @@
 
 ## Navigation
 
-- Home and SQLite-dir resolution: `home.go`, `databases.go`.
+- Home and SQLite-dir resolution: `home.go`, `requirements.go`, `databases.go`.
 - Move surfaces: `move.go`, `databaseapply.go`, `statedb.go`, `queue.go`, `memories.go`, `toml.go`, `agents.go`.
 - Witness: `witness.go`, `process.go`.
 - Rollout JSONL: `rollout.go`.

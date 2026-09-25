@@ -2,6 +2,8 @@ package stats_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +13,7 @@ import (
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
 const fixtureProject = "/Users/test/Projects/myproject"
@@ -150,8 +153,9 @@ func TestComputeFootprint_NotFoundIsAbsentNotError(t *testing.T) {
 func TestComputeAllFootprints_RanksByBytesDescending(t *testing.T) {
 	targets := fixtureTargets(t)
 
-	footprints, err := stats.ComputeAllFootprints(t.Context(), targets)
+	all, err := stats.ComputeAllFootprints(t.Context(), targets)
 	require.NoError(t, err)
+	footprints := all.Projects
 	require.Len(t, footprints, 4)
 
 	for index := 1; index < len(footprints); index++ {
@@ -175,7 +179,51 @@ func TestComputeAllFootprints_EmptyHomeYieldsNone(t *testing.T) {
 	home := &claude.Home{Dir: t.TempDir() + "/dotclaude", ConfigFile: t.TempDir() + "/dotclaude.json"}
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 
-	footprints, err := stats.ComputeAllFootprints(t.Context(), targets)
+	all, err := stats.ComputeAllFootprints(t.Context(), targets)
 	require.NoError(t, err)
-	assert.Empty(t, footprints)
+	assert.Empty(t, all.Projects)
+}
+
+func TestComputeFootprint_ClaudeReportsNoAuditWarnings(t *testing.T) {
+	targets := fixtureTargets(t)
+
+	footprint, err := stats.ComputeFootprint(t.Context(), targets, fixtureProject)
+
+	require.NoError(t, err)
+	require.Len(t, footprint.ByTool, 1)
+	assert.Empty(t, footprint.ByTool[0].Warnings)
+}
+
+// divergentCodexTargets stages the Codex fixture with a profile overlay whose
+// sqlite_home differs from the resolved one, which the adapter reports
+// through Auditor.AuditWarnings.
+func divergentCodexTargets(t *testing.T) []tool.Target {
+	t.Helper()
+	home := codex.SetupFixture(t)
+	overlay := "sqlite_home = \"" + filepath.Join(t.TempDir(), "elsewhere") + "\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, "work.config.toml"), []byte(overlay), 0o600))
+	noProcesses := func() ([]codex.ProcessInfo, error) { return nil, nil }
+	workspace := codex.NewWorkspace(home, func(string) string { return "" }, noProcesses)
+	return []tool.Target{{Tool: codex.New(), Workspace: workspace}}
+}
+
+func TestComputeFootprint_CarriesCodexAuditWarnings(t *testing.T) {
+	targets := divergentCodexTargets(t)
+
+	footprint, err := stats.ComputeFootprint(t.Context(), targets, codex.FixtureProjectPath())
+
+	require.NoError(t, err)
+	require.Len(t, footprint.ByTool, 1)
+	require.Len(t, footprint.ByTool[0].Warnings, 1)
+	assert.Contains(t, footprint.ByTool[0].Warnings[0], "work.config.toml")
+}
+
+func TestComputeAllFootprints_CarriesCodexAuditWarnings(t *testing.T) {
+	targets := divergentCodexTargets(t)
+
+	all, err := stats.ComputeAllFootprints(t.Context(), targets)
+
+	require.NoError(t, err)
+	require.Len(t, all.Warnings["codex"], 1)
+	assert.Contains(t, all.Warnings["codex"][0], "work.config.toml")
 }

@@ -40,7 +40,11 @@ package's types support.
     apply would).
   - `Auditor`: `ReferenceSurfaces(ctx context.Context, project string) ([]CountSurface, error)`,
     `DiskCategories(ctx context.Context, project string) ([]SizeCategory, error)`,
-    `EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)`.
+    `EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)`,
+    `AuditWarnings(ctx context.Context) ([]string, error)`. `AuditWarnings`
+    carries caveats on everything the other three return, such as a state
+    location the tool could not fully resolve; it takes no project because
+    the caveats hold for every project.
 - **Contract value types**
   - `Category`: `Name`, `Description`, `DefaultSelected`, `ExcludedFromAll`
     (kept out of the `--all` sweep and exported only via explicit
@@ -156,7 +160,7 @@ A third adapter is one new package (`internal/tool/<name>`) plus one line in
   `Placeholders`/`Export` with any tool-declared home anchors,
   `PreflightDirs`/`ImplicitAnchors`/`MCPServers`/`ArchiveMCPServers`/`Stage`/a
   deduplicating `Finalize`, the
-  three `Auditor` methods, `ActiveWriters`, and round-trip fixtures.
+  four `Auditor` methods, `ActiveWriters`, and round-trip fixtures.
 - Everything else is inherited unchanged: CLI wiring and generated flags
   (`cmd/cc-port/toolselect.go`), locking (`internal/lock`), archive
   mechanics and caps (`internal/archive`), manifest I/O and validation

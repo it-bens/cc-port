@@ -42,51 +42,201 @@ shapes themselves.
   exist, be a directory, and canonicalize (`canonicalizeExistingDir`); `Open`
   reports `tool.ErrToolAbsent` for a missing default location rather than
   fabricating a `Workspace` over state that was never written.
-- `Home.SQLiteDir` mirrors Codex's three-tier resolution
-  (`core/src/config/mod.rs:3996-4001`): the `sqlite_home` key in
-  `config.toml`, then `$CODEX_SQLITE_HOME`, then the home directory itself.
-  A relative `sqlite_home` value resolves against the home directory; a
-  relative `$CODEX_SQLITE_HOME` resolves against the process's current
-  working directory, matching Codex's own `resolve_sqlite_home_env`.
+- `Home.SQLiteDir` mirrors Codex's sqlite-home resolution, highest tier
+  first. A managed requirement's `sqlite_home` replaces the configured value
+  (`core/src/config/requirements.rs:35,76-101`, applied before resolution at
+  `core/src/config/mod.rs:3219-3224`) and also beats `$CODEX_SQLITE_HOME`
+  (`core/src/config/requirements.rs:131-157`). The configured value is the
+  highest config layer that sets `sqlite_home`, by layer precedence
+  (`config/src/config_layer_source.rs:33-51`). Below all of them,
+  `core/src/config/mod.rs:3996-4001` falls back to `$CODEX_SQLITE_HOME`,
+  then the home directory itself. `$CODEX_SQLITE_HOME` is trimmed and a
+  blank value counts as unset (`core/src/config/mod.rs:267-277`). Every
+  value, from any tier, resolves the way `AbsolutePathBuf::resolve_path_against_base`
+  resolves it (`utils/absolute-path/src/lib.rs:45-56`): a leading `~` or
+  `~/` expands to `$HOME`, a relative value joins its base from the table
+  below, and an empty value resolves to that base itself.
+
+  | Tier | Source, lowest precedence first within the tier | Relative values resolve against |
+  |---|---|---|
+  | Requirement | `/etc/codex/requirements.toml`; then the cloud cache's `requirements_toml` fragments; then the MDM `requirements_toml_base64` preference (`config/src/loader/managed_requirements.rs:104-113`) | `/etc/codex` for the file, the codex home for the rest |
+  | Managed config | `/etc/codex/managed_config.toml` (layer precedence 40); then the MDM `config_toml_base64` preference (50). Both outrank `config.toml`, profiles, and project config | `/etc/codex` for the file (`config/src/loader/mod.rs:434-445`), the codex home for MDM (`:457`) |
+  | `config.toml` | `$CODEX_HOME/config.toml` (20) | the codex home |
+  | Machine config | `/etc/codex/config.toml` (10); then the cloud cache's `config_toml` fragments (15) | `/etc/codex` for the file, the codex home for the fragments (`config/src/loader/mod.rs:208`) |
+  | Environment | `$CODEX_SQLITE_HOME` | cc-port's current working directory |
+  | Default | the codex home | none |
+
+  Cloud fragments arrive highest precedence first, so the first fragment in
+  a bucket that sets `sqlite_home` wins
+  (`config/src/cloud_config_bundle.rs`, `CloudRequirementsTomlBundle::into_layers`;
+  `config/src/cloud_config_layers.rs:117-119`). MDM values are base64-encoded
+  TOML under the domain `com.openai.codex` (`config/src/loader/macos.rs:27-29`),
+  read from `/Library/Managed Preferences/<user>/com.openai.codex.plist`,
+  else `/Library/Managed Preferences/com.openai.codex.plist`; the first plist
+  carrying a key supplies that key. The plist reader handles the XML and
+  binary (`bplist00`) formats without a third-party dependency. Every source
+  is parsed even when a higher one wins, because Codex refuses to load when
+  any layer fails to parse.
+- The cloud cache at `$CODEX_HOME/cloud-config-bundle-cache.json` is loaded
+  the way `CloudConfigBundleCache::load` loads it
+  (`cloud-config/src/cache.rs:49-107`): parse, then verify the
+  HMAC-SHA256 `signature` with Codex's built-in key
+  (`cloud-config/src/cache.rs:26-29`), then check `version` is 1, then
+  `expires_at`. Codex signs and verifies `serde_json::to_vec` of the
+  deserialized `signed_payload` (`cloud-config/src/cache.rs:214-218`):
+  compact JSON, fields in declaration order (`version`, `cached_at`,
+  `expires_at`, `chatgpt_user_id`, `account_id`, `bundle`, and inside it
+  `config_toml` then `requirements_toml`, each fragment as `id`, `name`,
+  `contents`), an absent `Option` as `null`, and unknown fields dropped.
+  cc-port writes those bytes in that order from the file's own JSON value
+  tokens. They equal serde_json's output for a Codex-written cache; a value
+  spelled differently, such as an escape serde_json would not emit, fails
+  cc-port's check even where Codex's re-serialization would pass. serde_json
+  rejects a repeated declared field of any struct it deserializes (the
+  envelope, `signed_payload`, `bundle`, each bucket, each fragment) and
+  ignores a repeated unknown field; encoding/json would keep the last of
+  either, so cc-port refuses a repeated declared field and ignores a
+  repeated unknown one.
+- Before the cache, cc-port runs Codex's cloud-config gate from
+  `$CODEX_HOME/auth.json` (`cloud-config/src/service.rs:50-58,186-191`).
+  The auth mode comes from `auth_mode`, or is inferred the way
+  `AuthDotJson::resolved_mode` infers it (`login/src/auth/manager.rs:1744-1761`).
+  No `auth.json`, API-key or Bedrock auth, ChatGPT auth without token data,
+  or a plan other than business, education, or enterprise
+  (`protocol/src/account.rs:67-80`) means Codex never applies cloud config:
+  cc-port reads no cache and warns nothing. Agent-identity auth whose
+  stored record has a non-blank `task_id` loads without the network
+  (`login/src/auth/manager.rs:329-362`, `login/src/auth/agent_identity.rs:133-153`),
+  so its record's `plan_type`, `chatgpt_user_id`, and `account_id` run the
+  same gate. For ChatGPT auth on an eligible
+  plan, cc-port decodes the `tokens.id_token` JWT payload without verifying
+  its signature, as Codex does (`login/src/token_data.rs:128-198`), reads the
+  `chatgpt_plan_type` and `chatgpt_user_id` claims (falling back to
+  `user_id`), and takes `tokens.account_id` as a plain field. The cache
+  applies only when its `chatgpt_user_id` and `account_id` equal those
+  (`cloud-config/src/cache.rs:91-100`). The decoded values are compared and
+  dropped. Errors about a managed-preference payload name the file and a
+  fixed reason, line, or byte offset, never a value from it.
+- When Codex would apply cloud config but skips the cache, it fetches the
+  bundle from the network instead, which cc-port cannot. That happens when
+  the cache is missing, was cached for a different account, when `auth.json`
+  lacks a complete identity, or after `expires_at`
+  (`cloud-config/src/cache.rs:54-56,102-104`). Each case contributes nothing
+  and produces a `cloud-managed sqlite_home could not be checked` warning.
+  Personal-access-token auth, an agent-identity JWT, and an agent-identity
+  record without a registered task produce the same warning: Codex resolves
+  their plan and account over the network (`login/src/auth/manager.rs`,
+  `from_auth_dot_json`), so cc-port cannot tell whether any bundle applies.
+- So does an `auth.json` Codex cannot load. cc-port checks it the way
+  serde deserializes `AuthDotJson` (`login/src/auth/storage.rs:41-109`)
+  and `TokenData` with its `id_token` claims (`login/src/token_data.rs:11-198`):
+  a top-level object with no repeated declared field (serde ignores repeated
+  unknown ones), a known `auth_mode`, every
+  declared field of its declared type (a required `String` or `bool` not
+  null), `last_refresh` an RFC 3339 timestamp, an `id_token` that decodes,
+  and the credential its auth mode needs present
+  (`login/src/auth/manager.rs:322-393`). Unknown fields are ignored, as serde
+  ignores them. A file that fails any check contributes nothing, and the
+  warning carries no value from it.
 - `Home.AgentsDir` is `$HOME/.agents`, populated only when `$HOME` resolves;
   every surface rooted there activates only when the directory exists on
   disk.
-- `profileSQLiteHomeWarning` checks every discovered `<profile>.config.toml`
+- `profileSQLiteHomeDivergence` checks every discovered `<profile>.config.toml`
   overlay for a `sqlite_home` different from the resolved `Home.SQLiteDir`.
-  For a project this adapter already knows, both `ResidualWarnings` (move)
-  and `Export` call it and add its result to their warnings, so a divergent
-  overlay is reported rather than silently trusted. See Not covered for the
-  paths that still resolve against base config.toml with no warning, and
-  for why no path resolves against the overlay instead.
+  It reports nothing when a requirement or a managed config layer set
+  `Home.SQLiteDir`, because both outrank every profile.
+  `sqliteHomeWarnings` lists the cloud-cache warning and that divergence.
+  `ResidualWarnings` (move), `Export`, `Finalize` (import), and
+  `AuditWarnings` (stats) report the list, so an unchecked cloud cache or a
+  divergent overlay is reported rather than silently trusted. See Not
+  covered for why no path resolves against the overlay instead.
+- A missing `Home.SQLiteDir` in the default tier reads as "no databases
+  found" in `discoverDatabases`. `Open` never produces one, because the
+  codex home it defaults to must exist; only a `Home` built directly from
+  `Dir` and `SQLiteDir`, as fixtures do, reaches it.
 - `projectAbsenceError` covers the case a warning cannot reach: a project
   this adapter finds nowhere under the base-resolved directory. Every guard
   that would otherwise report a bare `tool.ErrProjectAbsent`
   (`Placeholders`, `Export`, `ReferenceSurfaces`, `DiskCategories`, and
-  `MoveSurfaces`) calls it first. When a profile overlay declares a
-  divergent `sqlite_home`, it returns `ErrProjectAbsenceUnresolved`
-  instead, naming the overlay and the base directory checked. That error
+  `MoveSurfaces`) calls it first. When `sqliteHomeWarnings` reports any
+  caveat, a divergent profile overlay or an unchecked cloud cache, it
+  returns `ErrProjectAbsenceUnresolved` instead, carrying those warnings and
+  the directory checked. For an account on an eligible plan this includes
+  every run more than an hour after Codex last refreshed its cache, so a
+  project Codex does not know fails the sweep until Codex runs once. For
+  personal-access-token auth, an agent-identity JWT, or an `auth.json`
+  cc-port cannot load, the caveat has no such window: every run fails the
+  same way until the sign-in changes. That error
   does not match `errors.Is(err, tool.ErrProjectAbsent)`, so
   move/export/stats sweep semantics treat it as a hard failure rather than
   silently skipping Codex. `ActiveWriters` is genuinely exempt: it never
   answers whether a particular project exists. `EnumerateProjects` is
   exempt only from this project-specific guard, since it too takes no
   project argument; it remains subject to the same base-only resolution
-  limit as every other surface (see Not covered), so it can still omit a
-  profile-only project from an all-project listing with no warning. When
-  no overlay diverges, all five guarded call sites behave exactly as
-  before.
+  limit as every other surface, so it can still omit a profile-only project
+  from an all-project listing. With no caveat, all five guarded call sites
+  return the ordinary `tool.ErrProjectAbsent`.
 
 **Refused.**
 
 - An explicit `--codex-home` that does not exist, is not a directory, or
   cannot resolve through `filepath.EvalSymlinks`: `Open` returns an error
   before constructing a `Workspace`.
+- A `sqlite_home` from any tier but the default that does not exist or is
+  not a directory: `Open` returns an error naming the source and the path.
+  Database discovery reads a missing directory as "no databases", so
+  accepting one would report every project as unknown to Codex.
+- A machine-level source that exists but cannot be read or parsed: an
+  unparsable `requirements.toml`, `config.toml`, or `managed_config.toml`
+  under `/etc/codex`; a cloud cache that is not valid JSON, repeats a
+  declared field, lacks a required field, fails signature verification, carries a
+  `version` other than 1, or holds an unparsable fragment; a managed-preferences plist that is
+  malformed, or whose value is not a string, not valid base64, or not UTF-8
+  TOML. `Open` returns the error, naming the file.
 
 **Not covered.**
 
-- A `sqlite_home` value that itself does not exist. Resolution only computes
-  the path; database discovery (`discoverDatabases`) separately treats a
-  missing directory as "no databases found," not an error.
+- Auth that is not in `auth.json`. Codex can take a `CODEX_API_KEY` or
+  `CODEX_ACCESS_TOKEN` in its own process environment and can keep
+  credentials in the OS keyring (`login/src/auth/manager.rs:1473-1560`), and
+  either takes precedence over `auth.json`. The keyring is not visible to a
+  later cc-port run; the variables would be, when exported in the shell that
+  runs cc-port, but cc-port reads only the file store, so a machine that
+  signs in through them runs the gate on an `auth.json` Codex ignores.
+- Validating a layer's other keys. Codex parses every layer into its full
+  `ConfigToml` or `ConfigRequirementsToml` schema and refuses to start when
+  any field has the wrong type. cc-port checks TOML syntax and the
+  `sqlite_home` type only; mirroring the full schemas, which change with
+  every Codex release, is out of scope. As a result, cc-port accepts a layer
+  Codex would reject and resolves a `sqlite_home` for a Codex that does not
+  start at all.
+- Parsing an agent-identity record's private key. Codex refuses a record
+  whose `agent_private_key` does not parse
+  (`login/src/auth/agent_identity.rs:138-139`); cc-port does not read key
+  material, so such a record still feeds its gate.
+- Login restrictions from Codex's configuration. Codex drops a sign-in whose
+  mode `forced_login_method` excludes, refuses agent-identity auth for a
+  workspace `forced_chatgpt_workspace_id` excludes
+  (`login/src/auth/manager.rs:1560-1565`), and supports agent identity only
+  against its production and staging ChatGPT environments
+  (`login/src/auth/agent_identity.rs:71-79`). cc-port reads `auth.json`
+  without those settings, so it can run the gate for a sign-in Codex would
+  not use.
+- Asking macOS which preferences are forced. Codex reads MDM values through
+  `CFPreferencesAppValueIsForced` and `CFPreferencesCopyAppValue`
+  (`config/src/loader/macos.rs:136-204`) and names no file path. cc-port
+  builds with `CGO_ENABLED=0` and cannot call CoreFoundation, so it reads
+  the plist files under `/Library/Managed Preferences` that back those
+  values. A plist left behind after MDM unenrollment still supplies
+  cc-port's value while Codex ignores it.
+- `sqlite_home` from a trusted project's `.codex/config.toml` (layer
+  precedence 25, above `config.toml`). Codex loads that layer for the
+  directory it runs in (`config/src/loader/mod.rs:407`) and does not strip
+  `sqlite_home` from it (`PROJECT_LOCAL_CONFIG_DENYLIST`,
+  `config/src/loader/mod.rs:84-97`). cc-port resolves the Codex home once
+  per run, not per trusted project, so a project-scoped `sqlite_home` is not
+  consulted. The same holds for `-c` session flags, which are never written
+  to disk.
 - Resolving `Home.SQLiteDir` against the profile a past Codex session
   actually used. Codex selects a profile-v2 overlay only from the runtime
   `--profile` flag (`cli/src/main.rs:2354-2381`,
@@ -100,16 +250,6 @@ shapes themselves.
   later tool can determine which profile, if any, wrote the state on disk,
   so `Home.SQLiteDir` always resolves against base `config.toml`, matching
   Codex's own behavior with no `--profile` flag.
-- Warning about a divergent profile overlay for a project this adapter
-  already knows, anywhere but move and export. `ReferenceSurfaces` and
-  `DiskCategories` (stats) add no per-call warning for a known project's
-  possibly-incomplete data: `tool.Auditor`'s three methods return counts,
-  sizes, and project listings, with no channel to warn through on success.
-  `ActiveWriters`'s `busyProbeWitness` is not project-scoped at all: it
-  probes every database discovered under `Home.SQLiteDir` regardless of
-  project, and `tool.Workspace.ActiveWriters` returns writers and an error
-  with the same no-warning shape. A divergent profile is silent in both
-  cases as long as the project stays otherwise known.
 - `EnumerateProjects` carries the same base-only resolution limit in a
   worse shape. It builds its candidate project set from
   `discoverDatabases(Home.SQLiteDir, ...)` project paths
@@ -122,7 +262,7 @@ shapes themselves.
   incomplete. `EnumerateProjects` also forwards whatever error
   `DiskCategories` returns for any one candidate project without scoping
   the failure to that project, so one project's lower-level read failure
-  aborts the whole listing. All three cases above are a deliberate residual, not an
+  aborts the whole listing. These cases are a deliberate residual, not an
   oversight: inferring the active profile instead (the sole overlay, or
   the most recently modified one) would silently inspect a directory that
   may be wrong, the exact failure this section exists to avoid.
@@ -823,9 +963,17 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
 
 ## Tests
 
-Unit tests across `move_test.go`, `queue_test.go`, `statedb_test.go`, `witness_test.go`,
-`process_test.go`, `home_test.go`, `rollout_test.go`, and
-`export_import_stats_test.go`. Coverage: three-tier `sqlite_home` resolution,
+Unit tests across `move_test.go`, `queue_test.go`, `statedb_test.go`, `witness_test.go`, `process_test.go`,
+`home_test.go`, `requirements_test.go`, `rollout_test.go`, and `export_import_stats_test.go`. Coverage: `sqlite_home` resolution
+(precedence across every requirement and machine-level config source,
+including XML and binary managed-preference plists; cloud cache signature
+verification, a repeated declared cache field refused and a repeated
+unknown one ignored; the auth gate across API-key,
+ineligible-plan, eligible, mismatched-account, incomplete-identity,
+personal-access-token, and agent-identity record and JWT auth; `auth.json`
+files Codex cannot load warning without echoing them; the expired and missing
+cloud-cache warnings through move and import; unparsable machine-level sources; an explicit `sqlite_home` that
+does not exist),
 glob-based discovery against generation-suffixed fixture filenames, both
 rollout roots, era-A skip behavior under plain and `--deep` rewrite, the
 process-table and busy-probe witness sources driven through the injected
@@ -862,6 +1010,14 @@ and the busy probe covering `queue_*.sqlite` and `thread_history_*.sqlite`.
 tables, a config without an `[mcp_servers]` table, an empty one, an absent
 `config.toml`, a `config.toml` that cannot be parsed, a table naming both a
 command and a url, and a profile overlay whose definitions stay unread.
+
+`requirements_test.go`'s `TestMain` points `systemConfigDir` and
+`managedPreferencesDir` at a scratch directory, so tests in this package
+never read the real `/etc/codex` or `/Library/Managed Preferences`. Tests in
+`cmd/cc-port`, the root integration suite, and other packages that reach
+`Open` still read those real paths. They are absent on the maintainer's
+machine; a host with a Codex MDM profile or files under `/etc/codex` would
+change those tests' results.
 
 Fixtures come from `testdata/dotcodex/` staged via `SetupFixture`, following
 the `testutil.SetupFixture` pattern. `SetupFixture` copies the static tree
