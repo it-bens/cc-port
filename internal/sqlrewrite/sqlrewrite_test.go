@@ -160,9 +160,10 @@ func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
 	transaction, err := rewriter.Begin()
 	require.NoError(t, err)
-	updated, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "present", map[string]any{"title": "new", "archived_at": 42})
+	updated, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "present", map[string]any{"title": "new", "archived_at": 42}, nil)
 	require.NoError(t, err)
-	absent, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "missing", map[string]any{"title": "never inserted", "archived_at": 42})
+	absent, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "missing",
+		map[string]any{"title": "never inserted", "archived_at": 42}, nil)
 	require.NoError(t, err)
 	require.NoError(t, transaction.Commit())
 
@@ -181,6 +182,279 @@ func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
 	var rows int
 	require.NoError(t, check.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM threads").Scan(&rows))
 	assert.Equal(t, 1, rows)
+}
+
+func TestUpdateColumnsByRowIDUpdatesCompositeKeyRowWithoutInsert(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rowid.sqlite")
+	database := openSQLite(t, path)
+	require.NoError(t, prepareWAL(database))
+	require.NoError(t, execute(database,
+		"CREATE TABLE project_roots (project_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL, PRIMARY KEY (project_id, position))"))
+	require.NoError(t, execute(database, "INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)",
+		"primary-project", 0, "/Users/test/Projects/old-root"))
+	require.NoError(t, execute(database, "INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)",
+		"primary-project", 1, "/Users/test/Projects/other-root"))
+	var targetRowID int64
+	require.NoError(t, database.QueryRowContext(context.Background(),
+		"SELECT rowid FROM project_roots WHERE position = 0").Scan(&targetRowID))
+	require.NoError(t, database.Close())
+
+	rewriter, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	transaction, err := rewriter.Begin()
+	require.NoError(t, err)
+	updated, err := rewriter.UpdateColumnsByRowID(transaction, "project_roots", targetRowID,
+		map[string]any{"path": "/Users/test/Projects/new-root"}, map[string]any{"path": "/Users/test/Projects/old-root"})
+	require.NoError(t, err)
+	require.NoError(t, transaction.Commit())
+
+	assert.Equal(t, 1, updated)
+	check := openSQLite(t, path)
+	rows, err := check.QueryContext(context.Background(), "SELECT path FROM project_roots ORDER BY position")
+	require.NoError(t, err)
+	var paths []string
+	for rows.Next() {
+		var rootPath string
+		require.NoError(t, rows.Scan(&rootPath))
+		paths = append(paths, rootPath)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	assert.Equal(t, []string{"/Users/test/Projects/new-root", "/Users/test/Projects/other-root"}, paths)
+}
+
+func TestUpdateColumnsByRowIDReportsZeroForAbsentRowWithoutInsert(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rowid-absent.sqlite")
+	database := openSQLite(t, path)
+	require.NoError(t, execute(database,
+		"CREATE TABLE project_roots (project_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL, PRIMARY KEY (project_id, position))"))
+	require.NoError(t, execute(database, "INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)",
+		"primary-project", 0, "/Users/test/Projects/old-root"))
+	require.NoError(t, database.Close())
+
+	rewriter, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	transaction, err := rewriter.Begin()
+	require.NoError(t, err)
+	const absentRowID = 999
+	updated, err := rewriter.UpdateColumnsByRowID(transaction, "project_roots", absentRowID,
+		map[string]any{"path": "/Users/test/Projects/never-inserted"}, map[string]any{"path": "/Users/test/Projects/old-root"})
+	require.NoError(t, err)
+	require.NoError(t, transaction.Commit())
+
+	assert.Zero(t, updated)
+	check := openSQLite(t, path)
+	var rowCount int
+	require.NoError(t, check.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM project_roots").Scan(&rowCount))
+	assert.Equal(t, 1, rowCount)
+}
+
+func TestUpdateColumnsByRowIDWritesOnlyWhileExpectedValueHolds(t *testing.T) {
+	const plannedPath = "/Users/test/Projects/old-root"
+	cases := []struct {
+		name        string
+		currentPath string
+		wantUpdated int
+		wantPath    string
+	}{
+		{name: "value unchanged since plan", currentPath: plannedPath, wantUpdated: 1, wantPath: "/Users/test/Projects/new-root"},
+		{name: "value changed since plan", currentPath: "/Users/test/Projects/other-root", wantUpdated: 0, wantPath: "/Users/test/Projects/other-root"},
+		{
+			name: "value changed only in letter case", currentPath: "/USERS/TEST/PROJECTS/OLD-ROOT",
+			wantUpdated: 0, wantPath: "/USERS/TEST/PROJECTS/OLD-ROOT",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "guarded.sqlite")
+			database := openSQLite(t, path)
+			require.NoError(t, execute(database,
+				"CREATE TABLE project_roots (project_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL COLLATE NOCASE, "+
+					"PRIMARY KEY (project_id, position))"))
+			require.NoError(t, execute(database, "INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)",
+				"primary-project", 0, testCase.currentPath))
+			rewriter, err := Open(path)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+			transaction, err := rewriter.Begin()
+			require.NoError(t, err)
+
+			updated, err := rewriter.UpdateColumnsByRowID(transaction, "project_roots", 1,
+				map[string]any{"path": "/Users/test/Projects/new-root"}, map[string]any{"path": plannedPath})
+			require.NoError(t, err)
+			require.NoError(t, transaction.Commit())
+
+			assert.Equal(t, testCase.wantUpdated, updated)
+			var storedPath string
+			require.NoError(t, database.QueryRowContext(context.Background(), "SELECT path FROM project_roots").Scan(&storedPath))
+			assert.Equal(t, testCase.wantPath, storedPath)
+		})
+	}
+}
+
+func TestUpdateColumnsByKeyWritesOnlyWhileExpectedValueHolds(t *testing.T) {
+	const plannedCWD = "/Users/test/Projects/old-project"
+	cases := []struct {
+		name        string
+		currentCWD  string
+		wantUpdated int
+		wantCWD     string
+	}{
+		{name: "value unchanged since plan", currentCWD: plannedCWD, wantUpdated: 1, wantCWD: "/Users/test/Projects/new-project"},
+		{name: "value changed since plan", currentCWD: "/Users/test/Projects/other-project", wantUpdated: 0, wantCWD: "/Users/test/Projects/other-project"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "guarded-key.sqlite")
+			database := openSQLite(t, path)
+			require.NoError(t, execute(database, "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL)"))
+			require.NoError(t, execute(database, "INSERT INTO threads (id, cwd) VALUES (?, ?)", "primary-session", testCase.currentCWD))
+			rewriter, err := Open(path)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+			transaction, err := rewriter.Begin()
+			require.NoError(t, err)
+
+			updated, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "primary-session",
+				map[string]any{"cwd": "/Users/test/Projects/new-project"}, map[string]any{"cwd": plannedCWD})
+			require.NoError(t, err)
+			require.NoError(t, transaction.Commit())
+
+			assert.Equal(t, testCase.wantUpdated, updated)
+			var storedCWD string
+			require.NoError(t, database.QueryRowContext(context.Background(), "SELECT cwd FROM threads").Scan(&storedCWD))
+			assert.Equal(t, testCase.wantCWD, storedCWD)
+		})
+	}
+}
+
+func TestUpdateColumnsByRowIDRefusesMissingExpectedValue(t *testing.T) {
+	cases := []struct {
+		name     string
+		expected map[string]any
+		wantErr  string
+	}{
+		{name: "no expected map", expected: nil, wantErr: "update SQLite columns by rowid: no expected values supplied"},
+		{name: "empty expected map", expected: map[string]any{}, wantErr: "update SQLite columns by rowid: no expected values supplied"},
+		{
+			name: "nil expected value", expected: map[string]any{"path": nil},
+			wantErr: `update SQLite columns by rowid: expected value for column "path" is nil`,
+		},
+		{
+			name: "typed nil expected value", expected: map[string]any{"path": (*string)(nil)},
+			wantErr: `update SQLite columns by rowid: expected value for column "path" is nil`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "unguarded.sqlite")
+			database := openSQLite(t, path)
+			require.NoError(t, execute(database,
+				"CREATE TABLE project_roots (project_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL, PRIMARY KEY (project_id, position))"))
+			require.NoError(t, execute(database, "INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)",
+				"primary-project", 0, "/Users/test/Projects/old-root"))
+			rewriter, err := Open(path)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+			transaction, err := rewriter.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = transaction.Rollback() })
+
+			_, err = rewriter.UpdateColumnsByRowID(transaction, "project_roots", 1,
+				map[string]any{"path": "/Users/test/Projects/new-root"}, testCase.expected)
+
+			require.EqualError(t, err, testCase.wantErr)
+		})
+	}
+}
+
+func TestUpdateColumnsByRowIDAddressesRealRowIDBesideOidAndUnderscoreRowIDColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rowid-aliases.sqlite")
+	database := openSQLite(t, path)
+	require.NoError(t, execute(database, "CREATE TABLE project_roots (oid TEXT, _rowid_ TEXT, path TEXT NOT NULL)"))
+	require.NoError(t, execute(database, "INSERT INTO project_roots (oid, _rowid_, path) VALUES (?, ?, ?)",
+		"2", "2", "/Users/test/Projects/first-root"))
+	require.NoError(t, execute(database, "INSERT INTO project_roots (oid, _rowid_, path) VALUES (?, ?, ?)",
+		"1", "1", "/Users/test/Projects/second-root"))
+	rewriter, err := Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	transaction, err := rewriter.Begin()
+	require.NoError(t, err)
+
+	updated, err := rewriter.UpdateColumnsByRowID(transaction, "project_roots", 2,
+		map[string]any{"path": "/Users/test/Projects/new-root"}, map[string]any{"path": "/Users/test/Projects/second-root"})
+	require.NoError(t, err)
+	require.NoError(t, transaction.Commit())
+
+	assert.Equal(t, 1, updated)
+	var paths []string
+	rows, err := database.QueryContext(context.Background(), "SELECT path FROM project_roots ORDER BY oid DESC")
+	require.NoError(t, err)
+	for rows.Next() {
+		var rootPath string
+		require.NoError(t, rows.Scan(&rootPath))
+		paths = append(paths, rootPath)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	assert.Equal(t, []string{"/Users/test/Projects/first-root", "/Users/test/Projects/new-root"}, paths)
+}
+
+func TestUpdateColumnsByRowIDRefusesUnsupportedSchema(t *testing.T) {
+	cases := []struct {
+		name    string
+		schema  string
+		wantErr string
+	}{
+		{
+			name:   "missing column",
+			schema: "CREATE TABLE project_roots (project_id TEXT NOT NULL, position INTEGER NOT NULL, PRIMARY KEY (project_id, position))",
+			wantErr: `unexpected schema for table "project_roots": missing column "path"; ` +
+				`observed position INTEGER primary-key-2, project_id TEXT primary-key-1`,
+		},
+		{
+			name: "without rowid table",
+			schema: "CREATE TABLE project_roots (project_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL, " +
+				"PRIMARY KEY (project_id, position)) WITHOUT ROWID",
+			wantErr: `unexpected schema for table "project_roots": an ordinary rowid table is required; observed kinds [table], without rowid true`,
+		},
+		{
+			name:    "column shadowing the rowid",
+			schema:  "CREATE TABLE project_roots (RowID TEXT PRIMARY KEY, path TEXT NOT NULL)",
+			wantErr: `unexpected schema for table "project_roots": declared column "RowID" shadows the rowid; observed RowID TEXT primary-key-1, path TEXT`,
+		},
+		{
+			name:    "view",
+			schema:  "CREATE TABLE roots_source (path TEXT); CREATE VIEW project_roots AS SELECT path FROM roots_source",
+			wantErr: `unexpected schema for table "project_roots": an ordinary rowid table is required; observed kinds [view], without rowid false`,
+		},
+		{
+			name:    "virtual table",
+			schema:  "CREATE VIRTUAL TABLE project_roots USING fts5(path)",
+			wantErr: `unexpected schema for table "project_roots": an ordinary rowid table is required; observed kinds [virtual], without rowid false`,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "refused.sqlite")
+			database := openSQLite(t, path)
+			require.NoError(t, execute(database, testCase.schema))
+			rewriter, err := Open(path)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+			transaction, err := rewriter.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = transaction.Rollback() })
+
+			_, err = rewriter.UpdateColumnsByRowID(transaction, "project_roots", 1,
+				map[string]any{"path": "/Users/test/Projects/new-root"}, map[string]any{"path": "/Users/test/Projects/old-root"})
+
+			require.EqualError(t, err, testCase.wantErr)
+		})
+	}
 }
 
 func TestVersionMeetsFloor(t *testing.T) {

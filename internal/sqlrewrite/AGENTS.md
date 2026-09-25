@@ -11,5 +11,5 @@
 
 - Entry: `sqlrewrite.go:Open`.
 - Text/blob rewrite: `sqlrewrite.go:RewriteTextColumn`.
-- Update-only mutation: `sqlrewrite.go:UpdateColumnsByKey`.
+- Update-only mutation: `sqlrewrite.go:UpdateColumnsByKey`, `sqlrewrite.go:UpdateColumnsByRowID`.
 - Tests: `sqlrewrite_test.go`.

@@ -26,9 +26,21 @@ opens and guards.
 - `(*DB).RewriteTextColumn(tx *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error)`:
   streams matching TEXT or BLOB rows, applies `rewrite.ReplacePathInBytes` in
   Go, and writes each changed row back by its declared primary key.
-- `(*DB).UpdateColumnsByKey(tx *Tx, table, primaryKeyColumn string, primaryKey any, values map[string]any) (int, error)`:
+- `RequirePrimaryKeyAndColumns(db *sql.DB, table, primaryKeyColumn string, columns ...string) error`:
+  the schema check `UpdateColumnsByKey` runs, on the caller's read-only
+  connection, so a read-only plan refuses the same schema its apply would.
+- `(*DB).UpdateColumnsByKey(tx *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any) (int, error)`:
   updates columns on an existing row identified by its single-column primary
-  key; never inserts.
+  key, only while each `expected` column still holds its expected value; a
+  nil or empty `expected` adds no condition. Never inserts.
+- `(*DB).UpdateColumnsByRowID(tx *Tx, table string, rowID int64, values, expected map[string]any) (int, error)`:
+  updates columns on an existing row identified by its SQLite rowid, for a
+  table whose declared primary key is composite, only while each `expected`
+  column still holds its expected value. `expected` must name at least one
+  column. Never inserts.
+- `RequireRowIDTableAndColumns(db *sql.DB, table string, columns ...string) error`:
+  the schema check `UpdateColumnsByRowID` runs, on the caller's read-only
+  connection, so a read-only plan refuses the same schema its apply would.
 
 ## Contracts
 
@@ -140,8 +152,9 @@ opens and guards.
 
 **Handled.**
 
-- `CountTextColumnRO`, `RewriteTextColumn`, and the generic keyed update
-  (`UpdateColumnsByKey`) call `PRAGMA table_info` first and refuse with the
+- `CountTextColumnRO`, `RewriteTextColumn`, the two keyed updates
+  (`UpdateColumnsByKey`, `UpdateColumnsByRowID`), and
+  `RequirePrimaryKeyAndColumns` call `PRAGMA table_info` first and refuse with the
   observed schema in the error message when a declared column or primary key
   is missing, so a schema surprise fails loudly naming what was actually
   found rather than producing a confusing SQL error deeper in the call.
@@ -154,6 +167,34 @@ opens and guards.
   update on a single column. `CountTextColumnRO` has no per-row update to
   key, so it validates the column alone and does not take a primary key
   parameter.
+- `UpdateColumnsByRowID` keys its update on the rowid and requires an
+  ordinary rowid table. It reads the table's `type` and `wr` flag from
+  `pragma_table_list`, which SQLite fills from the parsed schema, and
+  requires exactly one row of type `table` with `wr = 0`. Matching
+  `WITHOUT ROWID` in the stored `CREATE` text would depend on how that text
+  is written, and a `SELECT rowid` probe succeeds on a `WITHOUT ROWID`
+  table that declares a column named `rowid`. For the same reason it
+  refuses a table declaring a column named `rowid` in any letter case: such
+  a column shadows the real rowid in `WHERE rowid = ?`. A column named `oid`
+  or `_rowid_` shadows only its own name, so the update still addresses the
+  real rowid. `TestUpdateColumnsByRowIDRefusesUnsupportedSchema` covers a
+  missing column, a `WITHOUT ROWID` table, a `RowID` column, a view, and an
+  `fts5` virtual table;
+  `TestUpdateColumnsByRowIDAddressesRealRowIDBesideOidAndUnderscoreRowIDColumns`
+  covers the accepted aliases.
+- The keyed updates' `expected` map adds one `"<column>" COLLATE BINARY = ?`
+  predicate per entry, so the update writes only a row whose guarded columns
+  still hold the expected bytes, even in a column declared with a
+  case-insensitive collation. A row that no longer matches is left unchanged
+  and the call returns zero; the caller decides whether zero is an error.
+  Every `expected` column goes through the same column check as the written
+  columns. `UpdateColumnsByRowID` requires a non-empty `expected`, because
+  SQLite can hand a freed rowid to a different row; a declared primary key
+  stays with its row, so `UpdateColumnsByKey` accepts none.
+  `TestUpdateColumnsByRowIDWritesOnlyWhileExpectedValueHolds` covers an
+  unchanged value, a changed value, and a value changed only in letter case;
+  `TestUpdateColumnsByKeyWritesOnlyWhileExpectedValueHolds` covers an
+  unchanged and a changed value.
 - `RewriteTextColumn` and `CountTextColumnRO` each read a column's runtime
   value as `any` and type switch on `string` vs. `[]byte`, so the same
   column reads correctly whether it is declared TEXT or BLOB, without the
@@ -166,18 +207,27 @@ opens and guards.
 - `RewriteTextColumn` or `CountTextColumnRO` against a column of any type
   other than `string` or `[]byte` (TEXT/BLOB): a hard error naming the
   observed Go type. This check applies only to the two operations that read
-  a row's value back into Go; `UpdateColumnsByKey` writes caller-supplied
-  values straight through as SQL parameters and does not type-check them.
-- Either of the two read-or-rewrite operations above, or `UpdateColumnsByKey`,
-  against a table or column the schema query does not find, or (for
+  a row's value back into Go; the keyed updates write caller-supplied
+  values straight through as SQL parameters and do not type-check them.
+- Either of the two read-or-rewrite operations above, or either keyed
+  update, against a table or column the schema query does not find, or (for
   `RewriteTextColumn`/`UpdateColumnsByKey`) a primary key column that either
   does not exist or is not actually the table's primary key.
+- `UpdateColumnsByRowID` against a `WITHOUT ROWID` table, a view, a virtual
+  table, a name matching more than one schema, or a table declaring a column
+  named `rowid`.
+- A nil value in either keyed update's `expected` map, untyped or a typed
+  nil such as a nil pointer: either binds SQL `NULL`, and `= NULL` never
+  matches, so the call refuses it instead of silently updating nothing.
+- `UpdateColumnsByRowID` with a nil or empty `expected` map.
+  `TestUpdateColumnsByRowIDRefusesMissingExpectedValue` covers a nil map, an
+  empty map, a nil value, and a nil `*string`.
 
 **Not covered.**
 
 - Schema migration. This package validates the schema it finds; it does not
   alter a table's structure.
-- Validating the Go type of a value passed to `UpdateColumnsByKey`. The
+- Validating the Go type of a value passed to a keyed update. The
   caller is responsible for passing a value the underlying column accepts;
   a wrong type surfaces as whatever error `database/sql` itself returns.
 
@@ -185,18 +235,22 @@ opens and guards.
 
 **Handled.**
 
-- `UpdateColumnsByKey` never inserts a row. `TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert`
-  asserts a call against a missing primary key updates zero rows and leaves
-  the table's row count unchanged. This is the primitive `internal/tool/codex`
-  uses to apply the threads sidecar (see `internal/tool/codex/README.md`
-  §Sidecar update-only rationale): the state database is a foreign,
-  self-healing derived cache to that caller, and an `INSERT` into it would
-  fight Codex's own reconciler.
+- `UpdateColumnsByKey` and `UpdateColumnsByRowID` never insert a row.
+  `TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert` and
+  `TestUpdateColumnsByRowIDReportsZeroForAbsentRowWithoutInsert` assert a
+  call against a missing key updates zero rows, reports zero, and leaves the
+  table's row count unchanged. `internal/tool/codex` uses `UpdateColumnsByKey`
+  to apply the threads sidecar (see `internal/tool/codex/README.md`
+  §Sidecar update-only rationale), and both to rewrite the state database's
+  project-path columns on move (see `internal/tool/codex/README.md` §cwd
+  matching): the state database is a foreign, self-healing derived cache to
+  that caller, and an `INSERT` into it would fight Codex's own reconciler.
 
 **Refused.**
 
 - None at the SQL layer; "no insert" is enforced by the query shape
-  (`UPDATE ... WHERE <primary key> = ?`), which structurally cannot create a
+  (`UPDATE ... WHERE <primary key> = ?` or `UPDATE ... WHERE rowid = ?`,
+  plus any expected-value conditions), which structurally cannot create a
   row.
 
 **Not covered.**
@@ -212,5 +266,8 @@ Unit tests in `sqlrewrite_test.go`: the version-floor drift test, the
 busy-refusal timing test, the checkpoint-on-open test against a fixture
 database with a synthetic `-wal`, `FileDSN` round-tripping a table through a
 path whose directory segment contains `?`, `RewriteTextColumn` fixtures
-covering a TEXT and a BLOB column, and `UpdateColumnsByKey`'s
-update-without-insert behavior.
+covering a TEXT and a BLOB column, the update-without-insert behavior of
+`UpdateColumnsByKey` and `UpdateColumnsByRowID`, `UpdateColumnsByRowID`
+updating one row of a composite-key table by rowid, both expected-value
+guards, `UpdateColumnsByRowID`'s refusal of a missing expected value, and
+its schema refusals.

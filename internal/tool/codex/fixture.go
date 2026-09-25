@@ -205,6 +205,40 @@ func buildFixtureMemoriesV2Worktree(t *testing.T, root string) {
 	buildFixtureMemoriesGitBaseline(t, root, fixtureGitConfigNoRemote)
 }
 
+// fixtureProjectID is the projects.id of the fixture's one Codex project,
+// whose single project_roots row holds FixtureProjectPath.
+const fixtureProjectID = "primary-project"
+
+// stateDBProjectsSchema is the table DDL of Codex's
+// state/migrations/0049_projects.sql, verbatim. The migration's two indexes
+// are omitted: idx_threads_project_id covers threads columns the fixture's
+// reduced threads table does not declare.
+const stateDBProjectsSchema = `
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    position INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+);
+
+CREATE TABLE project_roots (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    PRIMARY KEY (project_id, position)
+);
+
+CREATE TABLE project_idempotency_keys (
+    key TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
+
+ALTER TABLE threads ADD COLUMN project_id TEXT
+    REFERENCES projects(id) ON DELETE SET NULL;`
+
 func buildFixtureStateDB(t *testing.T, path string) {
 	t.Helper()
 	database, err := sql.Open("sqlite", path)
@@ -239,7 +273,7 @@ CREATE TABLE backfill_state (
 	last_watermark TEXT,
 	last_success_at INTEGER,
 	updated_at INTEGER NOT NULL
-);`
+);` + stateDBProjectsSchema
 	if _, err := database.ExecContext(context.Background(), schema); err != nil {
 		t.Fatalf("create fixture state schema: %v", err)
 	}
@@ -255,6 +289,21 @@ CREATE TABLE backfill_state (
 	)
 	if err != nil {
 		t.Fatalf("insert fixture thread: %v", err)
+	}
+
+	_, err = database.ExecContext(context.Background(),
+		`INSERT INTO projects (id, name, metadata, position, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)`,
+		fixtureProjectID, "codexproject", "{}", 0, now*1000, now*1000,
+	)
+	if err != nil {
+		t.Fatalf("insert fixture project: %v", err)
+	}
+	_, err = database.ExecContext(context.Background(),
+		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`,
+		fixtureProjectID, 0, FixtureProjectPath(),
+	)
+	if err != nil {
+		t.Fatalf("insert fixture project root: %v", err)
 	}
 
 	const backfillEpoch = 1_752_137_200

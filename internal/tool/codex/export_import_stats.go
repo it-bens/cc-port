@@ -884,7 +884,7 @@ func applyThreadSidecars(sidecars []threadSidecar, databases []string) (int, err
 				return 0, err
 			}
 			values := sidecarColumns(sidecar)
-			count, err := database.UpdateColumnsByKey(transaction, threadsTable, "id", sidecar.ThreadID, values)
+			count, err := database.UpdateColumnsByKey(transaction, threadsTable, "id", sidecar.ThreadID, values, nil)
 			if err == nil {
 				err = transaction.Commit()
 			} else {
@@ -922,7 +922,7 @@ func rearmBackfillState(databases []string) error {
 		}
 		_, err = database.UpdateColumnsByKey(transaction, backfillStateTable, "id", 1, map[string]any{
 			"status": "pending", "last_watermark": nil,
-		})
+		}, nil)
 		if err == nil {
 			err = transaction.Commit()
 		} else {
@@ -988,7 +988,11 @@ func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project strin
 	if err != nil {
 		return nil, err
 	}
-	threads, err := workspace.countThreadRows(ctx, project)
+	threads, err := workspace.countStateDBColumnRows(ctx, threadsCWDPath, project)
+	if err != nil {
+		return nil, err
+	}
+	projectRoots, err := workspace.countStateDBColumnRows(ctx, projectRootsPath, project)
 	if err != nil {
 		return nil, err
 	}
@@ -1021,13 +1025,18 @@ func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project strin
 	}
 	return []tool.CountSurface{
 		{Name: "threads rows", Count: threads},
+		{Name: "project roots", Count: projectRoots},
 		{Name: "rollout files", Count: len(rollouts)},
 		{Name: "history lines", Count: history},
 		{Name: "session-index lines", Count: index},
 	}, nil
 }
 
-func (workspace *Workspace) countThreadRows(ctx context.Context, project string) (int, error) {
+// countStateDBColumnRows sums, across every discovered state database, the
+// rows whose target column canonically matches project. Move's combined
+// "state-db" surface counts every stateDBPathColumns column together, but
+// ReferenceSurfaces reports each as its own named surface.
+func (workspace *Workspace) countStateDBColumnRows(ctx context.Context, target stateDBPathColumn, project string) (int, error) {
 	var total int
 	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
 	if err != nil {
@@ -1041,15 +1050,16 @@ func (workspace *Workspace) countThreadRows(ctx context.Context, project string)
 		if err != nil {
 			return 0, err
 		}
-		count, err := countMatchingThreadRows(ctx, database, project)
+		count, err := countMatchingColumnRows(ctx, database, target.table, target.column, project)
 		_ = database.Close()
 		if err != nil {
-			return 0, fmt.Errorf("count thread rows in database %s: %w", path, err)
+			return 0, fmt.Errorf("count %s rows in database %s: %w", target.rowKind, path, err)
 		}
 		total += count
 	}
 	return total, nil
 }
+
 func countHistoryForIDs(ctx context.Context, path string, ids map[string]struct{}) (int, error) {
 	lines, err := scanLines(ctx, path)
 	if err != nil {
@@ -1125,48 +1135,17 @@ func (workspace *Workspace) DiskCategories(ctx context.Context, project string) 
 	return []tool.SizeCategory{active, archived, history}, nil
 }
 
-// EnumerateProjects unions database thread cwd values, config.toml/profile
+// EnumerateProjects unions the state databases' project paths
+// (stateDBProjectPaths: threads.cwd and project_roots.path), config.toml/profile
 // [projects] TOML keys, and rollout session_meta/turn_context cwd values.
 func (workspace *Workspace) EnumerateProjects(ctx context.Context) ([]tool.ProjectInfo, error) {
 	projects := make(map[string]struct{})
-	paths, err := discoverDatabases(workspace.home.SQLiteDir, stateDBGlob)
+	stateProjects, err := stateDBProjectPaths(ctx, workspace.home.SQLiteDir)
 	if err != nil {
 		return nil, err
 	}
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		database, err := openReadOnlyDatabase(path)
-		if err != nil {
-			return nil, err
-		}
-		rows, err := database.QueryContext(ctx, `SELECT DISTINCT cwd FROM threads`)
-		if err != nil {
-			_ = database.Close()
-			return nil, fmt.Errorf("query project directories from database %s: %w", path, err)
-		}
-		for rows.Next() {
-			if err := ctx.Err(); err != nil {
-				_ = rows.Close()
-				_ = database.Close()
-				return nil, err
-			}
-			var cwd string
-			if err := rows.Scan(&cwd); err != nil {
-				_ = rows.Close()
-				_ = database.Close()
-				return nil, fmt.Errorf("scan project directory from database %s: %w", path, err)
-			}
-			projects[cwd] = struct{}{}
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			_ = database.Close()
-			return nil, fmt.Errorf("iterate project directories from database %s: %w", path, err)
-		}
-		_ = rows.Close()
-		_ = database.Close()
+	for _, project := range stateProjects {
+		projects[project] = struct{}{}
 	}
 	configKeys, err := workspace.configProjectKeys(ctx)
 	if err != nil {
@@ -1244,23 +1223,26 @@ func (workspace *Workspace) rolloutProjectCWDs(ctx context.Context) ([]string, e
 	return cwds, nil
 }
 
-// knowsProject reports whether Codex has any record of project: a rollout's
-// structured cwd, a thread row, or a config.toml/profile projects key. A
-// config-key-only project (a trust entry with no sessions yet) still
-// counts, matching the three-way association projectKnown uses for move.
+// knowsProject reports whether Codex has any record of project: a
+// state-database row (stateDBKnowsProject, the same check projectKnown uses
+// for move), a rollout's structured cwd, or a config.toml/profile projects
+// key. The state database is checked first so its schema is validated even
+// when a rollout would already answer. A config-key-only project (a trust
+// entry with no sessions yet) and a project Codex holds only as a project
+// root still count.
 func (workspace *Workspace) knowsProject(ctx context.Context, project string) (bool, error) {
+	stateKnown, err := stateDBKnowsProject(ctx, workspace.home.SQLiteDir, project)
+	if err != nil {
+		return false, err
+	}
+	if stateKnown {
+		return true, nil
+	}
 	rollouts, _, err := workspace.projectRollouts(ctx, project)
 	if err != nil {
 		return false, err
 	}
 	if len(rollouts) > 0 {
-		return true, nil
-	}
-	count, err := workspace.countThreadRows(ctx, project)
-	if err != nil {
-		return false, err
-	}
-	if count > 0 {
 		return true, nil
 	}
 	return configTOMLKnowsProject(workspace.home, project)
@@ -1282,7 +1264,7 @@ func (workspace *Workspace) projectThreadIDs(ctx context.Context, project string
 		if err != nil {
 			return nil, err
 		}
-		matched, err := matchingThreadCWDs(ctx, database, project)
+		matched, err := matchingColumnValues(ctx, database, threadsCWDPath.table, threadsCWDPath.column, project)
 		if err != nil {
 			_ = database.Close()
 			return nil, fmt.Errorf("match thread cwd in database %s: %w", path, err)
@@ -1312,8 +1294,8 @@ func (workspace *Workspace) projectThreadIDs(ctx context.Context, project string
 // one function computes it for both callers instead of each re-deriving it
 // and risking drift (finding FE2: ReferenceSurfaces used to build its id
 // set from rollouts alone, so a state-db-only thread showed zero history
-// and session-index counts even though Export and countThreadRows both
-// included it).
+// and session-index counts even though Export and the threads-rows count
+// both included it).
 func (workspace *Workspace) projectThreadIDSet(
 	ctx context.Context, project string, rolloutThreadIDs map[string]struct{},
 ) (map[string]struct{}, error) {

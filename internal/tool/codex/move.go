@@ -106,14 +106,15 @@ func (workspace *Workspace) moveIdentity(req tool.MoveRequest) (bool, error) {
 }
 
 // projectKnown reports whether Codex has any record of oldPath: a thread
-// row, a config.toml/profile projects key, or a rollout's structured cwd.
+// or project-root row (stateDBKnowsProject), a config.toml/profile projects
+// key, or a rollout's structured cwd.
 // No identity witness is needed (spec §6.1): Codex stores cwd verbatim,
 // so equality-or-prefix matching against any one source is sufficient.
 // newPath is only needed to run planRolloutFile's rewrite-pipeline count
 // identically to how MoveSurfaces' own rolloutsSurfaceWithPlans will count
 // and apply; this call only inspects whether that count is positive.
 func (workspace *Workspace) projectKnown(oldPath, newPath string) (bool, error) {
-	stateKnown, err := stateDBKnowsProject(workspace.home.SQLiteDir, oldPath)
+	stateKnown, err := stateDBKnowsProject(context.Background(), workspace.home.SQLiteDir, oldPath)
 	if err != nil {
 		return false, err
 	}
@@ -178,8 +179,8 @@ func sqlDatabaseSurface(
 
 func (workspace *Workspace) stateDBSurfaceWithPlans(req tool.MoveRequest, pending *pendingMoveDatabases, plans stateDBRewritePlans) tool.Surface {
 	return sqlDatabaseSurface("state-db", req,
-		func(ctx context.Context, oldPath, _ string) (int, error) {
-			return countStateDB(ctx, workspace.home.SQLiteDir, oldPath)
+		func(context.Context, string, string) (int, error) {
+			return plans.rowCount(), nil
 		},
 		func(ctx context.Context, oldPath, newPath string, undo *tool.Restorer) (databaseRewrites, int, error) {
 			return startStateDBRewritesWithPlan(ctx, workspace.home.SQLiteDir, oldPath, newPath, plans, undo)
