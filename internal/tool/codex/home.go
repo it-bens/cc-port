@@ -25,11 +25,11 @@ import (
 var ErrProjectAbsenceUnresolved = errors.New("project absence could not be established: a profile overlay declares a divergent sqlite_home")
 
 // configTOMLFileName is Codex's top-level configuration file, flat under the
-// home directory (core/src/config/mod.rs:272, CONFIG_TOML_FILE).
+// home directory (core/src/config/mod.rs:264, CONFIG_TOML_FILE).
 const configTOMLFileName = "config.toml"
 
 // sqliteHomeEnv is the environment variable Codex consults for the second
-// tier of sqlite-home resolution (state/src/lib.rs:95, SQLITE_HOME_ENV).
+// tier of sqlite-home resolution (state/src/lib.rs:124, SQLITE_HOME_ENV).
 const sqliteHomeEnv = "CODEX_SQLITE_HOME"
 
 // Home is Codex's resolved state root for one Workspace: the primary
@@ -59,7 +59,7 @@ func newHome(dir string, getenv func(string) string) (*Home, error) {
 }
 
 // resolveSQLiteDir mirrors Codex's three-tier sqlite-home resolution
-// (core/src/config/mod.rs:3669-3674): the sqlite_home key in config.toml,
+// (core/src/config/mod.rs:3996-4001): the sqlite_home key in config.toml,
 // then $CODEX_SQLITE_HOME, then the home directory itself.
 func resolveSQLiteDir(dir string, getenv func(string) string) (string, error) {
 	configPath := filepath.Join(dir, configTOMLFileName)
@@ -91,7 +91,7 @@ func resolveSQLiteDir(dir string, getenv func(string) string) (string, error) {
 // (<profile>.config.toml) for a sqlite_home declaration that resolves to a
 // directory other than home.SQLiteDir. Codex's profile-v2 selection
 // (the --profile CLI flag) is a runtime argument, never recorded in
-// config.toml: core/src/config/mod.rs:3047-3054 refuses to start Codex at
+// config.toml: core/src/config/mod.rs:3319-3326 refuses to start Codex at
 // all when a legacy `profile` key is even present in config.toml, so there
 // is no on-disk record of which profile, if any, was active for the
 // sessions currently on disk. resolveSQLiteDir therefore always resolves
@@ -195,7 +195,7 @@ func expandHomeDirectory(path, home string) string {
 
 // resolveAgainstCWD makes path absolute against the current process's
 // working directory, matching Codex's own resolve_sqlite_home_env
-// behavior for a relative $CODEX_SQLITE_HOME (core/src/config/mod.rs:281-286).
+// behavior for a relative $CODEX_SQLITE_HOME (core/src/config/mod.rs:267-277).
 func resolveAgainstCWD(path string) (string, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {

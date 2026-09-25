@@ -29,24 +29,24 @@ var ErrCompressedRolloutUnsupported = errors.New("compressed rollout unsupported
 
 // rolloutLineProbe reads just enough of a rollout JSONL line to classify
 // it. Codex tags every RolloutItem line as {"type":…,"payload":…}
-// (protocol/src/protocol.rs:3130-3145).
+// (history/src/rollout_payload.rs:21-27).
 type rolloutLineProbe struct {
 	Type string `json:"type"`
 }
 
 // rolloutTypeSessionMeta and rolloutTypeTurnContext are the two RolloutItem
 // variants carrying the project's structured identity fields: session_meta
-// (protocol/src/protocol.rs:3014-3062) and turn_context
-// (protocol/src/protocol.rs:3208-3224).
+// (protocol/src/protocol.rs:3117-3186) and turn_context
+// (protocol/src/protocol.rs:3287-3344).
 const (
 	rolloutTypeSessionMeta = "session_meta"
 	rolloutTypeTurnContext = "turn_context"
 )
 
 // rolloutRoots lists the two physical roots a rollout can live under:
-// sessions/YYYY/MM/DD/ and the flat archived_sessions/ (rollout/src/lib.rs:21-22).
+// sessions/YYYY/MM/DD/ and the flat archived_sessions/ (rollout/src/lib.rs:84-85).
 // Archiving physically renames the file from one root to the other
-// (thread-store/src/local/archive_thread.rs:41-53).
+// (thread-store/src/local/archive_thread.rs:118-131).
 func rolloutRoots(home *Home) []string {
 	return []string{
 		filepath.Join(home.Dir, sessionsSubdir),
@@ -58,14 +58,14 @@ func rolloutRoots(home *Home) []string {
 // rollout set, in sorted order: when both X.jsonl and its X.jsonl.zst
 // sibling exist, only X.jsonl is kept. Codex's own compression worker can
 // leave both on disk momentarily — it persists the compressed file before
-// removing the plain one (rollout/src/compression.rs:632-651) — and never
+// removing the plain one (rollout/src/compression.rs:899-923) — and never
 // re-compresses once the plain file is gone, so a crash in that window
 // strands the pair with no self-heal. Every data consumer (export, move,
 // projectRollouts, knowsProject, stats) must see exactly one file per
 // logical rollout or a duplicate archive entry corrupts the whole import;
 // this mirrors Codex's own walker, which applies the identical suppression
-// (rollout/src/compression.rs:141-163, should_skip_compressed_sibling at
-// 941-943). A missing root is not an error: a fresh Codex home may not have
+// (rollout/src/compression.rs:201-229, should_skip_compressed_sibling at
+// 1284-1286). A missing root is not an error: a fresh Codex home may not have
 // written it yet.
 func discoverRolloutFiles(home *Home) ([]string, error) {
 	var files []string

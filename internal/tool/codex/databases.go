@@ -28,7 +28,7 @@ func openReadOnlyDatabase(path string) (*sql.DB, error) {
 // Database filename glob patterns. Codex's generation suffix can bump
 // (state_5.sqlite today; a future binary may write state_6.sqlite), so
 // every discovery site globs rather than pinning a literal filename
-// (state/src/lib.rs:97-100).
+// (state/src/sqlite.rs:29-33).
 const (
 	stateDBGlob    = "state_*.sqlite"
 	memoriesDBGlob = "memories_*.sqlite"

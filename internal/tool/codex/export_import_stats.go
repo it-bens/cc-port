@@ -803,7 +803,7 @@ func historyKey(line []byte) (string, error) {
 		return "", fmt.Errorf("parse history line for deduplication: %w", err)
 	}
 	// Codex timestamps history.jsonl at whole-second precision
-	// (message-history/src/lib.rs:121-125, SystemTime::now()...as_secs()), so
+	// (message-history/src/lib.rs:127-131, SystemTime::now()...as_secs()), so
 	// two distinct prompts submitted to one thread within the same
 	// wall-clock second share (session_id, ts). Text joins the key so those
 	// two survive rather than collapsing into one on import, while an

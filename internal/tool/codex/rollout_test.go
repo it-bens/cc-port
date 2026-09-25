@@ -58,7 +58,7 @@ func TestDiscoverRolloutFilesFindsBothRoots(t *testing.T) {
 
 // TestDiscoverRolloutFiles_SuppressesCompressedSibling guards finding H4:
 // a crash mid-compression can leave both X.jsonl and X.jsonl.zst on disk
-// (rollout/src/compression.rs:632-651 persists the compressed file before
+// (rollout/src/compression.rs:899-923 persists the compressed file before
 // removing the plain one), and Codex never re-compresses once the plain
 // file is gone, so the pair is durable with no self-heal. Every rollout
 // consumer must see one logical file, mirroring Codex's own walker
