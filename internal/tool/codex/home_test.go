@@ -87,20 +87,21 @@ func TestOpenExplicitOverrideCanonicalizesSymlink(t *testing.T) {
 func TestResolveSQLiteDirDefaultsToCodexHome(t *testing.T) {
 	dir := t.TempDir()
 
-	sqliteDir, err := resolveSQLiteDir(dir, fakeGetenv(nil))
+	resolution, err := resolveSQLiteDir(dir, fakeGetenv(nil), absentManagedSources(t, dir), fixtureNow)
 
 	require.NoError(t, err)
-	assert.Equal(t, dir, sqliteDir)
+	assert.Equal(t, dir, resolution.dir)
 }
 
-func TestResolveSQLiteDirUsesEnvOverEnvDefault(t *testing.T) {
+func TestResolveSQLiteDirUsesEnvOverCodexHome(t *testing.T) {
 	dir := t.TempDir()
 	sqliteHome := filepath.Join(dir, "sqlite-elsewhere")
+	getenv := fakeGetenv(map[string]string{"CODEX_SQLITE_HOME": sqliteHome})
 
-	sqliteDir, err := resolveSQLiteDir(dir, fakeGetenv(map[string]string{"CODEX_SQLITE_HOME": sqliteHome}))
+	resolution, err := resolveSQLiteDir(dir, getenv, absentManagedSources(t, dir), fixtureNow)
 
 	require.NoError(t, err)
-	assert.Equal(t, sqliteHome, sqliteDir)
+	assert.Equal(t, sqliteHome, resolution.dir)
 }
 
 func TestResolveSQLiteDirPrefersConfigTOMLOverEnv(t *testing.T) {
@@ -111,21 +112,22 @@ func TestResolveSQLiteDirPrefersConfigTOMLOverEnv(t *testing.T) {
 		[]byte(`sqlite_home = "`+configured+`"`+"\n"),
 		0o600,
 	))
+	getenv := fakeGetenv(map[string]string{"CODEX_SQLITE_HOME": filepath.Join(dir, "ignored")})
 
-	sqliteDir, err := resolveSQLiteDir(dir, fakeGetenv(map[string]string{"CODEX_SQLITE_HOME": filepath.Join(dir, "ignored")}))
+	resolution, err := resolveSQLiteDir(dir, getenv, absentManagedSources(t, dir), fixtureNow)
 
 	require.NoError(t, err)
-	assert.Equal(t, configured, sqliteDir)
+	assert.Equal(t, configured, resolution.dir)
 }
 
 func TestResolveSQLiteDirResolvesRelativeConfigValueAgainstCodexHome(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), []byte("sqlite_home = \"relative-sqlite\"\n"), 0o600))
 
-	sqliteDir, err := resolveSQLiteDir(dir, fakeGetenv(nil))
+	resolution, err := resolveSQLiteDir(dir, fakeGetenv(nil), absentManagedSources(t, dir), fixtureNow)
 
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(dir, "relative-sqlite"), sqliteDir)
+	assert.Equal(t, filepath.Join(dir, "relative-sqlite"), resolution.dir)
 }
 
 func TestResolveSQLiteDirExpandsTildeConfigValueAgainstOSHome(t *testing.T) {
@@ -133,35 +135,70 @@ func TestResolveSQLiteDirExpandsTildeConfigValueAgainstOSHome(t *testing.T) {
 	osHome := filepath.Join(t.TempDir(), "os-home")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), []byte("sqlite_home = \"~/state\"\n"), 0o600))
 
-	sqliteDir, err := resolveSQLiteDir(dir, fakeGetenv(map[string]string{"HOME": osHome}))
+	resolution, err := resolveSQLiteDir(dir, fakeGetenv(map[string]string{"HOME": osHome}), absentManagedSources(t, dir), fixtureNow)
 
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(osHome, "state"), sqliteDir)
+	assert.Equal(t, filepath.Join(osHome, "state"), resolution.dir)
+}
+
+func TestResolveSQLiteDirTreatsBlankEnvironmentValueAsUnset(t *testing.T) {
+	dir := t.TempDir()
+	getenv := fakeGetenv(map[string]string{sqliteHomeEnv: "  \t"})
+
+	resolution, err := resolveSQLiteDir(dir, getenv, absentManagedSources(t, dir), fixtureNow)
+
+	require.NoError(t, err)
+	assert.Equal(t, dir, resolution.dir)
+	assert.Equal(t, sqliteHomeFromCodexHome, resolution.source.tier)
+}
+
+func TestResolveSQLiteDirTrimsEnvironmentValue(t *testing.T) {
+	dir := t.TempDir()
+	sqliteHome := filepath.Join(dir, "sqlite-elsewhere")
+	getenv := fakeGetenv(map[string]string{sqliteHomeEnv: " " + sqliteHome + "\n"})
+
+	resolution, err := resolveSQLiteDir(dir, getenv, absentManagedSources(t, dir), fixtureNow)
+
+	require.NoError(t, err)
+	assert.Equal(t, sqliteHome, resolution.dir)
 }
 
 func TestResolveSQLiteDirResolvesRelativeEnvironmentValueAgainstProcessCWD(t *testing.T) {
 	dir := t.TempDir()
 	currentDir, err := os.Getwd()
 	require.NoError(t, err)
+	getenv := fakeGetenv(map[string]string{sqliteHomeEnv: "relative-sqlite"})
 
-	sqliteDir, err := resolveSQLiteDir(dir, fakeGetenv(map[string]string{sqliteHomeEnv: "relative-sqlite"}))
+	resolution, err := resolveSQLiteDir(dir, getenv, absentManagedSources(t, dir), fixtureNow)
 
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(currentDir, "relative-sqlite"), sqliteDir)
+	assert.Equal(t, filepath.Join(currentDir, "relative-sqlite"), resolution.dir)
 }
 
-func TestResolveSQLiteDirDoesNotExpandTildeEnvironmentValue(t *testing.T) {
+func TestResolveSQLiteDirExpandsTildeEnvironmentValueAgainstOSHome(t *testing.T) {
 	dir := t.TempDir()
-	currentDir, err := os.Getwd()
-	require.NoError(t, err)
+	osHome := filepath.Join(t.TempDir(), "os-home")
+	getenv := fakeGetenv(map[string]string{"HOME": osHome, sqliteHomeEnv: "~/state"})
 
-	sqliteDir, err := resolveSQLiteDir(dir, fakeGetenv(map[string]string{"HOME": filepath.Join(t.TempDir(), "os-home"), sqliteHomeEnv: "~/state"}))
+	resolution, err := resolveSQLiteDir(dir, getenv, absentManagedSources(t, dir), fixtureNow)
 
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(currentDir, "~", "state"), sqliteDir)
+	assert.Equal(t, filepath.Join(osHome, "state"), resolution.dir)
 }
 
-func TestProfileSQLiteHomeWarning_EmptyWhenNoOverlayDeclaresSQLiteHome(t *testing.T) {
+func TestResolveSQLiteDirResolvesEmptyConfigValueToCodexHome(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), []byte(`sqlite_home = ""`), 0o600))
+	getenv := fakeGetenv(map[string]string{sqliteHomeEnv: filepath.Join(dir, "ignored")})
+
+	resolution, err := resolveSQLiteDir(dir, getenv, absentManagedSources(t, dir), fixtureNow)
+
+	require.NoError(t, err)
+	assert.Equal(t, dir, resolution.dir)
+	assert.Equal(t, sqliteHomeFromConfigTOML, resolution.source.tier)
+}
+
+func TestProfileSQLiteHomeDivergence_EmptyWhenNoOverlayDeclaresSQLiteHome(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, "work.config.toml"),
@@ -170,13 +207,13 @@ func TestProfileSQLiteHomeWarning_EmptyWhenNoOverlayDeclaresSQLiteHome(t *testin
 	))
 	home := &Home{Dir: dir, SQLiteDir: dir}
 
-	warning, err := profileSQLiteHomeWarning(home, fakeGetenv(nil))
+	warning, err := profileSQLiteHomeDivergence(home, fakeGetenv(nil))
 
 	require.NoError(t, err)
 	assert.Empty(t, warning)
 }
 
-// TestProfileSQLiteHomeWarning_ReportsDivergentOverlay guards the fail-loud
+// TestProfileSQLiteHomeDivergence_ReportsDivergentOverlay guards the fail-loud
 // path for finding H2: Codex's active --profile selection is a runtime CLI
 // argument never recorded in config.toml (core/src/config/mod.rs:3319-3326
 // refuses to start Codex at all when a legacy `profile` key is present), so
@@ -185,7 +222,7 @@ func TestProfileSQLiteHomeWarning_EmptyWhenNoOverlayDeclaresSQLiteHome(t *testin
 // config.toml. When a discovered profile overlay declares a sqlite_home
 // different from that resolution, cc-port must say so rather than silently
 // trusting the base resolution.
-func TestProfileSQLiteHomeWarning_ReportsDivergentOverlay(t *testing.T) {
+func TestProfileSQLiteHomeDivergence_ReportsDivergentOverlay(t *testing.T) {
 	dir := t.TempDir()
 	elsewhere := filepath.Join(dir, "elsewhere")
 	require.NoError(t, os.WriteFile(
@@ -195,7 +232,7 @@ func TestProfileSQLiteHomeWarning_ReportsDivergentOverlay(t *testing.T) {
 	))
 	home := &Home{Dir: dir, SQLiteDir: dir}
 
-	warning, err := profileSQLiteHomeWarning(home, fakeGetenv(nil))
+	warning, err := profileSQLiteHomeDivergence(home, fakeGetenv(nil))
 
 	require.NoError(t, err)
 	assert.Contains(t, warning, "work.config.toml")

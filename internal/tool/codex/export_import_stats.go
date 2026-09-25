@@ -93,7 +93,7 @@ func (workspace *Workspace) Export(ctx context.Context, project string, selected
 	if !known {
 		return result, workspace.projectAbsenceError()
 	}
-	if err := workspace.recordProfileSQLiteHomeWarning(&result); err != nil {
+	if err := workspace.recordSQLiteHomeWarnings(&result); err != nil {
 		return result, err
 	}
 	rollouts, eraA, err := workspace.projectRollouts(ctx, project)
@@ -154,19 +154,16 @@ func recordCodexEntry(result *tool.ExportResult, category string, written archiv
 	result.Categories[category] = append(result.Categories[category], tool.ArchiveEntry{ArchivePath: written.Name, Size: written.Size})
 }
 
-// recordProfileSQLiteHomeWarning appends profileSQLiteHomeWarning's result
-// to result.Warnings when non-empty, mirroring the same check move's
-// ResidualWarnings makes: Export has no separate residual-scan step, so it
-// must surface a divergent profile overlay inline rather than silently
-// archiving only what base config.toml's SQLiteDir resolves to.
-func (workspace *Workspace) recordProfileSQLiteHomeWarning(result *tool.ExportResult) error {
-	warning, err := profileSQLiteHomeWarning(workspace.home, workspace.getenv)
+// recordSQLiteHomeWarnings appends sqliteHomeWarnings' result to
+// result.Warnings, the same caveats move's ResidualWarnings reports: Export
+// has no separate residual-scan step, so it must surface them inline rather
+// than silently archiving only what the resolved SQLiteDir holds.
+func (workspace *Workspace) recordSQLiteHomeWarnings(result *tool.ExportResult) error {
+	warnings, err := sqliteHomeWarnings(workspace.home, workspace.getenv)
 	if err != nil {
 		return err
 	}
-	if warning != "" {
-		result.Warnings = append(result.Warnings, warning)
-	}
+	result.Warnings = append(result.Warnings, warnings...)
 	return nil
 }
 
@@ -625,6 +622,12 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 	if project == "" {
 		return nil, fmt.Errorf("finalize Codex import: target project is empty")
 	}
+	// Read before any append, so an unreadable profile overlay aborts the
+	// import before Finalize changes anything.
+	warnings, err := sqliteHomeWarnings(workspace.home, workspace.getenv)
+	if err != nil {
+		return nil, err
+	}
 	if err := appendUniqueHistory(ctx, filepath.Join(workspace.home.Dir, codexHistoryFile), workspace.historyAppends); err != nil {
 		return nil, err
 	}
@@ -654,7 +657,6 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 			return nil, err
 		}
 	}
-	var warnings []string
 	switch {
 	case unapplied == 0:
 	case len(databases) == 0:
@@ -973,6 +975,12 @@ func parseThreadSidecar(line []byte) (threadSidecar, error) {
 		return threadSidecar{}, errors.New("thread_id must be a non-empty string")
 	}
 	return sidecar, nil
+}
+
+// AuditWarnings implements tool.Auditor: the same sqlite_home caveats move,
+// export, and import report.
+func (workspace *Workspace) AuditWarnings(context.Context) ([]string, error) {
+	return sqliteHomeWarnings(workspace.home, workspace.getenv)
 }
 
 // ReferenceSurfaces reports the native reference counts for one project.

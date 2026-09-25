@@ -634,7 +634,7 @@ func TestResidualWarningsReportsBackupWarningPerRoot(t *testing.T) {
 }
 
 // TestResidualWarnings_WarnsOnDivergentProfileSQLiteHome guards the wiring
-// of profileSQLiteHomeWarning into the move command's existing warning
+// of sqliteHomeWarnings into the move command's existing warning
 // channel: a profile overlay declaring a sqlite_home different from the
 // resolved one must surface through the same ResidualWarnings call every
 // other move residual reports through.

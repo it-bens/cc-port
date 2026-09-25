@@ -98,7 +98,7 @@ func TestExportHistoryOnlyIncludesAssociatedHistoryLines(t *testing.T) {
 
 // TestExport_WarnsOnDivergentProfileSQLiteHome guards finding H2 on the
 // export path: unlike move, Export has no separate residual-scan step, so
-// the same profileSQLiteHomeWarning must be checked inline and surfaced
+// the same sqliteHomeWarnings must be checked inline and surfaced
 // through tool.ExportResult.Warnings, the export command's own warning
 // channel, or a divergent profile's state would be silently omitted from
 // the archive with no signal to the user.

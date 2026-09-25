@@ -13,6 +13,8 @@ import (
 
 	"github.com/it-bens/cc-port/internal/stats"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
 // driveStats runs the stats subcommand through a fresh root command against
@@ -67,9 +69,19 @@ func TestStatsCmd_JSONFlagEmitsAllProjectsDTO(t *testing.T) {
 	stdout, err := driveStats(t, home.Dir, "--json")
 	require.NoError(t, err)
 
-	var footprints []stats.ProjectFootprint
-	require.NoError(t, json.Unmarshal([]byte(stdout), &footprints))
-	assert.Len(t, footprints, 4, "the fixture stages four encoded project directories")
+	var all stats.AllFootprints
+	require.NoError(t, json.Unmarshal([]byte(stdout), &all))
+	assert.Len(t, all.Projects, 4, "the fixture stages four encoded project directories")
+}
+
+func TestRenderAllFootprintsPrintsAuditWarningsPerTool(t *testing.T) {
+	var stdout bytes.Buffer
+	targets := []tool.Target{{Tool: codex.New()}}
+	footprints := &stats.AllFootprints{Warnings: map[string][]string{"codex": {"sqlite_home could not be checked"}}}
+
+	require.NoError(t, renderAllFootprints(&stdout, targets, footprints))
+
+	assert.Contains(t, stdout.String(), "  [codex]\n    ! sqlite_home could not be checked\n")
 }
 
 // TestStatsCmd_RendersWitnessLessSuffixAndHumanizedBytes drives all-projects

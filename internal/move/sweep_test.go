@@ -91,6 +91,8 @@ func (w *fakeWorkspace) EnumerateProjects(context.Context) ([]tool.ProjectInfo, 
 	return nil, errors.New("not exercised")
 }
 
+func (*fakeWorkspace) AuditWarnings(context.Context) ([]string, error) { return nil, nil }
+
 var (
 	_ tool.Tool      = (*fakeTool)(nil)
 	_ tool.Workspace = (*fakeWorkspace)(nil)

@@ -203,8 +203,13 @@ type ProjectInfo struct {
 }
 
 // Auditor is the read-only, lock-free surface stats renders per tool.
+// AuditWarnings reports caveats on everything the other three methods
+// return, such as a state location the tool could not fully resolve, for
+// stats to print beside the tool's results; it takes no project because the
+// caveats hold for every project.
 type Auditor interface {
 	ReferenceSurfaces(ctx context.Context, project string) ([]CountSurface, error)
 	DiskCategories(ctx context.Context, project string) ([]SizeCategory, error)
 	EnumerateProjects(ctx context.Context) ([]ProjectInfo, error)
+	AuditWarnings(ctx context.Context) ([]string, error)
 }

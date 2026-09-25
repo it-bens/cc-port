@@ -518,7 +518,7 @@ func copyMainDatabase(t *testing.T, source, destination string) string {
 	t.Helper()
 	data, err := os.ReadFile(source) //nolint:gosec // G304: caller uses t.TempDir paths.
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(destination, data, 0o600)) //nolint:gosec // G703: caller uses t.TempDir paths.
+	require.NoError(t, os.WriteFile(destination, data, 0o600))
 	return destination
 }
 

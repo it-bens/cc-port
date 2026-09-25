@@ -345,6 +345,10 @@ func orderDisk(byCategory map[string]diskUsage) []tool.SizeCategory {
 	return ordered
 }
 
+// AuditWarnings implements tool.Auditor. Claude's state locations resolve
+// without caveats, so it reports none.
+func (*Workspace) AuditWarnings(context.Context) ([]string, error) { return nil, nil }
+
 // EnumerateProjects implements tool.Auditor.
 func (workspace *Workspace) EnumerateProjects(ctx context.Context) ([]tool.ProjectInfo, error) {
 	enumerations, err := EnumerateProjects(ctx, workspace.home)

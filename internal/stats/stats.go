@@ -15,8 +15,9 @@ import (
 
 // ToolFootprint is one tool's contribution to a project's footprint.
 // Absent is true when the tool reported tool.ErrProjectAbsent: it simply
-// does not know this project, and every other field is left zero rather
-// than fabricated.
+// does not know this project, and every count and size is left zero rather
+// than fabricated. Warnings carries the tool's Auditor.AuditWarnings either
+// way.
 type ToolFootprint struct {
 	Tool           string
 	Absent         bool
@@ -25,6 +26,7 @@ type ToolFootprint struct {
 	Disk           []tool.SizeCategory
 	DiskFiles      int
 	DiskBytes      int64
+	Warnings       []string
 }
 
 // Footprint is a single project's full footprint, one ToolFootprint per
@@ -57,7 +59,11 @@ func ComputeFootprint(ctx context.Context, targets []tool.Target, projectPath st
 }
 
 func computeToolFootprint(ctx context.Context, target tool.Target, projectPath string) (ToolFootprint, error) {
-	result := ToolFootprint{Tool: target.Tool.Name()}
+	warnings, err := target.Workspace.AuditWarnings(ctx)
+	if err != nil {
+		return ToolFootprint{}, fmt.Errorf("audit warnings: %w", err)
+	}
+	result := ToolFootprint{Tool: target.Tool.Name(), Warnings: warnings}
 
 	references, err := target.Workspace.ReferenceSurfaces(ctx, projectPath)
 	if err != nil {
@@ -75,7 +81,8 @@ func computeToolFootprint(ctx context.Context, target tool.Target, projectPath s
 	disk, err := target.Workspace.DiskCategories(ctx, projectPath)
 	if err != nil {
 		if errors.Is(err, tool.ErrProjectAbsent) {
-			return ToolFootprint{Tool: target.Tool.Name(), Absent: true}, nil
+			result.Absent = true
+			return result, nil
 		}
 		return ToolFootprint{}, fmt.Errorf("disk categories: %w", err)
 	}
@@ -94,33 +101,48 @@ type ProjectFootprint struct {
 	tool.ProjectInfo
 }
 
+// AllFootprints is the all-projects ranking plus each target's
+// Auditor.AuditWarnings, keyed by tool name. A target with no warnings has
+// no key.
+type AllFootprints struct {
+	Projects []ProjectFootprint
+	Warnings map[string][]string
+}
+
 // ComputeAllFootprints reports every target's known projects, flattened into
 // one list and ranked by total bytes descending across every tool combined
-// (ties broken by label).
-func ComputeAllFootprints(ctx context.Context, targets []tool.Target) ([]ProjectFootprint, error) {
+// (ties broken by label), with every target's audit warnings.
+func ComputeAllFootprints(ctx context.Context, targets []tool.Target) (*AllFootprints, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	var footprints []ProjectFootprint
+	all := &AllFootprints{Warnings: make(map[string][]string)}
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		warnings, err := target.Workspace.AuditWarnings(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%s: audit warnings: %w", target.Tool.Name(), err)
+		}
+		if len(warnings) > 0 {
+			all.Warnings[target.Tool.Name()] = warnings
 		}
 		infos, err := target.Workspace.EnumerateProjects(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("%s: enumerate projects: %w", target.Tool.Name(), err)
 		}
 		for _, info := range infos {
-			footprints = append(footprints, ProjectFootprint{Tool: target.Tool.Name(), ProjectInfo: info})
+			all.Projects = append(all.Projects, ProjectFootprint{Tool: target.Tool.Name(), ProjectInfo: info})
 		}
 	}
 
-	sort.SliceStable(footprints, func(first, second int) bool {
-		if footprints[first].Bytes != footprints[second].Bytes {
-			return footprints[first].Bytes > footprints[second].Bytes
+	sort.SliceStable(all.Projects, func(first, second int) bool {
+		if all.Projects[first].Bytes != all.Projects[second].Bytes {
+			return all.Projects[first].Bytes > all.Projects[second].Bytes
 		}
-		return footprints[first].Label < footprints[second].Label
+		return all.Projects[first].Label < all.Projects[second].Label
 	})
-	return footprints, nil
+	return all, nil
 }
