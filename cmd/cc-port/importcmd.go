@@ -132,7 +132,7 @@ func runImportDryRun(cmd *cobra.Command, toolSet *tool.Set, targets []tool.Targe
 
 func runImportApply(cmd *cobra.Command, toolSet *tool.Set, targets []tool.Target, options *importer.Options) error {
 	var result *importer.Result
-	if err := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
 		options.Reporter = reporter
 		runResult, runErr := importer.Run(ctx, toolSet, targets, options)
 		if runErr != nil {
@@ -140,17 +140,19 @@ func runImportApply(cmd *cobra.Command, toolSet *tool.Set, targets []tool.Target
 		}
 		result = runResult
 		return nil
-	}); err != nil {
-		return err
+	})
+	if progErr != nil {
+		return progErr
 	}
 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Imported to %s\n", options.TargetPath); err != nil {
 		return fmt.Errorf("write success line: %w", err)
 	}
 	if len(result.SkippedTools) > 0 {
-		if _, err := fmt.Fprintf(
+		_, err := fmt.Fprintf(
 			cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "),
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("write skipped-tools note: %w", err)
 		}
 	}

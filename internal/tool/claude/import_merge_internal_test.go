@@ -245,7 +245,7 @@ func TestMergeProjectConfigBytes_PreservesDestinationApprovalGateValues(t *testi
 	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
 	assert.True(t, gjson.GetBytes(merged, path+".hasTrustDialogAccepted").Bool())
 	assert.False(t, gjson.GetBytes(merged, path+".hasClaudeMdExternalIncludesApproved").Bool())
-	assert.Equal(t, []interface{}{"Bash(go:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
+	assert.Equal(t, []any{"Bash(go:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
 		"the destination's allowedTools must survive the config splice")
 	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())
 }
@@ -299,7 +299,7 @@ func TestFinalizeConfigGrants_SplicesIncomingAllowedToolsOverDestination(t *test
 	merged, err := os.ReadFile(workspace.home.ConfigFile)
 	require.NoError(t, err)
 	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
-	assert.Equal(t, []interface{}{"Bash(rm:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
+	assert.Equal(t, []any{"Bash(rm:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
 		"a selected config-grants category must port the incoming grants over the destination's")
 	assert.Equal(t, "kept", gjson.GetBytes(merged, path+".setting").String())
 
@@ -375,7 +375,7 @@ func TestFinalize_ConfigGrantsSpliceWinsOverDestinationOwnedHandling(t *testing.
 	merged, err := os.ReadFile(workspace.home.ConfigFile)
 	require.NoError(t, err)
 	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
-	assert.Equal(t, []interface{}{"Bash(granted:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
+	assert.Equal(t, []any{"Bash(granted:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
 		"the grants entry's value must land, not the config block's destination-owned copy")
 	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())
 }

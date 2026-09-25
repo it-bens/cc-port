@@ -282,13 +282,14 @@ const noCaseAliasPath = "/USERS/FIXTURE/CODEXPROJECT"
 // (buildFixtureStateDB): move rewrites threads by id and project_roots by
 // rowid.
 func createStateDBNoCaseFixture(database *sql.DB, oldPath string) error {
-	if _, err := database.ExecContext(context.Background(), `
+	_, err := database.ExecContext(context.Background(), `
 		CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT COLLATE NOCASE);
 		CREATE TABLE project_roots (
 			project_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL COLLATE NOCASE,
 			PRIMARY KEY (project_id, position)
 		);
-	`); err != nil {
+	`)
+	if err != nil {
 		return err
 	}
 	rows := []struct {

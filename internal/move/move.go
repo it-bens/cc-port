@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/progress"
@@ -228,9 +229,9 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 	result = &ApplyResult{}
 	defer func() {
 		var releaseErrors []error
-		for index := len(preparedTargets) - 1; index >= 0; index-- {
-			if err := preparedTargets[index].held.Release(); err != nil {
-				releaseErrors = append(releaseErrors, fmt.Errorf("release %s lock: %w", preparedTargets[index].target.Tool.Name(), err))
+		for _, preparedTarget := range slices.Backward(preparedTargets) {
+			if err := preparedTarget.held.Release(); err != nil {
+				releaseErrors = append(releaseErrors, fmt.Errorf("release %s lock: %w", preparedTarget.target.Tool.Name(), err))
 			}
 		}
 		if len(releaseErrors) > 0 {

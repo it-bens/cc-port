@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -494,8 +495,7 @@ func (p *SafeRenamePromoter) doRename(oldpath, newpath string) error {
 // and joins cleanup errors so callers can see residual promotion state.
 func (p *SafeRenamePromoter) Rollback() error {
 	var rollbackErrors []error
-	for index := len(p.entries) - 1; index >= 0; index-- {
-		entry := p.entries[index]
+	for _, entry := range slices.Backward(p.entries) {
 		if !entry.promoted {
 			if err := os.Remove(entry.temp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove unpromoted temp %s: %w", entry.temp, err))

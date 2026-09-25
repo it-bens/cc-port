@@ -232,8 +232,7 @@ func sqliteHomeValue(data []byte) (value string, present bool, err error) {
 		SQLiteHome *string `toml:"sqlite_home"`
 	}
 	if err := toml.Unmarshal(data, &probe); err != nil {
-		var decodeErr *toml.DecodeError
-		if errors.As(err, &decodeErr) {
+		if decodeErr, ok := errors.AsType[*toml.DecodeError](err); ok {
 			row, column := decodeErr.Position()
 			return "", false, fmt.Errorf("invalid TOML or sqlite_home type at line %d, column %d", row, column)
 		}
@@ -557,12 +556,10 @@ func decodeRequiredJSON(raw json.RawMessage, name string, target any) error {
 // jsonReason reduces an encoding/json error to a byte offset or a type
 // mismatch, because a syntax error message quotes a character of the cache.
 func jsonReason(err error) error {
-	var syntaxErr *json.SyntaxError
-	if errors.As(err, &syntaxErr) {
+	if syntaxErr, ok := errors.AsType[*json.SyntaxError](err); ok {
 		return fmt.Errorf("invalid JSON at byte %d", syntaxErr.Offset)
 	}
-	var typeErr *json.UnmarshalTypeError
-	if errors.As(err, &typeErr) {
+	if typeErr, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		return fmt.Errorf("a JSON %s where the cache layout needs another type", typeErr.Value)
 	}
 	return errors.New("invalid JSON")
@@ -844,14 +841,16 @@ func parseAuthDotJSON(data []byte) (auth *authDotJSON, ok bool) {
 		}
 		*field.present = value != nil
 	}
-	if auth.hasBedrockAPIKey, ok = optionalJSONStruct(fields["bedrock_api_key"], map[string]jsonKind{
+	auth.hasBedrockAPIKey, ok = optionalJSONStruct(fields["bedrock_api_key"], map[string]jsonKind{
 		"api_key": jsonRequiredString, "region": jsonRequiredString,
-	}); !ok {
+	})
+	if !ok {
 		return nil, false
 	}
-	if auth.hasBedrockAccessKeys, ok = optionalJSONStruct(fields["bedrock_access_keys"], map[string]jsonKind{
+	auth.hasBedrockAccessKeys, ok = optionalJSONStruct(fields["bedrock_access_keys"], map[string]jsonKind{
 		"access_key_id": jsonRequiredString, "secret_access_key": jsonRequiredString, "session_token": jsonOptionalString,
-	}); !ok {
+	})
+	if !ok {
 		return nil, false
 	}
 	lastRefresh, ok := optionalJSONString(fields["last_refresh"])
@@ -1311,8 +1310,7 @@ func requireXMLDocumentEnd(decoder *xml.Decoder) error {
 // xmlReason reduces an encoding/xml error to its line number, because its
 // message can quote element names or text from a managed-preference payload.
 func xmlReason(err error) error {
-	var syntaxErr *xml.SyntaxError
-	if errors.As(err, &syntaxErr) {
+	if syntaxErr, ok := errors.AsType[*xml.SyntaxError](err); ok {
 		return fmt.Errorf("malformed XML on line %d", syntaxErr.Line)
 	}
 	return errors.New("malformed XML")

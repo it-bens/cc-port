@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 )
 
 // View is the data carrier passed between reader stages. Reader is
@@ -76,12 +77,12 @@ func RunWriter(ctx context.Context, stages []WriterStage) (io.WriteCloser, error
 	}
 	var writer io.Writer
 	closers := make([]io.Closer, 0, len(stages))
-	for i := len(stages) - 1; i >= 0; i-- {
-		next, closer, err := stages[i].Open(ctx, writer)
+	for _, stage := range slices.Backward(stages) {
+		next, closer, err := stage.Open(ctx, writer)
 		if err != nil {
 			closeErr := walkClose(closers)
 			return nil, errors.Join(
-				fmt.Errorf("pipeline: open stage %q: %w", stages[i].Name(), err),
+				fmt.Errorf("pipeline: open stage %q: %w", stage.Name(), err),
 				closeErr,
 			)
 		}
@@ -178,8 +179,8 @@ func walkClose(closers []io.Closer) error {
 // non-nil errors with errors.Join.
 func walkCloseReverse(closers []io.Closer) error {
 	var errs []error
-	for i := len(closers) - 1; i >= 0; i-- {
-		if err := closers[i].Close(); err != nil {
+	for _, closer := range slices.Backward(closers) {
+		if err := closer.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}

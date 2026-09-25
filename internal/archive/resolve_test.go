@@ -146,10 +146,7 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 	if r.pos >= len(r.data) {
 		return 0, io.EOF
 	}
-	n := r.chunk
-	if n > len(p) {
-		n = len(p)
-	}
+	n := min(r.chunk, len(p))
 	remaining := len(r.data) - r.pos
 	if n > remaining {
 		n = remaining

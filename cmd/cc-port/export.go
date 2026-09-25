@@ -60,7 +60,7 @@ func newExportCmd(toolSet *tool.Set, flags *toolFlags, banner Banner) *cobra.Com
 			}
 
 			var result export.Result
-			if err := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
+			progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
 				exportOptions := export.Options{
 					ProjectPath:  projectPath,
 					Selected:     selection,
@@ -79,8 +79,9 @@ func newExportCmd(toolSet *tool.Set, flags *toolFlags, banner Banner) *cobra.Com
 				}
 				result = runResult
 				return nil
-			}); err != nil {
-				return err
+			})
+			if progErr != nil {
+				return progErr
 			}
 
 			renderToolWarnings(cmd.ErrOrStderr(), targets, result.ByTool)

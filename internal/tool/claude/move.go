@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
@@ -176,10 +177,8 @@ func fileHistoryWarning(count int) string {
 }
 
 func appendUniqueMoveWarnings(warnings []string, warning string) []string {
-	for _, existing := range warnings {
-		if existing == warning {
-			return warnings
-		}
+	if slices.Contains(warnings, warning) {
+		return warnings
 	}
 	return append(warnings, warning)
 }

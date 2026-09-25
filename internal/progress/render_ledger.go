@@ -3,6 +3,7 @@ package progress
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -311,8 +312,8 @@ func (model *ledgerModel) openPhase() *phaseNode {
 }
 
 func deepestOpen(node *phaseNode) (*phaseNode, bool) {
-	for index := len(node.children) - 1; index >= 0; index-- {
-		if candidate, ok := deepestOpen(node.children[index]); ok {
+	for _, child := range slices.Backward(node.children) {
+		if candidate, ok := deepestOpen(child); ok {
 			return candidate, true
 		}
 	}

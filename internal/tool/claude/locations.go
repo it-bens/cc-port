@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -469,10 +470,8 @@ func verifyProjectIdentity(ctx context.Context, claudeHome *Home, projectPath st
 	if err != nil {
 		return err
 	}
-	for _, cwd := range cwds {
-		if cwd == projectPath {
-			return nil
-		}
+	if slices.Contains(cwds, projectPath) {
+		return nil
 	}
 	if len(cwds) > 0 {
 		return fmt.Errorf(

@@ -134,7 +134,7 @@ func assertStreamHistoryJSONLRewritesMatching(t *testing.T) {
 	// Last element should be empty string (trailing newline)
 	assert.Empty(t, lines[len(lines)-1])
 
-	var entry1, entry2, entry3 map[string]interface{}
+	var entry1, entry2, entry3 map[string]any
 	require.NoError(t, json.Unmarshal([]byte(lines[0]), &entry1))
 	require.NoError(t, json.Unmarshal([]byte(lines[1]), &entry2))
 	require.NoError(t, json.Unmarshal([]byte(lines[2]), &entry3))
@@ -189,7 +189,7 @@ func TestSessionFile(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, changed)
 
-		var decoded map[string]interface{}
+		var decoded map[string]any
 		require.NoError(t, json.Unmarshal(result, &decoded))
 		assert.Equal(t, "/new/project/subdir", decoded["cwd"])
 		assert.Equal(t, "value", decoded["extraField"])
@@ -201,7 +201,7 @@ func TestSessionFile(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, changed)
 
-		var decoded map[string]interface{}
+		var decoded map[string]any
 		require.NoError(t, json.Unmarshal(result, &decoded))
 		assert.Equal(t, "/new/project", decoded["cwd"])
 	})
@@ -212,7 +212,7 @@ func TestSessionFile(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, changed)
 
-		var decoded map[string]interface{}
+		var decoded map[string]any
 		require.NoError(t, json.Unmarshal(result, &decoded))
 		assert.Equal(t, "/other/project", decoded["cwd"])
 	})
@@ -267,15 +267,15 @@ func TestUserConfig(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, changed)
 
-		var decoded map[string]interface{}
+		var decoded map[string]any
 		require.NoError(t, json.Unmarshal(result, &decoded))
 
-		projects := decoded["projects"].(map[string]interface{})
+		projects := decoded["projects"].(map[string]any)
 		assert.Contains(t, projects, "/new/project")
 		assert.NotContains(t, projects, "/old/project")
 		assert.Contains(t, projects, "/other/project")
 
-		newProjectData := projects["/new/project"].(map[string]interface{})
+		newProjectData := projects["/new/project"].(map[string]any)
 		assert.Equal(t, "value", newProjectData["setting"])
 
 		assert.Equal(t, "global", decoded["globalSetting"])
@@ -336,24 +336,24 @@ func assertUserConfigRewritesEmbeddedPaths(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, changed)
 
-	var decoded map[string]interface{}
+	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(result, &decoded))
 
-	projects := decoded["projects"].(map[string]interface{})
-	block := projects["/new/project"].(map[string]interface{})
+	projects := decoded["projects"].(map[string]any)
+	block := projects["/new/project"].(map[string]any)
 
-	mcpServers := block["mcpServers"].(map[string]interface{})
-	example := mcpServers["example"].(map[string]interface{})
-	args := example["args"].([]interface{})
+	mcpServers := block["mcpServers"].(map[string]any)
+	example := mcpServers["example"].(map[string]any)
+	args := example["args"].([]any)
 	assert.Equal(t, "/new/project/src", args[1])
 
-	env := example["env"].(map[string]interface{})
+	env := example["env"].(map[string]any)
 	assert.Equal(t, "/new/project", env["PROJECT_DIR"])
 
-	contextURIs := block["mcpContextUris"].([]interface{})
+	contextURIs := block["mcpContextUris"].([]any)
 	assert.Equal(t, "file:///new/project/context.md", contextURIs[0])
 
-	exampleFiles := block["exampleFiles"].([]interface{})
+	exampleFiles := block["exampleFiles"].([]any)
 	assert.Equal(t, "/new/project/examples/one.txt", exampleFiles[0])
 
 	assert.NotContains(t, string(result), "/old/project")
