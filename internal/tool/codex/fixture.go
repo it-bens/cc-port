@@ -23,13 +23,14 @@ func FixtureProjectPath() string {
 }
 
 // SetupFixture stages testdata/dotcodex under t.TempDir() and builds
-// fixture state_5.sqlite and memories_1.sqlite databases, plus the
-// memories/.git no-remote baseline, alongside it — SQLite files are
-// binary and nested .git directories are untrackable by the outer repo,
-// so both are built by test code rather than committed, following the
-// testutil.SetupFixture pattern. sqlite_home resolves to the same
-// directory (config.toml declares no sqlite_home key and
-// $CODEX_SQLITE_HOME is unset in the fixture environment).
+// fixture state_5.sqlite and memories_1.sqlite databases, plus a no-remote
+// .git baseline under each memory worktree root (memories/ and
+// memories_v2/), alongside it — SQLite files are binary and nested .git
+// directories are untrackable by the outer repo, so all of it is built by
+// test code rather than committed, following the testutil.SetupFixture
+// pattern. sqlite_home resolves to the same directory (config.toml
+// declares no sqlite_home key and $CODEX_SQLITE_HOME is unset in the
+// fixture environment).
 func SetupFixture(t *testing.T) *Home {
 	t.Helper()
 
@@ -41,7 +42,8 @@ func SetupFixture(t *testing.T) *Home {
 
 	buildFixtureStateDB(t, filepath.Join(codexDir, stateDBFileName))
 	buildFixtureMemoriesDB(t, filepath.Join(codexDir, memoriesDBFileName))
-	buildFixtureMemoriesGitBaseline(t, filepath.Join(codexDir, memoriesWorktreeSubdir))
+	buildFixtureMemoriesGitBaseline(t, filepath.Join(codexDir, memoriesWorktreeSubdir), fixtureGitConfigNoRemote)
+	buildFixtureMemoriesV2Worktree(t, filepath.Join(codexDir, memoriesWorktreeV2Subdir))
 
 	return &Home{Dir: codexDir, SQLiteDir: codexDir}
 }
@@ -134,20 +136,73 @@ const (
 	memoriesDBFileName = "memories_1.sqlite"
 )
 
-// buildFixtureMemoriesGitBaseline creates a no-remote memories/.git
-// baseline at runtime: git never tracks a nested .git directory, so —
-// like the SQLite fixtures below — test code builds it instead of
-// committing it.
-func buildFixtureMemoriesGitBaseline(t *testing.T, memoriesDir string) {
+// fixtureGitConfigNoRemote is a local-only baseline config, the shape
+// hasNoRemoteGitBaseline accepts.
+const fixtureGitConfigNoRemote = "[core]\n\trepositoryformatversion = 0\n"
+
+// fixtureGitConfigWithRemote attaches the baseline to a remote, the shape a
+// move leaves in place.
+const fixtureGitConfigWithRemote = fixtureGitConfigNoRemote +
+	"[remote \"origin\"]\n\turl = https://example.invalid/repo.git\n"
+
+// buildFixtureMemoriesGitBaseline creates a .git baseline under root whose
+// config is config, at runtime: git never tracks a nested .git directory, so
+// — like the SQLite fixtures below — test code builds it instead of
+// committing it. Calling it on a root that already has a baseline replaces
+// that baseline's config.
+func buildFixtureMemoriesGitBaseline(t *testing.T, root, config string) {
 	t.Helper()
-	gitDir := filepath.Join(memoriesDir, gitDirName)
+	gitDir := filepath.Join(root, gitDirName)
 	if err := os.MkdirAll(gitDir, 0o750); err != nil {
 		t.Fatalf("create fixture memories git baseline: %v", err)
 	}
-	const config = "[core]\n\trepositoryformatversion = 0\n"
 	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0o600); err != nil {
 		t.Fatalf("write fixture memories git baseline config: %v", err)
 	}
+}
+
+// buildFixtureMemoriesV2Worktree stages a memories_v2/ worktree mirroring
+// Codex's real v2 layout, plus its own no-remote .git baseline, entirely at
+// runtime: like memories/'s SQLite and git fixtures above, nothing under
+// memories_v2/ is committed to testdata/dotcodex/. Unlike memories/, v2
+// never gets raw_memories.md: sync_phase2_workspace_inputs
+// (memories/write/src/phase2.rs:196-206) calls
+// rebuild_raw_memories_file_from_memories only for MemoryVersion::V1,
+// while sync_rollout_summaries_from_memories runs for both versions, so
+// rollout_summaries/*.md is the one deterministic file family both
+// versions share. memory_summary.md is a consolidation-agent-authored
+// artifact validate_consolidation_artifacts_for_version reads for both
+// versions (memories/write/src/workspace.rs:101-114); it is staged here too
+// since cc-port's worktree rewrite walks every file under root, not a fixed
+// filename set, and a real v2 worktree carries it.
+func buildFixtureMemoriesV2Worktree(t *testing.T, root string) {
+	t.Helper()
+	summariesDir := filepath.Join(root, "rollout_summaries")
+	if err := os.MkdirAll(summariesDir, 0o750); err != nil {
+		t.Fatalf("create fixture memories_v2 worktree: %v", err)
+	}
+
+	summary := "thread_id: 00000000-0000-4000-8000-000000000001\n" +
+		"cwd: " + FixtureProjectPath() + "\n\n" +
+		"Summary: fixed a bug in " + FixtureProjectPath() + "/src/main.py.\n"
+	if err := os.WriteFile(filepath.Join(summariesDir, "2026-07-17T10-00-00-a1b2.md"), []byte(summary), 0o600); err != nil {
+		t.Fatalf("write fixture memories_v2 rollout summary: %v", err)
+	}
+
+	// Headings match is_valid_v2_summary's required set
+	// (memories/write/src/workspace.rs:122-125), so this fixture is a valid
+	// v2 memory_summary.md, not merely a plausible-looking one.
+	memorySummary := "v1\n\n" +
+		"## User Profile\n\n" +
+		"## User preferences\n\n" +
+		"## General Tips\n\n" +
+		"## What's in Memory\n\n" +
+		"Fixed a bug in " + FixtureProjectPath() + "/src/main.py.\n"
+	if err := os.WriteFile(filepath.Join(root, "memory_summary.md"), []byte(memorySummary), 0o600); err != nil {
+		t.Fatalf("write fixture memories_v2 memory_summary.md: %v", err)
+	}
+
+	buildFixtureMemoriesGitBaseline(t, root, fixtureGitConfigNoRemote)
 }
 
 func buildFixtureStateDB(t *testing.T, path string) {

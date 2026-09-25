@@ -6,9 +6,10 @@ Implements `tool.Tool` and `tool.Workspace` for OpenAI Codex. Codex stores
 project-associated state in shapes Claude Code never uses: verbatim absolute
 `cwd` strings, a WAL-mode SQLite index with a live desktop writer, TOML
 tables keyed by project path, JSONL session files that Codex may compress,
-and a git-baselined memory directory. This adapter concentrates every one of those
-tool-specific facts in this package; `internal/move`, `internal/export`,
-`internal/importer`, and `internal/stats` know nothing about Codex.
+and one or two git-baselined memory worktree roots. This adapter concentrates
+every one of those tool-specific facts in this package; `internal/move`,
+`internal/export`, `internal/importer`, and `internal/stats` know nothing
+about Codex.
 
 ## Public API
 
@@ -590,34 +591,39 @@ state, distinct from the porting surface §Config never ported refuses.
 
 ### Git baseline handling
 
-Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state policy (cross-cutting) for `$CODEX_HOME/memories/.git`.
+Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state policy (cross-cutting) for every root in `memoriesWorktreeSubdirs`: `$CODEX_HOME/memories/.git` and `$CODEX_HOME/memories_v2/.git`. Codex writes the second root when `config.memories.version = "v2"` or `config.memories.dual_write = true` (`memories/write/src/start.rs:40-48`). The two directory names come from `MemoryVersion::directory_name()` (`protocol/src/memory_version.rs:17-22`).
 
 **Handled.**
 
-- `moveGitBaselineToBackup` renames `memories/.git` to a sibling rollback
-  backup only when
-  `hasNoRemoteGitBaseline` confirms the shape probe (`memories/.git/config`
-  exists and contains no `[remote` section), then rewrites the worktree.
-  Codex's own baseline helper unconditionally re-initializes a missing or
-  unusable `.git`, so removing a no-remote baseline after commit is safe.
-- The baseline is staged to a sibling backup during apply and
+- The `memories-worktree` move surface runs its plan, rewrite, and baseline steps once per root that exists on disk, and sums their counts into a single `memories-worktree` result. An absent root contributes nothing, the same "surface not present" handling an absent `memories/` gets today.
+- Apply rewrites a root's worktree first, then calls
+  `moveGitBaselineToBackup`. It renames that root's `.git` to a sibling
+  rollback backup only when `hasNoRemoteGitBaseline` confirms the shape probe
+  (`<root>/.git/config` exists and contains no `[remote` section) and the
+  rewritten worktree references `newPath`. The worktree walk behind the second
+  check runs only once the probe passes. Codex's own baseline helper
+  unconditionally re-initializes a missing or unusable `.git`, so removing a
+  no-remote baseline after commit is safe.
+- Each root's baseline is staged to its own sibling backup during apply and
   removed only once the surrounding move's databases have committed
   (`pendingMoveDatabases.commitSurface`), so an in-process failure can still
-  restore it via the registered `Restorer` undo.
-- Before every memories worktree apply, `reconcileStrandedGitBackup` removes a
-  leftover sibling backup from a prior crashed run, including when the current
-  worktree has no path occurrence to rewrite.
+  restore every root's backup already renamed via the registered `Restorer`
+  undo.
+- Before every root's apply, `reconcileStrandedGitBackup` removes that root's
+  leftover sibling backup from a prior crashed run, including when the
+  current worktree has no path occurrence to rewrite.
 
 **Refused.**
 
-- Deleting `memories/.git` when it carries a `[remote` section. The worktree
-  is still rewritten; the git repository state (commits, remotes, refs) is
-  left untouched and `memoriesGitBaselineWarning` reports it.
+- Deleting a root's `.git` when it carries a `[remote` section. That root's
+  worktree is still rewritten. The git repository state (commits, remotes,
+  refs) is left untouched and `memoriesGitBaselineWarning` reports it.
 
 **Not covered.**
 
-- A backup cleanup failure after a successful commit. The commit surface keeps
-  the move successful and `gitBackupWarning` reports that residual path.
+- A backup cleanup failure after a successful commit, for either root. The
+  commit surface keeps the move successful and `gitBackupWarning` reports
+  each residual backup path independently.
 
 ## Quirks
 
@@ -639,11 +645,12 @@ Implements this adapter's instance of `docs/architecture.md` §Git-repo-in-state
   exist there), so every other path hit under it surfaces only as a residual
   warning, never a rewrite. Exactly one adapter owns this shared path until a
   second consumer of `~/.agents` exists.
-- `memories/.git` worktree files are rewritten, while its metadata directory is
-  renamed to a rollback backup only behind the shape probe in
-  `docs/architecture.md` §Git-repo-in-state policy (cross-cutting).
-  `hasNoRemoteGitBaseline` is this adapter's implementation of that probe; see
-  §Git baseline handling for the full contract.
+- Each memory worktree root's (`memories/`, `memories_v2/`) files are
+  rewritten, while its `.git` metadata directory is renamed to a rollback
+  backup only behind the shape probe in `docs/architecture.md`
+  §Git-repo-in-state policy (cross-cutting). `hasNoRemoteGitBaseline` is this
+  adapter's implementation of that probe. See §Git baseline handling for the
+  full contract.
 
 ## Tests
 
@@ -669,9 +676,14 @@ tables, a config without an `[mcp_servers]` table, an empty one, an absent
 command and a url, and a profile overlay whose definitions stay unread.
 
 Fixtures come from `testdata/dotcodex/` staged via `SetupFixture`, following
-the `testutil.SetupFixture` pattern: `SetupFixture` copies the static tree
-and then builds `state_5.sqlite`, `memories_1.sqlite`, and the
-`memories/.git` no-remote baseline at test runtime, because SQLite files are
-binary and a nested `.git` directory is untrackable by the outer repository.
-All fixture content (project paths, thread IDs) is synthetic; nothing is
-copied from a real `~/.codex`.
+the `testutil.SetupFixture` pattern. `SetupFixture` copies the static tree
+and then builds `state_5.sqlite`, `memories_1.sqlite`, a `memories/.git`
+no-remote baseline, and a `memories_v2/` worktree at test runtime, because
+SQLite files are binary and a nested `.git` directory is untrackable by the
+outer repository. The `memories_v2/` worktree carries its own per-version
+file set, not a copy of `memories/`'s: `rollout_summaries/*.md` and
+`memory_summary.md`, never `raw_memories.md` — `sync_phase2_workspace_inputs`
+(`memories/write/src/phase2.rs:196-206`) calls
+`rebuild_raw_memories_file_from_memories` only for `MemoryVersion::V1` —
+plus its own no-remote `.git` baseline. All fixture content (project paths,
+thread IDs) is synthetic; nothing is copied from a real `~/.codex`.

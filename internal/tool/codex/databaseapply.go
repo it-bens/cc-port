@@ -28,7 +28,7 @@ type databaseRewrites []*databaseRewrite
 type pendingMoveDatabases struct {
 	state         databaseRewrites
 	memories      databaseRewrites
-	gitBackup     string
+	gitBackup     []string
 	removeAll     func(string) error
 	reportWarning func(string)
 }
@@ -129,12 +129,12 @@ func (pending *pendingMoveDatabases) commitSurface() tool.Surface {
 					}
 				}
 			}
-			if pending.gitBackup != "" {
+			for _, backup := range pending.gitBackup {
 				removeAll := pending.removeAll
 				if removeAll == nil {
 					removeAll = os.RemoveAll
 				}
-				_ = removeAll(pending.gitBackup)
+				_ = removeAll(backup)
 			}
 			return tool.SurfaceResult{}, nil
 		},
