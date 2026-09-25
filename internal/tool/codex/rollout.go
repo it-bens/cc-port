@@ -43,6 +43,17 @@ const (
 	rolloutTypeTurnContext = "turn_context"
 )
 
+// rolloutTypeEventMsg lines carry an EventMsg tagged by payload.type
+// (protocol/src/protocol.rs:1355-1358). Only the thread_settings_applied
+// variant (protocol/src/protocol.rs:2194-2232) holds structured path fields:
+// Codex resumes from its thread_settings.cwd and its state backfill copies
+// that cwd into threads.cwd (state/src/extract.rs:130-139), so a stale value
+// survives a move. It is a rewrite target only, not an identity source.
+const (
+	rolloutTypeEventMsg               = "event_msg"
+	rolloutEventThreadSettingsApplied = "thread_settings_applied"
+)
+
 // rolloutRoots lists the two physical roots a rollout can live under:
 // sessions/YYYY/MM/DD/ and the flat archived_sessions/ (rollout/src/lib.rs:84-85).
 // Archiving physically renames the file from one root to the other
@@ -321,9 +332,13 @@ func rolloutSubstitutions(sources []string, oldPath, newPath string) ([]pathSubs
 }
 
 // rewriteRolloutLine rewrites one rollout JSONL line, applying substitutions
-// in order (session_meta and turn_context lines always; every other line —
-// response items, world-state blobs, compacted summaries — only under
-// deep). Substitutions must already be ordered longest-source-first
+// in order: the fields structuredRolloutFieldPaths names always, matched on
+// their decoded value; under deep, additionally every other line and field —
+// response items, other event_msg variants, world-state blobs, compacted
+// summaries — through a byte pass over the whole line that matches the raw
+// and the fully slash-escaped spelling, so for the single-path field values
+// Codex writes, deep rewrites a superset of what default mode does.
+// Substitutions must already be ordered longest-source-first
 // (rolloutSubstitutionSources): planRolloutFile calls this same function to
 // count, over a throwaway copy, rather than counting each source
 // independently against the original line, so a dry-run count can never
@@ -337,28 +352,36 @@ func rewriteRolloutLine(line []byte, substitutions []pathSubstitution, deep bool
 	if err := json.Unmarshal(line, &probe); err != nil {
 		return line, 0
 	}
-	structured := probe.Type == rolloutTypeSessionMeta || probe.Type == rolloutTypeTurnContext
-	if deep {
-		updated := line
-		total := 0
-		for _, substitution := range substitutions {
-			var replaced int
-			updated, replaced = rewrite.ReplacePathInBytesWithJSONEscape(updated, substitution.old, substitution.new)
-			total += replaced
-		}
-		return updated, total
+	fieldPaths := structuredRolloutFieldPaths(line, probe.Type)
+	if !deep {
+		return rewriteStructuredRolloutFields(line, fieldPaths, substitutions)
 	}
-	if !structured {
-		return line, 0
-	}
-	return rewriteStructuredRolloutFields(line, probe.Type, substitutions)
-}
-
-//nolint:gocritic // Named results would be shadowed by the per-field rewrite values.
-func rewriteStructuredRolloutFields(line []byte, rolloutType string, substitutions []pathSubstitution) ([]byte, int) {
 	updated := line
 	total := 0
-	for _, path := range structuredRolloutFieldPaths(line, rolloutType) {
+	for _, substitution := range substitutions {
+		var replaced int
+		updated, replaced = rewrite.ReplacePathInBytesWithJSONEscape(updated, substitution.old, substitution.new)
+		total += replaced
+	}
+	// The field pass covers only fields the byte pass left byte-identical: those
+	// hold no raw or fully escaped match, so it finds just the mixed-escaped
+	// spellings the byte pass cannot see. Re-scanning a field the byte pass
+	// already rewrote would count it twice and, when newPath contains oldPath
+	// at a path boundary (/real/project to /elsewhere/real/project), rewrite
+	// the fresh value a second time.
+	untouched := make([]string, 0, len(fieldPaths))
+	for _, path := range fieldPaths {
+		if gjson.GetBytes(updated, path).Raw == gjson.GetBytes(line, path).Raw {
+			untouched = append(untouched, path)
+		}
+	}
+	updated, fieldCount := rewriteStructuredRolloutFields(updated, untouched, substitutions)
+	return updated, total + fieldCount
+}
+
+func rewriteStructuredRolloutFields(line []byte, fieldPaths []string, substitutions []pathSubstitution) (updated []byte, total int) {
+	updated = line
+	for _, path := range fieldPaths {
 		value := gjson.GetBytes(updated, path)
 		if value.Type != gjson.String {
 			continue
@@ -383,19 +406,98 @@ func rewriteStructuredRolloutFields(line []byte, rolloutType string, substitutio
 	return updated, total
 }
 
+// rolloutArrayWildcard marks an array step in a rollout path-field template;
+// expandStringFieldPaths replaces it with each element index.
+const rolloutArrayWildcard = ".#"
+
+// permissionProfileFieldTemplates lists the absolute-path fields of a
+// serialized PermissionProfile, relative to the profile: Path-variant
+// filesystem entries (protocol/src/models.rs:315-325,418-435;
+// protocol/src/permissions.rs:183-192,454-471) and the read/write root lists
+// of the untagged pre-tagged profile, which Codex reads from rollout files
+// (LegacyPermissionProfile and its PermissionProfileDe fallback,
+// protocol/src/models.rs:745-752,785-800; list parsing, models.rs:99-106,222-244).
+// Glob patterns, special-path tokens, and network settings are not paths.
+var permissionProfileFieldTemplates = []string{
+	"file_system.entries.#.path.path",
+	"file_system.read.#",
+	"file_system.write.#",
+}
+
+var sessionMetaFieldTemplates = []string{
+	"payload.cwd",
+	"payload.runtime_workspace_roots.#",
+}
+
+// turnContextFieldTemplates adds the legacy SandboxPolicy's workspace-write
+// roots (protocol/src/protocol.rs:1069-1120) and the raw filesystem sandbox
+// policy's Path-variant entries (protocol/src/permissions.rs:257-267).
+var turnContextFieldTemplates = append([]string{
+	"payload.cwd",
+	"payload.workspace_roots.#",
+	"payload.sandbox_policy.writable_roots.#",
+	"payload.file_system_sandbox_policy.entries.#.path.path",
+}, prefixedTemplates("payload.permission_profile.", permissionProfileFieldTemplates)...)
+
+var threadSettingsFieldTemplates = append([]string{
+	"payload.thread_settings.cwd",
+	"payload.thread_settings.runtime_workspace_roots.#",
+}, prefixedTemplates("payload.thread_settings.permission_profile.", permissionProfileFieldTemplates)...)
+
+func prefixedTemplates(prefix string, templates []string) []string {
+	prefixed := make([]string, 0, len(templates))
+	for _, template := range templates {
+		prefixed = append(prefixed, prefix+template)
+	}
+	return prefixed
+}
+
+// structuredRolloutFieldPaths returns the gjson paths of the string-valued,
+// path-carrying fields default-mode move rewrites in line, whose top-level
+// type is rolloutType. A line of any other type, or an event_msg of any other
+// variant, has none.
 func structuredRolloutFieldPaths(line []byte, rolloutType string) []string {
-	paths := []string{"payload.cwd"}
-	if rolloutType != rolloutTypeTurnContext {
-		return paths
-	}
-	roots := gjson.GetBytes(line, "payload.workspace_roots")
-	if !roots.IsArray() {
-		return paths
-	}
-	for index, root := range roots.Array() {
-		if root.Type == gjson.String {
-			paths = append(paths, "payload.workspace_roots."+strconv.Itoa(index))
+	var templates []string
+	switch rolloutType {
+	case rolloutTypeSessionMeta:
+		templates = sessionMetaFieldTemplates
+	case rolloutTypeTurnContext:
+		templates = turnContextFieldTemplates
+	case rolloutTypeEventMsg:
+		variant := gjson.GetBytes(line, "payload.type")
+		if variant.Type != gjson.String || variant.String() != rolloutEventThreadSettingsApplied {
+			return nil
 		}
+		templates = threadSettingsFieldTemplates
+	default:
+		return nil
+	}
+	var paths []string
+	for _, template := range templates {
+		paths = append(paths, expandStringFieldPaths(line, template)...)
+	}
+	return paths
+}
+
+// expandStringFieldPaths resolves each rolloutArrayWildcard in template to
+// every index of the array at that point and returns the resulting paths
+// whose value in line is a string. An absent field, a non-array value at a
+// wildcard, or a non-string leaf contributes nothing.
+func expandStringFieldPaths(line []byte, template string) []string {
+	arrayPath, rest, hasWildcard := strings.Cut(template, rolloutArrayWildcard)
+	if !hasWildcard {
+		if gjson.GetBytes(line, template).Type == gjson.String {
+			return []string{template}
+		}
+		return nil
+	}
+	array := gjson.GetBytes(line, arrayPath)
+	if !array.IsArray() {
+		return nil
+	}
+	var paths []string
+	for index := range array.Array() {
+		paths = append(paths, expandStringFieldPaths(line, arrayPath+"."+strconv.Itoa(index)+rest)...)
 	}
 	return paths
 }

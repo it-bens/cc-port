@@ -5,11 +5,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func rolloutFixturePath(home *Home, relative string) string {
@@ -115,12 +117,12 @@ func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {
 	shallow, eraA, err := planRolloutFile(path, FixtureProjectPath(), "/Users/fixture/renamed-project", false)
 	require.NoError(t, err)
 	assert.False(t, eraA)
-	assert.Equal(t, 3, shallow, "session_meta.cwd, turn_context.cwd, and turn_context.workspace_roots[0], not the prose response_item")
+	assert.Equal(t, 10, shallow, "session_meta 2, thread_settings_applied 3, turn_context 5 structured fields; no free text")
 
 	deep, eraA, err := planRolloutFile(path, FixtureProjectPath(), "/Users/fixture/renamed-project", true)
 	require.NoError(t, err)
 	assert.False(t, eraA)
-	assert.Equal(t, 5, deep, "structured fields, structured free text, and the prose response_item under --deep")
+	assert.Equal(t, 13, deep, "structured fields, structured free text, the agent_message, and the prose response_item under --deep")
 }
 
 func TestPlanRolloutFileEraBHasNoTurnContext(t *testing.T) {
@@ -154,14 +156,31 @@ func TestApplyRolloutFileRewritesStructuredFieldsAlways(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.False(t, eraA)
-	assert.Equal(t, 3, changed)
+	assert.Equal(t, 10, changed)
 
 	lines, err := readRolloutLines(path)
 	require.NoError(t, err)
-	require.Len(t, lines, 3)
-	assert.Contains(t, string(lines[0]), newPath, "session_meta.cwd rewritten")
-	assert.Contains(t, string(lines[1]), newPath, "turn_context.cwd and workspace_roots rewritten")
-	assert.Contains(t, string(lines[2]), FixtureProjectPath(), "prose left untouched without --deep")
+	require.Len(t, lines, 5)
+	for _, field := range []struct {
+		line int
+		path string
+	}{
+		{0, "payload.cwd"},
+		{0, "payload.runtime_workspace_roots.0"},
+		{1, "payload.thread_settings.cwd"},
+		{1, "payload.thread_settings.runtime_workspace_roots.0"},
+		{1, "payload.thread_settings.permission_profile.file_system.entries.1.path.path"},
+		{2, "payload.cwd"},
+		{2, "payload.workspace_roots.0"},
+		{2, "payload.permission_profile.file_system.entries.1.path.path"},
+		{2, "payload.file_system_sandbox_policy.entries.1.path.path"},
+	} {
+		assert.Equal(t, newPath, gjson.GetBytes(lines[field.line], field.path).String(), "line %d %s", field.line, field.path)
+	}
+	assert.Equal(t, newPath+"/build", gjson.GetBytes(lines[2], "payload.sandbox_policy.writable_roots.0").String())
+	assert.Contains(t, string(lines[0]), `"free_text":"keep `+FixtureProjectPath(), "session_meta free text left untouched without --deep")
+	assert.Contains(t, string(lines[3]), FixtureProjectPath(), "agent_message left untouched without --deep")
+	assert.Contains(t, string(lines[4]), FixtureProjectPath(), "prose left untouched without --deep")
 }
 
 func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
@@ -173,7 +192,7 @@ func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.False(t, eraA)
-	assert.Equal(t, 5, changed)
+	assert.Equal(t, 13, changed)
 
 	lines, err := readRolloutLines(path)
 	require.NoError(t, err)
@@ -193,6 +212,166 @@ func TestRewriteRolloutLineScopesShallowModeToStructuredFields(t *testing.T) {
 	assert.Contains(t, string(shallow), `"note":"keep /Users/fixture/codexproject verbatim"`)
 	assert.Equal(t, 2, deepCount)
 	assert.NotContains(t, string(deep), FixtureProjectPath())
+}
+
+func TestStructuredRolloutFieldPathsNamesEveryPathCarrier(t *testing.T) {
+	cases := []struct {
+		name        string
+		rolloutType string
+		line        string
+		want        []string
+	}{
+		{
+			name:        "session_meta with runtime workspace roots",
+			rolloutType: rolloutTypeSessionMeta,
+			line: `{"type":"session_meta","payload":{"cwd":"/Users/test/Projects/app",` +
+				`"runtime_workspace_roots":["/Users/test/Projects/app","/Users/test/Projects/shared"]}}`,
+			want: []string{"payload.cwd", "payload.runtime_workspace_roots.0", "payload.runtime_workspace_roots.1"},
+		},
+		{
+			name:        "session_meta without runtime workspace roots",
+			rolloutType: rolloutTypeSessionMeta,
+			line:        `{"type":"session_meta","payload":{"cwd":"/Users/test/Projects/app"}}`,
+			want:        []string{"payload.cwd"},
+		},
+		{
+			name:        "session_meta skips a non-string root element",
+			rolloutType: rolloutTypeSessionMeta,
+			line:        `{"type":"session_meta","payload":{"cwd":"/Users/test/Projects/app","runtime_workspace_roots":[7,"/Users/test/Projects/app"]}}`,
+			want:        []string{"payload.cwd", "payload.runtime_workspace_roots.1"},
+		},
+		{
+			name:        "turn_context with workspace roots",
+			rolloutType: rolloutTypeTurnContext,
+			line:        `{"type":"turn_context","payload":{"cwd":"/Users/test/Projects/app","workspace_roots":["/Users/test/Projects/app"]}}`,
+			want:        []string{"payload.cwd", "payload.workspace_roots.0"},
+		},
+		{
+			name:        "turn_context without workspace roots",
+			rolloutType: rolloutTypeTurnContext,
+			line:        `{"type":"turn_context","payload":{"cwd":"/Users/test/Projects/app"}}`,
+			want:        []string{"payload.cwd"},
+		},
+		{
+			name:        "turn_context sandbox and permission path entries",
+			rolloutType: rolloutTypeTurnContext,
+			line: `{"type":"turn_context","payload":{"cwd":"/Users/test/Projects/app",` +
+				`"sandbox_policy":{"type":"workspace-write","writable_roots":["/Users/test/Projects/app/build"],"network_access":false},` +
+				`"permission_profile":{"type":"managed","file_system":{"type":"restricted","entries":[` +
+				`{"path":{"type":"special","value":{"kind":"root"}},"access":"read"},` +
+				`{"path":{"type":"path","path":"/Users/test/Projects/app"},"access":"write"}]},"network":"restricted"},` +
+				`"file_system_sandbox_policy":{"kind":"restricted","entries":[` +
+				`{"path":{"type":"glob_pattern","pattern":"/Users/test/Projects/app/**/*.env"},"access":"none"},` +
+				`{"path":{"type":"path","path":"/Users/test/Projects/app"},"access":"write"}]}}}`,
+			want: []string{
+				"payload.cwd",
+				"payload.sandbox_policy.writable_roots.0",
+				"payload.file_system_sandbox_policy.entries.1.path.path",
+				"payload.permission_profile.file_system.entries.1.path.path",
+			},
+		},
+		{
+			// The legacy profile shape is untagged by design: no "type" key.
+			name:        "turn_context legacy permission profile read and write roots",
+			rolloutType: rolloutTypeTurnContext,
+			line: `{"type":"turn_context","payload":{"cwd":"/Users/test/Projects/app","permission_profile":{"network":{"enabled":false},` +
+				`"file_system":{"read":["/Users/test/Projects/app/docs"],"write":["/Users/test/Projects/app"]}}}}`,
+			want: []string{
+				"payload.cwd",
+				"payload.permission_profile.file_system.read.0",
+				"payload.permission_profile.file_system.write.0",
+			},
+		},
+		{
+			name:        "thread_settings_applied with runtime workspace roots",
+			rolloutType: rolloutTypeEventMsg,
+			line: `{"type":"event_msg","payload":{"type":"thread_settings_applied",` +
+				`"thread_settings":{"cwd":"/Users/test/Projects/app","runtime_workspace_roots":["/Users/test/Projects/app"]}}}`,
+			want: []string{"payload.thread_settings.cwd", "payload.thread_settings.runtime_workspace_roots.0"},
+		},
+		{
+			name:        "thread_settings_applied without runtime workspace roots",
+			rolloutType: rolloutTypeEventMsg,
+			line:        `{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"cwd":"/Users/test/Projects/app"}}}`,
+			want:        []string{"payload.thread_settings.cwd"},
+		},
+		{
+			name:        "thread_settings_applied permission profile path entries",
+			rolloutType: rolloutTypeEventMsg,
+			line: `{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"cwd":"/Users/test/Projects/app",` +
+				`"permission_profile":{"type":"managed","file_system":{"type":"restricted","entries":[` +
+				`{"path":{"type":"special","value":{"kind":"project_roots","subpath":"docs"}},"access":"read"},` +
+				`{"path":{"type":"path","path":"/Users/test/Projects/app"},"access":"write"}]},"network":"restricted"}}}}`,
+			want: []string{"payload.thread_settings.cwd", "payload.thread_settings.permission_profile.file_system.entries.1.path.path"},
+		},
+		{
+			name:        "another event_msg variant carries none",
+			rolloutType: rolloutTypeEventMsg,
+			line: `{"type":"event_msg","payload":{"type":"agent_message",` +
+				`"message":"opened /Users/test/Projects/app","cwd":"/Users/test/Projects/app"}}`,
+			want: nil,
+		},
+		{
+			name:        "response_item carries none",
+			rolloutType: "response_item",
+			line:        `{"type":"response_item","payload":{"type":"message","cwd":"/Users/test/Projects/app"}}`,
+			want:        nil,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, structuredRolloutFieldPaths([]byte(testCase.line), testCase.rolloutType))
+		})
+	}
+}
+
+func TestRewriteRolloutLineLeavesOtherEventMsgVariantsInDefaultMode(t *testing.T) {
+	line := []byte(`{"type":"event_msg","payload":{"type":"agent_message","message":"opened /Users/fixture/codexproject/src/main.py"}}`)
+	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+
+	rewritten, count := rewriteRolloutLine(line, substitutions, false)
+
+	assert.Zero(t, count)
+	assert.Equal(t, line, rewritten)
+}
+
+func TestRewriteRolloutLineRewritesMixedEscapedFieldInEveryMode(t *testing.T) {
+	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users\/fixture/codexproject"}}`)
+	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+
+	for _, deep := range []bool{false, true} {
+		t.Run("deep="+strconv.FormatBool(deep), func(t *testing.T) {
+			rewritten, count := rewriteRolloutLine(line, substitutions, deep)
+
+			assert.Equal(t, 1, count)
+			assert.Equal(t, "/Users/fixture/renamed-project", gjson.GetBytes(rewritten, "payload.cwd").String())
+		})
+	}
+}
+
+func TestRewriteRolloutLineDeepRewritesFieldOnceWhenNewPathContainsOldPath(t *testing.T) {
+	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users/fixture/codexproject"}}`)
+	newPath := "/Users/elsewhere" + FixtureProjectPath()
+	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: newPath}}
+
+	rewritten, count := rewriteRolloutLine(line, substitutions, true)
+
+	assert.Equal(t, 1, count)
+	assert.Equal(t, newPath, gjson.GetBytes(rewritten, "payload.cwd").String())
+}
+
+func TestRewriteRolloutLineLeavesWritableRootsOutsideTheProject(t *testing.T) {
+	line := []byte(`{"type":"turn_context","payload":{"cwd":"/Users/test/Projects/elsewhere","sandbox_policy":{"type":"workspace-write",` +
+		`"writable_roots":["/Users/fixture/codexproject/build","/Users/fixture/codexproject-cache","/opt/shared-cache"]}}}`)
+	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+
+	rewritten, count := rewriteRolloutLine(line, substitutions, false)
+
+	assert.Equal(t, 1, count)
+	assert.Equal(t,
+		`["/Users/fixture/renamed-project/build","/Users/fixture/codexproject-cache","/opt/shared-cache"]`,
+		gjson.GetBytes(rewritten, "payload.sandbox_policy.writable_roots").Raw,
+	)
 }
 
 func TestRolloutMalformedWarningsPreserveUnparseableLines(t *testing.T) {

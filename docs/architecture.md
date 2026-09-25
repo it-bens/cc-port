@@ -226,8 +226,10 @@ rewrites snapshot contents. File-history is a Claude Code concept; Codex has no 
 never-inspect-opaque-bytes principle does not extend to Codex's own state.
 Codex's memories worktree files are rewritten in place, not left opaque (see
 §Git-repo-in-state policy). Rollout bodies get similar treatment. Within a
-structured rollout, session identity fields are always rewritten, and
-non-structured lines are rewritten too under `--deep`. An era-A rollout (one
+structured rollout, the path fields of `session_meta`, `turn_context`, and
+`thread_settings_applied` lines are always rewritten (see
+`internal/tool/codex/README.md` §Rollout structured fields). Under `--deep`,
+every other line and field is rewritten too. An era-A rollout (one
 with no session_meta or turn_context line) is skipped entirely, even under
 `--deep` (see `internal/tool/codex/README.md` §Era-A rollout handling).
 

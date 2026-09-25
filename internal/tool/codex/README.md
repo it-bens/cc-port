@@ -469,6 +469,81 @@ shapes themselves.
   structured association either; the adapter matches that limitation rather
   than inventing a heuristic Codex does not use.
 
+### Rollout structured fields
+
+**Handled.**
+
+- Without `--deep`, move rewrites exactly these fields of a structured
+  rollout, as listed by `structuredRolloutFieldPaths`. `<i>` stands for
+  every array index; `<profile>` is a serialized `PermissionProfile`.
+
+  | Line | Fields rewritten |
+  |---|---|
+  | `session_meta` | `payload.cwd`, `payload.runtime_workspace_roots.<i>` |
+  | `turn_context` | `payload.cwd`, `payload.workspace_roots.<i>`, `payload.sandbox_policy.writable_roots.<i>`, `payload.file_system_sandbox_policy.entries.<i>.path.path`, and the `<profile>` fields under `payload.permission_profile` |
+  | `event_msg` whose `payload.type` is `thread_settings_applied` | `payload.thread_settings.cwd`, `payload.thread_settings.runtime_workspace_roots.<i>`, and the `<profile>` fields under `payload.thread_settings.permission_profile` |
+  | `<profile>` | `file_system.entries.<i>.path.path`, plus the legacy `file_system.read.<i>` and `file_system.write.<i>` |
+
+  Upstream shapes at `rust-v0.156.1`: `SessionMeta`
+  (`protocol/src/protocol.rs:3117-3186`), `TurnContextItem`
+  (`protocol/src/protocol.rs:3287-3344`), `ThreadSettingsAppliedEvent` and
+  `ThreadSettingsSnapshot` (`protocol/src/protocol.rs:2194-2232`), and the
+  `{"type":…,"payload":…}` line envelope
+  (`history/src/rollout_payload.rs:22-63`). The sandbox and permission
+  fields: `SandboxPolicy`'s `workspace-write` variant
+  (`protocol/src/protocol.rs:1069-1120`), `RawFileSystemSandboxPolicy`
+  (`protocol/src/permissions.rs:257-267`), `PermissionProfile` and its
+  serialized `file_system` (`protocol/src/models.rs:315-325,418-435`), the
+  entry and its `path` variant, whose absolute path sits in `path.path`
+  (`protocol/src/permissions.rs:183-192,454-471`). Codex reads the untagged
+  pre-tagged profile shape from rollout files through `LegacyPermissionProfile`
+  and the `PermissionProfileDe` fallback
+  (`protocol/src/models.rs:745-752,785-800`); its `file_system.read` and
+  `file_system.write` root lists parse through
+  `protocol/src/models.rs:99-106,222-244`.
+- The runtime-roots and thread-settings fields are not identity sources,
+  but Codex reads them back. Resume takes cwd and runtime roots from the
+  thread's own latest `thread_settings_applied` snapshot, or from
+  `session_meta` when no such snapshot exists, and maps saved roots from the
+  saved cwd onto the resume cwd
+  (`app-server/src/request_processors/thread_processor.rs:3780-3846`).
+  State backfill copies `thread_settings.cwd` into `threads.cwd`
+  (`state/src/extract.rs:130-139`). A stale value in any of them outlives
+  the move.
+- Each field is rewritten only where it holds the project path at a path
+  boundary. A writable root or permission entry elsewhere, or one that only
+  shares a prefix with the project path, stays unchanged.
+- An absent field adds nothing. A field that is not a string, and a
+  non-string array element, stay unchanged.
+- Dry-run and apply count through the same `rewriteRolloutLine` call over
+  the same field list, so their counts agree.
+- `--deep` runs two passes over each line of a structured rollout. A byte
+  pass, `rewrite.ReplacePathInBytesWithJSONEscape`, rewrites the whole line
+  and matches two spellings of the project path: raw, where only the
+  leading `/` may be escaped as `\/`, and fully escaped, with every `/`
+  written as `\/`. The field pass then decodes each listed field the byte
+  pass left unchanged, so it also rewrites a mixed-escaped spelling such as
+  `/Users\/me/project`. A field the byte pass already rewrote is not
+  scanned again, so no occurrence is counted twice. For the single-path
+  values Codex writes to these fields, `--deep` therefore rewrites
+  everything default mode does.
+
+**Not covered.**
+
+- Other fields that can hold a project path stay unchanged without
+  `--deep`: permission entries of the `glob_pattern` variant, whose
+  `pattern` is a glob rather than a path; `session_meta`'s
+  `selected_capability_roots.<i>.location.path`
+  (`protocol/src/capabilities.rs:12-36`); and every other `event_msg`
+  variant.
+- A listed field whose value holds the project path twice, once raw and
+  once mixed-escaped, keeps the mixed-escaped one under `--deep`: the byte
+  pass changes the field, so the field pass skips it. Codex writes each of
+  these fields as a single path, so its own rollouts never hold that value.
+- Only `session_meta` and `turn_context` cwd values supply symlink-alias
+  substitution sources (see §cwd matching). A field above recorded through
+  an alias that neither of those cwd values records stays unrewritten.
+
 ### History and session-index append-only
 
 **Handled.**
@@ -716,6 +791,13 @@ shapes themselves.
   Codex's own `paths_match_after_normalization`.
 - A state-database row matching the project that Codex writes after the
   plan is captured: move does not rewrite it.
+- `threads.sandbox_policy`. The column holds the serialized permission
+  profile, path entries included (`state/src/extract.rs:104-105,136-137`),
+  and move leaves it at the pre-move paths. Codex reads it back only into
+  the stored thread's `permission_profile`
+  (`thread-store/src/local/read_thread.rs:385`), which nothing outside the
+  thread store consumes; a resumed thread takes its profile from the
+  rollout and the current config, so the stale column changes no behavior.
 - Thread-history byte offsets into a rewritten rollout. Codex's
   `thread_history_*.sqlite` stores byte offsets into rollout files:
   `thread_history_projection_state.next_rollout_byte_offset`
@@ -976,6 +1058,9 @@ cloud-cache warnings through move and import; unparsable machine-level sources; 
 does not exist),
 glob-based discovery against generation-suffixed fixture filenames, both
 rollout roots, era-A skip behavior under plain and `--deep` rewrite, the
+structured rollout field list per line type and its default-mode rewrite
+with matching dry-run and apply counts, a writable root outside the project
+left unchanged, the
 process-table and busy-probe witness sources driven through the injected
 process lister rather than the live process table, `codex-dev.db` refusal on both a
 path-reference hit and a schema-drift case, the sidecar's apply-and-remainder
