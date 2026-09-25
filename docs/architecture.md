@@ -273,31 +273,34 @@ described in §File-history policy (cross-cutting).
 ## Git-repo-in-state policy (cross-cutting)
 
 A tool's own state directory can itself contain a git repository. Codex's
-memories directory (`$CODEX_HOME/memories/`) is the current instance: Codex
-baselines it as a git worktree so it can diff and commit generated memory
-files. Three rules govern any state git repository cc-port's rewrite surfaces
-touch, in priority order:
+memory worktree roots are the current instance: Codex baselines each one as a
+git worktree so it can diff and commit generated memory files. There are two
+such roots, `$CODEX_HOME/memories/` and `$CODEX_HOME/memories_v2/`, and cc-port
+applies the same three rules to each independently. Three rules govern any
+state git repository cc-port's rewrite surfaces touch, in priority order:
 
 1. Never rewrite bytes inside a `.git` object store. A byte-level substring
    replacement would corrupt git's own packed or loose object encoding.
 2. When the owning tool provably re-initializes a missing `.git`, rewrite the
    worktree and delete `.git`. Deleting is safe only because the tool's own
    source-verified behavior recreates the baseline unconditionally on next
-   use; this is not a general license to delete a git directory.
+   use. This is not a general license to delete a git directory.
 3. Otherwise, leave `.git` in place, rewrite the worktree, and warn. The
-   worktree files still need their path rewritten; the repository state
+   worktree files still need their path rewritten, but the repository state
    (commits, remotes, refs) is left untouched and the caller is told so.
 
-Rule 2 applies to Codex's memories baseline behind a shape probe:
-`memories/.git/config` exists and contains no `[remote` section. This shape
+Rule 2 applies to each of Codex's memory worktree roots behind a shape probe:
+that root's `.git/config` exists and contains no `[remote` section. This shape
 (a local-only baseline with no configured remote) is cc-port's own heuristic
 standing in for the underlying fact that Codex's baseline helper
 unconditionally re-initializes a missing or unusable `.git` on next write.
 Any other shape (a `.git` carrying a `[remote` section, meaning a user or
 tooling has attached the worktree to a real remote) falls back to rule 3:
 `internal/tool/codex/README.md` §Git baseline handling reports it as a warning
-rather than deleting it. No git dependency enters cc-port; the probe reads
-`memories/.git/config` as a plain text file.
+rather than deleting it, evaluated per root, so a remote on one root does not
+stop the other root's baseline from being invalidated. No git dependency
+enters cc-port. The probe reads each root's `.git/config` as a plain text
+file.
 
 ## Crash and idempotence contract
 
