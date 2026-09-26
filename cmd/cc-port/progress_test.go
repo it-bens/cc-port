@@ -78,47 +78,28 @@ func TestRunWithProgress_JSONModeEmitsEventObjectsThroughSink(t *testing.T) {
 	assert.Contains(t, rendered, `"event":"phase_end"`)
 }
 
-type fakeInterruptibleRenderer struct {
-	interrupt chan struct{}
-}
+func TestRunWithProgress_WorkContextFollowsCommandCancellation(t *testing.T) {
+	cmd := newProgressTestCmd(t)
+	require.NoError(t, cmd.Flags().Set("json", "true"))
+	sinkPath := captureJSONSink(t)
 
-func (fakeInterruptibleRenderer) Consume(progress.Event) {}
-func (fakeInterruptibleRenderer) Finalize() error        { return nil }
-func (renderer fakeInterruptibleRenderer) Interrupted() <-chan struct{} {
-	return renderer.interrupt
-}
-
-type fakePlainRenderer struct{}
-
-func (fakePlainRenderer) Consume(progress.Event) {}
-func (fakePlainRenderer) Finalize() error        { return nil }
-
-func TestWireInterrupt_CancelsContextOnInterrupt(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	parent, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	renderer := fakeInterruptibleRenderer{interrupt: make(chan struct{})}
+	cmd.SetContext(parent)
 
-	wireInterrupt(ctx, cancel, renderer)
-	close(renderer.interrupt)
+	err := runWithProgress(cmd, func(ctx context.Context, _ progress.Reporter) error {
+		cancel()
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatal("work context did not observe the command context's cancellation")
+		}
+		return ctx.Err()
+	})
+	require.ErrorIs(t, err, context.Canceled)
 
-	select {
-	case <-ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("context was not cancelled after interrupt")
-	}
-}
-
-func TestWireInterrupt_SkipsNonInterruptibleRenderer(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	wireInterrupt(ctx, cancel, fakePlainRenderer{})
-
-	select {
-	case <-ctx.Done():
-		t.Fatal("context cancelled for a non-interruptible renderer")
-	case <-time.After(50 * time.Millisecond):
-	}
+	rendered := readSink(t, sinkPath)
+	assert.Contains(t, rendered, `"event":"cancelled"`)
 }
 
 func readSink(t *testing.T, sinkPath string) string {
@@ -129,9 +110,10 @@ func readSink(t *testing.T, sinkPath string) string {
 }
 
 // newProgressTestCmd builds a command carrying the four verbosity flags
-// runWithProgress reads, with a non-nil context so context.WithCancel has a
-// real parent. Production seeds the context via cobra's ExecuteContext; tests
-// that call runWithProgress directly must seed it here.
+// runWithProgress reads, with a non-nil context because runWithProgress hands
+// cmd.Context() to work unchanged and cobra returns nil until one is set.
+// Production seeds the context via cobra's ExecuteContext; tests that call
+// runWithProgress directly must seed it here.
 func newProgressTestCmd(t *testing.T) *cobra.Command {
 	t.Helper()
 	cmd := &cobra.Command{Use: "test"}

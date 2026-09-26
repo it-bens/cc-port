@@ -2,7 +2,6 @@ package progress
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,10 +35,6 @@ func TestPickChoosesNullWhenQuiet(t *testing.T) {
 
 func TestPickChoosesLedgerOnTTY(t *testing.T) {
 	forceTTY(t, true)
-	original := ledgerInput
-	ledgerInput = strings.NewReader("")
-	t.Cleanup(func() { ledgerInput = original })
-
 	renderer, _ := Pick(Selection{})
 	ledger, ok := renderer.(*LedgerRenderer)
 	require.True(t, ok, "expected *LedgerRenderer, got %T", renderer)

@@ -3,11 +3,9 @@ package progress
 import (
 	"bytes"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	teatest "github.com/charmbracelet/x/exp/teatest/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +16,7 @@ import (
 // run (or sends a terminal event, which quits on its own).
 func runLedger(t *testing.T, events chan Event, feed func()) []byte {
 	t.Helper()
-	model := newLedgerModel(events, make(chan struct{}))
+	model := newLedgerModel(events)
 	test := teatest.NewTestModel(t, model, teatest.WithInitialTermSize(80, 24))
 
 	feed()
@@ -74,7 +72,24 @@ func TestLedgerRendersInterruptedOnCancel(t *testing.T) {
 	})
 
 	assert.Contains(t, string(output), "interrupted at copy")
-	assert.Contains(t, string(output), "(4/10 completed)")
+	assert.Contains(t, string(output), "(4/10 files completed)")
+}
+
+// TestLedgerCancelOmitsFractionForZeroTotalPhase pins the defect where a run
+// cancelled inside a phase that opened with Total zero rendered a nonsense
+// fraction. The live counter prints a bare count whenever the total is unknown,
+// and the terminal line must agree rather than format its own done/total pair.
+func TestLedgerCancelOmitsFractionForZeroTotalPhase(t *testing.T) {
+	events := make(chan Event, ledgerChannelDepth)
+	output := runLedger(t, events, func() {
+		events <- PhaseStart{Path: []string{"archive.claude"}, Total: 0, Unit: UnitFiles, At: time.Now()}
+		events <- PhaseAdvance{Path: []string{"archive.claude"}, Done: 5}
+		events <- Cancelled{Reason: "user interrupt"}
+	})
+
+	assert.Contains(t, string(output), "interrupted at archive.claude")
+	assert.NotContains(t, string(output), "/0 completed")
+	assert.Contains(t, string(output), "5 files")
 }
 
 func TestLedgerRendersFailed(t *testing.T) {
@@ -169,39 +184,7 @@ func TestLedgerDropsVerboseDetailUnderBackpressure(t *testing.T) {
 	assert.Equal(t, int64(1), advance.Done)
 }
 
-func TestLedgerSignalsInterruptOnCtrlC(t *testing.T) {
-	interrupt := make(chan struct{})
-	model := newLedgerModel(make(chan Event, ledgerChannelDepth), interrupt)
-
-	_, cmd := model.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-
-	assert.Nil(t, cmd)
-	select {
-	case <-interrupt:
-	default:
-		t.Fatal("ctrl+c did not close the interrupt channel")
-	}
-}
-
-func TestLedgerIgnoresNonCtrlCKeys(t *testing.T) {
-	interrupt := make(chan struct{})
-	model := newLedgerModel(make(chan Event, ledgerChannelDepth), interrupt)
-
-	_, cmd := model.Update(tea.KeyPressMsg{Code: 'a'})
-
-	assert.Nil(t, cmd)
-	select {
-	case <-interrupt:
-		t.Fatal("a non-ctrl+c key closed the interrupt channel")
-	default:
-	}
-}
-
 func TestLedgerFinalizeSucceedsAfterCleanRun(t *testing.T) {
-	original := ledgerInput
-	ledgerInput = strings.NewReader("")
-	t.Cleanup(func() { ledgerInput = original })
-
 	var output bytes.Buffer
 	renderer := NewLedgerRenderer(&output)
 	renderer.Consume(PhaseStart{Path: []string{"copy"}, Total: 1, Unit: UnitFiles, At: time.Now()})
