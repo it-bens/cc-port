@@ -214,9 +214,9 @@ func runPushCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 
 // renderPushOutcome writes the push summary and, on apply, the tool warnings
 // and the "Pushed:" confirmation. It runs after runWithProgress tears down the
-// ledger: the ledger holds the terminal in raw mode, where a bare "\n" moves
-// down without a carriage return, so writing the summary before teardown
-// staircases every line. Failures writing the summary, the "(no changes)"
+// ledger: the ledger repaints its live region on stderr while it runs, so
+// writing the summary before teardown interleaves it with those repaints and
+// corrupts the frame. Failures writing the summary, the "(no changes)"
 // hint, and the "Pushed:" confirmation fold into progErr; the tool warnings
 // are best-effort stderr diagnostics whose write failures are not.
 //

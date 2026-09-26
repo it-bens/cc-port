@@ -56,8 +56,8 @@ func (renderer *StreamRenderer) Consume(event Event) {
 			renderer.phase.name(), typed.Err, renderer.warningSuffix())
 	case Cancelled:
 		done, total := renderer.phase.doneTotal()
-		renderer.printf("[CANCELLED] phase=%s done=%d/%d%s\n",
-			renderer.phase.name(), done, total, renderer.warningSuffix())
+		renderer.printf("[CANCELLED] phase=%s done=%s%s\n",
+			renderer.phase.name(), formatProgressCount(done, total), renderer.warningSuffix())
 	case Done:
 		renderer.printf("[DONE]%s\n", renderer.warningSuffix())
 	}
@@ -90,12 +90,22 @@ func (renderer *StreamRenderer) printAdvance(event PhaseAdvance) {
 	renderer.printf("[PROGRESS] phase=%s %s\n", key, formatProgress(event.Done, total))
 }
 
-// formatProgress renders "done/total (pct%)"; when total is unknown (<= 0) it
-// renders just the done count so the line never divides by zero.
+// formatProgress renders "done/total (pct%)" when the total is known and the
+// bare done count when it is not, so the line never divides by zero.
 func formatProgress(done, total int64) string {
+	count := formatProgressCount(done, total)
+	if total <= 0 {
+		return count
+	}
+	percent := float64(done) / float64(total) * 100
+	return fmt.Sprintf("%s (%.0f%%)", count, percent)
+}
+
+// formatProgressCount renders done as "done/total" when the total is known
+// (positive), or as the bare done count when it is not.
+func formatProgressCount(done, total int64) string {
 	if total <= 0 {
 		return fmt.Sprintf("%d", done)
 	}
-	percent := float64(done) / float64(total) * 100
-	return fmt.Sprintf("%d/%d (%.0f%%)", done, total, percent)
+	return fmt.Sprintf("%d/%d", done, total)
 }

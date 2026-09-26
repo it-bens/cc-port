@@ -16,9 +16,9 @@ import (
 // rendered output back.
 var stderrSink = os.Stderr
 
-// runWithProgress runs work under a cancellable context derived from the
-// command's context, which the composition root has already wired to SIGINT.
-// The returned error joins work's error with renderer.Finalize so neither is lost.
+// runWithProgress runs work under the command's context, which the composition
+// root has already wired to SIGINT. The returned error joins work's error with
+// renderer.Finalize so neither is lost.
 func runWithProgress(cmd *cobra.Command, work func(ctx context.Context, reporter progress.Reporter) error) error {
 	selection, err := selectionFromFlags(cmd)
 	if err != nil {
@@ -28,12 +28,7 @@ func runWithProgress(cmd *cobra.Command, work func(ctx context.Context, reporter
 	renderer, level := progress.Pick(selection)
 	reporter := progress.NewReporter(renderer, level)
 
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	wireInterrupt(ctx, cancel, renderer)
-
-	workErr := work(ctx, reporter)
+	workErr := work(cmd.Context(), reporter)
 	switch {
 	case errors.Is(workErr, context.Canceled):
 		reporter.Cancelled(workErr.Error())
@@ -44,24 +39,6 @@ func runWithProgress(cmd *cobra.Command, work func(ctx context.Context, reporter
 	}
 
 	return errors.Join(workErr, renderer.Finalize())
-}
-
-// wireInterrupt routes an interactive renderer's interrupt signal to context
-// cancellation. Renderers that do not own interactive input do not implement
-// progress.Interruptible and are skipped; the root context's SIGINT wiring,
-// inherited through cmd.Context(), stays their cancellation source.
-func wireInterrupt(ctx context.Context, cancel context.CancelFunc, renderer progress.Renderer) {
-	interruptible, ok := renderer.(progress.Interruptible)
-	if !ok {
-		return
-	}
-	go func() {
-		select {
-		case <-interruptible.Interrupted():
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
 }
 
 func selectionFromFlags(cmd *cobra.Command) (progress.Selection, error) {

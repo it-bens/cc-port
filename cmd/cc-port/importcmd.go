@@ -118,7 +118,7 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 // runImportDryRun renders what an apply would commit and writes nothing. It
 // runs outside runWithProgress: the plan reports the same preflight the apply
 // path reports through its progress phases, and rendering to stdout while the
-// ledger holds the terminal in raw mode staircases every line.
+// ledger repaints its live region interleaves the two on a shared terminal.
 func runImportDryRun(cmd *cobra.Command, toolSet *tool.Set, targets []tool.Target, options *importer.Options) error {
 	plan, err := importer.DryRun(cmd.Context(), toolSet, targets, options)
 	if err != nil {

@@ -133,9 +133,9 @@ func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 
 	// Downloading and planning run under their own progress ledger so the plan
 	// can render once that ledger has torn down but before ExecutePull writes.
-	// The ledger holds the terminal in raw mode, where a bare "\n" moves down
-	// without a carriage return, so rendering inside either run staircases
-	// every line.
+	// The ledger repaints its live region on stderr while it runs, so rendering
+	// the plan inside either run interleaves the two on a shared terminal and
+	// corrupts the frame.
 	progErr := runWithProgress(cmd, func(ctx context.Context, reporter progress.Reporter) error {
 		opts.Reporter = reporter
 

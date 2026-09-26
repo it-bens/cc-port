@@ -5,7 +5,6 @@ import (
 	"io"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/progress"
@@ -25,39 +24,32 @@ const spinnerInterval = 100 * time.Millisecond
 // model. It is selected when the sink is a TTY and neither --json nor --quiet
 // is set.
 type LedgerRenderer struct {
-	events    chan Event
-	program   *tea.Program
-	done      chan struct{}
-	runErr    error
-	interrupt chan struct{}
+	events chan Event
+	done   chan struct{}
+	runErr error
 }
 
 // NewLedgerRenderer builds a LedgerRenderer writing to output and starts its
-// bubbletea program in a goroutine. The program owns terminal input so bubbletea
-// consumes the capability-query responses the terminal emits at startup;
-// without that, those bytes leak to the shell prompt after exit.
-// WithoutSignalHandler keeps OS signals with the central handler in the cmd
-// layer. A Ctrl-C key press closes the interrupt channel exposed by Interrupted,
-// which the cmd layer routes to context cancellation.
+// bubbletea program in a goroutine. Input stays disabled; the pinned bubbletea
+// v2.0.10 gates every reply-expecting query on that, so no terminal reply leaks
+// to the shell prompt after exit. Never entering raw mode keeps Ctrl-C a
+// SIGINT rather than a key press, at the cost of cooked-mode echo: typed keys
+// and ^C echo over the repainted region. That safety belongs to the pinned
+// version, not to disabled input: on v2.0.9 the same startup probe took the
+// ungated p.execute path. WithoutSignalHandler leaves SIGINT to the composition
+// root; the Cancelled event drives the interrupted render.
 func NewLedgerRenderer(output io.Writer) *LedgerRenderer {
 	events := make(chan Event, ledgerChannelDepth)
-	interrupt := make(chan struct{})
-	model := newLedgerModel(events, interrupt)
-
-	options := []tea.ProgramOption{
+	model := newLedgerModel(events)
+	program := tea.NewProgram(
+		model,
 		tea.WithOutput(output),
+		tea.WithInput(nil),
 		tea.WithoutSignalHandler(),
-	}
-	if ledgerInput != nil {
-		options = append(options, tea.WithInput(ledgerInput))
-	}
-	program := tea.NewProgram(model, options...)
-
+	)
 	renderer := &LedgerRenderer{
-		events:    events,
-		program:   program,
-		done:      make(chan struct{}),
-		interrupt: interrupt,
+		events: events,
+		done:   make(chan struct{}),
 	}
 	go func() {
 		defer close(renderer.done)
@@ -65,13 +57,6 @@ func NewLedgerRenderer(output io.Writer) *LedgerRenderer {
 		renderer.runErr = err
 	}()
 	return renderer
-}
-
-// Interrupted reports the channel closed when the user presses Ctrl-C while the
-// ledger owns the terminal. The cmd layer selects on it to cancel the work
-// context.
-func (renderer *LedgerRenderer) Interrupted() <-chan struct{} {
-	return renderer.interrupt
 }
 
 // Consume applies the drop policy: verbose/debug Detail events are dropped on
@@ -105,14 +90,12 @@ func (renderer *LedgerRenderer) Finalize() error {
 // ledgerModel is the bubbletea model: a tree of phase nodes plus the terminal
 // outcome. It owns the event channel; a poll command drains it into Update.
 type ledgerModel struct {
-	events        <-chan Event
-	interrupt     chan struct{}
-	interruptOnce sync.Once
-	roots         []*phaseNode
-	index         map[string]*phaseNode
-	spinner       spinner.Model
-	warnings      int
-	outcome       terminalOutcome
+	events   <-chan Event
+	roots    []*phaseNode
+	index    map[string]*phaseNode
+	spinner  spinner.Model
+	warnings int
+	outcome  terminalOutcome
 }
 
 // terminalOutcome records how the run ended so View can paint the final frame.
@@ -121,6 +104,7 @@ type terminalOutcome struct {
 	phase  string
 	done   int64
 	total  int64
+	unit   Unit
 	reason string
 	err    error
 }
@@ -158,19 +142,12 @@ type channelClosedMsg struct{}
 // spinnerTickMsg drives a single spinner frame.
 type spinnerTickMsg struct{}
 
-func newLedgerModel(events <-chan Event, interrupt chan struct{}) *ledgerModel {
+func newLedgerModel(events <-chan Event) *ledgerModel {
 	return &ledgerModel{
-		events:    events,
-		interrupt: interrupt,
-		index:     make(map[string]*phaseNode),
-		spinner:   spinner.New(spinner.WithSpinner(spinner.Dot)),
+		events:  events,
+		index:   make(map[string]*phaseNode),
+		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
-}
-
-// signalInterrupt closes the interrupt channel exactly once so the cmd layer can
-// cancel the work context. Repeated Ctrl-C is idempotent.
-func (model *ledgerModel) signalInterrupt() {
-	model.interruptOnce.Do(func() { close(model.interrupt) })
 }
 
 func (model *ledgerModel) Init() tea.Cmd {
@@ -207,11 +184,6 @@ func (model *ledgerModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return model, nextTick
 	case Event:
 		return model.applyEvent(typed)
-	case tea.KeyPressMsg:
-		if typed.String() == "ctrl+c" {
-			model.signalInterrupt()
-		}
-		return model, nil
 	default:
 		return model, nil
 	}
@@ -247,7 +219,7 @@ func (model *ledgerModel) applyEvent(event Event) (tea.Model, tea.Cmd) {
 		done, total := openProgress(open)
 		model.outcome = terminalOutcome{
 			kind: outcomeCancelled, phase: openName(open),
-			done: done, total: total, reason: typed.Reason,
+			done: done, total: total, unit: openUnit(open), reason: typed.Reason,
 		}
 		return model, tea.Quit
 	case Done:
@@ -352,6 +324,13 @@ func openProgress(node *phaseNode) (done, total int64) {
 	return node.done, node.total
 }
 
+func openUnit(node *phaseNode) Unit {
+	if node == nil {
+		return UnitItems
+	}
+	return node.unit
+}
+
 func (model *ledgerModel) View() tea.View {
 	var builder strings.Builder
 	for _, root := range model.roots {
@@ -403,8 +382,9 @@ func (model *ledgerModel) writeOutcome(builder *strings.Builder) {
 		fmt.Fprintf(builder, "failed at %s: %s%s\n",
 			model.outcome.phase, model.outcome.err, warningSuffix(model.warnings))
 	case outcomeCancelled:
-		fmt.Fprintf(builder, "interrupted at %s (%d/%d completed)%s\n",
-			model.outcome.phase, model.outcome.done, model.outcome.total, warningSuffix(model.warnings))
+		fmt.Fprintf(builder, "interrupted at %s (%s completed)%s\n",
+			model.outcome.phase, formatCount(model.outcome.done, model.outcome.total, model.outcome.unit),
+			warningSuffix(model.warnings))
 	case outcomeRunning:
 	}
 }
