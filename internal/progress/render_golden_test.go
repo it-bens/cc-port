@@ -140,6 +140,21 @@ func TestStreamRendererCancelGolden(t *testing.T) {
 	goldenCompare(t, "stream_cancel", buffer.Bytes())
 }
 
+// A phase opened with Total zero has no denominator to report, so the cancelled
+// line carries the bare done count rather than a done/0 fraction.
+func TestStreamRendererCancelUnknownTotalGolden(t *testing.T) {
+	pinClock(t, time.Second)
+	var buffer bytes.Buffer
+	renderer := NewStreamRenderer(&buffer)
+
+	renderer.Consume(PhaseStart{Path: []string{"archive", "claude"}, Total: 0, Unit: UnitFiles})
+	renderer.Consume(PhaseAdvance{Path: []string{"archive", "claude"}, Done: 5})
+	renderer.Consume(Cancelled{Reason: "user interrupt"})
+	require.NoError(t, renderer.Finalize())
+
+	goldenCompare(t, "stream_cancel_unknown_total", buffer.Bytes())
+}
+
 func TestJSONRendererLifecycleGolden(t *testing.T) {
 	pinClock(t, time.Second)
 	var buffer bytes.Buffer
