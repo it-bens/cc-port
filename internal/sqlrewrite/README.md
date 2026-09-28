@@ -51,29 +51,41 @@ opens and guards.
 **Handled.**
 
 - Every SQL-running export takes `ctx` first and runs each `database/sql`
-  call through its `*Context` variant. The caller's live context therefore
-  governs the statement in flight: `Open` (its WAL fold and
+  call through its `*Context` variant: `Open` (its WAL fold and
   `sqlite_version()` read), `(*DB).CheckpointTruncate`, `CountTextColumnRO`,
-  `(*DB).RewriteTextColumn`, both keyed updates, and both schema checks.
-- `Rows.Next` stops on cancellation and `rows.Err()` returns it, and
-  `modernc.org/sqlite` interrupts a running statement on cancellation. This
-  package adds no `ctx.Err()` check of its own.
-- `(*DB).Begin` opens its transaction with `context.WithoutCancel(ctx)`
-  rather than the caller's `ctx`, because a cancelled `BeginTx` context
-  rolls the transaction back on its own. Codex opens a transaction in one
-  rewrite surface's Apply and commits it in the later `commit-databases`
-  surface. A Ctrl-C in between would then roll the transaction back behind
-  the `Restorer`'s undo registration, and `Commit` would report
-  `sql.ErrTxDone` as a partial database commit. Statements inside the
-  transaction still run on the caller's `ctx`.
+  both read-only schema checks, and the three transaction mutators
+  `(*DB).RewriteTextColumn`, `(*DB).UpdateColumnsByKey`, and
+  `(*DB).UpdateColumnsByRowID`.
+- Outside a transaction the call gets the caller's live `ctx`: `Rows.Next`
+  then stops on cancellation and `rows.Err()` returns it, and
+  `modernc.org/sqlite` interrupts the statement in flight.
+- The statements a transaction runs do not take the live `ctx` at all.
+  `(*DB).Begin` opens the transaction under `context.WithoutCancel(ctx)`,
+  and each mutator derives the same context for the statements it runs: the
+  schema read, `RewriteTextColumn`'s streaming select and prepared
+  statement, and every per-row update. An interrupted `UPDATE` inside an
+  explicit transaction makes SQLite roll the whole transaction back by
+  itself. Codex opens a transaction in one rewrite surface's Apply and
+  commits it in the later `commit-databases` surface. A Ctrl-C in between
+  would roll the transaction back behind the `Restorer`'s undo
+  registration, and its later `Rollback` would fail against a database that
+  is intact.
   `TestTransactionCommitsAfterBeginContextIsCancelled` covers the rule.
+- Cancellation is honoured between those statements instead. Each mutator
+  checks `ctx.Err()` before it runs anything, and `RewriteTextColumn` checks
+  again before each row's update; the check returns the wrapped
+  `context.Canceled` and leaves the transaction open, so the `Restorer`'s
+  `Rollback` still succeeds.
+  `TestCancelledRewriteTextColumnLeavesTransactionRollbackable` covers it.
 
 **Refused.**
 
-- None. A cancelled context surfaces as the `context.Canceled` error the
-  underlying call returns; this package raises no error of its own for it.
-  `TestCountTextColumnROFailsOnCancelledContext` and
-  `TestRewriteTextColumnFailsOnCancelledContext` assert it.
+- None. A cancelled context surfaces as the `context.Canceled` error a
+  `*Context` call returns, or as the one a between-statement check raises;
+  either is in the returned error's chain.
+  `TestCountTextColumnROFailsOnCancelledContext`,
+  `TestRewriteTextColumnFailsOnCancelledContext`, and
+  `TestCancelledRewriteTextColumnLeavesTransactionRollbackable` assert it.
 
 **Not covered.**
 
@@ -309,6 +321,7 @@ covering a TEXT and a BLOB column, the update-without-insert behavior of
 updating one row of a composite-key table by rowid, both expected-value
 guards, `UpdateColumnsByRowID`'s refusal of a missing expected value, and
 its schema refusals. The cancellation tests cover `Begin`'s transaction
-still committing once its own begin context is cancelled, and
+still committing once its own begin context is cancelled,
 `CountTextColumnRO` and `RewriteTextColumn` surfacing a cancelled context
-as `context.Canceled`.
+as `context.Canceled`, and a cancelled `RewriteTextColumn` leaving the
+transaction rollbackable with its earlier update undone.

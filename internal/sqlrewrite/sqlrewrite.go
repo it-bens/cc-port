@@ -92,8 +92,9 @@ func (database *DB) Close() error {
 	return nil
 }
 
-// Begin starts a transaction under context.WithoutCancel(ctx), because a
-// cancelled BeginTx context rolls back a transaction committed later.
+// Begin starts a transaction whose statements run non-cancellable, under
+// context.WithoutCancel(ctx): SQLite rolls an explicit transaction back on
+// its own when a statement in it is interrupted.
 func (database *DB) Begin(ctx context.Context) (*Tx, error) {
 	if database == nil || database.database == nil {
 		return nil, fmt.Errorf("begin SQLite rewrite transaction: database is nil")
@@ -187,13 +188,17 @@ func CountTextColumnRO(ctx context.Context, database *sql.DB, table, column, old
 func (database *DB) RewriteTextColumn(
 	ctx context.Context, transaction *Tx, table, primaryKeyColumn, column, oldPath, newPath string,
 ) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("rewrite SQLite text column: %w", err)
+	}
 	if err := validatePathArguments(oldPath, newPath); err != nil {
 		return 0, err
 	}
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("rewrite SQLite text column: transaction is nil")
 	}
-	if err := requirePrimaryKeyAndColumn(ctx, transaction.transaction, table, primaryKeyColumn, column); err != nil {
+	transactionCtx := context.WithoutCancel(ctx)
+	if err := requirePrimaryKeyAndColumn(transactionCtx, transaction.transaction, table, primaryKeyColumn, column); err != nil {
 		return 0, err
 	}
 
@@ -202,7 +207,7 @@ func (database *DB) RewriteTextColumn(
 		"SELECT %s, %s FROM %s WHERE instr(%s, ?) > 0",
 		quoteIdentifier(primaryKeyColumn), quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column),
 	)
-	rows, err := transaction.transaction.QueryContext(ctx, selectQuery, oldPath)
+	rows, err := transaction.transaction.QueryContext(transactionCtx, selectQuery, oldPath)
 	if err != nil {
 		return 0, fmt.Errorf("stream text values from %s.%s: %w", table, column, err)
 	}
@@ -210,7 +215,7 @@ func (database *DB) RewriteTextColumn(
 
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
 	updateQuery := fmt.Sprintf("UPDATE %s SET %s = ? WHERE %s = ?", quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(primaryKeyColumn))
-	statement, err := transaction.transaction.PrepareContext(ctx, updateQuery)
+	statement, err := transaction.transaction.PrepareContext(transactionCtx, updateQuery)
 	if err != nil {
 		return 0, fmt.Errorf("prepare text rewrite for %s.%s: %w", table, column, err)
 	}
@@ -231,7 +236,10 @@ func (database *DB) RewriteTextColumn(
 		if replacements == 0 {
 			continue
 		}
-		if _, err := statement.ExecContext(ctx, rewritten, primaryKey); err != nil {
+		if err := ctx.Err(); err != nil {
+			return 0, fmt.Errorf("write rewritten text value to %s.%s: %w", table, column, err)
+		}
+		if _, err := statement.ExecContext(transactionCtx, rewritten, primaryKey); err != nil {
 			return 0, fmt.Errorf("write rewritten text value to %s.%s: %w", table, column, err)
 		}
 		count++
@@ -251,6 +259,9 @@ func (database *DB) RewriteTextColumn(
 func (database *DB) UpdateColumnsByKey(
 	ctx context.Context, transaction *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any,
 ) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("update SQLite columns by key: %w", err)
+	}
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("update SQLite columns by key: transaction is nil")
 	}
@@ -262,10 +273,11 @@ func (database *DB) UpdateColumnsByKey(
 	}
 	columns := sortedColumns(values)
 	required := append(sortedColumns(expected), columns...)
-	if err := requirePrimaryKeyAndColumns(ctx, transaction.transaction, table, primaryKeyColumn, required...); err != nil {
+	transactionCtx := context.WithoutCancel(ctx)
+	if err := requirePrimaryKeyAndColumns(transactionCtx, transaction.transaction, table, primaryKeyColumn, required...); err != nil {
 		return 0, err
 	}
-	return updateColumnsWhere(ctx, transaction, table, quoteIdentifier(primaryKeyColumn), primaryKey, columns, values, expected)
+	return updateColumnsWhere(transactionCtx, transaction, table, quoteIdentifier(primaryKeyColumn), primaryKey, columns, values, expected)
 }
 
 // UpdateColumnsByRowID updates columns on an existing row identified by its
@@ -278,6 +290,9 @@ func (database *DB) UpdateColumnsByKey(
 func (database *DB) UpdateColumnsByRowID(
 	ctx context.Context, transaction *Tx, table string, rowID int64, values, expected map[string]any,
 ) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("update SQLite columns by rowid: %w", err)
+	}
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("update SQLite columns by rowid: transaction is nil")
 	}
@@ -292,10 +307,11 @@ func (database *DB) UpdateColumnsByRowID(
 	}
 	columns := sortedColumns(values)
 	required := append(sortedColumns(expected), columns...)
-	if err := requireRowIDTableAndColumns(ctx, transaction.transaction, table, required...); err != nil {
+	transactionCtx := context.WithoutCancel(ctx)
+	if err := requireRowIDTableAndColumns(transactionCtx, transaction.transaction, table, required...); err != nil {
 		return 0, err
 	}
-	return updateColumnsWhere(ctx, transaction, table, "rowid", rowID, columns, values, expected)
+	return updateColumnsWhere(transactionCtx, transaction, table, "rowid", rowID, columns, values, expected)
 }
 
 // refuseNilExpectedValues rejects a nil expected value, untyped or a typed

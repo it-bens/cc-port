@@ -520,6 +520,43 @@ func TestRewriteTextColumnFailsOnCancelledContext(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestCancelledRewriteTextColumnLeavesTransactionRollbackable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cancelled-rollback.sqlite")
+	const oldPath = "/Users/test/Projects/my-project"
+	database := openSQLite(t, path)
+	require.NoError(t, prepareWAL(database))
+	require.NoError(t, execute(database, "CREATE TABLE documents (id INTEGER PRIMARY KEY, text_content TEXT)"))
+	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", 1, oldPath+"/notes"))
+	require.NoError(t, database.Close())
+
+	rewriter, err := Open(t.Context(), path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	transaction, err := rewriter.Begin(ctx)
+	require.NoError(t, err)
+
+	rewritten, err := rewriter.RewriteTextColumn(
+		ctx, transaction, "documents", "id", "text_content", oldPath, "/Users/test/Projects/renamed",
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, rewritten)
+
+	cancel()
+	_, err = rewriter.RewriteTextColumn(
+		ctx, transaction, "documents", "id", "text_content", oldPath, "/Users/test/Projects/renamed",
+	)
+	require.ErrorIs(t, err, context.Canceled)
+
+	require.NoError(t, transaction.Rollback())
+
+	check := openSQLite(t, path)
+	var stored string
+	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT text_content FROM documents WHERE id = 1").Scan(&stored))
+	assert.Equal(t, oldPath+"/notes", stored)
+}
+
 func TestVersionMeetsFloor(t *testing.T) {
 	cases := []struct {
 		name    string
