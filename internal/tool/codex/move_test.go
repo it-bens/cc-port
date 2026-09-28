@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -124,6 +125,40 @@ func TestMoveSurfacesDefaultModeRolloutPlanPredictsApply(t *testing.T) {
 
 	assert.Equal(t, 12, planCounts[categorySessions], "ten era-C structured fields plus session_meta.cwd in the era-B and archived rollouts")
 	assert.Equal(t, planCounts[categorySessions], applyCounts[categorySessions])
+}
+
+const otherProjectRolloutPath = "sessions/2026/07/18/rollout-2026-07-18T11-00-00-00000000-0000-4000-8000-000000000005.jsonl"
+
+// TestMoveSurfacesLeavesOtherProjectRolloutUntouched guards that a rollout
+// naming another project is neither written nor registered: a rename over it
+// would detach a live Codex writer holding the file open, and a registered
+// snapshot would replace it again on Restore.
+func TestMoveSurfacesLeavesOtherProjectRolloutUntouched(t *testing.T) {
+	workspace, home := fixtureWorkspace(t)
+	path := rolloutFixturePath(home, otherProjectRolloutPath)
+	original, err := os.ReadFile(path) //nolint:gosec // G304: path inside the staged fixture home
+	require.NoError(t, err)
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project", DeepRewrite: true}
+	surfaces, err := workspace.MoveSurfaces(req)
+	require.NoError(t, err)
+	sessionsIndex := slices.IndexFunc(surfaces, func(surface tool.Surface) bool { return surface.Name == categorySessions })
+	require.NotEqual(t, -1, sessionsIndex)
+	undo := tool.NewRestorer()
+
+	result, err := surfaces[sessionsIndex].Apply(context.Background(), undo)
+	require.NoError(t, err)
+	require.Positive(t, result.Count, "sanity: the fixture project's own rollouts are rewritten")
+	require.NoError(t, undo.Restore())
+
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path inside the staged fixture home
+	require.NoError(t, err)
+	assert.Equal(t, original, data)
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "neither apply nor Restore replaces the other project's rollout")
+	assert.Equal(t, before.ModTime(), after.ModTime())
 }
 
 func TestMoveSurfacesDefaultModeRewritesRuntimeRootsAndThreadSettings(t *testing.T) {
@@ -1187,6 +1222,30 @@ func TestAgentsMarketplaceRewritesStructuredSourceWithDottedKeys(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(updated), "/Users/fixture/renamed-project/plugin")
 	assert.Contains(t, string(updated), `"source":"local"`)
+}
+
+func TestAgentsMarketplaceLeavesFileWithoutMatchingSourceUntouched(t *testing.T) {
+	agentsDir := FixtureAgentsDir(t)
+	marketplacePath := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
+	contents := `{"entries":[{"name":"other-plugin","source":"/Users/test/Projects/otherproject/plugin"}]}`
+	require.NoError(t, os.WriteFile(marketplacePath, []byte(contents), 0o600))
+	before, err := os.Stat(marketplacePath)
+	require.NoError(t, err)
+	undo := tool.NewRestorer()
+
+	applied, err := applyAgentsMarketplace(agentsDir, FixtureProjectPath(), "/Users/fixture/renamed-project", undo)
+	require.NoError(t, err)
+	afterApply, err := os.Stat(marketplacePath)
+	require.NoError(t, err)
+	require.NoError(t, undo.Restore())
+	afterRestore, err := os.Stat(marketplacePath)
+	require.NoError(t, err)
+
+	assert.Zero(t, applied)
+	assert.True(t, os.SameFile(before, afterApply), "apply leaves the marketplace inode in place")
+	assert.Equal(t, before.ModTime(), afterApply.ModTime())
+	assert.True(t, os.SameFile(before, afterRestore), "Restore has no snapshot to put back")
+	assert.Equal(t, before.ModTime(), afterRestore.ModTime())
 }
 
 func TestAgentsMarketplaceLeavesTagOnlySourceUntouched(t *testing.T) {

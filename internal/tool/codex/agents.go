@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,9 +103,6 @@ func applyAgentsMarketplace(agentsDir, oldPath, newPath string, undo *tool.Resto
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if err := undo.RegisterFile(path); err != nil {
-		return 0, fmt.Errorf("back up %s: %w", path, err)
-	}
 
 	total := 0
 	updated := data
@@ -120,11 +118,11 @@ func applyAgentsMarketplace(agentsDir, oldPath, newPath string, undo *tool.Resto
 			return 0, fmt.Errorf("rewrite %s in %s: %w", sourcePath, path, err)
 		}
 	}
-	if total == 0 {
+	if bytes.Equal(updated, data) {
 		return 0, nil
 	}
-	if err := rewrite.SafeWriteFile(path, updated, info.Mode()); err != nil {
-		return 0, fmt.Errorf("write %s: %w", path, err)
+	if err := undo.ReplaceFile(path, updated, info.Mode()); err != nil {
+		return 0, err
 	}
 	return total, nil
 }

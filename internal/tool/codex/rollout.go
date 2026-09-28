@@ -17,6 +17,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // ErrCompressedRolloutUnsupported is the sentinel discoverRolloutFiles
@@ -559,8 +560,8 @@ func planRolloutFile(path, oldPath, newPath string, deep bool) (count int, eraA 
 // applyRolloutSubstitutions applies substitutions captured during preflight.
 // It deliberately performs no path canonicalization, so another tool's apply
 // cannot make a previously canonical match disappear by removing oldPath.
-func applyRolloutSubstitutions(path string, substitutions []pathSubstitution, deep bool) (int, error) {
-	changedCount, err := rewriteRolloutLines(path, func(line []byte) ([]byte, int) {
+func applyRolloutSubstitutions(path string, substitutions []pathSubstitution, deep bool, undo *tool.Restorer) (int, error) {
+	changedCount, err := rewriteRolloutLines(path, undo, func(line []byte) ([]byte, int) {
 		return rewriteRolloutLine(line, substitutions, deep)
 	})
 	if err != nil {
@@ -587,7 +588,9 @@ func readRolloutLines(path string) (lines [][]byte, err error) {
 	return lines, nil
 }
 
-func rewriteRolloutLines(path string, transform func(line []byte) (rewritten []byte, count int)) (int, error) {
+// rewriteRolloutLines replaces path through undo only when transform changed
+// at least one line; an unchanged rollout is neither registered nor written.
+func rewriteRolloutLines(path string, undo *tool.Restorer, transform func(line []byte) (rewritten []byte, count int)) (int, error) {
 	lines, err := readRolloutLines(path)
 	if err != nil {
 		return 0, err
@@ -601,13 +604,19 @@ func rewriteRolloutLines(path string, transform func(line []byte) (rewritten []b
 		output.Write(rewrittenLine)
 		output.WriteByte('\n')
 	}
+	// The change count, not a byte compare, is the change test: reassembly
+	// terminates every line with '\n', so an unterminated final line would
+	// read as a change without any path having been rewritten.
+	if count == 0 {
+		return 0, nil
+	}
 
 	info, err := os.Stat(path)
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if err := rewrite.SafeWriteFile(path, output.Bytes(), info.Mode()); err != nil {
-		return 0, fmt.Errorf("write %s: %w", path, err)
+	if err := undo.ReplaceFile(path, output.Bytes(), info.Mode()); err != nil {
+		return 0, err
 	}
 	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 		return 0, fmt.Errorf("restore mtime %s: %w", path, err)

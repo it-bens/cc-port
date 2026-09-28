@@ -148,3 +148,52 @@ func TestRestorer_CleanupRemovesSiblingBackupsWithoutRestoring(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("mutated"), got, "Cleanup must not restore the target")
 }
+
+// TestRestorer_ReplaceFileWritesReplacementAndRollsBack covers both
+// RegisterFile branches ReplaceFile drives: a small file held in memory, and
+// a large file (>1 MiB, no injectable threshold exists on Restorer, so this
+// test writes a real file past it) routed through the sibling-backup path.
+// ReplaceFile must write the replacement bytes, and a later Restore must put
+// back the original bytes, mode, and modification time. The replacement mode
+// differs from the original so the mode assertion cannot pass by accident.
+func TestRestorer_ReplaceFileWritesReplacementAndRollsBack(t *testing.T) {
+	replacement := []byte("replacement\n")
+	const replacementMode = 0o640
+	past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name     string
+		original []byte
+	}{
+		{"in-memory branch", []byte("original\n")},
+		{"sibling backup branch", []byte(strings.Repeat("abc\n", 300_000))}, // >1 MiB: forces the sibling-backup path
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			target := filepath.Join(tmp, "target.txt")
+			require.NoError(t, os.WriteFile(target, testCase.original, 0o600))
+			require.NoError(t, os.Chtimes(target, past, past))
+
+			restorer := tool.NewRestorer()
+			require.NoError(t, restorer.ReplaceFile(target, replacement, replacementMode))
+
+			written, err := os.ReadFile(target) //nolint:gosec // test-controlled path
+			require.NoError(t, err)
+			assert.Equal(t, replacement, written, "ReplaceFile must write the replacement bytes")
+
+			require.NoError(t, restorer.Restore())
+
+			restored, err := os.ReadFile(target) //nolint:gosec // test-controlled path
+			require.NoError(t, err)
+			assert.Equal(t, testCase.original, restored, "Restore must put back the original bytes")
+
+			info, err := os.Stat(target)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+				"Restore must put back the original mode")
+			assert.WithinDuration(t, past, info.ModTime(), time.Second,
+				"Restore must reapply the pre-mutation mtime, not the restore time")
+		})
+	}
+}

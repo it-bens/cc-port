@@ -55,7 +55,6 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 
 type rolloutRewritePlan struct {
 	substitutions []pathSubstitution
-	eraA          bool
 	count         int
 	warnings      []string
 }
@@ -101,7 +100,7 @@ func (workspace *Workspace) captureMovePreflight(req tool.MoveRequest) (moveRewr
 				count += lineCount
 			}
 		}
-		rollouts[path] = rolloutRewritePlan{substitutions: substitutions, eraA: eraA, count: count, warnings: rolloutMalformedWarnings(path, lines)}
+		rollouts[path] = rolloutRewritePlan{substitutions: substitutions, count: count, warnings: rolloutMalformedWarnings(path, lines)}
 	}
 	return moveRewritePreflight{state: state, queue: queue, config: config, rollouts: rollouts}, nil
 }
@@ -278,13 +277,10 @@ func (workspace *Workspace) rolloutsSurfaceWithPlans(req tool.MoveRequest, plans
 					return tool.SurfaceResult{}, err
 				}
 				warnings = append(warnings, plan.warnings...)
-				if plan.eraA || len(plan.substitutions) == 0 {
+				if plan.count == 0 {
 					continue
 				}
-				if err := undo.RegisterFile(path); err != nil {
-					return tool.SurfaceResult{}, fmt.Errorf("back up %s: %w", path, err)
-				}
-				changed, err := applyRolloutSubstitutions(path, plan.substitutions, req.DeepRewrite)
+				changed, err := applyRolloutSubstitutions(path, plan.substitutions, req.DeepRewrite, undo)
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("%s: %w", path, err)
 				}

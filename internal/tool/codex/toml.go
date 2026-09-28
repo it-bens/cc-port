@@ -204,9 +204,6 @@ func applyConfigTOMLKeys(path string, keys []string, newPath string, undo *tool.
 		}
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if err := undo.RegisterFile(path); err != nil {
-		return 0, fmt.Errorf("back up %s: %w", path, err)
-	}
 	data, err := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled config discovery
 	if err != nil {
 		return 0, fmt.Errorf("read %s: %w", path, err)
@@ -228,8 +225,8 @@ func applyConfigTOMLKeys(path string, keys []string, newPath string, undo *tool.
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if err := rewrite.SafeWriteFile(path, rewritten, info.Mode()); err != nil {
-		return 0, fmt.Errorf("write %s: %w", path, err)
+	if err := undo.ReplaceFile(path, rewritten, info.Mode()); err != nil {
+		return 0, err
 	}
 	return total, nil
 }

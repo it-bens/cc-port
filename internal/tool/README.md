@@ -97,6 +97,10 @@ package's types support.
   - `NewRestorer() *Restorer`
   - `(*Restorer).RegisterFile(path string) error`: snapshots `path`'s current
     contents before a caller overwrites it in place.
+  - `(*Restorer).ReplaceFile(path string, rewritten []byte, mode os.FileMode) error`:
+    snapshots `path` through `RegisterFile`, then writes `rewritten` over it.
+    The only way a move writer replaces a file; the caller decides whether the
+    file changed and must not call it for an unchanged one.
   - `(*Restorer).RegisterUndo(fn func() error)`: records a non-file rollback
     (a SQL transaction rollback, for example).
   - `(*Restorer).Restore() error`: reverses every registration in reverse

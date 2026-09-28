@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -220,13 +221,11 @@ func applyMemoriesWorktree(ctx context.Context, root, oldPath, newPath string, u
 			return 0, fmt.Errorf("read %s: %w", path, err)
 		}
 		rewritten, count := rewrite.ReplacePathInBytes(data, oldPath, newPath)
-		if count > 0 {
-			if err := undo.RegisterFile(path); err != nil {
-				return 0, fmt.Errorf("back up %s: %w", path, err)
-			}
-			if err := rewrite.SafeWriteFile(path, rewritten, info.Mode()); err != nil {
-				return 0, fmt.Errorf("write %s: %w", path, err)
-			}
+		if bytes.Equal(rewritten, data) {
+			continue
+		}
+		if err := undo.ReplaceFile(path, rewritten, info.Mode()); err != nil {
+			return 0, err
 		}
 		total += count
 	}

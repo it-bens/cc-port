@@ -23,9 +23,10 @@ const siblingBackupThreshold = 1 << 20 // 1 MiB
 // rollback-artifact naming.
 const siblingSuffix = rewrite.RollbackSuffix
 
-// Restorer collects rollback state for one Surface Apply pass. File
-// surfaces call RegisterFile before overwriting a path in place; a future
-// non-file surface (e.g. a SQL transaction) calls RegisterUndo with its own
+// Restorer collects rollback state for one Surface Apply pass. A move
+// writer replaces a file through ReplaceFile, which snapshots the pre-image
+// through RegisterFile; a surface whose rollback is not a file rewrite (a
+// SQL transaction, a directory rename) calls RegisterUndo with its own
 // rollback callback. Restore reverses every registration in reverse
 // registration order, joining any errors; Cleanup discards backing state
 // once the caller's operation has fully succeeded.
@@ -120,6 +121,20 @@ func (restorer *Restorer) registerSibling(path string, mode os.FileMode, modTime
 	restorer.cleanups = append(restorer.cleanups, func() {
 		_ = os.Remove(sibling)
 	})
+	return nil
+}
+
+// ReplaceFile snapshots path through RegisterFile, then writes rewritten
+// over it. It is the only way a move writer replaces a file; the caller
+// decides whether the file actually changed and must not call ReplaceFile
+// for an unchanged one.
+func (restorer *Restorer) ReplaceFile(path string, rewritten []byte, mode os.FileMode) error {
+	if err := restorer.RegisterFile(path); err != nil {
+		return fmt.Errorf("back up %s: %w", path, err)
+	}
+	if err := rewrite.SafeWriteFile(path, rewritten, mode); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
 	return nil
 }
 

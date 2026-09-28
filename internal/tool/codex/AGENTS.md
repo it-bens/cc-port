@@ -9,6 +9,7 @@
 - Never `INSERT` into the state database; it is a foreign, self-healing cache Codex's own reconciler owns. (README §Sidecar update-only rationale)
 - Walk both rollout roots (`sessions/`, `archived_sessions/`) in every rollout surface; never assume one. (README §Both-roots coverage)
 - Preserve rollout filenames exactly; `rewriteRolloutLines` rewrites content in place at the same path, never renames. (README §Era-A rollout handling)
+- A move writer replaces a file only through `undo.ReplaceFile`, and only after its rewrite changed something; an unchanged file is neither registered nor written. (README §Rollout structured fields)
 - Append to `history.jsonl` and `session_index.jsonl` with `O_APPEND`, never rename-replace; a replace would invalidate `history.jsonl`'s inode-keyed TUI cache and could drop a concurrent Codex append to either file. (README §History and session-index append-only)
 - Never export or import `config.toml`; trust is a per-machine decision. Reading it to report the destination's own MCP server definitions is not porting. (README §Config never ported, §MCP server definitions)
 - Compute a project's stats/export thread-ID set only through `projectThreadIDSet`; never re-derive it from rollouts alone. (README §Reference thread-ID union)

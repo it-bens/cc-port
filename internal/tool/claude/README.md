@@ -461,14 +461,29 @@ per-project reference rewrite. `project-directory` runs last because it
 derives paths directly from `Home.ProjectDir` and never locates via witness
 state.
 
+Every move writer replaces a file only when its rewrite changed something.
+An unchanged file returns a zero count, registers nothing with the
+`Restorer`, and keeps its content, inode, and mtime. This matters most for
+the home-wide files — `history.jsonl`, `~/.claude.json`, `settings.json`,
+and the plugin registries — which a move shares with every other project and
+which need not name the moved one.
+
+Writers replace through `tool.Restorer.ReplaceFile` alone: it registers the
+pre-image and writes in one call, and no move writer calls `RegisterFile` or
+`rewrite.SafeWriteFile` directly. The change test compares the rewritten
+bytes with the bytes the writer read, except in `applyHistoryRewrite`, which
+reassembles the file line by line and keys on `StreamHistoryJSONL`'s
+rewritten-line count instead.
+
 #### Handled
 
 - Every plain-bytes surface with substitutable content (user-wide,
-  session-keyed) routes through `rewriteTracked`: `Restorer.RegisterFile`,
-  then `rewrite.ReplacePathInBytes`, then `rewrite.SafeWriteFile`. History
-  and config are format-aware instead: `historySurface` streams through
-  `StreamHistoryJSONL`, and `configSurface` rewrites through
-  `RewriteUserConfig`.
+  session-keyed) routes through `rewriteTracked`, which reads the file,
+  rewrites it through `rewrite.ReplacePathInBytes`, compares the result with
+  what it read, and only then registers and writes through
+  `tool.Restorer.ReplaceFile`. History and config are format-aware instead:
+  `historySurface` streams through `StreamHistoryJSONL`, and `configSurface`
+  rewrites through `RewriteUserConfig`.
 - Transcripts and memory route through `rewriteTwicePreservingMtime`, which
   additionally rewrites the encoded storage-directory form
   (`Home.ProjectDir(oldPath)` to `Home.ProjectDir(newPath)`) in the same
