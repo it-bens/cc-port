@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/archive"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -24,8 +25,26 @@ func TestApply_PreflightsEveryWitnessBeforeAnySurfaceApply(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.Failed())
 	assert.Equal(t, []string{
-		"surface:first", "witness:first", "surface:second", "witness:second", "apply:first", "apply:second",
+		"surface:first", "witness:first", "surface:second", "witness:second", "witness:first", "witness:second", "apply:first", "apply:second",
 	}, events)
+}
+
+func TestApply_WriterStartedAfterPreflightPreventsAnyApply(t *testing.T) {
+	events := []string{}
+	first := newPreflightTargetRefusingFrom(t, "first", &events, 2)
+	second := newPreflightTarget(t, "second", &events, false)
+
+	_, err := move.Apply(context.Background(), []tool.Target{first, second}, move.Options{OldPath: "/old", NewPath: "/new"})
+
+	require.Error(t, err)
+	assert.Equal(t, []string{
+		"surface:first", "witness:first", "surface:second", "witness:second", "witness:first", "witness:second",
+	}, events)
+	var liveError *lock.LiveSessionsError
+	require.ErrorAs(t, err, &liveError)
+	assert.Equal(t, []tool.ActiveWriter{{Pid: 1, Cwd: "/writer"}}, liveError.Sessions)
+	require.ErrorContains(t, err, "pid=1")
+	require.ErrorContains(t, err, `cwd="/writer"`)
 }
 
 func TestApply_SecondWitnessRefusalPreventsFirstMutation(t *testing.T) {
@@ -53,6 +72,10 @@ type preflightWorkspace struct {
 	lockPath string
 	events   *[]string
 	refuse   bool
+	// refuseFrom makes the witness quiet until its refuseFrom-th call, then a
+	// live writer — a session started after the lock-time witness.
+	refuseFrom   int
+	witnessCalls int
 }
 
 func newPreflightTarget(t *testing.T, name string, events *[]string, refuse bool) tool.Target {
@@ -63,11 +86,20 @@ func newPreflightTarget(t *testing.T, name string, events *[]string, refuse bool
 	}
 }
 
+func newPreflightTargetRefusingFrom(t *testing.T, name string, events *[]string, refuseFrom int) tool.Target {
+	t.Helper()
+	return tool.Target{
+		Tool:      &preflightTool{name: name},
+		Workspace: &preflightWorkspace{name: name, lockPath: filepath.Join(t.TempDir(), name+".lock"), events: events, refuseFrom: refuseFrom},
+	}
+}
+
 func (workspace *preflightWorkspace) Root() string     { return workspace.lockPath }
 func (workspace *preflightWorkspace) LockPath() string { return workspace.lockPath }
 func (workspace *preflightWorkspace) ActiveWriters() ([]tool.ActiveWriter, error) {
 	*workspace.events = append(*workspace.events, "witness:"+workspace.name)
-	if workspace.refuse {
+	workspace.witnessCalls++
+	if workspace.refuse || (workspace.refuseFrom > 0 && workspace.witnessCalls >= workspace.refuseFrom) {
 		return []tool.ActiveWriter{{Pid: 1, Cwd: "/writer"}}, nil
 	}
 	return nil, nil

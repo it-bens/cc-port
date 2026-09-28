@@ -201,12 +201,13 @@ func (result *ApplyResult) Failed() bool {
 }
 
 // Apply performs the project move. Every selected target is preflighted in
-// registry order (MoveSurfaces, writer witness, then flock) before any tool
-// applies. The flocks remain held until the full apply completes. Cross-tool
-// rollback does not exist: a target that has
-// already completed reflects the true new path even if a later target
-// fails, so the returned ApplyResult carries a per-tool success/failure
-// record and Failed reports whether the caller should exit non-zero.
+// registry order (MoveSurfaces, writer witness, then flock), then every
+// target's witness is re-run once, aggregated, before any tool applies.
+// The flocks remain held until the full apply completes. Cross-tool
+// rollback does not exist: a target that has already completed reflects
+// the true new path even if a later target fails, so the returned
+// ApplyResult carries a per-tool success/failure record and Failed reports
+// whether the caller should exit non-zero.
 func Apply(ctx context.Context, targets []tool.Target, options Options) (result *ApplyResult, returnErr error) {
 	if err := validatePreconditions(options.OldPath, options.NewPath); err != nil {
 		return nil, err
@@ -219,19 +220,13 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 	}
 	req := options.request()
 
-	type prepared struct {
-		target   tool.Target
-		surfaces []tool.Surface
-		held     *lock.Held
-		absent   bool
-	}
-	var preparedTargets []prepared
+	var preparedTargets []preparedTarget
 	result = &ApplyResult{}
 	defer func() {
 		var releaseErrors []error
-		for _, preparedTarget := range slices.Backward(preparedTargets) {
-			if err := preparedTarget.held.Release(); err != nil {
-				releaseErrors = append(releaseErrors, fmt.Errorf("release %s lock: %w", preparedTarget.target.Tool.Name(), err))
+		for _, entry := range slices.Backward(preparedTargets) {
+			if err := entry.held.Release(); err != nil {
+				releaseErrors = append(releaseErrors, fmt.Errorf("release %s lock: %w", entry.target.Tool.Name(), err))
 			}
 		}
 		if len(releaseErrors) > 0 {
@@ -239,25 +234,22 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 		}
 	}()
 
-	for _, target := range targets {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		surfaces, err := target.Workspace.MoveSurfaces(ctx, req)
-		absent := false
-		if err != nil {
-			if errors.Is(err, tool.ErrProjectAbsent) {
-				absent = true
-				surfaces = nil
-			} else {
-				return nil, fmt.Errorf("preflight %s: %w", target.Tool.Name(), err)
-			}
-		}
-		held, err := lock.Acquire(target.Workspace.LockPath(), target.Workspace.ActiveWriters)
-		if err != nil {
-			return nil, fmt.Errorf("preflight %s: %w", target.Tool.Name(), err)
-		}
-		preparedTargets = append(preparedTargets, prepared{target: target, surfaces: surfaces, held: held, absent: absent})
+	var err error
+	preparedTargets, err = preflightTargets(ctx, targets, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// The lock-time witness ran before any surface byte was touched, and the
+	// flocks do not stop the tools themselves from starting. Re-run every
+	// prepared target's witness once here so a session started since the
+	// preflight aborts the move before the first applyTarget writes anything.
+	witnesses := make([]func() ([]tool.ActiveWriter, error), len(preparedTargets))
+	for index, entry := range preparedTargets {
+		witnesses[index] = entry.target.Workspace.ActiveWriters
+	}
+	if err := lock.RecheckWitnesses(witnesses); err != nil {
+		return nil, fmt.Errorf("recheck live writers: %w", err)
 	}
 
 	for _, entry := range preparedTargets {
@@ -287,6 +279,43 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 	}
 
 	return result, nil
+}
+
+// preparedTarget is one target's preflight state, held until Apply's deferred
+// release after the full apply completes.
+type preparedTarget struct {
+	target   tool.Target
+	surfaces []tool.Surface
+	held     *lock.Held
+	absent   bool
+}
+
+// preflightTargets prepares every target in registry order — MoveSurfaces,
+// then witness-first lock.Acquire — before any target applies. On error it
+// returns the targets prepared so far, so the caller can release their locks.
+func preflightTargets(ctx context.Context, targets []tool.Target, req tool.MoveRequest) ([]preparedTarget, error) {
+	preparedTargets := make([]preparedTarget, 0, len(targets))
+	for _, target := range targets {
+		if err := ctx.Err(); err != nil {
+			return preparedTargets, err
+		}
+		surfaces, err := target.Workspace.MoveSurfaces(ctx, req)
+		absent := false
+		if err != nil {
+			if errors.Is(err, tool.ErrProjectAbsent) {
+				absent = true
+				surfaces = nil
+			} else {
+				return preparedTargets, fmt.Errorf("preflight %s: %w", target.Tool.Name(), err)
+			}
+		}
+		held, err := lock.Acquire(target.Workspace.LockPath(), target.Workspace.ActiveWriters)
+		if err != nil {
+			return preparedTargets, fmt.Errorf("preflight %s: %w", target.Tool.Name(), err)
+		}
+		preparedTargets = append(preparedTargets, preparedTarget{target: target, surfaces: surfaces, held: held, absent: absent})
+	}
+	return preparedTargets, nil
 }
 
 func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surface, req tool.MoveRequest, reporter progress.Reporter) ToolResult {

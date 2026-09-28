@@ -18,8 +18,10 @@ as "the project") lives in the owning adapter's `MoveSurfaces` (for example
 - `Apply(ctx context.Context, targets []tool.Target, options Options) (*ApplyResult, error)`:
   executes the move. Every selected target is preflighted in registry order
   (`MoveSurfaces`, then witness-first `lock.Acquire`) before any tool
-  applies; the acquired locks are held through the full apply and released
-  in reverse order via a deferred cleanup. See
+  applies; after the preflight loop it re-runs every prepared target's
+  witness through `lock.RecheckWitnesses` before the first surface applies.
+  The acquired locks are held through the full apply and released in reverse
+  order via a deferred cleanup. See
   `docs/architecture.md` §Crash and idempotence contract for the per-tool
   apply bracket, in-process failure, re-run convergence, and cross-tool
   rollback guarantees this call implements. `ApplyResult` carries a per-tool
@@ -52,6 +54,14 @@ witness-then-flock ordering that guards `Apply`.
   `MoveSurfaces` marks that target `Absent` and skips it during apply, still
   holding its (already-acquired) lock through the full run for consistency
   with the other targets.
+- After the preflight loop, `Apply` re-runs every prepared target's witness,
+  absent targets included, through `lock.RecheckWitnesses` before the first
+  surface applies. A live writer fails the move with an error prefixed
+  `recheck live writers:` that wraps the joined `*lock.LiveSessionsError`,
+  naming every writer's pid and cwd. No file has been written when it fails,
+  and the acquired locks release as usual. The residual window this leaves
+  open is in [`internal/lock/README.md`](../lock/README.md) §Concurrency
+  guard.
 - Each target's surfaces apply in the order its adapter returned them, each
   registering its own rollback with a fresh `tool.Restorer`; a surface
   failure rolls back only that target's own `Restorer` (see
