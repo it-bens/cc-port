@@ -51,7 +51,7 @@ func TestStateDBKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
 func TestMove_StateDBApplyFailsWhenProjectRootChangedAfterPlan(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	require.Equal(t, "state-db", surfaces[0].Name)
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
@@ -76,7 +76,7 @@ func TestMove_StateDBApplyFailsWhenProjectRootChangedAfterPlan(t *testing.T) {
 func TestMove_StateDBApplyFailsWhenThreadCwdChangedAfterPlan(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	require.Equal(t, "state-db", surfaces[0].Name)
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
@@ -131,7 +131,7 @@ func TestMove_StateDBApplyFailsWhenStateDatabasesChangedAfterPlan(t *testing.T) 
 		t.Run(testCase.name, func(t *testing.T) {
 			workspace, home := fixtureWorkspace(t)
 			req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-			surfaces, err := workspace.MoveSurfaces(req)
+			surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 			require.NoError(t, err)
 			require.Equal(t, "state-db", surfaces[0].Name)
 			testCase.change(t, home)
@@ -223,10 +223,10 @@ func TestStateDBPlanMatchesByteExactValuesUnderCaseInsensitiveCollation(t *testi
 
 	rewrites, err := matchingPathRewrites(context.Background(), path, FixtureProjectPath(), newPath)
 	require.NoError(t, err)
-	rewriter, err := sqlrewrite.Open(path)
+	rewriter, err := sqlrewrite.Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin()
+	transaction, err := rewriter.Begin(t.Context())
 	require.NoError(t, err)
 	applied, err := rewriteStateDBPathsWithPlan(context.Background(), rewriter, transaction, rewrites)
 	require.NoError(t, err)

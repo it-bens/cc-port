@@ -92,8 +92,8 @@ const SurfaceProjectDirectory = "project-directory"
 // warnings about content a move cannot fully rewrite (e.g. opaque snapshot
 // bytes that may still reference the old path).
 type Mover interface {
-	MoveSurfaces(req MoveRequest) ([]Surface, error)
-	ResidualWarnings(req MoveRequest) ([]string, error)
+	MoveSurfaces(ctx context.Context, req MoveRequest) ([]Surface, error)
+	ResidualWarnings(ctx context.Context, req MoveRequest) ([]string, error)
 }
 
 // ArchiveEntry names one file an Exporter wrote into the archive, relative
@@ -120,7 +120,7 @@ type ExportResult struct {
 // Exporter produces the placeholder set for one project and streams that
 // project's selected categories into an archive.Sink.
 type Exporter interface {
-	Placeholders(project string, selected map[string]bool) ([]manifest.Placeholder, error)
+	Placeholders(ctx context.Context, project string, selected map[string]bool) ([]manifest.Placeholder, error)
 	Export(ctx context.Context, project string, selected map[string]bool, sink *archive.Sink) (ExportResult, error)
 }
 

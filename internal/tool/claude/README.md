@@ -25,11 +25,11 @@ drive it through the contract without knowing Claude's on-disk shape.
     `UsageDataDir`, `PluginsDataDir`, `TasksDir`, `PluginsInstalledFile`,
     `KnownMarketplacesFile`.
 - **Project enumeration**
-  - `LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, error)`:
+  - `LocateProject(ctx context.Context, claudeHome *Home, projectPath string) (*ProjectLocations, error)`:
     returns every file tied to a project. Errors if the project directory
     does not exist. Optional resources are zero-valued when absent.
   - `ProjectLocations`: struct holding the set.
-  - `EnumerateProjects(claudeHome *Home) ([]ProjectEnumeration, error)`:
+  - `EnumerateProjects(ctx context.Context, claudeHome *Home) ([]ProjectEnumeration, error)`:
     lists every encoded project directory with the data needed to size its
     disk footprint. An absent or empty projects directory yields an empty
     slice, not an error.
@@ -66,11 +66,11 @@ drive it through the contract without knowing Claude's on-disk shape.
     `history.jsonl` is capped separately, by its own `maxCodexJSONLLine`
     constant at the same 16 MiB value.
 - **Tool contract implementation** (`Adapter`, `Workspace` in `adapter.go`)
-  - `(*Workspace).MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error)`,
-    `(*Workspace).ResidualWarnings(tool.MoveRequest) ([]string, error)`
+  - `(*Workspace).MoveSurfaces(ctx, tool.MoveRequest) ([]tool.Surface, error)`,
+    `(*Workspace).ResidualWarnings(ctx, tool.MoveRequest) ([]string, error)`
     (`move.go`): the ordered per-surface rewrite this adapter performs for
     `cc-port move`.
-  - `(*Workspace).Placeholders(project string, selected map[string]bool) ([]manifest.Placeholder, error)`,
+  - `(*Workspace).Placeholders(ctx, project string, selected map[string]bool) ([]manifest.Placeholder, error)`,
     `(*Workspace).Export(ctx, project string, selected map[string]bool, sink *archive.Sink) (tool.ExportResult, error)`
     (`export.go`, `discover.go`): placeholder discovery and category export
     for `cc-port export`.

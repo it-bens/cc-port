@@ -80,7 +80,7 @@ func (c *cancelOnMarkerCloser) Close() error { return c.inner.Close() }
 // against the file bytes.
 func firstFileHistorySnapshot(t *testing.T, home *claude.Home) (dir, path string) {
 	t.Helper()
-	locations, err := claude.LocateProject(home, testProjectPath)
+	locations, err := claude.LocateProject(t.Context(), home, testProjectPath)
 	require.NoError(t, err)
 	require.NotEmpty(t, locations.FileHistoryDirs)
 	sort.Strings(locations.FileHistoryDirs)

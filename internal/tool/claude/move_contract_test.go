@@ -34,7 +34,7 @@ func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
 				// Simulate a SIGKILL right after the sessions surface commits:
 				// apply ONLY that one surface, leaving the encoded project
 				// directory itself untouched.
-				preflightSurfaces, err := workspace.MoveSurfaces(req)
+				preflightSurfaces, err := workspace.MoveSurfaces(t.Context(), req)
 				require.NoError(t, err)
 				undo := tool.NewRestorer()
 				applied := false
@@ -74,7 +74,7 @@ func TestMoveSurfaces_SecondApplyReportsProjectAbsent(t *testing.T) {
 	req := tool.MoveRequest{OldPath: testutil.FixtureProjectPath(), NewPath: testutil.FixtureProjectPath() + "-renamed", RefsOnly: true}
 
 	_ = surfaceCounts(t, workspace, req, true)
-	_, err := workspace.MoveSurfaces(req)
+	_, err := workspace.MoveSurfaces(t.Context(), req)
 
 	require.ErrorIs(t, err, tool.ErrProjectAbsent)
 }
@@ -91,7 +91,7 @@ func TestMove_ResumesAfterWitnessFlip(t *testing.T) {
 	newPath := oldPath + "-renamed"
 	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true}
 
-	crashedSurfaces, err := workspace.MoveSurfaces(req)
+	crashedSurfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	partialUndo := tool.NewRestorer()
 	ranSessions := false
@@ -107,7 +107,7 @@ func TestMove_ResumesAfterWitnessFlip(t *testing.T) {
 	require.True(t, ranSessions, "sanity: MoveSurfaces must include the sessions surface")
 	partialUndo.Cleanup()
 
-	resumedSurfaces, err := workspace.MoveSurfaces(req)
+	resumedSurfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err, "a move whose session witnesses already point at the new path must still converge")
 	undo := tool.NewRestorer()
 	for _, surface := range resumedSurfaces {
@@ -116,9 +116,9 @@ func TestMove_ResumesAfterWitnessFlip(t *testing.T) {
 	}
 	undo.Cleanup()
 
-	_, err = claude.LocateProject(home, oldPath)
+	_, err = claude.LocateProject(t.Context(), home, oldPath)
 	require.ErrorIs(t, err, tool.ErrProjectAbsent, "old path must no longer be locatable after convergence")
-	locations, err := claude.LocateProject(home, newPath)
+	locations, err := claude.LocateProject(t.Context(), home, newPath)
 	require.NoError(t, err, "new path must be fully locatable and witness-consistent after convergence")
 	assert.NotEmpty(t, locations.SessionTranscripts, "the project's transcripts must have carried over to the new path")
 }
@@ -138,7 +138,7 @@ func TestMove_RefusesForeignWitness(t *testing.T) {
 		NewPath: "/Users/test/Projects/my-project-renamed",
 	}
 
-	_, err := workspace.MoveSurfaces(req)
+	_, err := workspace.MoveSurfaces(t.Context(), req)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "refusing to rewrite")
@@ -180,7 +180,7 @@ func TestMove_LeavesUnreferencedHomeWideFilesUntouched(t *testing.T) {
 	}
 
 	workspace := claude.NewWorkspace(home)
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
 	for _, surface := range surfaces {
@@ -245,7 +245,7 @@ func TestMove_LeavesFilesWithoutOldPathReferenceUntouched(t *testing.T) {
 		before[index] = snapshot{info: info, data: data}
 	}
 
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
 	for _, surface := range surfaces {
@@ -271,7 +271,7 @@ func TestMove_LeavesFilesWithoutOldPathReferenceUntouched(t *testing.T) {
 
 func surfaceCounts(t *testing.T, workspace *claude.Workspace, req tool.MoveRequest, apply bool) map[string]int {
 	t.Helper()
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	counts := make(map[string]int, len(surfaces))
 	undo := tool.NewRestorer()

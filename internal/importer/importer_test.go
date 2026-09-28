@@ -169,9 +169,9 @@ func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	codexSelection := map[string]bool{"sessions": true}
 	claudeWorkspace := claude.NewWorkspace(claudeSource)
 	codexWorkspace := quietCodexWorkspace(codex.SetupFixture(t))
-	claudePlaceholders, err := claudeWorkspace.Placeholders(sharedProject, claudeSelection)
+	claudePlaceholders, err := claudeWorkspace.Placeholders(t.Context(), sharedProject, claudeSelection)
 	require.NoError(t, err)
-	codexPlaceholders, err := codexWorkspace.Placeholders(sharedProject, codexSelection)
+	codexPlaceholders, err := codexWorkspace.Placeholders(t.Context(), sharedProject, codexSelection)
 	require.NoError(t, err)
 
 	var archiveBytes bytes.Buffer

@@ -70,8 +70,8 @@ type sidecarGit struct {
 }
 
 // Placeholders declares Codex's machine-local home and project anchors.
-func (workspace *Workspace) Placeholders(project string, _ map[string]bool) ([]manifest.Placeholder, error) {
-	known, err := workspace.knowsProject(context.Background(), project)
+func (workspace *Workspace) Placeholders(ctx context.Context, project string, _ map[string]bool) ([]manifest.Placeholder, error) {
+	known, err := workspace.knowsProject(ctx, project)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (workspace *Workspace) Export(ctx context.Context, project string, selected
 		if err := workspace.exportSessionIndex(ctx, sink, &result, threadIDs); err != nil {
 			return result, err
 		}
-		if err := workspace.exportThreadSidecar(sink, &result, threadIDs); err != nil {
+		if err := workspace.exportThreadSidecar(ctx, sink, &result, threadIDs); err != nil {
 			return result, err
 		}
 	}
@@ -398,7 +398,9 @@ func (workspace *Workspace) exportSessionIndex(
 	return nil
 }
 
-func (workspace *Workspace) exportThreadSidecar(sink *archive.Sink, result *tool.ExportResult, threadIDs map[string]struct{}) error {
+func (workspace *Workspace) exportThreadSidecar(
+	ctx context.Context, sink *archive.Sink, result *tool.ExportResult, threadIDs map[string]struct{},
+) error {
 	if len(threadIDs) == 0 {
 		return nil
 	}
@@ -414,7 +416,7 @@ func (workspace *Workspace) exportThreadSidecar(sink *archive.Sink, result *tool
 			return err
 		}
 		rows, queryErr := database.QueryContext(
-			context.Background(), `SELECT id, archived_at, title, git_sha, git_branch, git_origin_url FROM threads`,
+			ctx, `SELECT id, archived_at, title, git_sha, git_branch, git_origin_url FROM threads`,
 		)
 		if queryErr != nil {
 			_ = database.Close()
@@ -647,12 +649,12 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 			return nil, err
 		}
 	}
-	unapplied, err := applyThreadSidecars(sidecars, databases)
+	unapplied, err := applyThreadSidecars(ctx, sidecars, databases)
 	if err != nil {
 		return nil, err
 	}
 	if workspace.rolloutsStaged && len(databases) > 0 {
-		if err := rearmBackfillState(databases); err != nil {
+		if err := rearmBackfillState(ctx, databases); err != nil {
 			return nil, err
 		}
 	}
@@ -870,29 +872,29 @@ func (workspace *Workspace) parseThreadSidecars() ([]threadSidecar, error) {
 	return sidecars, nil
 }
 
-func applyThreadSidecars(sidecars []threadSidecar, databases []string) (int, error) {
+func applyThreadSidecars(ctx context.Context, sidecars []threadSidecar, databases []string) (int, error) {
 	unapplied := 0
 	for _, sidecar := range sidecars {
 		applied := false
 		for _, path := range databases {
-			database, err := sqlrewrite.Open(path)
+			database, err := sqlrewrite.Open(ctx, path)
 			if err != nil {
 				return 0, fmt.Errorf("open state database %s: %w", path, err)
 			}
-			transaction, err := database.Begin()
+			transaction, err := database.Begin(ctx)
 			if err != nil {
 				_ = database.Close()
 				return 0, err
 			}
 			values := sidecarColumns(sidecar)
-			count, err := database.UpdateColumnsByKey(transaction, threadsTable, "id", sidecar.ThreadID, values, nil)
+			count, err := database.UpdateColumnsByKey(ctx, transaction, threadsTable, "id", sidecar.ThreadID, values, nil)
 			if err == nil {
 				err = transaction.Commit()
 			} else {
 				_ = transaction.Rollback()
 			}
 			if err == nil {
-				err = database.CheckpointTruncate()
+				err = database.CheckpointTruncate(ctx)
 			}
 			closeErr := database.Close()
 			if err == nil {
@@ -910,18 +912,18 @@ func applyThreadSidecars(sidecars []threadSidecar, databases []string) (int, err
 	return unapplied, nil
 }
 
-func rearmBackfillState(databases []string) error {
+func rearmBackfillState(ctx context.Context, databases []string) error {
 	for _, path := range databases {
-		database, err := sqlrewrite.Open(path)
+		database, err := sqlrewrite.Open(ctx, path)
 		if err != nil {
 			return fmt.Errorf("open state database %s: %w", path, err)
 		}
-		transaction, err := database.Begin()
+		transaction, err := database.Begin(ctx)
 		if err != nil {
 			_ = database.Close()
 			return fmt.Errorf("re-arm backfill state for %s: %w", path, err)
 		}
-		_, err = database.UpdateColumnsByKey(transaction, backfillStateTable, "id", 1, map[string]any{
+		_, err = database.UpdateColumnsByKey(ctx, transaction, backfillStateTable, "id", 1, map[string]any{
 			"status": "pending", "last_watermark": nil,
 		}, nil)
 		if err == nil {
@@ -930,7 +932,7 @@ func rearmBackfillState(databases []string) error {
 			_ = transaction.Rollback()
 		}
 		if err == nil {
-			err = database.CheckpointTruncate()
+			err = database.CheckpointTruncate(ctx)
 		}
 		closeErr := database.Close()
 		if err == nil {

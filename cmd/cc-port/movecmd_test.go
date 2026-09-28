@@ -36,11 +36,13 @@ type codexOnlyWorkspace struct{}
 func (*codexOnlyWorkspace) Root() string                                { return "/codex" }
 func (*codexOnlyWorkspace) LockPath() string                            { return "" }
 func (*codexOnlyWorkspace) ActiveWriters() ([]tool.ActiveWriter, error) { return nil, nil }
-func (*codexOnlyWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error) {
+func (*codexOnlyWorkspace) MoveSurfaces(context.Context, tool.MoveRequest) ([]tool.Surface, error) {
 	return []tool.Surface{{Name: "state", Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil }}}, nil
 }
-func (*codexOnlyWorkspace) ResidualWarnings(tool.MoveRequest) ([]string, error) { return nil, nil }
-func (*codexOnlyWorkspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
+func (*codexOnlyWorkspace) ResidualWarnings(context.Context, tool.MoveRequest) ([]string, error) {
+	return nil, nil
+}
+func (*codexOnlyWorkspace) Placeholders(context.Context, string, map[string]bool) ([]manifest.Placeholder, error) {
 	return nil, assert.AnError
 }
 func (*codexOnlyWorkspace) Export(context.Context, string, map[string]bool, *archive.Sink) (tool.ExportResult, error) {

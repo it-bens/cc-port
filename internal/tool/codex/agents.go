@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -142,12 +143,15 @@ func readAgentsMarketplace(agentsDir string) (data []byte, ok bool, err error) {
 // residualAgentsWarning reports whether ~/.agents contains any file that
 // still references oldPath. marketplace.json is included so a schema-shaped
 // value the targeted rewrite intentionally leaves alone cannot be silent.
-func residualAgentsWarning(agentsDir, oldPath string) (string, error) {
+func residualAgentsWarning(ctx context.Context, agentsDir, oldPath string) (string, error) {
 	if agentsDir == "" {
 		return "", nil
 	}
 	count := 0
 	walkErr := filepath.WalkDir(agentsDir, func(path string, entry fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil

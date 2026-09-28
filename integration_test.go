@@ -96,7 +96,7 @@ func discoverPlaceholders(
 ) map[string][]manifest.Placeholder {
 	t.Helper()
 	workspace := claude.NewWorkspace(home)
-	placeholders, err := workspace.Placeholders(fixtureProjectPath, selection["claude"])
+	placeholders, err := workspace.Placeholders(t.Context(), fixtureProjectPath, selection["claude"])
 	require.NoError(t, err, "discover placeholders")
 	placeholders = append(placeholders, manifest.Placeholder{Key: "{{HOME}}", Original: fixtureHomeDir})
 	return map[string][]manifest.Placeholder{"claude": placeholders}
@@ -176,7 +176,7 @@ func TestIntegration_MoveRoundTrip(t *testing.T) {
 	assert.DirExists(t, newProjectDataDir, "new encoded project data dir should exist after move")
 
 	// LocateProject on new path should succeed and have expected fields.
-	locations, err := claude.LocateProject(sourceHome, newPath)
+	locations, err := claude.LocateProject(t.Context(), sourceHome, newPath)
 	require.NoError(t, err, "LocateProject should succeed for new project path")
 	assert.True(t, locations.HasConfigBlock, "new project should have a config block")
 }
@@ -334,7 +334,7 @@ func verifyImportedProject(t *testing.T, destinationHome *claude.Home, destinati
 	t.Helper()
 
 	// LocateProject on target path should succeed.
-	locations, err := claude.LocateProject(destinationHome, destinationProjectPath)
+	locations, err := claude.LocateProject(t.Context(), destinationHome, destinationProjectPath)
 	require.NoError(t, err, "LocateProject should succeed on imported project")
 	assert.NotEmpty(t, locations.SessionTranscripts,
 		"imported project should have at least one session transcript")
@@ -434,10 +434,10 @@ func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
 		Caps:       archive.DefaultCaps(),
 	})
 
-	imported, err := claude.LocateProject(destinationHome, destinationProjectPath)
+	imported, err := claude.LocateProject(t.Context(), destinationHome, destinationProjectPath)
 	require.NoError(t, err, "LocateProject should succeed on imported project")
 	assertAllCategoriesImported(t, imported)
-	sourceLocations, err := claude.LocateProject(sourceHome, fixtureProjectPath)
+	sourceLocations, err := claude.LocateProject(t.Context(), sourceHome, fixtureProjectPath)
 	require.NoError(t, err)
 	assertFileHistorySnapshotsByteIdentical(t, sourceLocations.FileHistoryDirs, imported.FileHistoryDirs)
 
@@ -825,7 +825,7 @@ func stageWorkflowTree(t *testing.T, sessionSubdir, encodedProjectDir, projectPa
 // its first session subdir and returns the session UUID that names it.
 func stageFixtureWorkflowTree(t *testing.T, home *claude.Home) string {
 	t.Helper()
-	locations, err := claude.LocateProject(home, fixtureProjectPath)
+	locations, err := claude.LocateProject(t.Context(), home, fixtureProjectPath)
 	require.NoError(t, err, "locate fixture project")
 	require.NotEmpty(t, locations.SessionSubdirs, "fixture must have a session subdir to host workflows")
 	sessionSubdir := locations.SessionSubdirs[0]

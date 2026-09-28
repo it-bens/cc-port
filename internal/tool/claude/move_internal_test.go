@@ -26,7 +26,7 @@ func TestResidualWarnings_ReportRulesFileReferences(t *testing.T) {
 	))
 	workspace := NewWorkspace(home)
 
-	warnings, err := workspace.ResidualWarnings(tool.MoveRequest{
+	warnings, err := workspace.ResidualWarnings(t.Context(), tool.MoveRequest{
 		OldPath: projectPath,
 		NewPath: "/Users/test/Projects/renamed",
 	})
@@ -186,7 +186,7 @@ func TestMoveSurfaces_RerunAfterPhysicalResidualFailureRefusesProjectAbsent(t *t
 	workspace := NewWorkspace(home)
 	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
 
-	firstSurfaces, err := workspace.MoveSurfaces(req)
+	firstSurfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	firstUndo := tool.NewRestorer()
 	for _, surface := range firstSurfaces {
@@ -203,7 +203,7 @@ func TestMoveSurfaces_RerunAfterPhysicalResidualFailureRefusesProjectAbsent(t *t
 
 	removeAll = originalRemoveAll
 	workspace.clearMoveWarnings()
-	_, err = workspace.MoveSurfaces(req)
+	_, err = workspace.MoveSurfaces(t.Context(), req)
 	require.ErrorIs(t, err, tool.ErrProjectAbsent)
 	assert.DirExists(t, oldPath)
 }
@@ -270,7 +270,7 @@ func projectDirectorySurfaceOf(t *testing.T, surfaces []tool.Surface) tool.Surfa
 func TestMoveSurfaces_PlansWitnesslessProjectDirectoryPromotion(t *testing.T) {
 	workspace, home, oldPath, newPath := witnesslessProjectWorkspace(t)
 
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	result, err := projectDirectorySurfaceOf(t, surfaces).Plan(t.Context())
 
@@ -288,7 +288,7 @@ func TestMoveSurfaces_PlansWitnesslessProjectDirectoryPromotion(t *testing.T) {
 func TestMoveSurfaces_PlansUUIDWitnessedProjectDirectoryPromotion(t *testing.T) {
 	workspace, home, oldPath, newPath := uuidTranscriptWitnessedByNoSessionsWorkspace(t)
 
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	result, err := projectDirectorySurfaceOf(t, surfaces).Plan(t.Context())
 
@@ -321,12 +321,12 @@ func TestResolveMoveIdentity_LocatesViaOldPathWhenWitnessesAlreadyFlipped(t *tes
 	workspace := NewWorkspace(home)
 	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true}
 
-	identity, err := workspace.resolveMoveIdentityState(req)
+	identity, err := workspace.resolveMoveIdentityState(t.Context(), req)
 	require.NoError(t, err, "a witness already naming newPath must not read as a foreign collision")
 	assert.Equal(t, oldPath, identity.locatePath,
 		"the encoded directory is still at oldPath, so the move must locate it there")
 
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
 	for _, surface := range surfaces {
@@ -360,7 +360,7 @@ func TestStrandedStagingWarnings_ReportsDanglingSymlink(t *testing.T) {
 func TestMoveSurfaces_AppliesWitnesslessProjectDirectoryPromotion(t *testing.T) {
 	workspace, home, oldPath, newPath := witnesslessProjectWorkspace(t)
 
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
 	for _, surface := range surfaces {
@@ -381,7 +381,7 @@ func TestMoveSurfaces_AppliesWitnesslessProjectDirectoryPromotion(t *testing.T) 
 func TestMoveSurfaces_ApplyCarriesWitnesslessIdentityWarning(t *testing.T) {
 	workspace, home, oldPath, newPath := witnesslessProjectWorkspace(t)
 
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	result, err := projectDirectorySurfaceOf(t, surfaces).Apply(t.Context(), tool.NewRestorer())
 
@@ -403,7 +403,7 @@ func TestResolveMoveIdentity_RefusesThirdPathWitness(t *testing.T) {
 	sessionFile := fmt.Sprintf(`{"sessionId":%q,"cwd":%q}`, sessionUUID, thirdPath)
 	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "1.json"), []byte(sessionFile), 0o600))
 
-	_, err := NewWorkspace(home).resolveMoveIdentity(tool.MoveRequest{OldPath: oldPath, NewPath: newPath})
+	_, err := NewWorkspace(home).resolveMoveIdentity(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), thirdPath)

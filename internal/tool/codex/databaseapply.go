@@ -23,7 +23,7 @@ type databaseRewrite struct {
 	transaction *sqlrewrite.Tx
 	committed   bool
 	commit      func() error
-	checkpoint  func() error
+	checkpoint  func(context.Context) error
 }
 
 type databaseRewrites []*databaseRewrite
@@ -114,11 +114,11 @@ func startDatabaseRewrites(
 		if err := ctx.Err(); err != nil {
 			return nil, 0, err
 		}
-		database, err := sqlrewrite.Open(path)
+		database, err := sqlrewrite.Open(ctx, path)
 		if err != nil {
 			return nil, 0, fmt.Errorf("open %s: %w", path, err)
 		}
-		transaction, err := database.Begin()
+		transaction, err := database.Begin(ctx)
 		if err != nil {
 			_ = database.Close()
 			return nil, 0, fmt.Errorf("begin %s: %w", path, err)
@@ -155,7 +155,7 @@ func (pending *pendingMoveDatabases) commitSurface() tool.Surface {
 	return tool.Surface{
 		Name: "commit-databases",
 		Plan: func(context.Context) (tool.SurfaceResult, error) { return tool.SurfaceResult{}, nil },
-		Apply: func(_ context.Context, _ *tool.Restorer) (tool.SurfaceResult, error) {
+		Apply: func(ctx context.Context, _ *tool.Restorer) (tool.SurfaceResult, error) {
 			// SQLite transactions on separate databases cannot commit atomically.
 			// Commit state last because it is the database identity source; a state
 			// failure leaves the project discoverable for a convergent rerun.
@@ -175,7 +175,7 @@ func (pending *pendingMoveDatabases) commitSurface() tool.Surface {
 			}
 			for _, rewrites := range commitOrder {
 				for _, rewrite := range rewrites {
-					if err := rewrite.checkpoint(); err != nil {
+					if err := rewrite.checkpoint(ctx); err != nil {
 						pending.addWarning(fmt.Sprintf("could not checkpoint %s after commit: %v", rewrite.path, err))
 					}
 					if err := rewrite.database.Close(); err != nil {

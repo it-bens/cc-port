@@ -87,7 +87,7 @@ func matchingQueuedItems(ctx context.Context, path, oldPath, newPath string) ([]
 	}
 	defer func() { _ = database.Close() }()
 
-	if err := sqlrewrite.RequirePrimaryKeyAndColumns(database, queuedItemsTable, queuedItemsIDColumn, queuedItemsPayloadColumn); err != nil {
+	if err := sqlrewrite.RequirePrimaryKeyAndColumns(ctx, database, queuedItemsTable, queuedItemsIDColumn, queuedItemsPayloadColumn); err != nil {
 		return nil, err
 	}
 	// #nosec G201 -- table and column names are adapter constants, not user input.
@@ -196,7 +196,7 @@ func rewriteQueuedItemsWithPlan(
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		updated, err := database.UpdateColumnsByKey(transaction, queuedItemsTable, queuedItemsIDColumn, itemRewrite.id,
+		updated, err := database.UpdateColumnsByKey(ctx, transaction, queuedItemsTable, queuedItemsIDColumn, itemRewrite.id,
 			map[string]any{queuedItemsPayloadColumn: itemRewrite.newPayload},
 			map[string]any{queuedItemsPayloadColumn: itemRewrite.oldPayload})
 		if err != nil {

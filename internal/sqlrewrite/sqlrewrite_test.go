@@ -41,7 +41,7 @@ func TestOpenRefusesBusyWriterImmediately(t *testing.T) {
 	// wall-clock measurement is the only mechanism available to prove Open
 	// refused immediately rather than waiting out a nonzero busy_timeout.
 	started := time.Now()
-	_, err = Open(path)
+	_, err = Open(t.Context(), path)
 	elapsed := time.Since(started)
 
 	require.Error(t, err)
@@ -65,7 +65,7 @@ func TestOpenFoldsWALBeforeMainDatabaseIsObserved(t *testing.T) {
 	beforePath := copyMainDatabase(t, path, filepath.Join(temporaryDirectory, "before.sqlite"))
 	assert.Equal(t, 0, entryCount(t, beforePath))
 
-	rewriter, err := Open(path)
+	rewriter, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, rewriter.Close())
 
@@ -118,17 +118,17 @@ func TestRewriteTextColumnPreservesTextAndBlobStorage(t *testing.T) {
 	))
 	require.NoError(t, insertDatabase.Close())
 
-	rewriter, err := Open(path)
+	rewriter, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin()
+	transaction, err := rewriter.Begin(t.Context())
 	require.NoError(t, err)
-	textCount, err := rewriter.RewriteTextColumn(transaction, "documents", "id", "text_content", oldPath, newPath)
+	textCount, err := rewriter.RewriteTextColumn(t.Context(), transaction, "documents", "id", "text_content", oldPath, newPath)
 	require.NoError(t, err)
-	blobCount, err := rewriter.RewriteTextColumn(transaction, "documents", "id", "blob_content", oldPath, newPath)
+	blobCount, err := rewriter.RewriteTextColumn(t.Context(), transaction, "documents", "id", "blob_content", oldPath, newPath)
 	require.NoError(t, err)
 	require.NoError(t, transaction.Commit())
-	require.NoError(t, rewriter.CheckpointTruncate())
+	require.NoError(t, rewriter.CheckpointTruncate(t.Context()))
 
 	assert.Equal(t, 1, textCount)
 	assert.Equal(t, 1, blobCount)
@@ -155,14 +155,16 @@ func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
 	require.NoError(t, execute(database, "INSERT INTO threads (id, title, archived_at) VALUES (?, ?, ?)", "present", "old", nil))
 	require.NoError(t, database.Close())
 
-	rewriter, err := Open(path)
+	rewriter, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin()
+	transaction, err := rewriter.Begin(t.Context())
 	require.NoError(t, err)
-	updated, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "present", map[string]any{"title": "new", "archived_at": 42}, nil)
+	updated, err := rewriter.UpdateColumnsByKey(
+		t.Context(), transaction, "threads", "id", "present", map[string]any{"title": "new", "archived_at": 42}, nil,
+	)
 	require.NoError(t, err)
-	absent, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "missing",
+	absent, err := rewriter.UpdateColumnsByKey(t.Context(), transaction, "threads", "id", "missing",
 		map[string]any{"title": "never inserted", "archived_at": 42}, nil)
 	require.NoError(t, err)
 	require.NoError(t, transaction.Commit())
@@ -199,12 +201,12 @@ func TestUpdateColumnsByRowIDUpdatesCompositeKeyRowWithoutInsert(t *testing.T) {
 		"SELECT rowid FROM project_roots WHERE position = 0").Scan(&targetRowID))
 	require.NoError(t, database.Close())
 
-	rewriter, err := Open(path)
+	rewriter, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin()
+	transaction, err := rewriter.Begin(t.Context())
 	require.NoError(t, err)
-	updated, err := rewriter.UpdateColumnsByRowID(transaction, "project_roots", targetRowID,
+	updated, err := rewriter.UpdateColumnsByRowID(t.Context(), transaction, "project_roots", targetRowID,
 		map[string]any{"path": "/Users/test/Projects/new-root"}, map[string]any{"path": "/Users/test/Projects/old-root"})
 	require.NoError(t, err)
 	require.NoError(t, transaction.Commit())
@@ -233,13 +235,13 @@ func TestUpdateColumnsByRowIDReportsZeroForAbsentRowWithoutInsert(t *testing.T) 
 		"primary-project", 0, "/Users/test/Projects/old-root"))
 	require.NoError(t, database.Close())
 
-	rewriter, err := Open(path)
+	rewriter, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin()
+	transaction, err := rewriter.Begin(t.Context())
 	require.NoError(t, err)
 	const absentRowID = 999
-	updated, err := rewriter.UpdateColumnsByRowID(transaction, "project_roots", absentRowID,
+	updated, err := rewriter.UpdateColumnsByRowID(t.Context(), transaction, "project_roots", absentRowID,
 		map[string]any{"path": "/Users/test/Projects/never-inserted"}, map[string]any{"path": "/Users/test/Projects/old-root"})
 	require.NoError(t, err)
 	require.NoError(t, transaction.Commit())
@@ -275,13 +277,13 @@ func TestUpdateColumnsByRowIDWritesOnlyWhileExpectedValueHolds(t *testing.T) {
 					"PRIMARY KEY (project_id, position))"))
 			require.NoError(t, execute(database, "INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)",
 				"primary-project", 0, testCase.currentPath))
-			rewriter, err := Open(path)
+			rewriter, err := Open(t.Context(), path)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-			transaction, err := rewriter.Begin()
+			transaction, err := rewriter.Begin(t.Context())
 			require.NoError(t, err)
 
-			updated, err := rewriter.UpdateColumnsByRowID(transaction, "project_roots", 1,
+			updated, err := rewriter.UpdateColumnsByRowID(t.Context(), transaction, "project_roots", 1,
 				map[string]any{"path": "/Users/test/Projects/new-root"}, map[string]any{"path": plannedPath})
 			require.NoError(t, err)
 			require.NoError(t, transaction.Commit())
@@ -311,13 +313,13 @@ func TestUpdateColumnsByKeyWritesOnlyWhileExpectedValueHolds(t *testing.T) {
 			database := openSQLite(t, path)
 			require.NoError(t, execute(database, "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL)"))
 			require.NoError(t, execute(database, "INSERT INTO threads (id, cwd) VALUES (?, ?)", "primary-session", testCase.currentCWD))
-			rewriter, err := Open(path)
+			rewriter, err := Open(t.Context(), path)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-			transaction, err := rewriter.Begin()
+			transaction, err := rewriter.Begin(t.Context())
 			require.NoError(t, err)
 
-			updated, err := rewriter.UpdateColumnsByKey(transaction, "threads", "id", "primary-session",
+			updated, err := rewriter.UpdateColumnsByKey(t.Context(), transaction, "threads", "id", "primary-session",
 				map[string]any{"cwd": "/Users/test/Projects/new-project"}, map[string]any{"cwd": plannedCWD})
 			require.NoError(t, err)
 			require.NoError(t, transaction.Commit())
@@ -355,14 +357,14 @@ func TestUpdateColumnsByRowIDRefusesMissingExpectedValue(t *testing.T) {
 				"CREATE TABLE project_roots (project_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL, PRIMARY KEY (project_id, position))"))
 			require.NoError(t, execute(database, "INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)",
 				"primary-project", 0, "/Users/test/Projects/old-root"))
-			rewriter, err := Open(path)
+			rewriter, err := Open(t.Context(), path)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-			transaction, err := rewriter.Begin()
+			transaction, err := rewriter.Begin(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = transaction.Rollback() })
 
-			_, err = rewriter.UpdateColumnsByRowID(transaction, "project_roots", 1,
+			_, err = rewriter.UpdateColumnsByRowID(t.Context(), transaction, "project_roots", 1,
 				map[string]any{"path": "/Users/test/Projects/new-root"}, testCase.expected)
 
 			require.EqualError(t, err, testCase.wantErr)
@@ -378,13 +380,13 @@ func TestUpdateColumnsByRowIDAddressesRealRowIDBesideOidAndUnderscoreRowIDColumn
 		"2", "2", "/Users/test/Projects/first-root"))
 	require.NoError(t, execute(database, "INSERT INTO project_roots (oid, _rowid_, path) VALUES (?, ?, ?)",
 		"1", "1", "/Users/test/Projects/second-root"))
-	rewriter, err := Open(path)
+	rewriter, err := Open(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin()
+	transaction, err := rewriter.Begin(t.Context())
 	require.NoError(t, err)
 
-	updated, err := rewriter.UpdateColumnsByRowID(transaction, "project_roots", 2,
+	updated, err := rewriter.UpdateColumnsByRowID(t.Context(), transaction, "project_roots", 2,
 		map[string]any{"path": "/Users/test/Projects/new-root"}, map[string]any{"path": "/Users/test/Projects/second-root"})
 	require.NoError(t, err)
 	require.NoError(t, transaction.Commit())
@@ -442,19 +444,80 @@ func TestUpdateColumnsByRowIDRefusesUnsupportedSchema(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "refused.sqlite")
 			database := openSQLite(t, path)
 			require.NoError(t, execute(database, testCase.schema))
-			rewriter, err := Open(path)
+			rewriter, err := Open(t.Context(), path)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-			transaction, err := rewriter.Begin()
+			transaction, err := rewriter.Begin(t.Context())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = transaction.Rollback() })
 
-			_, err = rewriter.UpdateColumnsByRowID(transaction, "project_roots", 1,
+			_, err = rewriter.UpdateColumnsByRowID(t.Context(), transaction, "project_roots", 1,
 				map[string]any{"path": "/Users/test/Projects/new-root"}, map[string]any{"path": "/Users/test/Projects/old-root"})
 
 			require.EqualError(t, err, testCase.wantErr)
 		})
 	}
+}
+
+func TestTransactionCommitsAfterBeginContextIsCancelled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "commit.sqlite")
+	database := openSQLite(t, path)
+	require.NoError(t, prepareWAL(database))
+	require.NoError(t, execute(database, "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT)"))
+	require.NoError(t, execute(database, "INSERT INTO threads (id, title) VALUES (?, ?)", "primary-session", "old"))
+	require.NoError(t, database.Close())
+	rewriter, err := Open(t.Context(), path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	beginCtx, cancelBegin := context.WithCancel(t.Context())
+	transaction, err := rewriter.Begin(beginCtx)
+	require.NoError(t, err)
+	updated, err := rewriter.UpdateColumnsByKey(t.Context(), transaction, "threads", "id", "primary-session", map[string]any{"title": "new"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, updated)
+
+	cancelBegin()
+	commitErr := transaction.Commit()
+
+	require.NoError(t, commitErr)
+	check := openSQLite(t, path)
+	var title string
+	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT title FROM threads WHERE id = ?", "primary-session").Scan(&title))
+	assert.Equal(t, "new", title)
+}
+
+func TestCountTextColumnROFailsOnCancelledContext(t *testing.T) {
+	database := openSQLite(t, filepath.Join(t.TempDir(), "count.sqlite"))
+	require.NoError(t, execute(database, "CREATE TABLE documents (id INTEGER PRIMARY KEY, text_content TEXT)"))
+	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", 1, "/Users/test/Projects/my-project/notes"))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := CountTextColumnRO(ctx, database, "documents", "text_content", "/Users/test/Projects/my-project")
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRewriteTextColumnFailsOnCancelledContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rewrite.sqlite")
+	database := openSQLite(t, path)
+	require.NoError(t, execute(database, "CREATE TABLE documents (id INTEGER PRIMARY KEY, text_content TEXT)"))
+	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", 1, "/Users/test/Projects/my-project/notes"))
+	require.NoError(t, database.Close())
+	rewriter, err := Open(t.Context(), path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	transaction, err := rewriter.Begin(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, transaction.Rollback()) })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err = rewriter.RewriteTextColumn(
+		ctx, transaction, "documents", "id", "text_content", "/Users/test/Projects/my-project", "/Users/test/Projects/renamed",
+	)
+
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestVersionMeetsFloor(t *testing.T) {
