@@ -348,18 +348,44 @@ rewrite cycle.
 ### Witness liveness
 
 `Workspace.ActiveWriters` reads session files and resolves each named PID
-through the workspace's injected liveness seam.
+through the workspace's injected liveness and start-time seams. A live PID is
+not on its own evidence of an active writer: the OS reuses PIDs, so a stale
+session file whose PID now belongs to an unrelated process would otherwise
+block every apply.
+
+A session file counts as an active writer only when three conditions hold:
+
+1. Its `pid` is positive.
+2. The liveness probe reports the PID alive (signal 0).
+3. Either the file carries no usable `procStart`, or the live process's start
+   time matches it.
+
+`procStart` is usable when it decodes to a string that parses in `time.ANSIC`
+in UTC. Claude Code writes it from `LC_ALL=C TZ=UTC ps -o lstart= -p <pid>`
+(UTC ctime layout, single-digit days space-padded, e.g.
+`Mon Sep 28 16:11:44 2026`); older Claude Code omits the key, and the Windows
+`procStartFt` form is not read. A match means the recorded and live start
+times, both truncated to whole seconds, differ by at most one second. When the
+live start time cannot be read — the process exited between the two probes,
+`EPERM`, a malformed `/proc` entry — the file is judged by signal 0 alone,
+exactly as a file written before Claude Code recorded a start time. A
+start-time read failure never returns an error from `FindActive`.
 
 #### Handled
 
-- A live PID produces its session's `Cwd` and PID as an active writer; a dead
-  PID produces no active writer.
+- A live PID whose `procStart` is absent, unusable, or agrees within one second
+  produces its session's `Cwd` and PID as an active writer; a dead PID, or a
+  live PID whose start time disagrees, produces no active writer.
 
 #### Refused
 
 - An unreadable-but-byte-present session file, including malformed JSON,
   returns an error wrapping `tool.ErrNoWitness` rather than silently skipping
-  the evidence.
+  the evidence. The error names the offending file. A known real-world cause:
+  Claude Code 2.1.280 wrote a live session's file with a stray trailing `}`
+  (anthropics/claude-code#96438). Refusing is correct there, because the
+  session is live and mutation must block; the named file is what to remove if
+  that session later crashes.
 
 #### Not covered
 
@@ -883,7 +909,16 @@ the config entry, carried by the grants entry when selected, absent from the
 archive when not, and an empty grants block for a grantless project),
 `session_keyed_groups_drift_test.go` (every `Registries` session-keyed
 entry's `Category` matches a name this adapter's `Categories()` declares),
-and `witness_test.go` (`FindActive` on a live vs. a dead session PID).
+and `witness_test.go` (`FindActive` over the live/dead PID split and the
+malformed-JSON refusal, the `procStart` match and mismatch — inside the
+one-second slack including a sub-second skew, outside it two seconds apart and
+days later — the unusable-`procStart` fallbacks (a numeric value, a non-`ctime`
+layout, an empty string, and the unread Windows `procStartFt` key), and the
+start-time read-error fallback), and the platform start-time seam in
+`witness_procstart_darwin_internal_test.go` and
+`witness_procstart_linux_internal_test.go` (`processStart` reading a live
+process's start time; `parseStatStarttime` counting fields past a
+parenthesised comm).
 
 The root `integration_test.go`'s `TestIntegration_ExportImportRoundTrip_AllCategories`
 drives a full export-import round trip across every category and, via
