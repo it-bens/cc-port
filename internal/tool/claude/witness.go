@@ -15,7 +15,7 @@ import (
 
 // procStartKey is the session-file key holding the writer process's start time.
 // Claude Code writes it as `ps -o lstart=` output in UTC; older versions omit
-// the key, and the Windows form lands under a different key this code ignores.
+// the key.
 const procStartKey = "procStart"
 
 // FindActive returns liveness evidence from Claude session files. A live pid is

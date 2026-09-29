@@ -22,6 +22,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Vet (darwin)
+        run: GOOS=darwin go vet ./...
+
       - name: Unit tests
         run: go test -race -coverprofile=coverage.txt ./...
 

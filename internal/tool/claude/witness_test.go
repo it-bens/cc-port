@@ -18,10 +18,6 @@ import (
 // witnessCwd is the cwd every session file this file writes carries.
 const witnessCwd = "/test/project"
 
-// hostProcStart is a literal in the layout Claude Code writes, including the
-// space-padded single-digit day `ps -o lstart=` emits.
-const hostProcStart = "Thu Jan  2 03:04:05 2031"
-
 func TestFindActiveReportsLiveSession(t *testing.T) {
 	home := newWitnessHome(t)
 	writeWitnessSession(t, home, "live", 42)
@@ -64,7 +60,7 @@ func TestFindActiveRefusesUnparseableSession(t *testing.T) {
 // of slack, so the kernel's sub-second start time and the `ps` rendering Claude
 // Code recorded both count as matches.
 func TestFindActiveJudgesProcStartAgreement(t *testing.T) {
-	recorded := time.Date(2031, time.January, 2, 3, 4, 5, 0, time.UTC)
+	procStart, recorded := fixtureHostProcStart(t)
 
 	cases := []struct {
 		name         string
@@ -88,7 +84,7 @@ func TestFindActiveJudgesProcStartAgreement(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			home := newWitnessHome(t)
-			writeWitnessSessionWithProcStart(t, home, "writer", 42, hostProcStart)
+			writeWitnessSessionWithProcStart(t, home, "writer", 42, procStart)
 			workspace := NewWorkspaceForTest(home, noWitnessEnv, aliveOnly(42), func(int) (time.Time, error) {
 				return testCase.live, testCase.readErr
 			})
@@ -115,10 +111,6 @@ func TestFindActiveReportsSessionWithUnusableProcStart(t *testing.T) {
 		name  string
 		extra map[string]json.RawMessage
 	}{
-		{
-			name:  "Windows procStartFt is not read",
-			extra: map[string]json.RawMessage{"procStartFt": json.RawMessage(`133268582400000000`)},
-		},
 		{
 			name:  "procStart is not a string",
 			extra: map[string]json.RawMessage{procStartKey: json.RawMessage(`1932718445`)},
@@ -187,6 +179,27 @@ func writeWitnessSessionWithProcStart(t *testing.T, home *Home, name string, pid
 		Pid:   pid,
 		Extra: map[string]json.RawMessage{procStartKey: json.RawMessage(strconv.Quote(procStart))},
 	})
+}
+
+// fixtureHostProcStart reads the writer start time committed in the repo's
+// session fixture, so the format these cases exercise is the one on disk rather
+// than a second copy. It returns the raw `ps -o lstart=` string to write into a
+// test session file, alongside the parsed value the cases offset from.
+func fixtureHostProcStart(t *testing.T) (string, time.Time) {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "dotclaude", "sessions", "24680.json"))
+	require.NoError(t, err)
+
+	var fixture SessionFile
+	require.NoError(t, json.Unmarshal(data, &fixture))
+
+	recorded, usable := parseProcStart(fixture)
+	require.True(t, usable, "the committed session fixture must carry a usable procStart")
+
+	var procStart string
+	require.NoError(t, json.Unmarshal(fixture.Extra[procStartKey], &procStart))
+	return procStart, recorded
 }
 
 func writeWitnessSessionFile(t *testing.T, home *Home, name string, sessionFile SessionFile) {

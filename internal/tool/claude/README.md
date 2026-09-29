@@ -364,12 +364,12 @@ The start-time comparison in condition 3 runs on macOS only. `procStart` is
 usable when it decodes to a string that parses in `time.ANSIC` in UTC. Claude
 Code writes it from `LC_ALL=C TZ=UTC ps -o lstart= -p <pid>` (UTC ctime layout,
 single-digit days space-padded, e.g. `Mon Sep 28 16:11:44 2026`); older Claude
-Code omits the key, and the Windows `procStartFt` form is not read. A match
-means the recorded and live start times, both truncated to whole seconds,
-differ by at most one second. When the live start time cannot be read — the
-process exited between the two probes, `EPERM` — the file is judged by signal 0
-alone, exactly as a file written before Claude Code recorded a start time. A
-start-time read failure never returns an error from `FindActive`.
+Code omits the key. A match means the recorded and live start times, both
+truncated to whole seconds, differ by at most one second. When the live start
+time cannot be read — the process exited between the two probes, `EPERM` — the
+file is judged by signal 0 alone, exactly as a file written before Claude Code
+recorded a start time. A start-time read failure never returns an error from
+`FindActive`.
 
 On Linux the live start time is never readable, so a session file is judged by
 signal 0 alone. The `btime` line of `/proc/stat`, the base that `ps -o lstart`
@@ -923,10 +923,10 @@ and `witness_test.go` (`FindActive` over the live/dead PID split and the
 malformed-JSON refusal, the `procStart` match and mismatch — inside the
 one-second slack including a sub-second skew, outside it two seconds apart and
 days later — the unusable-`procStart` fallbacks (a numeric value, a non-`ctime`
-layout, an empty string, and the unread Windows `procStartFt` key), and the
-start-time read-error fallback), and the platform start-time seam in
-`witness_procstart_darwin_internal_test.go` (`processStart` reading a live
-process's start time) and `witness_procstart_linux_internal_test.go`
+layout, and an empty string), and the start-time read-error fallback), and the
+platform start-time seam in `witness_procstart_darwin_internal_test.go`
+(`processStart` reading a spawned process's start time and refusing a PID the
+kernel no longer tracks) and `witness_procstart_linux_internal_test.go`
 (`processStart` refusing with an error, which judges a Linux session file by
 signal 0 alone).
 

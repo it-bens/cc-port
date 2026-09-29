@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -447,7 +446,8 @@ func TestRun_AbortsWhenWitnessTurnsLiveBetweenLockAndPromotion(t *testing.T) {
 			return livenessCalls >= 2
 		},
 		func(int) (time.Time, error) {
-			return time.Time{}, errors.New("the witness session file carries no procStart")
+			t.Fatal("the witness session file carries no procStart, so its start time must not be read")
+			return time.Time{}, nil
 		})
 	toolSet := tool.NewSet(claude.New())
 	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: workspace}}
