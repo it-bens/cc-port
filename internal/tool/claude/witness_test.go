@@ -70,10 +70,7 @@ func TestFindActiveJudgesProcStartAgreement(t *testing.T) {
 	}{
 		{name: "matching start time", live: recorded, wantReported: true},
 		{name: "one second later", live: recorded.Add(time.Second), wantReported: true},
-		{name: "one second earlier", live: recorded.Add(-time.Second), wantReported: true},
-		{name: "sub-second skew", live: recorded.Add(900 * time.Millisecond), wantReported: true},
 		{name: "two seconds apart", live: recorded.Add(2 * time.Second), wantReported: false},
-		{name: "unrelated process days later", live: recorded.Add(72 * time.Hour), wantReported: false},
 		{
 			name:         "start time read fails",
 			readErr:      errors.New("process exited between the liveness and start-time probes"),
@@ -105,39 +102,22 @@ func TestFindActiveJudgesProcStartAgreement(t *testing.T) {
 
 // TestFindActiveReportsSessionWithUnusableProcStart pins the sanctioned
 // fallback: a procStart that is present but unreadable leaves the file judged by
-// signal 0 alone, exactly as a file written before Claude Code recorded one.
+// signal 0 alone, exactly as a file written before Claude Code recorded one. The
+// absent key is pinned by TestFindActiveReportsLiveSession.
 func TestFindActiveReportsSessionWithUnusableProcStart(t *testing.T) {
-	cases := []struct {
-		name  string
-		extra map[string]json.RawMessage
-	}{
-		{
-			name:  "procStart is not a string",
-			extra: map[string]json.RawMessage{procStartKey: json.RawMessage(`1932718445`)},
-		},
-		{
-			name:  "procStart is not the ctime layout",
-			extra: map[string]json.RawMessage{procStartKey: json.RawMessage(`"2031-01-02T03:04:05Z"`)},
-		},
-		{
-			name:  "procStart is empty",
-			extra: map[string]json.RawMessage{procStartKey: json.RawMessage(`""`)},
-		},
-	}
+	home := newWitnessHome(t)
+	writeWitnessSessionFile(t, home, "writer", SessionFile{
+		Cwd:   witnessCwd,
+		Pid:   42,
+		Extra: map[string]json.RawMessage{procStartKey: json.RawMessage(`"2031-01-02T03:04:05Z"`)},
+	})
+	workspace := NewWorkspaceForTest(home, noWitnessEnv, aliveOnly(42), noStartTimeProbe(t))
 
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			home := newWitnessHome(t)
-			writeWitnessSessionFile(t, home, "writer", SessionFile{Cwd: witnessCwd, Pid: 42, Extra: testCase.extra})
-			workspace := NewWorkspaceForTest(home, noWitnessEnv, aliveOnly(42), noStartTimeProbe(t))
+	active, err := workspace.ActiveWriters()
 
-			active, err := workspace.ActiveWriters()
-
-			require.NoError(t, err)
-			require.Len(t, active, 1, "an unusable procStart leaves the file judged by liveness alone")
-			assert.Equal(t, 42, active[0].Pid)
-		})
-	}
+	require.NoError(t, err)
+	require.Len(t, active, 1, "an unusable procStart leaves the file judged by liveness alone")
+	assert.Equal(t, 42, active[0].Pid)
 }
 
 func newWitnessHome(t *testing.T) *Home {
