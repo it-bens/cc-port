@@ -225,7 +225,7 @@ func applyConfigTOMLKeys(path string, keys []string, newPath string, undo *tool.
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if err := undo.ReplaceFile(path, rewritten, info.Mode()); err != nil {
+	if _, err := undo.ReplaceFile(path, data, rewritten, info.Mode()); err != nil {
 		return 0, err
 	}
 	return total, nil

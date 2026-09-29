@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -24,10 +25,10 @@ const siblingBackupThreshold = 1 << 20 // 1 MiB
 const siblingSuffix = rewrite.RollbackSuffix
 
 // Restorer collects rollback state for one Surface Apply pass. A move
-// writer replaces a file through ReplaceFile, which snapshots the pre-image
-// through RegisterFile; a surface whose rollback is not a file rewrite (a
-// SQL transaction, a directory rename) calls RegisterUndo with its own
-// rollback callback. Restore reverses every registration in reverse
+// writer replaces a file through ReplaceFile or ReplacePathInFile, which
+// snapshot the pre-image through RegisterFile; a surface whose rollback is
+// not a file rewrite (a SQL transaction, a directory rename) calls
+// RegisterUndo with its own rollback callback. Restore reverses every registration in reverse
 // registration order, joining any errors; Cleanup discards backing state
 // once the caller's operation has fully succeeded.
 type Restorer struct {
@@ -124,18 +125,53 @@ func (restorer *Restorer) registerSibling(path string, mode os.FileMode, modTime
 	return nil
 }
 
-// ReplaceFile snapshots path through RegisterFile, then writes rewritten
-// over it. It is the only way a move writer replaces a file; the caller
-// decides whether the file actually changed and must not call ReplaceFile
-// for an unchanged one.
-func (restorer *Restorer) ReplaceFile(path string, rewritten []byte, mode os.FileMode) error {
+// ReplaceFile writes rewritten over path when it differs from original,
+// the bytes the caller read from path, snapshotting the pre-image through
+// RegisterFile first. It is the only way a move writer replaces a file, and it
+// owns the change test: identical bytes return false without registering or
+// writing, so an unchanged file keeps its content, inode, and mtime. A failed
+// write drops the registration it just added, so Restore never replaces a
+// file this call left unmodified.
+func (restorer *Restorer) ReplaceFile(path string, original, rewritten []byte, mode os.FileMode) (changed bool, err error) {
+	if bytes.Equal(original, rewritten) {
+		return false, nil
+	}
+	restoreCount, cleanupCount := len(restorer.restores), len(restorer.cleanups)
 	if err := restorer.RegisterFile(path); err != nil {
-		return fmt.Errorf("back up %s: %w", path, err)
+		return false, fmt.Errorf("back up %s: %w", path, err)
 	}
 	if err := rewrite.SafeWriteFile(path, rewritten, mode); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+		for _, cleanup := range restorer.cleanups[cleanupCount:] {
+			cleanup()
+		}
+		restorer.restores = restorer.restores[:restoreCount]
+		restorer.cleanups = restorer.cleanups[:cleanupCount]
+		return false, fmt.Errorf("write %s: %w", path, err)
 	}
-	return nil
+	return true, nil
+}
+
+// ReplacePathInFile rewrites every path-boundary occurrence of oldPath in
+// path to newPath through ReplaceFile, keeping path's mode. It returns the
+// replacement count when the file changed and zero when it did not.
+func (restorer *Restorer) ReplacePathInFile(path, oldPath, newPath string) (count int, err error) {
+	original, err := os.ReadFile(path) //nolint:gosec // G304: path is caller-supplied, already-validated internal state
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", path, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, fmt.Errorf("stat %s: %w", path, err)
+	}
+	rewritten, count := rewrite.ReplacePathInBytes(original, oldPath, newPath)
+	changed, err := restorer.ReplaceFile(path, original, rewritten, info.Mode())
+	if err != nil {
+		return 0, err
+	}
+	if !changed {
+		return 0, nil
+	}
+	return count, nil
 }
 
 // RegisterUndo records fn to run during Restore, in the same reverse-order

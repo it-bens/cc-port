@@ -1,6 +1,7 @@
 package tool_test
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -176,7 +177,9 @@ func TestRestorer_ReplaceFileWritesReplacementAndRollsBack(t *testing.T) {
 			require.NoError(t, os.Chtimes(target, past, past))
 
 			restorer := tool.NewRestorer()
-			require.NoError(t, restorer.ReplaceFile(target, replacement, replacementMode))
+			changed, err := restorer.ReplaceFile(target, testCase.original, replacement, replacementMode)
+			require.NoError(t, err)
+			require.True(t, changed, "differing bytes must be reported as a change")
 
 			written, err := os.ReadFile(target) //nolint:gosec // test-controlled path
 			require.NoError(t, err)
@@ -196,4 +199,135 @@ func TestRestorer_ReplaceFileWritesReplacementAndRollsBack(t *testing.T) {
 				"Restore must reapply the pre-mutation mtime, not the restore time")
 		})
 	}
+}
+
+// TestRestorer_ReplaceFileLeavesIdenticalBytesUntouched guards the change
+// test ReplaceFile owns: identical bytes must neither be written (a rename
+// would give the file a new inode and mtime) nor registered (a later Restore
+// would replace a file the move never modified).
+func TestRestorer_ReplaceFileLeavesIdenticalBytesUntouched(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "settings.json")
+	original := []byte(`{"cwd":"/Users/test/Projects/otherproject"}`)
+	require.NoError(t, os.WriteFile(target, original, 0o600))
+	past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(target, past, past))
+	before, err := os.Stat(target)
+	require.NoError(t, err)
+	restorer := tool.NewRestorer()
+
+	changed, err := restorer.ReplaceFile(target, original, bytes.Clone(original), 0o600)
+	require.NoError(t, err)
+	afterReplace, err := os.Stat(target)
+	require.NoError(t, err)
+	externalEdit := []byte(`{"cwd":"/Users/test/Projects/edited-later"}`)
+	require.NoError(t, os.WriteFile(target, externalEdit, 0o600))
+	require.NoError(t, restorer.Restore())
+
+	assert.False(t, changed)
+	assert.True(t, os.SameFile(before, afterReplace), "an unchanged file keeps its inode")
+	assert.Equal(t, before.ModTime(), afterReplace.ModTime())
+	restored, err := os.ReadFile(target) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Equal(t, externalEdit, restored, "Restore has no snapshot of an unchanged file to put back")
+}
+
+// TestRestorer_ReplaceFileDropsRegistrationWhenWriteFails guards that a
+// failed write leaves no registration behind: the file keeps its original
+// bytes, so a Restore that replayed the snapshot would overwrite whatever the
+// file holds by then with a pre-image the move never replaced.
+func TestRestorer_ReplaceFileDropsRegistrationWhenWriteFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; chmod 0500 will not prevent writes")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "settings.json")
+	original := []byte(`{"cwd":"/Users/test/Projects/myproject"}`)
+	require.NoError(t, os.WriteFile(target, original, 0o600))
+	require.NoError(t, os.Chmod(dir, 0o500)) //nolint:gosec // G302: deliberately read-only so SafeWriteFile cannot create its temp file
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700) //nolint:gosec // G302: restore perms in test teardown
+	})
+	restorer := tool.NewRestorer()
+
+	changed, err := restorer.ReplaceFile(target, original, []byte(`{"cwd":"/Users/test/Projects/renamed"}`), 0o600)
+	require.Error(t, err)
+	require.NoError(t, os.Chmod(dir, 0o700)) //nolint:gosec // G302: writable again so the external edit and a replayed snapshot could land
+	externalEdit := []byte(`{"cwd":"/Users/test/Projects/edited-later"}`)
+	require.NoError(t, os.WriteFile(target, externalEdit, 0o600))
+	require.NoError(t, restorer.Restore())
+
+	assert.False(t, changed)
+	restored, err := os.ReadFile(target) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Equal(t, externalEdit, restored, "Restore must not replay a snapshot for a write that never happened")
+}
+
+func TestRestorer_ReplacePathInFileRewritesAndRegisters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"cwd":"/old/proj"}`), 0o644)) //nolint:gosec // G306: test fixture in t.TempDir
+
+	restorer := tool.NewRestorer()
+	count, err := restorer.ReplacePathInFile(path, "/old/proj", "/new/proj")
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "one occurrence must be replaced")
+
+	got, err := os.ReadFile(path) //nolint:gosec // G304: path from t.TempDir
+	require.NoError(t, err)
+	require.JSONEq(t, `{"cwd":"/new/proj"}`, string(got))
+
+	// The registered snapshot must let a Restore reverse the rewrite,
+	// proving ReplacePathInFile registered exactly the file it rewrote.
+	require.NoError(t, restorer.Restore())
+	restored, err := os.ReadFile(path) //nolint:gosec // G304: path from t.TempDir
+	require.NoError(t, err)
+	require.JSONEq(t, `{"cwd":"/old/proj"}`, string(restored))
+}
+
+func TestRestorer_ReplacePathInFileNoReplacementIsNoOp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.json")
+	original := []byte(`{"unrelated":"content"}`)
+	require.NoError(t, os.WriteFile(path, original, 0o644)) //nolint:gosec // G306: test fixture in t.TempDir
+
+	count, err := tool.NewRestorer().ReplacePathInFile(path, "/old/proj", "/new/proj")
+	require.NoError(t, err)
+	require.Equal(t, 0, count, "no occurrence must be replaced")
+
+	got, err := os.ReadFile(path) //nolint:gosec // G304: path from t.TempDir
+	require.NoError(t, err)
+	require.Equal(t, original, got, "contents must not change")
+}
+
+func TestRestorer_ReplacePathInFileMissingFileFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.json")
+
+	_, err := tool.NewRestorer().ReplacePathInFile(path, "/old", "/new")
+	require.Error(t, err, "expected error for missing file")
+}
+
+func TestRestorer_ReplacePathInFileWriteFailsInReadOnlyDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; chmod 0500 will not prevent writes")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"cwd":"/old/proj"}`), 0o644)) //nolint:gosec // G306: test fixture in t.TempDir
+
+	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // G302: deliberately read-only for the test
+		t.Skipf("chmod unsupported: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700) //nolint:gosec // G302: restore perms in test teardown
+	})
+
+	// Verify chmod is effective: attempt to create a file.
+	probe := filepath.Join(dir, ".probe")
+	if f, err := os.Create(probe); err == nil { //nolint:gosec // G304: path from t.TempDir
+		_ = f.Close()
+		_ = os.Remove(probe)
+		t.Skip("chmod 0500 did not prevent writes on this filesystem")
+	}
+
+	_, err := tool.NewRestorer().ReplacePathInFile(path, "/old/proj", "/new/proj")
+	require.Error(t, err, "expected error writing into read-only dir")
 }

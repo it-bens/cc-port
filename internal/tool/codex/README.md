@@ -517,10 +517,12 @@ shapes themselves.
   non-string array element, stay unchanged.
 - Dry-run and apply count through the same `rewriteRolloutLine` call over
   the same field list, so their counts agree.
+- Apply reassembles a rollout byte for byte: each line keeps its terminator,
+  CRLF included, and an unterminated final line stays unterminated.
 - A rollout whose bytes would not change is left untouched: move neither
   writes it nor registers it for rollback, so its bytes, inode, and mtime
-  stay as they were, even when its final line lacks a trailing newline.
-  Replacing it would detach a running Codex writer that holds the file open.
+  stay as they were. Replacing it would detach a running Codex writer that
+  holds the file open.
 - `--deep` runs two passes over each line of a structured rollout. A byte
   pass, `rewrite.ReplacePathInBytesWithJSONEscape`, rewrites the whole line
   and matches two spellings of the project path: raw, where only the

@@ -468,22 +468,21 @@ the home-wide files — `history.jsonl`, `~/.claude.json`, `settings.json`,
 and the plugin registries — which a move shares with every other project and
 which need not name the moved one.
 
-Writers replace through `tool.Restorer.ReplaceFile` alone: it registers the
-pre-image and writes in one call, and no move writer calls `RegisterFile` or
-`rewrite.SafeWriteFile` directly. The change test compares the rewritten
-bytes with the bytes the writer read, except in `applyHistoryRewrite`, which
-reassembles the file line by line and keys on `StreamHistoryJSONL`'s
-rewritten-line count instead.
+Writers replace through `tool.Restorer.ReplaceFile` or
+`tool.Restorer.ReplacePathInFile` alone, and no move writer calls
+`RegisterFile` or `rewrite.SafeWriteFile` directly. `ReplaceFile` owns the
+change test (see `internal/tool/README.md` §Restorer semantics); each writer
+passes it the bytes it read alongside the rewritten bytes.
 
 #### Handled
 
 - Every plain-bytes surface with substitutable content (user-wide,
-  session-keyed) routes through `rewriteTracked`, which reads the file,
-  rewrites it through `rewrite.ReplacePathInBytes`, compares the result with
-  what it read, and only then registers and writes through
-  `tool.Restorer.ReplaceFile`. History and config are format-aware instead:
-  `historySurface` streams through `StreamHistoryJSONL`, and `configSurface`
-  rewrites through `RewriteUserConfig`.
+  session-keyed) routes through `tool.Restorer.ReplacePathInFile`, which
+  reads the file, rewrites it through `rewrite.ReplacePathInBytes`, and
+  replaces it through `tool.Restorer.ReplaceFile`. History and config are
+  format-aware instead: `historySurface` streams through
+  `StreamHistoryJSONL`, and `configSurface` rewrites through
+  `RewriteUserConfig`.
 - Transcripts and memory route through `rewriteTwicePreservingMtime`, which
   additionally rewrites the encoded storage-directory form
   (`Home.ProjectDir(oldPath)` to `Home.ProjectDir(newPath)`) in the same
@@ -693,7 +692,7 @@ by mtime).
   their open source and pass `ModTime()` through.
 - Move: transcripts and memory files restore their pre-rewrite mtime via
   `rewriteTwicePreservingMtime`; session-keyed flat files restore theirs via
-  `os.Chtimes` after `rewriteTracked`.
+  `os.Chtimes` after `tool.Restorer.ReplacePathInFile` reports a change.
 - Import: `archive.StageSibling` receives `entry.Modified` and applies it to
   the staged temp before promotion.
 
@@ -909,8 +908,7 @@ the identity guard's three-state outcome is deterministic under arbitrary
 projectPath and cwd byte sequences. Reached via the test-only
 `VerifyProjectIdentityForTest` shim in `export_test.go`.
 
-Move, export, import, and stats coverage: `move_internal_test.go`
-(`rewriteTracked` happy path and failure modes),
+Move, export, import, and stats coverage:
 `export_filehistory_test.go` (unreadable-snapshot and unreadable-dir
 failure, zip-write failure, context cancellation mid-walk),
 `export_line_cap_test.go` and `export_mtime_internal_test.go` (the

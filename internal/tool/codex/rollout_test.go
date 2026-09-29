@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -114,9 +115,9 @@ func TestRewriteRolloutLinesRewritesAtomicallyAndPreservesMtime(t *testing.T) {
 	assert.WithinDuration(t, past, info.ModTime(), time.Second)
 }
 
-// TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched pins the
-// unterminated final line: reassembly would append a newline, so a rollout
-// with no match must not be written at all.
+// TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched guards that a
+// rollout with no match, here ending in an unterminated line, is not written
+// at all: a rename over it would detach a live Codex writer.
 func TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	sessionMeta := `{"type":"session_meta","payload":{"id":"primary-session","cwd":"/Users/test/Projects/otherproject"}}`
@@ -141,6 +142,32 @@ func TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched(t *testing.T) 
 	require.NoError(t, err)
 	assert.True(t, os.SameFile(before, after), "an unchanged rollout keeps its inode")
 	assert.Equal(t, before.ModTime(), after.ModTime())
+}
+
+// TestApplyRolloutSubstitutionsPreservesLineTerminators guards byte-faithful
+// reassembly: a CRLF line keeps its '\r' and an unterminated final line stays
+// unterminated, so the only bytes that change are the substituted paths.
+func TestApplyRolloutSubstitutionsPreservesLineTerminators(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	const (
+		crlfSessionMeta = `{"type":"session_meta","payload":{"id":"primary-session","cwd":"%s"}}` + "\r\n"
+		crlfMessage     = `{"type":"response_item","payload":{"type":"message","role":"user",` +
+			`"content":[{"type":"input_text","text":"no path here"}]}}` + "\r\n"
+		unterminatedTurnContext = `{"type":"turn_context","payload":{"cwd":"%s"}}`
+	)
+	render := func(projectPath string) []byte {
+		return []byte(fmt.Sprintf(crlfSessionMeta, projectPath) + crlfMessage + fmt.Sprintf(unterminatedTurnContext, projectPath))
+	}
+	require.NoError(t, os.WriteFile(path, render("/Users/test/Projects/myproject"), 0o600))
+
+	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, "/Users/test/Projects/myproject", "/Users/test/Projects/renamed", false)
+
+	require.NoError(t, err)
+	require.False(t, eraA)
+	assert.Equal(t, 2, changed)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path built from t.TempDir() in this test
+	require.NoError(t, err)
+	assert.Equal(t, string(render("/Users/test/Projects/renamed")), string(data))
 }
 
 func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {

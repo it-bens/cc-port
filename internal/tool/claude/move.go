@@ -334,30 +334,6 @@ func snapshotPaths(ctx context.Context, locations *ProjectLocations) ([]string, 
 	return paths, nil
 }
 
-// rewriteTracked performs the read -> byte-replace -> compare -> register ->
-// atomic-write sequence used by every uniform plain-bytes rewrite surface. A
-// rewrite that leaves the bytes identical returns a zero count without
-// registering with the Restorer or writing, so a file that names none of the
-// moved path keeps its content, inode, and mtime.
-func rewriteTracked(path, oldPath, newPath string, undo *tool.Restorer) (int, error) {
-	original, err := os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
-	if err != nil {
-		return 0, err
-	}
-	rewritten, count := rewrite.ReplacePathInBytes(original, oldPath, newPath)
-	if bytes.Equal(original, rewritten) {
-		return 0, nil
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
-	if err := undo.ReplaceFile(path, rewritten, info.Mode()); err != nil {
-		return 0, err
-	}
-	return count, nil
-}
-
 func (workspace *Workspace) historySurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: categoryHistory,
@@ -444,13 +420,7 @@ func (workspace *Workspace) applyHistoryRewrite(
 	if err != nil {
 		return 0, nil, fmt.Errorf("rewrite history.jsonl: %w", err)
 	}
-	// The change count decides whether to write, not a byte comparison: this
-	// writer reassembles the file line by line, so a byte difference alone
-	// would not mean a path changed.
-	if count == 0 {
-		return 0, malformed, nil
-	}
-	if err := undo.ReplaceFile(historyFile, rewritten.Bytes(), 0o600); err != nil {
+	if _, err := undo.ReplaceFile(historyFile, original, rewritten.Bytes(), 0o600); err != nil {
 		return 0, nil, fmt.Errorf("write history.jsonl: %w", err)
 	}
 	return count, malformed, nil
@@ -501,17 +471,17 @@ func (workspace *Workspace) sessionsSurface(req tool.MoveRequest, locatePath str
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("rewrite session file %s: %w", sessionFilePath, err)
 				}
-				if bytes.Equal(original, rewritten) {
-					continue
-				}
 				info, err := os.Stat(sessionFilePath)
 				if err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				if err := undo.ReplaceFile(sessionFilePath, rewritten, info.Mode()); err != nil {
+				changed, err := undo.ReplaceFile(sessionFilePath, original, rewritten, info.Mode())
+				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("write session file %s: %w", sessionFilePath, err)
 				}
-				count++
+				if changed {
+					count++
+				}
 			}
 			return tool.SurfaceResult{Count: count, Warnings: malformedSessionWarnings(locations.MalformedSessionFiles)}, nil
 		},
@@ -553,7 +523,7 @@ func (workspace *Workspace) userWideSurfaces(req tool.MoveRequest) []tool.Surfac
 					}
 					return tool.SurfaceResult{}, fmt.Errorf("stat %s: %w", path, err)
 				}
-				count, err := rewriteTracked(path, req.OldPath, req.NewPath, undo)
+				count, err := undo.ReplacePathInFile(path, req.OldPath, req.NewPath)
 				return tool.SurfaceResult{Count: count}, err
 			},
 		})
@@ -605,12 +575,13 @@ func (workspace *Workspace) sessionKeyedSurfaces(req tool.MoveRequest, locatePat
 					if err != nil {
 						return tool.SurfaceResult{}, err
 					}
-					n, err := rewriteTracked(path, req.OldPath, req.NewPath, undo)
+					n, err := undo.ReplacePathInFile(path, req.OldPath, req.NewPath)
 					if err != nil {
 						return tool.SurfaceResult{}, fmt.Errorf("rewrite %s %s: %w", group.Name, path, err)
 					}
-					// Only a file rewriteTracked actually replaced needs its
-					// pre-move mtime put back; an unchanged file is left alone.
+					// Only a file ReplacePathInFile actually replaced (a nonzero
+					// count) needs its pre-move mtime put back; an unchanged file
+					// is left alone.
 					if n != 0 {
 						if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 							return tool.SurfaceResult{}, fmt.Errorf("restore mtime %s: %w", path, err)
@@ -657,17 +628,15 @@ func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
 				}
 				return tool.SurfaceResult{}, fmt.Errorf("read config file: %w", err)
 			}
-			rewritten, rekeyed, err := RewriteUserConfig(original, req.OldPath, req.NewPath)
+			rewritten, _, err := RewriteUserConfig(original, req.OldPath, req.NewPath)
 			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("rewrite config file: %w", err)
 			}
-			if bytes.Equal(original, rewritten) {
-				return tool.SurfaceResult{}, nil
-			}
-			if err := undo.ReplaceFile(configFile, rewritten, 0o600); err != nil {
+			changed, err := undo.ReplaceFile(configFile, original, rewritten, 0o600)
+			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("write config file: %w", err)
 			}
-			if rekeyed {
+			if changed {
 				return tool.SurfaceResult{Count: 1}, nil
 			}
 			return tool.SurfaceResult{}, nil
@@ -786,8 +755,8 @@ func (workspace *Workspace) memorySurface(req tool.MoveRequest, locatePath strin
 // rewriteTwicePreservingMtime replaces both the real project path and the
 // encoded storage directory form inside path, then restores path's
 // pre-rewrite modification time. A rewrite that leaves the bytes identical
-// returns a zero count without registering or writing, so a file naming
-// neither form keeps its content, inode, and mtime.
+// returns a zero count, and ReplaceFile neither registers nor writes it, so
+// a file naming neither form keeps its content, inode, and mtime.
 func rewriteTwicePreservingMtime(
 	path, oldPath, newPath, oldEncodedDir, newEncodedDir string, undo *tool.Restorer,
 ) (int, error) {
@@ -801,11 +770,12 @@ func rewriteTwicePreservingMtime(
 	}
 	rewritten, count := rewrite.ReplacePathInBytes(data, oldPath, newPath)
 	rewritten, encodedCount := rewrite.ReplacePathInBytes(rewritten, oldEncodedDir, newEncodedDir)
-	if bytes.Equal(data, rewritten) {
-		return 0, nil
-	}
-	if err := undo.ReplaceFile(path, rewritten, info.Mode()); err != nil {
+	changed, err := undo.ReplaceFile(path, data, rewritten, info.Mode())
+	if err != nil {
 		return 0, fmt.Errorf("write %s: %w", path, err)
+	}
+	if !changed {
+		return 0, nil
 	}
 	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 		return 0, fmt.Errorf("restore mtime %s: %w", path, err)
