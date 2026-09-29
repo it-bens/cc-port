@@ -223,9 +223,6 @@ func (database *DB) RewriteTextColumn(
 
 	count := 0
 	for rows.Next() {
-		if err := ctx.Err(); err != nil {
-			return 0, fmt.Errorf("write rewritten text value to %s.%s: %w", table, column, err)
-		}
 		var primaryKey any
 		var value any
 		if err := rows.Scan(&primaryKey, &value); err != nil {
@@ -259,9 +256,6 @@ func (database *DB) RewriteTextColumn(
 func (database *DB) UpdateColumnsByKey(
 	ctx context.Context, transaction *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any,
 ) (int, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("update SQLite columns by key: %w", err)
-	}
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("update SQLite columns by key: transaction is nil")
 	}
@@ -290,9 +284,6 @@ func (database *DB) UpdateColumnsByKey(
 func (database *DB) UpdateColumnsByRowID(
 	ctx context.Context, transaction *Tx, table string, rowID int64, values, expected map[string]any,
 ) (int, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("update SQLite columns by rowid: %w", err)
-	}
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("update SQLite columns by rowid: transaction is nil")
 	}

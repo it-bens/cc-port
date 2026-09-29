@@ -50,16 +50,16 @@ opens and guards.
 
 **Handled.**
 
-- Every SQL-running export takes `ctx` first and runs each `database/sql`
-  call through its `*Context` variant: `Open` (its WAL fold and
-  `sqlite_version()` read), `(*DB).CheckpointTruncate`, `CountTextColumnRO`,
-  both read-only schema checks, and the three transaction mutators
-  `(*DB).RewriteTextColumn`, `(*DB).UpdateColumnsByKey`, and
-  `(*DB).UpdateColumnsByRowID`.
-- Outside a transaction the call gets the caller's live `ctx`: `Rows.Next`
-  then stops on cancellation and `rows.Err()` returns it, and
-  `modernc.org/sqlite` interrupts the statement in flight.
-- The statements a transaction runs do not take the live `ctx` at all.
+- Every export that runs SQL takes `ctx` first — except `(*Tx).Commit` and
+  `(*Tx).Rollback`, below — and runs each `database/sql` call through its
+  `*Context` variant. Outside a transaction that call takes the caller's
+  live `ctx`: `Open` (its WAL fold and `sqlite_version()` read),
+  `(*DB).CheckpointTruncate`, `CountTextColumnRO`, and both read-only schema
+  checks. `Rows.Next` then stops on cancellation and `rows.Err()` returns it,
+  and `modernc.org/sqlite` interrupts the statement in flight.
+- The three transaction mutators — `(*DB).RewriteTextColumn`,
+  `(*DB).UpdateColumnsByKey`, and `(*DB).UpdateColumnsByRowID` — take `ctx`
+  but run none of their statements under it.
   `(*DB).Begin` opens the transaction under `context.WithoutCancel(ctx)`,
   and each mutator derives the same context for the statements it runs: the
   schema read, `RewriteTextColumn`'s streaming select and prepared
@@ -71,30 +71,30 @@ opens and guards.
   registration, and its later `Rollback` would fail against a database that
   is intact.
   `TestTransactionCommitsAfterBeginContextIsCancelled` covers the rule.
-- Cancellation is honoured between those statements instead. Each mutator
-  checks `ctx.Err()` before it runs anything, and `RewriteTextColumn` checks
-  again at the top of every row's iteration, before that row is read; the
-  check returns the wrapped `context.Canceled` and leaves the transaction
-  open, so the `Restorer`'s `Rollback` still succeeds.
-  `TestRewriteTextColumnReportsCancellationForARowTheBoundaryRuleRejects`
-  covers the per-row check;
-  `TestCancelledRewriteTextColumnLeavesTransactionRollbackable` covers the
-  entry check, and the `Rollback` that succeeds after a cancelled rewrite.
+- `(*DB).RewriteTextColumn` checks `ctx.Err()` on entry and returns the
+  wrapped `context.Canceled`, leaving the transaction open, so the
+  `Restorer`'s `Rollback` still succeeds.
 
 **Refused.**
 
-- None. A cancelled context surfaces as the `context.Canceled` error a
-  `*Context` call returns, or as the one a between-statement check raises;
-  either is in the returned error's chain.
-  `TestCountTextColumnROFailsOnCancelledContext`,
-  `TestRewriteTextColumnFailsOnCancelledContext`,
-  `TestCancelledRewriteTextColumnLeavesTransactionRollbackable`,
-  `TestRewriteTextColumnStopsBeforeTheFirstRowWriteWhenCancelled`, and
-  `TestRewriteTextColumnReportsCancellationForARowTheBoundaryRuleRejects`
-  assert it.
+- None. Outside a transaction a cancelled context surfaces as the
+  `context.Canceled` error the `*Context` call returns; inside one, only
+  `RewriteTextColumn`'s entry check raises it. Either is in the returned
+  error's chain.
 
 **Not covered.**
 
+- A cancel that lands while a mutator is inside its loop. The two keyed
+  mutators check nothing for cancellation and write under `WithoutCancel`,
+  so they do not observe one; their callers stop between calls instead,
+  checking `ctx.Err()` before each `UpdateColumnsByKey` or
+  `UpdateColumnsByRowID` call in `internal/tool/codex`'s queue and
+  state-database rewrite loops (`queue.go`, `statedb.go`);
+  `applyThreadSidecars` and `rearmBackfillState` (`export_import_stats.go`)
+  make one such call per database, right after a live-`ctx` `Open`, with no
+  check of their own.
+  `RewriteTextColumn` observes a later cancel no more than they do once its
+  entry check has passed.
 - `(*DB).Close`, `(*Tx).Commit`, and `(*Tx).Rollback` take no context, and
   keep their signatures. `database/sql` exposes no context variant for
   closing a handle or ending a transaction, so all three run to completion
@@ -328,10 +328,6 @@ updating one row of a composite-key table by rowid, both expected-value
 guards, `UpdateColumnsByRowID`'s refusal of a missing expected value, and
 its schema refusals. The cancellation tests cover `Begin`'s transaction
 still committing once its own begin context is cancelled,
-`CountTextColumnRO` and `RewriteTextColumn` surfacing a cancelled context
-as `context.Canceled`, a cancelled `RewriteTextColumn` leaving the
-transaction rollbackable with its earlier update undone, and its per-row
-check, driven by a context that reports cancellation only from its second
-`Err` call. One case stops before the first row's write, reading every row
-unchanged through the transaction and again after a successful `Rollback`;
-the other reaches a row the boundary rule leaves unchanged.
+`CountTextColumnRO` surfacing a cancelled context as `context.Canceled`,
+and `RewriteTextColumn` refusing a cancelled context on entry while leaving
+the transaction rollbackable, with its earlier update undone.

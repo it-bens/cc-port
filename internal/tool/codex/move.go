@@ -438,7 +438,7 @@ func (workspace *Workspace) ResidualWarnings(ctx context.Context, req tool.MoveR
 		warnings = append(warnings, marketplaceWarning)
 	}
 
-	agentsWarning, err := residualAgentsWarning(ctx, workspace.home.AgentsDir, req.OldPath)
+	agentsWarning, err := residualAgentsWarning(workspace.home.AgentsDir, req.OldPath)
 	if err != nil {
 		return warnings, err
 	}

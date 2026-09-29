@@ -498,28 +498,6 @@ func TestCountTextColumnROFailsOnCancelledContext(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestRewriteTextColumnFailsOnCancelledContext(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "rewrite.sqlite")
-	database := openSQLite(t, path)
-	require.NoError(t, execute(database, "CREATE TABLE documents (id INTEGER PRIMARY KEY, text_content TEXT)"))
-	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", 1, "/Users/test/Projects/my-project/notes"))
-	require.NoError(t, database.Close())
-	rewriter, err := Open(t.Context(), path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, transaction.Rollback()) })
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	_, err = rewriter.RewriteTextColumn(
-		ctx, transaction, "documents", "id", "text_content", "/Users/test/Projects/my-project", "/Users/test/Projects/renamed",
-	)
-
-	require.ErrorIs(t, err, context.Canceled)
-}
-
 func TestCancelledRewriteTextColumnLeavesTransactionRollbackable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cancelled-rollback.sqlite")
 	const oldPath = "/Users/test/Projects/my-project"
@@ -555,90 +533,6 @@ func TestCancelledRewriteTextColumnLeavesTransactionRollbackable(t *testing.T) {
 	var stored string
 	require.NoError(t, check.QueryRowContext(t.Context(), "SELECT text_content FROM documents WHERE id = 1").Scan(&stored))
 	assert.Equal(t, oldPath+"/notes", stored)
-}
-
-func TestRewriteTextColumnStopsBeforeTheFirstRowWriteWhenCancelled(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cancelled-first-row.sqlite")
-	const oldPath = "/Users/test/Projects/my-project"
-	database := openSQLite(t, path)
-	require.NoError(t, prepareWAL(database))
-	require.NoError(t, execute(database, "CREATE TABLE documents (id INTEGER PRIMARY KEY, text_content TEXT)"))
-	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", 1, oldPath+"/notes"))
-	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", 2, oldPath+"/diagrams"))
-	require.NoError(t, database.Close())
-
-	rewriter, err := Open(t.Context(), path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin(t.Context())
-	require.NoError(t, err)
-
-	rewritten, err := rewriter.RewriteTextColumn(
-		&lateCancelContext{Context: t.Context()}, transaction,
-		"documents", "id", "text_content", oldPath, "/Users/test/Projects/renamed",
-	)
-
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Zero(t, rewritten)
-
-	// Read through the transaction itself before rolling it back: Rollback
-	// undoes a write, so a read taken afterwards cannot tell a rewrite that
-	// wrote nothing from one that updated a row and then returned the
-	// cancellation.
-	pendingRows, err := transaction.transaction.QueryContext(t.Context(), "SELECT text_content FROM documents ORDER BY id")
-	require.NoError(t, err)
-	var pending []string
-	for pendingRows.Next() {
-		var value string
-		require.NoError(t, pendingRows.Scan(&value))
-		pending = append(pending, value)
-	}
-	require.NoError(t, pendingRows.Err())
-	require.NoError(t, pendingRows.Close())
-	assert.Equal(t, []string{oldPath + "/notes", oldPath + "/diagrams"}, pending)
-
-	require.NoError(t, transaction.Rollback())
-
-	check := openSQLite(t, path)
-	t.Cleanup(func() { require.NoError(t, check.Close()) })
-	rows, err := check.QueryContext(t.Context(), "SELECT text_content FROM documents ORDER BY id")
-	require.NoError(t, err)
-	var stored []string
-	for rows.Next() {
-		var value string
-		require.NoError(t, rows.Scan(&value))
-		stored = append(stored, value)
-	}
-	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
-	assert.Equal(t, []string{oldPath + "/notes", oldPath + "/diagrams"}, stored)
-}
-
-func TestRewriteTextColumnReportsCancellationForARowTheBoundaryRuleRejects(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cancelled-rejected-row.sqlite")
-	const oldPath = "/Users/test/Projects/my-project"
-	database := openSQLite(t, path)
-	require.NoError(t, execute(database, "CREATE TABLE documents (id INTEGER PRIMARY KEY, text_content TEXT)"))
-	// The streaming select matches by instr, so a value whose only occurrence
-	// of oldPath is followed by a path-continuation byte arrives at the loop
-	// with no replacements; the cancellation must still be observed there.
-	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", 1, oldPath+"-sibling/notes"))
-	require.NoError(t, database.Close())
-
-	rewriter, err := Open(t.Context(), path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
-	transaction, err := rewriter.Begin(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = transaction.Rollback() })
-
-	rewritten, err := rewriter.RewriteTextColumn(
-		&lateCancelContext{Context: t.Context()}, transaction,
-		"documents", "id", "text_content", oldPath, "/Users/test/Projects/renamed",
-	)
-
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Zero(t, rewritten)
 }
 
 func TestVersionMeetsFloor(t *testing.T) {
@@ -720,21 +614,4 @@ func sqliteVersionNumber(t *testing.T, version string) int {
 	_, err := fmt.Sscanf(version, "%d.%d.%d", &major, &minor, &patch)
 	require.NoError(t, err)
 	return major*1_000_000 + minor*1_000 + patch
-}
-
-// lateCancelContext reports cancellation only from its second Err call
-// onwards, so a mutator's entry check reads it as live while the observation
-// inside the row loop reads it as cancelled. Deterministic alternative to
-// racing a real cancel against the loop.
-type lateCancelContext struct {
-	context.Context
-	calls int
-}
-
-func (late *lateCancelContext) Err() error {
-	late.calls++
-	if late.calls == 1 {
-		return nil
-	}
-	return context.Canceled
 }

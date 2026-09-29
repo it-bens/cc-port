@@ -1290,7 +1290,7 @@ func TestResidualAgentsWarningIncludesMarketplaceMisses(t *testing.T) {
 	contents := `{"entries":[{"source":"local","unrecognized_path":"` + FixtureProjectPath() + `/plugin"}]}`
 	require.NoError(t, os.WriteFile(marketplacePath, []byte(contents), 0o600))
 
-	warning, err := residualAgentsWarning(t.Context(), agentsDir, FixtureProjectPath())
+	warning, err := residualAgentsWarning(agentsDir, FixtureProjectPath())
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, warning)
