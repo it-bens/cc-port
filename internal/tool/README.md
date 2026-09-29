@@ -214,9 +214,6 @@ A third adapter is one new package (`internal/tool/<name>`) plus one line in
   could not be rolled back.
 - `ReplaceFile` owns the change test. Identical bytes are neither
   registered nor written, so the file keeps its content, inode, and mtime.
-- A failed `ReplaceFile` write drops the registration that call added and
-  deletes its sibling backup, so `Restore` never replaces a file the call
-  left unmodified.
 - `RegisterUndo` gives non-file surfaces (a SQL transaction) the same
   reverse-order rollback sequence as file registrations, interleaved by
   registration order regardless of which registration method was used.
@@ -240,8 +237,8 @@ Unit tests in `path_test.go`, `restorer_test.go`, `set_test.go`. Coverage:
 `ResolveProjectPath` tilde expansion and symlink resolution, `Restorer`'s
 in-memory vs. sibling-backup threshold and reverse-order restore including a
 mixed file-and-undo registration sequence, `ReplaceFile`'s no-op for
-identical bytes and its dropped registration after a failed write,
-`ReplacePathInFile`'s rewrite and failure modes, and `NewSet`'s empty-registry,
+identical bytes, `ReplacePathInFile`'s rewrite and failure modes, and
+`NewSet`'s empty-registry,
 empty-name, duplicate-name, duplicate-qualified-category, and duplicate-key
 panic conditions alongside its
 `ByName`/`Detected` accessors and the package-level `ParseQualified` parser.

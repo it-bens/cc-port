@@ -129,23 +129,15 @@ func (restorer *Restorer) registerSibling(path string, mode os.FileMode, modTime
 // the bytes the caller read from path, snapshotting the pre-image through
 // RegisterFile first. It is the only way a move writer replaces a file, and it
 // owns the change test: identical bytes return false without registering or
-// writing, so an unchanged file keeps its content, inode, and mtime. A failed
-// write drops the registration it just added, so Restore never replaces a
-// file this call left unmodified.
+// writing, so an unchanged file keeps its content, inode, and mtime.
 func (restorer *Restorer) ReplaceFile(path string, original, rewritten []byte, mode os.FileMode) (changed bool, err error) {
 	if bytes.Equal(original, rewritten) {
 		return false, nil
 	}
-	restoreCount, cleanupCount := len(restorer.restores), len(restorer.cleanups)
 	if err := restorer.RegisterFile(path); err != nil {
 		return false, fmt.Errorf("back up %s: %w", path, err)
 	}
 	if err := rewrite.SafeWriteFile(path, rewritten, mode); err != nil {
-		for _, cleanup := range restorer.cleanups[cleanupCount:] {
-			cleanup()
-		}
-		restorer.restores = restorer.restores[:restoreCount]
-		restorer.cleanups = restorer.cleanups[:cleanupCount]
 		return false, fmt.Errorf("write %s: %w", path, err)
 	}
 	return true, nil
@@ -153,7 +145,7 @@ func (restorer *Restorer) ReplaceFile(path string, original, rewritten []byte, m
 
 // ReplacePathInFile rewrites every path-boundary occurrence of oldPath in
 // path to newPath through ReplaceFile, keeping path's mode. It returns the
-// replacement count when the file changed and zero when it did not.
+// replacement count, zero when the rewrite changed nothing.
 func (restorer *Restorer) ReplacePathInFile(path, oldPath, newPath string) (count int, err error) {
 	original, err := os.ReadFile(path) //nolint:gosec // G304: path is caller-supplied, already-validated internal state
 	if err != nil {
@@ -164,12 +156,9 @@ func (restorer *Restorer) ReplacePathInFile(path, oldPath, newPath string) (coun
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
 	rewritten, count := rewrite.ReplacePathInBytes(original, oldPath, newPath)
-	changed, err := restorer.ReplaceFile(path, original, rewritten, info.Mode())
+	_, err = restorer.ReplaceFile(path, original, rewritten, info.Mode())
 	if err != nil {
 		return 0, err
-	}
-	if !changed {
-		return 0, nil
 	}
 	return count, nil
 }

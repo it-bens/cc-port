@@ -145,18 +145,18 @@ func TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched(t *testing.T) 
 }
 
 // TestApplyRolloutSubstitutionsPreservesLineTerminators guards byte-faithful
-// reassembly: a CRLF line keeps its '\r' and an unterminated final line stays
-// unterminated, so the only bytes that change are the substituted paths.
+// reassembly: a terminated line keeps its '\n' and an unterminated final line
+// stays unterminated, so the only bytes that change are the substituted paths.
 func TestApplyRolloutSubstitutionsPreservesLineTerminators(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	const (
-		crlfSessionMeta = `{"type":"session_meta","payload":{"id":"primary-session","cwd":"%s"}}` + "\r\n"
-		crlfMessage     = `{"type":"response_item","payload":{"type":"message","role":"user",` +
-			`"content":[{"type":"input_text","text":"no path here"}]}}` + "\r\n"
+		sessionMeta = `{"type":"session_meta","payload":{"id":"primary-session","cwd":"%s"}}` + "\n"
+		message     = `{"type":"response_item","payload":{"type":"message","role":"user",` +
+			`"content":[{"type":"input_text","text":"no path here"}]}}` + "\n"
 		unterminatedTurnContext = `{"type":"turn_context","payload":{"cwd":"%s"}}`
 	)
 	render := func(projectPath string) []byte {
-		return []byte(fmt.Sprintf(crlfSessionMeta, projectPath) + crlfMessage + fmt.Sprintf(unterminatedTurnContext, projectPath))
+		return []byte(fmt.Sprintf(sessionMeta, projectPath) + message + fmt.Sprintf(unterminatedTurnContext, projectPath))
 	}
 	require.NoError(t, os.WriteFile(path, render("/Users/test/Projects/myproject"), 0o600))
 

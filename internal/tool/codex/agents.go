@@ -117,12 +117,9 @@ func applyAgentsMarketplace(agentsDir, oldPath, newPath string, undo *tool.Resto
 			return 0, fmt.Errorf("rewrite %s in %s: %w", sourcePath, path, err)
 		}
 	}
-	changed, err := undo.ReplaceFile(path, data, updated, info.Mode())
+	_, err = undo.ReplaceFile(path, data, updated, info.Mode())
 	if err != nil {
 		return 0, err
-	}
-	if !changed {
-		return 0, nil
 	}
 	return total, nil
 }

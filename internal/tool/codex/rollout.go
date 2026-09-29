@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -594,8 +593,7 @@ func readRolloutLines(path string) (lines [][]byte, err error) {
 // reassembled bytes. Reassembly is byte-faithful: every terminator is
 // reattached as read and an unterminated final line stays unterminated, so a
 // rollout the transform leaves unchanged is neither registered nor written.
-// A CRLF line's body keeps its '\r', which JSON parsing treats as trailing
-// whitespace. A replaced rollout keeps its pre-move mtime.
+// A replaced rollout keeps its pre-move mtime.
 func rewriteRolloutLines(path string, undo *tool.Restorer, transform func(line []byte) (rewritten []byte, count int)) (int, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -606,31 +604,20 @@ func rewriteRolloutLines(path string, undo *tool.Restorer, transform func(line [
 		return 0, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	reader := bufio.NewReader(bytes.NewReader(original))
 	var output bytes.Buffer
-	output.Grow(len(original))
 	count := 0
-	for lineNumber := 1; ; lineNumber++ {
-		line, readErr := reader.ReadBytes('\n')
-		if len(line) > maxCodexJSONLLine {
-			return 0, fmt.Errorf("%s line %d exceeds %d bytes: %w", path, lineNumber, maxCodexJSONLLine, bufio.ErrTooLong)
+	for _, line := range bytes.SplitAfter(original, []byte("\n")) {
+		if len(line) == 0 {
+			continue
 		}
-		if len(line) > 0 {
-			body, terminator := line, []byte(nil)
-			if line[len(line)-1] == '\n' {
-				body, terminator = line[:len(line)-1], line[len(line)-1:]
-			}
-			rewrittenBody, lineCount := transform(body)
-			count += lineCount
-			output.Write(rewrittenBody)
-			output.Write(terminator)
+		body, terminator := line, []byte(nil)
+		if line[len(line)-1] == '\n' {
+			body, terminator = line[:len(line)-1], line[len(line)-1:]
 		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return 0, fmt.Errorf("read %s line %d: %w", path, lineNumber, readErr)
-		}
+		rewrittenBody, lineCount := transform(body)
+		count += lineCount
+		output.Write(rewrittenBody)
+		output.Write(terminator)
 	}
 
 	changed, err := undo.ReplaceFile(path, original, output.Bytes(), info.Mode())

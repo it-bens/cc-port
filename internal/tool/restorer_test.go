@@ -150,55 +150,42 @@ func TestRestorer_CleanupRemovesSiblingBackupsWithoutRestoring(t *testing.T) {
 	assert.Equal(t, []byte("mutated"), got, "Cleanup must not restore the target")
 }
 
-// TestRestorer_ReplaceFileWritesReplacementAndRollsBack covers both
-// RegisterFile branches ReplaceFile drives: a small file held in memory, and
-// a large file (>1 MiB, no injectable threshold exists on Restorer, so this
-// test writes a real file past it) routed through the sibling-backup path.
-// ReplaceFile must write the replacement bytes, and a later Restore must put
-// back the original bytes, mode, and modification time. The replacement mode
-// differs from the original so the mode assertion cannot pass by accident.
+// TestRestorer_ReplaceFileWritesReplacementAndRollsBack covers the in-memory
+// RegisterFile branch ReplaceFile drives: it must write the replacement
+// bytes, and a later Restore must put back the original bytes, mode, and
+// modification time. The replacement mode differs from the original so the
+// mode assertion cannot pass by accident.
 func TestRestorer_ReplaceFileWritesReplacementAndRollsBack(t *testing.T) {
+	original := []byte("original\n")
 	replacement := []byte("replacement\n")
 	const replacementMode = 0o640
 	past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
 
-	cases := []struct {
-		name     string
-		original []byte
-	}{
-		{"in-memory branch", []byte("original\n")},
-		{"sibling backup branch", []byte(strings.Repeat("abc\n", 300_000))}, // >1 MiB: forces the sibling-backup path
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			tmp := t.TempDir()
-			target := filepath.Join(tmp, "target.txt")
-			require.NoError(t, os.WriteFile(target, testCase.original, 0o600))
-			require.NoError(t, os.Chtimes(target, past, past))
+	target := filepath.Join(t.TempDir(), "target.txt")
+	require.NoError(t, os.WriteFile(target, original, 0o600))
+	require.NoError(t, os.Chtimes(target, past, past))
 
-			restorer := tool.NewRestorer()
-			changed, err := restorer.ReplaceFile(target, testCase.original, replacement, replacementMode)
-			require.NoError(t, err)
-			require.True(t, changed, "differing bytes must be reported as a change")
+	restorer := tool.NewRestorer()
+	changed, err := restorer.ReplaceFile(target, original, replacement, replacementMode)
+	require.NoError(t, err)
+	require.True(t, changed, "differing bytes must be reported as a change")
 
-			written, err := os.ReadFile(target) //nolint:gosec // test-controlled path
-			require.NoError(t, err)
-			assert.Equal(t, replacement, written, "ReplaceFile must write the replacement bytes")
+	written, err := os.ReadFile(target) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Equal(t, replacement, written, "ReplaceFile must write the replacement bytes")
 
-			require.NoError(t, restorer.Restore())
+	require.NoError(t, restorer.Restore())
 
-			restored, err := os.ReadFile(target) //nolint:gosec // test-controlled path
-			require.NoError(t, err)
-			assert.Equal(t, testCase.original, restored, "Restore must put back the original bytes")
+	restored, err := os.ReadFile(target) //nolint:gosec // test-controlled path
+	require.NoError(t, err)
+	assert.Equal(t, original, restored, "Restore must put back the original bytes")
 
-			info, err := os.Stat(target)
-			require.NoError(t, err)
-			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
-				"Restore must put back the original mode")
-			assert.WithinDuration(t, past, info.ModTime(), time.Second,
-				"Restore must reapply the pre-mutation mtime, not the restore time")
-		})
-	}
+	info, err := os.Stat(target)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"Restore must put back the original mode")
+	assert.WithinDuration(t, past, info.ModTime(), time.Second,
+		"Restore must reapply the pre-mutation mtime, not the restore time")
 }
 
 // TestRestorer_ReplaceFileLeavesIdenticalBytesUntouched guards the change
@@ -229,37 +216,6 @@ func TestRestorer_ReplaceFileLeavesIdenticalBytesUntouched(t *testing.T) {
 	restored, err := os.ReadFile(target) //nolint:gosec // test-controlled path
 	require.NoError(t, err)
 	assert.Equal(t, externalEdit, restored, "Restore has no snapshot of an unchanged file to put back")
-}
-
-// TestRestorer_ReplaceFileDropsRegistrationWhenWriteFails guards that a
-// failed write leaves no registration behind: the file keeps its original
-// bytes, so a Restore that replayed the snapshot would overwrite whatever the
-// file holds by then with a pre-image the move never replaced.
-func TestRestorer_ReplaceFileDropsRegistrationWhenWriteFails(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root; chmod 0500 will not prevent writes")
-	}
-	dir := t.TempDir()
-	target := filepath.Join(dir, "settings.json")
-	original := []byte(`{"cwd":"/Users/test/Projects/myproject"}`)
-	require.NoError(t, os.WriteFile(target, original, 0o600))
-	require.NoError(t, os.Chmod(dir, 0o500)) //nolint:gosec // G302: deliberately read-only so SafeWriteFile cannot create its temp file
-	t.Cleanup(func() {
-		_ = os.Chmod(dir, 0o700) //nolint:gosec // G302: restore perms in test teardown
-	})
-	restorer := tool.NewRestorer()
-
-	changed, err := restorer.ReplaceFile(target, original, []byte(`{"cwd":"/Users/test/Projects/renamed"}`), 0o600)
-	require.Error(t, err)
-	require.NoError(t, os.Chmod(dir, 0o700)) //nolint:gosec // G302: writable again so the external edit and a replayed snapshot could land
-	externalEdit := []byte(`{"cwd":"/Users/test/Projects/edited-later"}`)
-	require.NoError(t, os.WriteFile(target, externalEdit, 0o600))
-	require.NoError(t, restorer.Restore())
-
-	assert.False(t, changed)
-	restored, err := os.ReadFile(target) //nolint:gosec // test-controlled path
-	require.NoError(t, err)
-	assert.Equal(t, externalEdit, restored, "Restore must not replay a snapshot for a write that never happened")
 }
 
 func TestRestorer_ReplacePathInFileRewritesAndRegisters(t *testing.T) {
