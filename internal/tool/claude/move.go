@@ -43,10 +43,12 @@ var ErrEncodedDirStagingCollision = errors.New("refusing to move: old encoded pr
 var removeAll = os.RemoveAll
 
 // MoveSurfaces implements tool.Mover. Surfaces run in the returned order:
-// each rewrite surface is individually atomic (a sibling-temp write via
-// rewrite.SafeWriteFile) and registers its pre-image with the Restorer, so
-// an in-process failure at any point restores every surface applied so
-// far. The final "project-directory" surface performs the actual rename —
+// each rewrite surface that changes a file is individually atomic (a
+// sibling-temp write via rewrite.SafeWriteFile) and registers its pre-image
+// with the Restorer, so an in-process failure at any point restores every
+// surface applied so far; a surface whose rewrite changed nothing writes
+// nothing and registers nothing. The final "project-directory" surface
+// performs the actual rename —
 // copying the encoded storage directory (and, unless RefsOnly, the
 // on-disk project directory) to the new path and removing the originals —
 // and must run last so every reference surface has already been rewritten
@@ -332,27 +334,6 @@ func snapshotPaths(ctx context.Context, locations *ProjectLocations) ([]string, 
 	return paths, nil
 }
 
-// rewriteTracked performs the register -> byte-replace -> atomic-write
-// sandwich used by every uniform plain-bytes rewrite surface.
-func rewriteTracked(path, oldPath, newPath string, undo *tool.Restorer) (int, error) {
-	if err := undo.RegisterFile(path); err != nil {
-		return 0, err
-	}
-	original, err := os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
-	if err != nil {
-		return 0, err
-	}
-	rewritten, count := rewrite.ReplacePathInBytes(original, oldPath, newPath)
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
-	if err := rewrite.SafeWriteFile(path, rewritten, info.Mode()); err != nil {
-		return 0, err
-	}
-	return count, nil
-}
-
 func (workspace *Workspace) historySurface(req tool.MoveRequest) tool.Surface {
 	return tool.Surface{
 		Name: categoryHistory,
@@ -427,17 +408,11 @@ func (workspace *Workspace) applyHistoryRewrite(
 	ctx context.Context, req tool.MoveRequest, undo *tool.Restorer,
 ) (count int, malformed []int, err error) {
 	historyFile := workspace.home.HistoryFile()
-	if _, err := os.Stat(historyFile); err != nil {
+	original, err := os.ReadFile(historyFile) //nolint:gosec // path constructed from trusted internal data
+	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return 0, nil, nil
 		}
-		return 0, nil, fmt.Errorf("stat %s: %w", historyFile, err)
-	}
-	if err := undo.RegisterFile(historyFile); err != nil {
-		return 0, nil, fmt.Errorf("back up history.jsonl: %w", err)
-	}
-	original, err := os.ReadFile(historyFile) //nolint:gosec // path constructed from trusted internal data
-	if err != nil {
 		return 0, nil, fmt.Errorf("read history.jsonl: %w", err)
 	}
 	var rewritten bytes.Buffer
@@ -445,7 +420,7 @@ func (workspace *Workspace) applyHistoryRewrite(
 	if err != nil {
 		return 0, nil, fmt.Errorf("rewrite history.jsonl: %w", err)
 	}
-	if err := rewrite.SafeWriteFile(historyFile, rewritten.Bytes(), 0o600); err != nil {
+	if _, err := undo.ReplaceFile(historyFile, original, rewritten.Bytes(), 0o600); err != nil {
 		return 0, nil, fmt.Errorf("write history.jsonl: %w", err)
 	}
 	return count, malformed, nil
@@ -488,14 +463,11 @@ func (workspace *Workspace) sessionsSurface(req tool.MoveRequest, locatePath str
 				if err := ctx.Err(); err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				if err := undo.RegisterFile(sessionFilePath); err != nil {
-					return tool.SurfaceResult{}, err
-				}
 				original, err := os.ReadFile(sessionFilePath) //nolint:gosec // path constructed from trusted internal data
 				if err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				rewritten, changed, err := RewriteSessionFile(original, req.OldPath, req.NewPath)
+				rewritten, _, err := RewriteSessionFile(original, req.OldPath, req.NewPath)
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("rewrite session file %s: %w", sessionFilePath, err)
 				}
@@ -503,7 +475,8 @@ func (workspace *Workspace) sessionsSurface(req tool.MoveRequest, locatePath str
 				if err != nil {
 					return tool.SurfaceResult{}, err
 				}
-				if err := rewrite.SafeWriteFile(sessionFilePath, rewritten, info.Mode()); err != nil {
+				changed, err := undo.ReplaceFile(sessionFilePath, original, rewritten, info.Mode())
+				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("write session file %s: %w", sessionFilePath, err)
 				}
 				if changed {
@@ -550,7 +523,7 @@ func (workspace *Workspace) userWideSurfaces(req tool.MoveRequest) []tool.Surfac
 					}
 					return tool.SurfaceResult{}, fmt.Errorf("stat %s: %w", path, err)
 				}
-				count, err := rewriteTracked(path, req.OldPath, req.NewPath, undo)
+				count, err := undo.ReplacePathInFile(path, req.OldPath, req.NewPath)
 				return tool.SurfaceResult{Count: count}, err
 			},
 		})
@@ -602,12 +575,17 @@ func (workspace *Workspace) sessionKeyedSurfaces(req tool.MoveRequest, locatePat
 					if err != nil {
 						return tool.SurfaceResult{}, err
 					}
-					n, err := rewriteTracked(path, req.OldPath, req.NewPath, undo)
+					n, err := undo.ReplacePathInFile(path, req.OldPath, req.NewPath)
 					if err != nil {
 						return tool.SurfaceResult{}, fmt.Errorf("rewrite %s %s: %w", group.Name, path, err)
 					}
-					if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
-						return tool.SurfaceResult{}, fmt.Errorf("restore mtime %s: %w", path, err)
+					// Only a file ReplacePathInFile actually replaced (a nonzero
+					// count) needs its pre-move mtime put back; an unchanged file
+					// is left alone.
+					if n != 0 {
+						if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+							return tool.SurfaceResult{}, fmt.Errorf("restore mtime %s: %w", path, err)
+						}
 					}
 					count += n
 				}
@@ -643,27 +621,22 @@ func (workspace *Workspace) configSurface(req tool.MoveRequest) tool.Surface {
 		},
 		Apply: func(_ context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			configFile := workspace.home.ConfigFile
-			if _, err := os.Stat(configFile); err != nil {
+			original, err := os.ReadFile(configFile) //nolint:gosec // path constructed from trusted internal data
+			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					return tool.SurfaceResult{}, nil
 				}
-				return tool.SurfaceResult{}, fmt.Errorf("stat %s: %w", configFile, err)
-			}
-			if err := undo.RegisterFile(configFile); err != nil {
-				return tool.SurfaceResult{}, fmt.Errorf("read config file for backup: %w", err)
-			}
-			original, err := os.ReadFile(configFile) //nolint:gosec // path constructed from trusted internal data
-			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("read config file: %w", err)
 			}
-			rewritten, rekeyed, err := RewriteUserConfig(original, req.OldPath, req.NewPath)
+			rewritten, _, err := RewriteUserConfig(original, req.OldPath, req.NewPath)
 			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("rewrite config file: %w", err)
 			}
-			if err := rewrite.SafeWriteFile(configFile, rewritten, 0o600); err != nil {
+			changed, err := undo.ReplaceFile(configFile, original, rewritten, 0o600)
+			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("write config file: %w", err)
 			}
-			if rekeyed {
+			if changed {
 				return tool.SurfaceResult{Count: 1}, nil
 			}
 			return tool.SurfaceResult{}, nil
@@ -781,7 +754,9 @@ func (workspace *Workspace) memorySurface(req tool.MoveRequest, locatePath strin
 
 // rewriteTwicePreservingMtime replaces both the real project path and the
 // encoded storage directory form inside path, then restores path's
-// pre-rewrite modification time.
+// pre-rewrite modification time. A rewrite that leaves the bytes identical
+// returns a zero count, and ReplaceFile neither registers nor writes it, so
+// a file naming neither form keeps its content, inode, and mtime.
 func rewriteTwicePreservingMtime(
 	path, oldPath, newPath, oldEncodedDir, newEncodedDir string, undo *tool.Restorer,
 ) (int, error) {
@@ -789,17 +764,18 @@ func rewriteTwicePreservingMtime(
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if err := undo.RegisterFile(path); err != nil {
-		return 0, err
-	}
 	data, err := os.ReadFile(path) //nolint:gosec // path constructed from trusted internal data
 	if err != nil {
 		return 0, fmt.Errorf("read %s: %w", path, err)
 	}
 	rewritten, count := rewrite.ReplacePathInBytes(data, oldPath, newPath)
 	rewritten, encodedCount := rewrite.ReplacePathInBytes(rewritten, oldEncodedDir, newEncodedDir)
-	if err := rewrite.SafeWriteFile(path, rewritten, info.Mode()); err != nil {
+	changed, err := undo.ReplaceFile(path, data, rewritten, info.Mode())
+	if err != nil {
 		return 0, fmt.Errorf("write %s: %w", path, err)
+	}
+	if !changed {
+		return 0, nil
 	}
 	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 		return 0, fmt.Errorf("restore mtime %s: %w", path, err)

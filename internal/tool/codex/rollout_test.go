@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 func rolloutFixturePath(home *Home, relative string) string {
@@ -35,10 +38,12 @@ func applyRolloutFileViaPlan(ctx context.Context, path, oldPath, newPath string,
 	if eraA {
 		return 0, true, nil
 	}
-	changedCount, err := applyRolloutSubstitutions(path, substitutions, deep)
+	undo := tool.NewRestorer()
+	changedCount, err := applyRolloutSubstitutions(path, substitutions, deep, undo)
 	if err != nil {
 		return 0, false, err
 	}
+	undo.Cleanup()
 	return changedCount, false, nil
 }
 
@@ -93,7 +98,7 @@ func TestRewriteRolloutLinesRewritesAtomicallyAndPreservesMtime(t *testing.T) {
 	past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, os.Chtimes(path, past, past))
 
-	changed, err := rewriteRolloutLines(path, func(line []byte) ([]byte, int) {
+	changed, err := rewriteRolloutLines(path, tool.NewRestorer(), func(line []byte) ([]byte, int) {
 		if bytes.Equal(line, []byte("line one")) {
 			return []byte("LINE ONE"), 1
 		}
@@ -108,6 +113,61 @@ func TestRewriteRolloutLinesRewritesAtomicallyAndPreservesMtime(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.WithinDuration(t, past, info.ModTime(), time.Second)
+}
+
+// TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched guards that a
+// rollout with no match, here ending in an unterminated line, is not written
+// at all: a rename over it would detach a live Codex writer.
+func TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	sessionMeta := `{"type":"session_meta","payload":{"id":"primary-session","cwd":"/Users/test/Projects/otherproject"}}`
+	unterminatedMessage := `{"type":"response_item","payload":{"type":"message","role":"user",` +
+		`"content":[{"type":"input_text","text":"look at /Users/test/Projects/otherproject/notes.md"}]}}`
+	original := []byte(sessionMeta + "\n" + unterminatedMessage)
+	require.NoError(t, os.WriteFile(path, original, 0o600))
+	past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(path, past, past))
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+
+	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, "/Users/test/Projects/myproject", "/Users/test/Projects/renamed", true)
+
+	require.NoError(t, err)
+	require.False(t, eraA)
+	assert.Zero(t, changed)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path built from t.TempDir() in this test
+	require.NoError(t, err)
+	assert.Equal(t, original, data)
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(before, after), "an unchanged rollout keeps its inode")
+	assert.Equal(t, before.ModTime(), after.ModTime())
+}
+
+// TestApplyRolloutSubstitutionsPreservesLineTerminators guards byte-faithful
+// reassembly: a terminated line keeps its '\n' and an unterminated final line
+// stays unterminated, so the only bytes that change are the substituted paths.
+func TestApplyRolloutSubstitutionsPreservesLineTerminators(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	const (
+		sessionMeta = `{"type":"session_meta","payload":{"id":"primary-session","cwd":"%s"}}` + "\n"
+		message     = `{"type":"response_item","payload":{"type":"message","role":"user",` +
+			`"content":[{"type":"input_text","text":"no path here"}]}}` + "\n"
+		unterminatedTurnContext = `{"type":"turn_context","payload":{"cwd":"%s"}}`
+	)
+	render := func(projectPath string) []byte {
+		return []byte(fmt.Sprintf(sessionMeta, projectPath) + message + fmt.Sprintf(unterminatedTurnContext, projectPath))
+	}
+	require.NoError(t, os.WriteFile(path, render("/Users/test/Projects/myproject"), 0o600))
+
+	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, "/Users/test/Projects/myproject", "/Users/test/Projects/renamed", false)
+
+	require.NoError(t, err)
+	require.False(t, eraA)
+	assert.Equal(t, 2, changed)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path built from t.TempDir() in this test
+	require.NoError(t, err)
+	assert.Equal(t, string(render("/Users/test/Projects/renamed")), string(data))
 }
 
 func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {

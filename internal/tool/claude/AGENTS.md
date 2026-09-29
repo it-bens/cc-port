@@ -9,6 +9,7 @@
 - Add each user-wide rewrite target as one `Registries` row and one `Home` method (README §User-wide registry).
 - Cap each new `history.jsonl` scanner with `MaxHistoryLine` (README §History line cap).
 - Never scrub or rewrite file-history snapshot bytes on any surface (export, import, move). (README §File-history handling (move), §File-history handling (export), §File-history handling (import))
+- A move writer replaces a file only through `undo.ReplaceFile` (or `undo.ReplacePathInFile`), which writes and registers only when the bytes changed (README §Apply contract (move)).
 
 ## Navigation
 

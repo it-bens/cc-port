@@ -211,22 +211,9 @@ func applyMemoriesWorktree(ctx context.Context, root, oldPath, newPath string, u
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		info, err := os.Stat(path)
+		count, err := undo.ReplacePathInFile(path, oldPath, newPath)
 		if err != nil {
-			return 0, fmt.Errorf("stat %s: %w", path, err)
-		}
-		data, err := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled worktree walk
-		if err != nil {
-			return 0, fmt.Errorf("read %s: %w", path, err)
-		}
-		rewritten, count := rewrite.ReplacePathInBytes(data, oldPath, newPath)
-		if count > 0 {
-			if err := undo.RegisterFile(path); err != nil {
-				return 0, fmt.Errorf("back up %s: %w", path, err)
-			}
-			if err := rewrite.SafeWriteFile(path, rewritten, info.Mode()); err != nil {
-				return 0, fmt.Errorf("write %s: %w", path, err)
-			}
+			return 0, err
 		}
 		total += count
 	}

@@ -2,7 +2,10 @@ package claude_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,6 +145,128 @@ func TestMove_RefusesForeignWitness(t *testing.T) {
 	assert.Contains(t, err.Error(), `"/Users/test/Projects/my project"`,
 		"error must name the witness cwd so the operator can identify the colliding project")
 	assert.NotErrorIs(t, err, tool.ErrProjectAbsent, "a foreign collision must hard refuse, not degrade to absence")
+}
+
+// TestMove_LeavesUnreferencedHomeWideFilesUntouched pins the no-op rule on
+// the home-wide surfaces: history.jsonl, ~/.claude.json, and settings.json
+// are shared across every project, so a move of a project none of them names
+// must leave each file's inode and mtime exactly as they were. A writer that
+// replaces the file anyway keeps its bytes but not its inode.
+func TestMove_LeavesUnreferencedHomeWideFilesUntouched(t *testing.T) {
+	root := t.TempDir()
+	home := &claude.Home{
+		Dir:        filepath.Join(root, "dotclaude"),
+		ConfigFile: filepath.Join(root, "dotclaude.json"),
+	}
+	oldPath := filepath.Join(root, "old-project")
+	newPath := filepath.Join(root, "new-project")
+	require.NoError(t, os.MkdirAll(home.ProjectDir(oldPath), 0o750))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home.ProjectDir(oldPath), "primary-session.jsonl"), []byte("{}\n"), 0o600))
+
+	unreferenced := map[string]string{
+		home.HistoryFile():  `{"display":"unrelated","project":"/Users/test/Projects/otherproject"}` + "\n",
+		home.ConfigFile:     `{"projects":{"/Users/test/Projects/otherproject":{"allowedTools":[]}}}`,
+		home.SettingsFile(): `{"env":{"PROJECT_ROOT":"/Users/test/Projects/otherproject"}}`,
+	}
+	past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
+	before := make(map[string]os.FileInfo, len(unreferenced))
+	for path, contents := range unreferenced {
+		require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+		require.NoError(t, os.Chtimes(path, past, past))
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		before[path] = info
+	}
+
+	workspace := claude.NewWorkspace(home)
+	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	require.NoError(t, err)
+	undo := tool.NewRestorer()
+	for _, surface := range surfaces {
+		_, err := surface.Apply(context.Background(), undo)
+		require.NoError(t, err, "apply %s", surface.Name)
+	}
+	undo.Cleanup()
+
+	for path, want := range before {
+		got, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.True(t, os.SameFile(want, got), "%s must keep its inode", path)
+		assert.Equal(t, want.ModTime(), got.ModTime(), "%s must keep its mtime", path)
+	}
+}
+
+// TestMove_LeavesFilesWithoutOldPathReferenceUntouched pins the no-op rule on
+// the per-project writers: a session-keyed registry file the moved project's
+// session UUID makes the writer enumerate, and a memory file naming neither
+// the project path nor its encoded directory form, each keep their bytes,
+// inode, and mtime. The project-directory surface is left out of the apply,
+// because its directory copy gives every file below the encoded directory a
+// fresh inode whatever the writers did.
+func TestMove_LeavesFilesWithoutOldPathReferenceUntouched(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	workspace := claude.NewWorkspace(home)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	// The fixture project directory holds this session's transcript, so the
+	// session-keyed registries enumerate every per-session file under this UUID.
+	const facetSessionUUID = "a1b2c3d4-0000-0000-0000-000000000001"
+
+	untouched := []struct {
+		path      string
+		forbidden []string
+	}{
+		{
+			path:      filepath.Join(home.UsageDataDir(), "facets", facetSessionUUID+".json"),
+			forbidden: []string{oldPath},
+		},
+		{
+			path:      filepath.Join(home.ProjectDir(oldPath), "memory", "owner_contacts.md"),
+			forbidden: []string{oldPath, home.ProjectDir(oldPath)},
+		},
+	}
+
+	type snapshot struct {
+		info os.FileInfo
+		data []byte
+	}
+	before := make([]snapshot, len(untouched))
+	for index, file := range untouched {
+		path := file.path
+		data, err := os.ReadFile(path) //nolint:gosec // G304: path inside the staged fixture
+		require.NoError(t, err)
+		for _, forbidden := range file.forbidden {
+			require.NotContains(t, string(data), forbidden,
+				"fixture sanity: %s must not carry a reference the move would rewrite", path)
+		}
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		before[index] = snapshot{info: info, data: data}
+	}
+
+	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	require.NoError(t, err)
+	undo := tool.NewRestorer()
+	for _, surface := range surfaces {
+		if surface.Name == tool.SurfaceProjectDirectory {
+			continue
+		}
+		_, err := surface.Apply(context.Background(), undo)
+		require.NoError(t, err, "apply %s", surface.Name)
+	}
+	undo.Cleanup()
+
+	for index, file := range untouched {
+		path := file.path
+		data, err := os.ReadFile(path) //nolint:gosec // G304: path inside the staged fixture
+		require.NoError(t, err)
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, before[index].data, data, "%s must keep its bytes", path)
+		assert.True(t, os.SameFile(before[index].info, info), "%s must keep its inode", path)
+		assert.Equal(t, before[index].info.ModTime(), info.ModTime(), "%s must keep its mtime", path)
+	}
 }
 
 func surfaceCounts(t *testing.T, workspace *claude.Workspace, req tool.MoveRequest, apply bool) map[string]int {

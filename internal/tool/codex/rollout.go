@@ -17,6 +17,7 @@ import (
 	"github.com/tidwall/sjson"
 
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool"
 )
 
 // ErrCompressedRolloutUnsupported is the sentinel discoverRolloutFiles
@@ -559,8 +560,8 @@ func planRolloutFile(path, oldPath, newPath string, deep bool) (count int, eraA 
 // applyRolloutSubstitutions applies substitutions captured during preflight.
 // It deliberately performs no path canonicalization, so another tool's apply
 // cannot make a previously canonical match disappear by removing oldPath.
-func applyRolloutSubstitutions(path string, substitutions []pathSubstitution, deep bool) (int, error) {
-	changedCount, err := rewriteRolloutLines(path, func(line []byte) ([]byte, int) {
+func applyRolloutSubstitutions(path string, substitutions []pathSubstitution, deep bool, undo *tool.Restorer) (int, error) {
+	changedCount, err := rewriteRolloutLines(path, undo, func(line []byte) ([]byte, int) {
 		return rewriteRolloutLine(line, substitutions, deep)
 	})
 	if err != nil {
@@ -587,27 +588,44 @@ func readRolloutLines(path string) (lines [][]byte, err error) {
 	return lines, nil
 }
 
-func rewriteRolloutLines(path string, transform func(line []byte) (rewritten []byte, count int)) (int, error) {
-	lines, err := readRolloutLines(path)
-	if err != nil {
-		return 0, err
-	}
-
-	var output bytes.Buffer
-	count := 0
-	for _, line := range lines {
-		rewrittenLine, lineCount := transform(line)
-		count += lineCount
-		output.Write(rewrittenLine)
-		output.WriteByte('\n')
-	}
-
+// rewriteRolloutLines passes each line body of path, its '\n' terminator
+// stripped, to transform and replaces path through undo with the
+// reassembled bytes. Reassembly is byte-faithful: every terminator is
+// reattached as read and an unterminated final line stays unterminated, so a
+// rollout the transform leaves unchanged is neither registered nor written.
+// A replaced rollout keeps its pre-move mtime.
+func rewriteRolloutLines(path string, undo *tool.Restorer, transform func(line []byte) (rewritten []byte, count int)) (int, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return 0, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if err := rewrite.SafeWriteFile(path, output.Bytes(), info.Mode()); err != nil {
-		return 0, fmt.Errorf("write %s: %w", path, err)
+	original, err := os.ReadFile(path) //nolint:gosec // G304: path from adapter-controlled rollout discovery
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	var output bytes.Buffer
+	count := 0
+	for _, line := range bytes.SplitAfter(original, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		body, terminator := line, []byte(nil)
+		if line[len(line)-1] == '\n' {
+			body, terminator = line[:len(line)-1], line[len(line)-1:]
+		}
+		rewrittenBody, lineCount := transform(body)
+		count += lineCount
+		output.Write(rewrittenBody)
+		output.Write(terminator)
+	}
+
+	changed, err := undo.ReplaceFile(path, original, output.Bytes(), info.Mode())
+	if err != nil {
+		return 0, err
+	}
+	if !changed {
+		return 0, nil
 	}
 	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 		return 0, fmt.Errorf("restore mtime %s: %w", path, err)

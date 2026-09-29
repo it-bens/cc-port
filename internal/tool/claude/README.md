@@ -461,12 +461,26 @@ per-project reference rewrite. `project-directory` runs last because it
 derives paths directly from `Home.ProjectDir` and never locates via witness
 state.
 
+Every move writer replaces a file only when its rewrite changed something.
+An unchanged file returns a zero count, registers nothing with the
+`Restorer`, and keeps its content, inode, and mtime. This matters most for
+the home-wide files — `history.jsonl`, `~/.claude.json`, `settings.json`,
+and the plugin registries — which a move shares with every other project and
+which need not name the moved one.
+
+Writers replace through `tool.Restorer.ReplaceFile` or
+`tool.Restorer.ReplacePathInFile` alone, and no move writer calls
+`RegisterFile` or `rewrite.SafeWriteFile` directly. `ReplaceFile` owns the
+change test (see `internal/tool/README.md` §Restorer semantics); each writer
+passes it the bytes it read alongside the rewritten bytes.
+
 #### Handled
 
 - Every plain-bytes surface with substitutable content (user-wide,
-  session-keyed) routes through `rewriteTracked`: `Restorer.RegisterFile`,
-  then `rewrite.ReplacePathInBytes`, then `rewrite.SafeWriteFile`. History
-  and config are format-aware instead: `historySurface` streams through
+  session-keyed) routes through `tool.Restorer.ReplacePathInFile`, which
+  reads the file, rewrites it through `rewrite.ReplacePathInBytes`, and
+  replaces it through `tool.Restorer.ReplaceFile`. History and config are
+  format-aware instead: `historySurface` streams through
   `StreamHistoryJSONL`, and `configSurface` rewrites through
   `RewriteUserConfig`.
 - Transcripts and memory route through `rewriteTwicePreservingMtime`, which
@@ -678,7 +692,7 @@ by mtime).
   their open source and pass `ModTime()` through.
 - Move: transcripts and memory files restore their pre-rewrite mtime via
   `rewriteTwicePreservingMtime`; session-keyed flat files restore theirs via
-  `os.Chtimes` after `rewriteTracked`.
+  `os.Chtimes` after `tool.Restorer.ReplacePathInFile` reports a change.
 - Import: `archive.StageSibling` receives `entry.Modified` and applies it to
   the staged temp before promotion.
 
@@ -894,8 +908,7 @@ the identity guard's three-state outcome is deterministic under arbitrary
 projectPath and cwd byte sequences. Reached via the test-only
 `VerifyProjectIdentityForTest` shim in `export_test.go`.
 
-Move, export, import, and stats coverage: `move_internal_test.go`
-(`rewriteTracked` happy path and failure modes),
+Move, export, import, and stats coverage:
 `export_filehistory_test.go` (unreadable-snapshot and unreadable-dir
 failure, zip-write failure, context cancellation mid-walk),
 `export_line_cap_test.go` and `export_mtime_internal_test.go` (the
