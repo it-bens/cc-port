@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -443,6 +444,10 @@ func TestRun_AbortsWhenWitnessTurnsLiveBetweenLockAndPromotion(t *testing.T) {
 		func(int) bool {
 			livenessCalls++
 			return livenessCalls >= 2
+		},
+		func(int) (time.Time, error) {
+			t.Fatal("the witness session file carries no procStart, so its start time must not be read")
+			return time.Time{}, nil
 		})
 	toolSet := tool.NewSet(claude.New())
 	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: workspace}}

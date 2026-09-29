@@ -348,18 +348,54 @@ rewrite cycle.
 ### Witness liveness
 
 `Workspace.ActiveWriters` reads session files and resolves each named PID
-through the workspace's injected liveness seam.
+through the workspace's injected liveness and start-time seams. On macOS a live
+PID is not on its own evidence of an active writer: the OS reuses PIDs, so a
+stale session file whose PID now belongs to an unrelated process would
+otherwise block every apply.
+
+A session file counts as an active writer only when three conditions hold:
+
+1. Its `pid` is positive.
+2. The liveness probe reports the PID alive (signal 0).
+3. On macOS, either the file carries no usable `procStart`, or the live
+   process's start time matches it.
+
+The start-time comparison in condition 3 runs on macOS only. `procStart` is
+usable when it decodes to a string that parses in `time.ANSIC` in UTC. Claude
+Code writes it from `LC_ALL=C TZ=UTC ps -o lstart= -p <pid>` (UTC ctime layout,
+single-digit days space-padded, e.g. `Mon Sep 28 16:11:44 2026`); older Claude
+Code omits the key. A match means the recorded and live start times, both
+truncated to whole seconds, differ by at most one second. When the live start
+time cannot be read — the process exited between the two probes, `EPERM` — the
+file is judged by signal 0 alone, exactly as a file written before Claude Code
+recorded a start time. A start-time read failure never returns an error from
+`FindActive`.
+
+On Linux the live start time is never readable, so a session file is judged by
+signal 0 alone. The `btime` line of `/proc/stat`, the base that `ps -o lstart`
+renders against, is recomputed from the wall clock on every read, so a clock
+step after a session started — systemd-timesyncd, chrony `makestep`, a WSL2
+drift fix — would shift the computed start time and make a live session look
+recycled. macOS reads the start time the kernel recorded at fork, which no
+clock step moves.
 
 #### Handled
 
 - A live PID produces its session's `Cwd` and PID as an active writer; a dead
-  PID produces no active writer.
+  PID produces no active writer. On macOS a live PID is excluded when its
+  `procStart` is usable and disagrees with the live start time by more than one
+  second; on Linux every live PID counts, because the live start time is never
+  readable.
 
 #### Refused
 
 - An unreadable-but-byte-present session file, including malformed JSON,
   returns an error wrapping `tool.ErrNoWitness` rather than silently skipping
-  the evidence.
+  the evidence. The error names the offending file. A known real-world cause:
+  Claude Code 2.1.280 wrote a live session's file with a stray trailing `}`
+  (anthropics/claude-code#96438). Refusing is correct there, because the
+  session is live and mutation must block; the named file is what to remove if
+  that session later crashes.
 
 #### Not covered
 
@@ -883,7 +919,16 @@ the config entry, carried by the grants entry when selected, absent from the
 archive when not, and an empty grants block for a grantless project),
 `session_keyed_groups_drift_test.go` (every `Registries` session-keyed
 entry's `Category` matches a name this adapter's `Categories()` declares),
-and `witness_test.go` (`FindActive` on a live vs. a dead session PID).
+and `witness_test.go` (`FindActive` over the live/dead PID split and the
+malformed-JSON refusal, the `procStart` match and mismatch — inside the
+one-second slack including a sub-second skew, outside it two seconds apart and
+days later — the unusable-`procStart` fallbacks (a numeric value, a non-`ctime`
+layout, and an empty string), and the start-time read-error fallback), and the
+platform start-time seam in `witness_procstart_darwin_internal_test.go`
+(`processStart` reading a spawned process's start time and refusing a PID the
+kernel no longer tracks) and `witness_procstart_linux_internal_test.go`
+(`processStart` refusing with an error, which judges a Linux session file by
+signal 0 alone).
 
 The root `integration_test.go`'s `TestIntegration_ExportImportRoundTrip_AllCategories`
 drives a full export-import round trip across every category and, via

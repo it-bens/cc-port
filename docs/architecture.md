@@ -121,10 +121,15 @@ Adapters obtain environment lookups and process observation through
 constructor fields that default to real sources rather than free in-line
 calls. Codex's `NewAdapter(getenv, listProcesses)` makes home resolution
 (`$CODEX_SQLITE_HOME`) and its witness's process-table scan testable without
-global mutation. Claude's `NewAdapter(getenv, processLiveness)` routes
-default-home resolution and per-session witness liveness through constructor
-seams; it checks the specific PIDs named in session files rather than
-scanning a process table. `New()` wires the real sources for production use.
+global mutation. Claude's `NewAdapter(getenv, processLiveness, processStartTime)`
+routes default-home resolution, per-session witness liveness, and the live
+start-time probe through constructor seams; it checks the specific PIDs named
+in session files rather than scanning a process table. `New()` wires the real
+sources (`os.Getenv`, `processAlive`, and the platform `processStart`) for
+production use; `NewWorkspace` wires the same three for callers that already
+hold a `*Home`, and `NewWorkspaceForTest` takes caller-supplied seams instead.
+`Adapter.Open` threads the adapter's own seams into `newWorkspace`, which
+`Workspace.ActiveWriters` then passes to `FindActive`.
 
 ## Contracts
 
