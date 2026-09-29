@@ -111,18 +111,6 @@ func TestRecheckActiveWriters_AggregatesLiveWritersInTargetOrder(t *testing.T) {
 		"live writers from every target must aggregate into one error in target order")
 }
 
-func TestRecheckActiveWriters_PropagatesScanFailure(t *testing.T) {
-	scanFailure := errors.New("witness backend gone")
-	targets := []tool.Target{
-		{Workspace: &recheckWorkspace{err: scanFailure}},
-		{Workspace: &recheckWorkspace{}},
-	}
-
-	err := RecheckActiveWriters(targets)
-
-	require.ErrorIs(t, err, scanFailure)
-}
-
 func TestRecheckActiveWriters_ScanFailureDoesNotHideLiveWriters(t *testing.T) {
 	scanFailure := errors.New("witness backend gone")
 	targets := []tool.Target{

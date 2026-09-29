@@ -240,12 +240,8 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 		return nil, err
 	}
 
-	// The lock-time witness ran before any surface byte was touched, and the
-	// flocks do not stop the tools themselves from starting. Re-run every
-	// target's witness once here so a session started since the preflight
-	// aborts the move before the first applyTarget writes anything. targets
-	// and preparedTargets align 1:1 — preflightTargets prepares every target
-	// or returns an error — so the re-checked set equals the Acquire set.
+	// The lock-time witness is stale after preflight, and the flocks do not
+	// stop the tools themselves from starting.
 	if err := lock.RecheckActiveWriters(targets); err != nil {
 		return nil, fmt.Errorf("recheck live writers: %w", err)
 	}

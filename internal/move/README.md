@@ -54,14 +54,9 @@ witness-then-flock ordering that guards `Apply`.
   `MoveSurfaces` marks that target `Absent` and skips it during apply, still
   holding its (already-acquired) lock through the full run for consistency
   with the other targets.
-- After the preflight loop, `Apply` re-runs every target's witness, absent
-  targets included, through `lock.RecheckActiveWriters` before the first
-  surface applies. A live writer fails the move with an error prefixed
-  `recheck live writers:` that wraps the joined `*lock.LiveSessionsError`,
-  naming every writer's pid and cwd. No file has been written when it fails,
-  and the acquired locks release as usual. The residual window this leaves
-  open is in [`internal/lock/README.md`](../lock/README.md) §Concurrency
-  guard.
+- After the preflight loop, `lock.RecheckActiveWriters` fails the move before
+  any write when a live writer is present (see
+  [`internal/lock/README.md`](../lock/README.md) §Concurrency guard).
 - Each target's surfaces apply in the order its adapter returned them, each
   registering its own rollback with a fresh `tool.Restorer`; a surface
   failure rolls back only that target's own `Restorer` (see

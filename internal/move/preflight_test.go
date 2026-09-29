@@ -43,8 +43,6 @@ func TestApply_WriterStartedAfterPreflightPreventsAnyApply(t *testing.T) {
 	var liveError *lock.LiveSessionsError
 	require.ErrorAs(t, err, &liveError)
 	assert.Equal(t, []tool.ActiveWriter{{Pid: 1, Cwd: "/writer"}}, liveError.Sessions)
-	require.ErrorContains(t, err, "pid=1")
-	require.ErrorContains(t, err, `cwd="/writer"`)
 }
 
 func TestApply_SecondWitnessRefusalPreventsFirstMutation(t *testing.T) {

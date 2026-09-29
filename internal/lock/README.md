@@ -88,14 +88,8 @@ A residual window remains. A writer that launches during the re-check's own
 multi-target aggregation span goes undetected for either command. An import
 also has the promotion and finalize span; a move also has the apply span.
 
-A session started after a move's re-check can write to a file the move is
-rewriting; its write between the move's read and the file's rename is lost. A
-move writer reads the whole file into memory, rewrites it, and replaces it
-through a temp file and rename. A rollback loses more, restoring the
-pre-image a surface registered with its restorer and dropping every write
-made to that file since the surface registered it. The re-check narrows each
-race from the whole run to these spans; closing them entirely would require
-tool-side locking.
+A session started after a move's re-check can lose a write to a file the move
+rewrites; closing the gap requires tool-side locking.
 
 The kernel releases the lock when cc-port exits, so a crash does not leave a
 stale block on the next invocation.
