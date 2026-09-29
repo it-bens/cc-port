@@ -372,12 +372,9 @@ recorded a start time. A start-time read failure never returns an error from
 `FindActive`.
 
 On Linux the live start time is never readable, so a session file is judged by
-signal 0 alone. The `btime` line of `/proc/stat`, the base that `ps -o lstart`
-renders against, is recomputed from the wall clock on every read, so a clock
-step after a session started — systemd-timesyncd, chrony `makestep`, a WSL2
-drift fix — would shift the computed start time and make a live session look
-recycled. macOS reads the start time the kernel recorded at fork, which no
-clock step moves.
+signal 0 alone. The `btime` line of `/proc/stat` is recomputed from the wall
+clock on every read, so a clock step would shift the computed start time and
+make a live session look recycled.
 
 #### Handled
 
@@ -919,16 +916,10 @@ the config entry, carried by the grants entry when selected, absent from the
 archive when not, and an empty grants block for a grantless project),
 `session_keyed_groups_drift_test.go` (every `Registries` session-keyed
 entry's `Category` matches a name this adapter's `Categories()` declares),
-and `witness_test.go` (`FindActive` over the live/dead PID split and the
-malformed-JSON refusal, the `procStart` match and mismatch — inside the
-one-second slack including a sub-second skew, outside it two seconds apart and
-days later — the unusable-`procStart` fallbacks (a numeric value, a non-`ctime`
-layout, and an empty string), and the start-time read-error fallback), and the
-platform start-time seam in `witness_procstart_darwin_internal_test.go`
-(`processStart` reading a spawned process's start time and refusing a PID the
-kernel no longer tracks) and `witness_procstart_linux_internal_test.go`
-(`processStart` refusing with an error, which judges a Linux session file by
-signal 0 alone).
+and `witness_test.go` (`FindActive`'s liveness, `procStart` agreement, and
+fallback rules), and the platform start-time seam in
+`witness_procstart_darwin_internal_test.go` (`processStart` reading a spawned
+process's start time).
 
 The root `integration_test.go`'s `TestIntegration_ExportImportRoundTrip_AllCategories`
 drives a full export-import round trip across every category and, via

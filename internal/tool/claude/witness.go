@@ -51,7 +51,7 @@ func FindActive(claudeHome *Home, processLiveness func(int) bool, processStartTi
 		if sessionFile.Pid <= 0 || !processLiveness(sessionFile.Pid) {
 			continue
 		}
-		if !writerStartedAtMatches(sessionFile, sessionFile.Pid, processStartTime) {
+		if !writerStartedAtMatches(sessionFile, processStartTime) {
 			continue
 		}
 		active = append(active, tool.ActiveWriter{Pid: sessionFile.Pid, Cwd: sessionFile.Cwd})
@@ -59,20 +59,20 @@ func FindActive(claudeHome *Home, processLiveness func(int) bool, processStartTi
 	return active, nil
 }
 
-// writerStartedAtMatches reports whether the process behind pid can be the
-// writer that produced sessionFile. Both refusals to decide fall back to
-// liveness alone, and that fallback is load-bearing rather than convenient: a
+// writerStartedAtMatches reports whether the process behind sessionFile's pid
+// can be the writer that produced sessionFile. Both refusals to decide fall back
+// to liveness alone, and that fallback is load-bearing rather than convenient: a
 // file with no usable procStart is what a pre-procStart Claude Code wrote, and
 // a start time that cannot be read means the process exited between the two
 // probes, or that the platform has no live start time to read at all (Linux).
 // Neither may turn the refusal into tool.ErrNoWitness, so neither returns an
 // error.
-func writerStartedAtMatches(sessionFile SessionFile, pid int, processStartTime func(int) (time.Time, error)) bool {
+func writerStartedAtMatches(sessionFile SessionFile, processStartTime func(int) (time.Time, error)) bool {
 	recorded, usable := parseProcStart(sessionFile)
 	if !usable {
 		return true
 	}
-	live, err := processStartTime(pid)
+	live, err := processStartTime(sessionFile.Pid)
 	if err != nil {
 		return true
 	}
