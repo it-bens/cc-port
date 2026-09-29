@@ -21,8 +21,9 @@ const procStartKey = "procStart"
 // FindActive returns liveness evidence from Claude session files. A live pid is
 // not on its own evidence of an active writer: the OS reuses pids, so a stale
 // session file whose pid now belongs to an unrelated process would otherwise
-// block every apply. A file whose recorded start time disagrees with the live
-// process's is skipped.
+// block every apply. On macOS a file whose recorded start time disagrees with
+// the live process's is skipped; Linux offers no stable start time to compare,
+// so there a live pid decides.
 func FindActive(claudeHome *Home, processLiveness func(int) bool, processStartTime func(int) (time.Time, error)) ([]tool.ActiveWriter, error) {
 	sessionsDir := claudeHome.SessionsDir()
 	entries, err := os.ReadDir(sessionsDir)
@@ -63,8 +64,9 @@ func FindActive(claudeHome *Home, processLiveness func(int) bool, processStartTi
 // liveness alone, and that fallback is load-bearing rather than convenient: a
 // file with no usable procStart is what a pre-procStart Claude Code wrote, and
 // a start time that cannot be read means the process exited between the two
-// probes. Neither may turn the refusal into tool.ErrNoWitness, so neither
-// returns an error.
+// probes, or that the platform has no live start time to read at all (Linux).
+// Neither may turn the refusal into tool.ErrNoWitness, so neither returns an
+// error.
 func writerStartedAtMatches(sessionFile SessionFile, pid int, processStartTime func(int) (time.Time, error)) bool {
 	recorded, usable := parseProcStart(sessionFile)
 	if !usable {

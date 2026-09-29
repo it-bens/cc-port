@@ -348,34 +348,44 @@ rewrite cycle.
 ### Witness liveness
 
 `Workspace.ActiveWriters` reads session files and resolves each named PID
-through the workspace's injected liveness and start-time seams. A live PID is
-not on its own evidence of an active writer: the OS reuses PIDs, so a stale
-session file whose PID now belongs to an unrelated process would otherwise
-block every apply.
+through the workspace's injected liveness and start-time seams. On macOS a live
+PID is not on its own evidence of an active writer: the OS reuses PIDs, so a
+stale session file whose PID now belongs to an unrelated process would
+otherwise block every apply.
 
 A session file counts as an active writer only when three conditions hold:
 
 1. Its `pid` is positive.
 2. The liveness probe reports the PID alive (signal 0).
-3. Either the file carries no usable `procStart`, or the live process's start
-   time matches it.
+3. On macOS, either the file carries no usable `procStart`, or the live
+   process's start time matches it.
 
-`procStart` is usable when it decodes to a string that parses in `time.ANSIC`
-in UTC. Claude Code writes it from `LC_ALL=C TZ=UTC ps -o lstart= -p <pid>`
-(UTC ctime layout, single-digit days space-padded, e.g.
-`Mon Sep 28 16:11:44 2026`); older Claude Code omits the key, and the Windows
-`procStartFt` form is not read. A match means the recorded and live start
-times, both truncated to whole seconds, differ by at most one second. When the
-live start time cannot be read — the process exited between the two probes,
-`EPERM`, a malformed `/proc` entry — the file is judged by signal 0 alone,
-exactly as a file written before Claude Code recorded a start time. A
+The start-time comparison in condition 3 runs on macOS only. `procStart` is
+usable when it decodes to a string that parses in `time.ANSIC` in UTC. Claude
+Code writes it from `LC_ALL=C TZ=UTC ps -o lstart= -p <pid>` (UTC ctime layout,
+single-digit days space-padded, e.g. `Mon Sep 28 16:11:44 2026`); older Claude
+Code omits the key, and the Windows `procStartFt` form is not read. A match
+means the recorded and live start times, both truncated to whole seconds,
+differ by at most one second. When the live start time cannot be read — the
+process exited between the two probes, `EPERM` — the file is judged by signal 0
+alone, exactly as a file written before Claude Code recorded a start time. A
 start-time read failure never returns an error from `FindActive`.
+
+On Linux the live start time is never readable, so a session file is judged by
+signal 0 alone. The `btime` line of `/proc/stat`, the base that `ps -o lstart`
+renders against, is recomputed from the wall clock on every read, so a clock
+step after a session started — systemd-timesyncd, chrony `makestep`, a WSL2
+drift fix — would shift the computed start time and make a live session look
+recycled. macOS reads the start time the kernel recorded at fork, which no
+clock step moves.
 
 #### Handled
 
-- A live PID whose `procStart` is absent, unusable, or agrees within one second
-  produces its session's `Cwd` and PID as an active writer; a dead PID, or a
-  live PID whose start time disagrees, produces no active writer.
+- A live PID produces its session's `Cwd` and PID as an active writer; a dead
+  PID produces no active writer. On macOS a live PID is excluded when its
+  `procStart` is usable and disagrees with the live start time by more than one
+  second; on Linux every live PID counts, because the live start time is never
+  readable.
 
 #### Refused
 
@@ -915,10 +925,10 @@ one-second slack including a sub-second skew, outside it two seconds apart and
 days later — the unusable-`procStart` fallbacks (a numeric value, a non-`ctime`
 layout, an empty string, and the unread Windows `procStartFt` key), and the
 start-time read-error fallback), and the platform start-time seam in
-`witness_procstart_darwin_internal_test.go` and
-`witness_procstart_linux_internal_test.go` (`processStart` reading a live
-process's start time; `parseStatStarttime` counting fields past a
-parenthesised comm).
+`witness_procstart_darwin_internal_test.go` (`processStart` reading a live
+process's start time) and `witness_procstart_linux_internal_test.go`
+(`processStart` refusing with an error, which judges a Linux session file by
+signal 0 alone).
 
 The root `integration_test.go`'s `TestIntegration_ExportImportRoundTrip_AllCategories`
 drives a full export-import round trip across every category and, via
