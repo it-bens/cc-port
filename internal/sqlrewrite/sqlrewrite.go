@@ -223,6 +223,9 @@ func (database *DB) RewriteTextColumn(
 
 	count := 0
 	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return 0, fmt.Errorf("write rewritten text value to %s.%s: %w", table, column, err)
+		}
 		var primaryKey any
 		var value any
 		if err := rows.Scan(&primaryKey, &value); err != nil {
@@ -235,9 +238,6 @@ func (database *DB) RewriteTextColumn(
 		}
 		if replacements == 0 {
 			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return 0, fmt.Errorf("write rewritten text value to %s.%s: %w", table, column, err)
 		}
 		if _, err := statement.ExecContext(transactionCtx, rewritten, primaryKey); err != nil {
 			return 0, fmt.Errorf("write rewritten text value to %s.%s: %w", table, column, err)

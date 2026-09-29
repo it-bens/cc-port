@@ -73,10 +73,13 @@ opens and guards.
   `TestTransactionCommitsAfterBeginContextIsCancelled` covers the rule.
 - Cancellation is honoured between those statements instead. Each mutator
   checks `ctx.Err()` before it runs anything, and `RewriteTextColumn` checks
-  again before each row's update; the check returns the wrapped
-  `context.Canceled` and leaves the transaction open, so the `Restorer`'s
-  `Rollback` still succeeds.
-  `TestCancelledRewriteTextColumnLeavesTransactionRollbackable` covers it.
+  again at the top of every row's iteration, before that row is read; the
+  check returns the wrapped `context.Canceled` and leaves the transaction
+  open, so the `Restorer`'s `Rollback` still succeeds.
+  `TestRewriteTextColumnReportsCancellationForARowTheBoundaryRuleRejects`
+  covers the per-row check;
+  `TestCancelledRewriteTextColumnLeavesTransactionRollbackable` covers the
+  entry check, and the `Rollback` that succeeds after a cancelled rewrite.
 
 **Refused.**
 
@@ -84,8 +87,11 @@ opens and guards.
   `*Context` call returns, or as the one a between-statement check raises;
   either is in the returned error's chain.
   `TestCountTextColumnROFailsOnCancelledContext`,
-  `TestRewriteTextColumnFailsOnCancelledContext`, and
-  `TestCancelledRewriteTextColumnLeavesTransactionRollbackable` assert it.
+  `TestRewriteTextColumnFailsOnCancelledContext`,
+  `TestCancelledRewriteTextColumnLeavesTransactionRollbackable`,
+  `TestRewriteTextColumnStopsBeforeTheFirstRowWriteWhenCancelled`, and
+  `TestRewriteTextColumnReportsCancellationForARowTheBoundaryRuleRejects`
+  assert it.
 
 **Not covered.**
 
@@ -323,5 +329,9 @@ guards, `UpdateColumnsByRowID`'s refusal of a missing expected value, and
 its schema refusals. The cancellation tests cover `Begin`'s transaction
 still committing once its own begin context is cancelled,
 `CountTextColumnRO` and `RewriteTextColumn` surfacing a cancelled context
-as `context.Canceled`, and a cancelled `RewriteTextColumn` leaving the
-transaction rollbackable with its earlier update undone.
+as `context.Canceled`, a cancelled `RewriteTextColumn` leaving the
+transaction rollbackable with its earlier update undone, and its per-row
+check, driven by a context that reports cancellation only from its second
+`Err` call. One case stops before the first row's write, reading every row
+unchanged through the transaction and again after a successful `Rollback`;
+the other reaches a row the boundary rule leaves unchanged.
