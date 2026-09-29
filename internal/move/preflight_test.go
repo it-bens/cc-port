@@ -17,8 +17,8 @@ import (
 
 func TestApply_PreflightsEveryWitnessBeforeAnySurfaceApply(t *testing.T) {
 	events := []string{}
-	first := newPreflightTarget(t, "first", &events, false)
-	second := newPreflightTarget(t, "second", &events, false)
+	first := newPreflightTarget(t, "first", &events, 0)
+	second := newPreflightTarget(t, "second", &events, 0)
 
 	result, err := move.Apply(t.Context(), []tool.Target{first, second}, move.Options{OldPath: "/old", NewPath: "/new"})
 
@@ -31,8 +31,8 @@ func TestApply_PreflightsEveryWitnessBeforeAnySurfaceApply(t *testing.T) {
 
 func TestApply_WriterStartedAfterPreflightPreventsAnyApply(t *testing.T) {
 	events := []string{}
-	first := newPreflightTargetRefusingFrom(t, "first", &events, 2)
-	second := newPreflightTarget(t, "second", &events, false)
+	first := newPreflightTarget(t, "first", &events, 2)
+	second := newPreflightTarget(t, "second", &events, 0)
 
 	_, err := move.Apply(context.Background(), []tool.Target{first, second}, move.Options{OldPath: "/old", NewPath: "/new"})
 
@@ -49,8 +49,8 @@ func TestApply_WriterStartedAfterPreflightPreventsAnyApply(t *testing.T) {
 
 func TestApply_SecondWitnessRefusalPreventsFirstMutation(t *testing.T) {
 	events := []string{}
-	first := newPreflightTarget(t, "first", &events, false)
-	second := newPreflightTarget(t, "second", &events, true)
+	first := newPreflightTarget(t, "first", &events, 0)
+	second := newPreflightTarget(t, "second", &events, 1)
 
 	_, err := move.Apply(context.Background(), []tool.Target{first, second}, move.Options{OldPath: "/old", NewPath: "/new"})
 
@@ -71,22 +71,14 @@ type preflightWorkspace struct {
 	name     string
 	lockPath string
 	events   *[]string
-	refuse   bool
-	// refuseFrom makes the witness quiet until its refuseFrom-th call, then a
-	// live writer — a session started after the lock-time witness.
+	// refuseFrom picks the call the witness turns live on: 0 keeps it quiet,
+	// 1 reports a live writer from the lock-time call, 2 or more from that
+	// call onward — 2 models a session started after the lock-time witness.
 	refuseFrom   int
 	witnessCalls int
 }
 
-func newPreflightTarget(t *testing.T, name string, events *[]string, refuse bool) tool.Target {
-	t.Helper()
-	return tool.Target{
-		Tool:      &preflightTool{name: name},
-		Workspace: &preflightWorkspace{name: name, lockPath: filepath.Join(t.TempDir(), name+".lock"), events: events, refuse: refuse},
-	}
-}
-
-func newPreflightTargetRefusingFrom(t *testing.T, name string, events *[]string, refuseFrom int) tool.Target {
+func newPreflightTarget(t *testing.T, name string, events *[]string, refuseFrom int) tool.Target {
 	t.Helper()
 	return tool.Target{
 		Tool:      &preflightTool{name: name},
@@ -99,7 +91,7 @@ func (workspace *preflightWorkspace) LockPath() string { return workspace.lockPa
 func (workspace *preflightWorkspace) ActiveWriters() ([]tool.ActiveWriter, error) {
 	*workspace.events = append(*workspace.events, "witness:"+workspace.name)
 	workspace.witnessCalls++
-	if workspace.refuse || (workspace.refuseFrom > 0 && workspace.witnessCalls >= workspace.refuseFrom) {
+	if workspace.refuseFrom > 0 && workspace.witnessCalls >= workspace.refuseFrom {
 		return []tool.ActiveWriter{{Pid: 1, Cwd: "/writer"}}, nil
 	}
 	return nil, nil

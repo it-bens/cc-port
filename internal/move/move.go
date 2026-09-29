@@ -242,13 +242,11 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 
 	// The lock-time witness ran before any surface byte was touched, and the
 	// flocks do not stop the tools themselves from starting. Re-run every
-	// prepared target's witness once here so a session started since the
-	// preflight aborts the move before the first applyTarget writes anything.
-	witnesses := make([]func() ([]tool.ActiveWriter, error), len(preparedTargets))
-	for index, entry := range preparedTargets {
-		witnesses[index] = entry.target.Workspace.ActiveWriters
-	}
-	if err := lock.RecheckWitnesses(witnesses); err != nil {
+	// target's witness once here so a session started since the preflight
+	// aborts the move before the first applyTarget writes anything. targets
+	// and preparedTargets align 1:1 — preflightTargets prepares every target
+	// or returns an error — so the re-checked set equals the Acquire set.
+	if err := lock.RecheckActiveWriters(targets); err != nil {
 		return nil, fmt.Errorf("recheck live writers: %w", err)
 	}
 

@@ -14,13 +14,13 @@ witness blocks mutation while a live writer is present.
   once (see §Concurrency guard).
 - `Held`: an acquired lock. `Release() error` frees it; later calls are
   no-ops.
-- `RecheckWitnesses(witnesses []func() ([]tool.ActiveWriter, error)) error`:
-  re-runs one witness per locked target and aggregates the results. Scan
-  failures and live writers join into one error, with every live writer
-  across all targets carried by a single `LiveSessionsError`. Returns nil
-  only when every witness succeeds and reports no writers. Used by
-  `importer.Run` immediately before batch promotion and by `move.Apply`
-  before its first surface applies (see §Concurrency guard).
+- `RecheckActiveWriters(targets []tool.Target) error`: re-runs every target's
+  `Workspace.ActiveWriters` and aggregates the results. Scan failures and live
+  writers join into one error, with every live writer across all targets
+  carried by a single `LiveSessionsError`. Returns nil only when every target's
+  witness succeeds and reports no writers. Used by `importer.Run` immediately
+  before batch promotion and by `move.Apply` before its first surface applies
+  (see §Concurrency guard).
 - `WithLock(lockPath string, witness func() ([]tool.ActiveWriter, error), fn func() error) error`:
   the single-lock convenience wrapper around `Acquire` and a deferred
   `Held.Release`. Calls `fn` with the lock held. It also runs the deferred
@@ -47,11 +47,11 @@ witness blocks mutation while a live writer is present.
 
 - `LiveSessionsError`: typed error reporting detected live writers.
   `WithLock` returns it when the witness finds writers before the lock is
-  taken; `RecheckWitnesses` returns it, writers aggregated across all
+  taken; `RecheckActiveWriters` returns it, writers aggregated across all
   targets, while the locks are held. `Sessions` carries the witness list as
   `[]tool.ActiveWriter`; tests assert via `errors.As`. `WithLock` takes the
   lock only when the list is empty. Reachable from `move.Apply` through both
-  its preflight `Acquire` and its post-preflight `RecheckWitnesses`.
+  its preflight `Acquire` and its post-preflight `RecheckActiveWriters`.
 - `ErrConcurrentInvocation`: returned by `WithLock` when another cc-port
   invocation already holds the advisory lock. The wrapping message names the
   contended lock directory; tests assert via `errors.Is`.
@@ -78,8 +78,8 @@ work. The flock stops concurrent cc-port runs but not the tools themselves,
 which are not flock-aware.
 
 `importer.Run` re-runs every selected target's witness through
-`RecheckWitnesses` immediately before batch promotion. `move.Apply` re-runs
-every prepared target's witness the same way, after its preflight loop and
+`RecheckActiveWriters` immediately before batch promotion. `move.Apply`
+re-runs every target's witness the same way, after its preflight loop and
 before its first surface applies; that set matches its `Acquire` calls,
 absent targets included. A session launched mid-run aborts before an import
 promotes or finalizes anything, or before a move writes its first file.
@@ -180,10 +180,9 @@ failure:
 - `WithLock` releases the lock after a panic in `fn` is recovered.
 - `WithLock` surfaces release errors on the `fn`-success path and suppresses
   them on the `fn`-error path.
-- `RecheckWitnesses`: all-quiet witnesses return nil; live writers aggregate
-  across witnesses in witness order into one `LiveSessionsError`; a scan
-  failure propagates without hiding live writers found by other witnesses; a
-  nil witness is refused.
+- `RecheckActiveWriters`: all-quiet targets return nil; live writers on
+  several targets aggregate into one `LiveSessionsError` in target order; a
+  scan failure propagates without hiding live writers found by other targets.
 
 ## References
 

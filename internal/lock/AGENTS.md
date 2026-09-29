@@ -4,7 +4,7 @@
 
 - Use `Acquire` when a caller must hold several tools' locks at once through
   a multi-target apply, and re-run every target's witness through
-  `RecheckWitnesses` before the first write; use `WithLock` when one call
+  `RecheckActiveWriters` before the first write; use `WithLock` when one call
   needs the lock only for its own duration (README §Concurrency guard).
 - Run the witness before acquiring the flock, for both entry points (README
   §Concurrency guard).
