@@ -191,7 +191,7 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	// flocks do not stop the tools themselves from launching. Re-check every
 	// selected target once here so a session started since then aborts the
 	// import before promotion and the finalize splices write anything.
-	if err := recheckActiveWriters(targets); err != nil {
+	if err := lock.RecheckActiveWriters(targets); err != nil {
 		return nil, cleanupStaged(stagedSet, err)
 	}
 
@@ -278,16 +278,6 @@ func VerifyEntryTools(allTools *tool.Set, entries []archive.RawEntry) error {
 		}
 	}
 	return nil
-}
-
-// recheckActiveWriters re-runs every selected target's witness, aggregated,
-// immediately before batch promotion.
-func recheckActiveWriters(targets []tool.Target) error {
-	witnesses := make([]func() ([]tool.ActiveWriter, error), len(targets))
-	for i, target := range targets {
-		witnesses[i] = target.Workspace.ActiveWriters
-	}
-	return lock.RecheckWitnesses(witnesses)
 }
 
 func groupEntriesByTool(entries []archive.RawEntry) map[string][]archive.RawEntry {

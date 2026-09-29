@@ -111,10 +111,10 @@ rename in the batch (across every tool, not just the one that failed) is
 reversed from the saved pre-promote bytes of each replaced destination.
 
 Between staging and promotion, `runLocked` re-runs every selected target's
-witness once, aggregated, via `lock.RecheckWitnesses`
-(`recheckActiveWriters`). A live writer at the re-check aborts with
-`lock.LiveSessionsError`: staged temps are removed and nothing is promoted
-or finalized. The rationale and the residual window are documented in
+witness once, aggregated, via `lock.RecheckActiveWriters`. A live writer at
+the re-check aborts with `lock.LiveSessionsError`: staged temps are removed
+and nothing is promoted or finalized. The rationale and the residual window
+are documented in
 [`internal/lock/README.md`](../lock/README.md) §Concurrency guard.
 
 #### Handled
