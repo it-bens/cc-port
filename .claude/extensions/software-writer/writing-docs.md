@@ -10,6 +10,7 @@
   | Module `AGENTS.md` + root `AGENTS.md` | pointer map into the adjacent README (root: cross-module map; bullets cite file + heading) | pointer skeleton, ≤30 lines | enforced (pointer-only) |
   | `CLAUDE.md` companions | nothing — a one-line `@AGENTS.md` include; the root `CLAUDE.md` additionally carries the skill-invocation table | single line (root: line + table) | exempt (structural include) |
   | `docs/release-checklist.md` | the manual release-regression runbook | ordered per-command checklist sections | enforced |
+  | `docs/claude-code-behavior.md` | Claude Code file-write behavior established by experiment: the version measured, each experiment's question, procedure, observations and result, the relevance to cc-port, open questions | Summary table / Materials and methods / one section per experiment (Question, Procedure, Observations, Result) / Relevance to cc-port / Open questions / Reproducing; describes procedures and results, no raw logs, machine paths, PIDs or timestamps | enforced |
 - `docs.pointer_file` = `AGENTS.md` — AGENTS.md owns pointer content; every AGENTS.md has a companion `CLAUDE.md` containing only `@AGENTS.md`, created and deleted as a pair.
 
 ## Pre-Step-1

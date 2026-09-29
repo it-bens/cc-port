@@ -8,4 +8,4 @@ Before editing any of the listed files, invoke the matching skill:
 |---|---|
 | `**/*.go` | `software-writer:writing-code` |
 | `**/*_test.go` | `software-writer:writing-tests` |
-| Any `README.md`, `AGENTS.md`, or `docs/architecture.md` | `software-writer:writing-docs` |
+| Any `README.md`, `AGENTS.md`, `docs/architecture.md`, or `docs/claude-code-behavior.md` | `software-writer:writing-docs` |
