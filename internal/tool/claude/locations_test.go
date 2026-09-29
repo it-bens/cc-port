@@ -32,7 +32,7 @@ func containsBaseName(items []string, baseName string) bool {
 func TestLocateProject(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
 	require.NotNil(t, projectLocations)
 
@@ -69,7 +69,7 @@ func TestLocateProject_NotFound(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
 	absentProjectPath := filepath.Join(t.TempDir(), "absent-project")
-	projectLocations, err := claude.LocateProject(claudeHome, absentProjectPath)
+	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, absentProjectPath)
 	require.Error(t, err)
 	assert.Nil(t, projectLocations)
 }
@@ -77,7 +77,7 @@ func TestLocateProject_NotFound(t *testing.T) {
 func TestLocateProject_CollectsUsageData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
 
 	assert.Len(t, projectLocations.UsageDataSessionMeta, 1)
@@ -96,7 +96,7 @@ func TestLocateProject_CollectsUsageData(t *testing.T) {
 func TestLocateProject_CollectsPluginsData(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
 
 	assert.Len(t, projectLocations.PluginsDataFiles, 1)
@@ -108,7 +108,7 @@ func TestLocateProject_CollectsPluginsData(t *testing.T) {
 func TestLocateProject_CollectsTaskFiles(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
 
 	assert.Len(t, projectLocations.TaskFiles, 3,
@@ -124,7 +124,7 @@ func TestLocateProject_CollectsTaskFiles(t *testing.T) {
 func TestLocateProject_CollectsTodos(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
 
 	assert.Len(t, projectLocations.TodoFiles, 1, "exactly one todo file matches a project session UUID")
@@ -140,7 +140,7 @@ func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
 	artifactName := "MEMORY.md" + rewrite.RollbackSuffix
 	require.NoError(t, os.WriteFile(filepath.Join(memoryDir, artifactName), []byte("stale rollback content"), 0o600))
 
-	projectLocations, err := claude.LocateProject(claudeHome, testProjectPath)
+	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 
 	require.NoError(t, err)
 	assert.False(t, containsBaseName(projectLocations.MemoryFiles, artifactName),
@@ -152,7 +152,7 @@ func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
 func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 	workspace := claude.NewWorkspace(claudeHome)
-	locations, err := claude.LocateProject(claudeHome, testProjectPath)
+	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
 	require.NotEmpty(t, locations.PluginsDataFiles)
 	require.NotEmpty(t, locations.TaskFiles)
@@ -182,7 +182,7 @@ func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
 		taskArtifacts = append(taskArtifacts, taskArtifact)
 	}
 
-	locations, err = claude.LocateProject(claudeHome, testProjectPath)
+	locations, err = claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
 	for _, artifact := range pluginArtifacts {
 		baseName := filepath.Base(artifact)
@@ -230,7 +230,7 @@ func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
 	// mismatched cwd and must refuse.
 	claudeHome := testutil.SetupFixture(t)
 
-	_, err := claude.LocateProject(claudeHome, "/Users/test/Projects/my-project")
+	_, err := claude.LocateProject(t.Context(), claudeHome, "/Users/test/Projects/my-project")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "refusing to rewrite")
@@ -241,7 +241,7 @@ func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
 func TestLocateProject_PassesOnMatchingSessionCwd(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	locations, err := claude.LocateProject(claudeHome, testProjectPath)
+	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 
 	require.NoError(t, err)
 	assert.Equal(t, testProjectPath, locations.ProjectPath)
@@ -263,7 +263,7 @@ func TestLocateProject_EmitsWarningOnNoSessionFiles(t *testing.T) {
 	t.Cleanup(func() { os.Stderr = originalStderr })
 
 	// Act
-	_, err = claude.LocateProject(claudeHome, testProjectPath)
+	_, err = claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	_ = writer.Close()
 
 	// Assert

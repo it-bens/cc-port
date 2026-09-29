@@ -47,8 +47,8 @@ type ProjectLocations struct {
 // the provided Home. It returns an error if the project directory does
 // not exist. Optional resources (memory files, history entries, etc.) are
 // collected with zero values when absent.
-func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, error) {
-	return locateProjectData(claudeHome, projectPath, verifyProjectIdentity)
+func LocateProject(ctx context.Context, claudeHome *Home, projectPath string) (*ProjectLocations, error) {
+	return locateProjectData(ctx, claudeHome, projectPath, verifyProjectIdentity)
 }
 
 // locateProjectForMove enumerates projectPath's data WITHOUT re-verifying
@@ -63,8 +63,8 @@ func LocateProject(claudeHome *Home, projectPath string) (*ProjectLocations, err
 // the SAME already-identity-confirmed directory reuses that result instead
 // of re-running a check that would incorrectly refuse the very witness
 // state a resume expects.
-func locateProjectForMove(claudeHome *Home, projectPath string) (*ProjectLocations, error) {
-	return locateProjectData(claudeHome, projectPath, func(context.Context, *Home, string, []string) error { return nil })
+func locateProjectForMove(ctx context.Context, claudeHome *Home, projectPath string) (*ProjectLocations, error) {
+	return locateProjectData(ctx, claudeHome, projectPath, func(context.Context, *Home, string, []string) error { return nil })
 }
 
 // locateProjectData is the shared engine behind LocateProject and
@@ -73,7 +73,7 @@ func locateProjectForMove(claudeHome *Home, projectPath string) (*ProjectLocatio
 // hard-refusing verifyProjectIdentity once it has already confirmed
 // identity through a different, move-aware check.
 func locateProjectData(
-	claudeHome *Home, projectPath string,
+	ctx context.Context, claudeHome *Home, projectPath string,
 	checkIdentity func(ctx context.Context, claudeHome *Home, projectPath string, sessionUUIDs []string) error,
 ) (*ProjectLocations, error) {
 	projectDir := claudeHome.ProjectDir(projectPath)
@@ -90,50 +90,44 @@ func locateProjectData(
 		ProjectDir:  projectDir,
 	}
 
-	// LocateProject resolves a single caller-supplied project path and has no
-	// context.Context of its own to thread (out of scope for the enumeration
-	// cancellation fix, which targets EnumerateProjects's all-projects walk).
-	// context.Background() below is a real "no cancellation source", not a
-	// silently degraded default: LocateProject's per-project cost is bounded
-	// and unaffected by the finding these collectors are otherwise shared for.
-	sessionUUIDs, err := collectProjectDirEntries(context.Background(), locations, projectDir)
+	sessionUUIDs, err := collectProjectDirEntries(ctx, locations, projectDir)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := checkIdentity(context.Background(), claudeHome, projectPath, sessionUUIDs); err != nil {
+	if err := checkIdentity(ctx, claudeHome, projectPath, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectMemoryFiles(context.Background(), locations, projectDir); err != nil {
+	if err := collectMemoryFiles(ctx, locations, projectDir); err != nil {
 		return nil, err
 	}
 
-	if err := collectFileHistoryDirs(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectFileHistoryDirs(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectSessionFiles(context.Background(), locations, claudeHome, projectPath); err != nil {
+	if err := collectSessionFiles(ctx, locations, claudeHome, projectPath); err != nil {
 		return nil, err
 	}
 
-	if err := collectTodos(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectTodos(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectUsageData(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectUsageData(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectPluginsData(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectPluginsData(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := collectTaskFiles(context.Background(), locations, claudeHome, sessionUUIDs); err != nil {
+	if err := collectTaskFiles(ctx, locations, claudeHome, sessionUUIDs); err != nil {
 		return nil, err
 	}
 
-	if err := countHistoryEntries(locations, claudeHome, projectPath); err != nil {
+	if err := countHistoryEntries(ctx, locations, claudeHome, projectPath); err != nil {
 		return nil, err
 	}
 
@@ -499,7 +493,9 @@ func verifyProjectIdentity(ctx context.Context, claudeHome *Home, projectPath st
 // tolerates for a project with no attributable sessions; it returns the
 // warning text so the move path can surface it as a structured plan
 // warning instead of a stderr note.
-func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessionUUIDs []string) (skipWarning string, err error) {
+func verifyProjectMoveIdentity(
+	ctx context.Context, claudeHome *Home, oldPath, newPath string, sessionUUIDs []string,
+) (skipWarning string, err error) {
 	encodedDir := claudeHome.ProjectDir(oldPath)
 
 	if len(sessionUUIDs) == 0 {
@@ -511,7 +507,7 @@ func verifyProjectMoveIdentity(claudeHome *Home, oldPath, newPath string, sessio
 		uuidSet[uuid] = struct{}{}
 	}
 
-	cwds, err := walkSessionWitnesses(context.Background(), claudeHome.SessionsDir(), uuidSet)
+	cwds, err := walkSessionWitnesses(ctx, claudeHome.SessionsDir(), uuidSet)
 	if err != nil {
 		return "", err
 	}
@@ -655,7 +651,7 @@ func collectSessionFiles(ctx context.Context, locations *ProjectLocations, claud
 	return nil
 }
 
-func countHistoryEntries(locations *ProjectLocations, claudeHome *Home, projectPath string) error {
+func countHistoryEntries(ctx context.Context, locations *ProjectLocations, claudeHome *Home, projectPath string) error {
 	historyFilePath := claudeHome.HistoryFile()
 	file, err := os.Open(historyFilePath) //nolint:gosec // G304: historyFilePath is derived from the trusted ClaudeHome
 	if err != nil {
@@ -669,6 +665,9 @@ func countHistoryEntries(locations *ProjectLocations, claudeHome *Home, projectP
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64<<10), MaxHistoryLine)
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue

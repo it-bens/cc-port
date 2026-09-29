@@ -15,12 +15,12 @@ import (
 )
 
 // MoveSurfaces implements tool.Mover.
-func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, error) {
-	known, err := workspace.moveIdentity(req)
+func (workspace *Workspace) MoveSurfaces(ctx context.Context, req tool.MoveRequest) ([]tool.Surface, error) {
+	known, err := workspace.moveIdentity(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("determine project identity: %w", err)
 	}
-	refusalWarning, err := codexDevWarning(filepath.Join(workspace.home.Dir, "sqlite", "codex-dev.db"), req.OldPath)
+	refusalWarning, err := codexDevWarning(ctx, filepath.Join(workspace.home.Dir, "sqlite", "codex-dev.db"), req.OldPath)
 	if err != nil {
 		return nil, fmt.Errorf("inspect codex-dev database: %w", err)
 	}
@@ -37,7 +37,7 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 	if !known {
 		return surfaces, nil
 	}
-	preflight, err := workspace.captureMovePreflight(req)
+	preflight, err := workspace.captureMovePreflight(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("capture move rewrite set: %w", err)
 	}
@@ -70,12 +70,12 @@ type moveRewritePreflight struct {
 // before Apply starts. The captured literal values are intentionally closed
 // over by surfaces: Apply must not depend on oldPath still existing after a
 // preceding tool has applied its own directory move.
-func (workspace *Workspace) captureMovePreflight(req tool.MoveRequest) (moveRewritePreflight, error) {
-	state, err := stateDBRewritePlansForProject(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
+func (workspace *Workspace) captureMovePreflight(ctx context.Context, req tool.MoveRequest) (moveRewritePreflight, error) {
+	state, err := stateDBRewritePlansForProject(ctx, workspace.home.SQLiteDir, req.OldPath, req.NewPath)
 	if err != nil {
 		return moveRewritePreflight{}, err
 	}
-	queue, err := queueDBRewritePlansForProject(context.Background(), workspace.home.SQLiteDir, req.OldPath, req.NewPath)
+	queue, err := queueDBRewritePlansForProject(ctx, workspace.home.SQLiteDir, req.OldPath, req.NewPath)
 	if err != nil {
 		return moveRewritePreflight{}, err
 	}
@@ -89,6 +89,9 @@ func (workspace *Workspace) captureMovePreflight(req tool.MoveRequest) (moveRewr
 	}
 	rollouts := make(map[string]rolloutRewritePlan, len(files))
 	for _, path := range files {
+		if err := ctx.Err(); err != nil {
+			return moveRewritePreflight{}, err
+		}
 		lines, substitutions, eraA, err := rolloutFileSubstitutions(path, req.OldPath, req.NewPath, req.DeepRewrite)
 		if err != nil {
 			return moveRewritePreflight{}, fmt.Errorf("%s: %w", path, err)
@@ -106,8 +109,8 @@ func (workspace *Workspace) captureMovePreflight(req tool.MoveRequest) (moveRewr
 }
 
 // moveIdentity reports whether Codex has a record of req.OldPath.
-func (workspace *Workspace) moveIdentity(req tool.MoveRequest) (bool, error) {
-	return workspace.projectKnown(req.OldPath, req.NewPath)
+func (workspace *Workspace) moveIdentity(ctx context.Context, req tool.MoveRequest) (bool, error) {
+	return workspace.projectKnown(ctx, req.OldPath, req.NewPath)
 }
 
 // projectKnown reports whether Codex has any record of oldPath: a thread
@@ -118,8 +121,8 @@ func (workspace *Workspace) moveIdentity(req tool.MoveRequest) (bool, error) {
 // newPath is only needed to run planRolloutFile's rewrite-pipeline count
 // identically to how MoveSurfaces' own rolloutsSurfaceWithPlans will count
 // and apply; this call only inspects whether that count is positive.
-func (workspace *Workspace) projectKnown(oldPath, newPath string) (bool, error) {
-	stateKnown, err := stateDBKnowsProject(context.Background(), workspace.home.SQLiteDir, oldPath)
+func (workspace *Workspace) projectKnown(ctx context.Context, oldPath, newPath string) (bool, error) {
+	stateKnown, err := stateDBKnowsProject(ctx, workspace.home.SQLiteDir, oldPath)
 	if err != nil {
 		return false, err
 	}
@@ -140,6 +143,9 @@ func (workspace *Workspace) projectKnown(oldPath, newPath string) (bool, error) 
 		return false, err
 	}
 	for _, path := range rolloutFiles {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		count, eraA, err := planRolloutFile(path, oldPath, newPath, false)
 		if err != nil {
 			return false, fmt.Errorf("%s: %w", path, err)
@@ -413,10 +419,10 @@ func (workspace *Workspace) agentsMarketplaceSurface(req tool.MoveRequest) tool.
 // verbatim or leaves untouched by design. On a residual-scan error, the
 // warnings collected so far are returned alongside the error rather than
 // discarded, since Apply already recorded those checkpoint warnings.
-func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, error) {
+func (workspace *Workspace) ResidualWarnings(ctx context.Context, req tool.MoveRequest) ([]string, error) {
 	warnings := workspace.applyWarningSnapshot()
 
-	eraAWarning, err := workspace.eraAWarning(req.OldPath, req.NewPath)
+	eraAWarning, err := workspace.eraAWarning(ctx, req.OldPath, req.NewPath)
 	if err != nil {
 		return warnings, err
 	}
@@ -450,7 +456,7 @@ func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, er
 		}
 	}
 
-	goalsWarning, err := goalsWarning(workspace.home.SQLiteDir)
+	goalsWarning, err := goalsWarning(ctx, workspace.home.SQLiteDir)
 	if err != nil {
 		return warnings, err
 	}
@@ -458,7 +464,7 @@ func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, er
 		warnings = append(warnings, goalsWarning)
 	}
 
-	codexDevWarning, err := codexDevWarning(filepath.Join(workspace.home.Dir, "sqlite", "codex-dev.db"), req.OldPath)
+	codexDevWarning, err := codexDevWarning(ctx, filepath.Join(workspace.home.Dir, "sqlite", "codex-dev.db"), req.OldPath)
 	if err != nil {
 		return warnings, err
 	}
@@ -503,13 +509,13 @@ func (workspace *Workspace) applyWarningSnapshot() []string {
 	return append([]string(nil), workspace.applyWarnings...)
 }
 
-func goalsWarning(sqliteDir string) (string, error) {
+func goalsWarning(ctx context.Context, sqliteDir string) (string, error) {
 	databases, err := discoverDatabases(sqliteDir, goalsDBGlob)
 	if err != nil {
 		return "", err
 	}
 	for _, path := range databases {
-		hasRows, err := goalsDatabaseHasRows(path)
+		hasRows, err := goalsDatabaseHasRows(ctx, path)
 		if err != nil {
 			return "", fmt.Errorf("inspect goals database %s: %w", path, err)
 		}
@@ -520,7 +526,7 @@ func goalsWarning(sqliteDir string) (string, error) {
 	return "", nil
 }
 
-func codexDevWarning(path, oldPath string) (string, error) {
+func codexDevWarning(ctx context.Context, path, oldPath string) (string, error) {
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil
@@ -539,7 +545,7 @@ func codexDevWarning(path, oldPath string) (string, error) {
 	count := 0
 	for _, column := range []struct {
 		table, column string
-		countMatches  func(database *sql.DB, table, column, oldPath string) (int, error)
+		countMatches  func(ctx context.Context, database *sql.DB, table, column, oldPath string) (int, error)
 	}{
 		// automations.cwds is free-text/multi-value (plural name), not a
 		// single verbatim cwd per row, so it stays on CountTextColumnRO's
@@ -548,13 +554,16 @@ func codexDevWarning(path, oldPath string) (string, error) {
 		// threads.cwd, so they route through the same canonical matching
 		// (spec §5.1): a symlink-aliased value is detected, not missed.
 		{table: "automations", column: "cwds", countMatches: sqlrewrite.CountTextColumnRO},
-		{table: "automation_runs", column: "source_cwd", countMatches: countMatchingColumnRowsBackground},
-		{table: "local_thread_catalog", column: "cwd", countMatches: countMatchingColumnRowsBackground},
+		{table: "automation_runs", column: "source_cwd", countMatches: countMatchingColumnRows},
+		{table: "local_thread_catalog", column: "cwd", countMatches: countMatchingColumnRows},
 	} {
-		if err := requireTableColumn(database, column.table, column.column); err != nil {
+		if err := requireTableColumn(ctx, database, column.table, column.column); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return "", fmt.Errorf("inspect %s.%s in %s: %w", column.table, column.column, path, ctxErr)
+			}
 			return fmt.Sprintf("codex-dev.db schema drift (%v); refusing to move", err), nil
 		}
-		matches, queryErr := column.countMatches(database, column.table, column.column, oldPath)
+		matches, queryErr := column.countMatches(ctx, database, column.table, column.column, oldPath)
 		if queryErr != nil {
 			return "", fmt.Errorf("inspect %s.%s in %s: %w", column.table, column.column, path, queryErr)
 		}
@@ -586,13 +595,16 @@ func gitBackupWarning(path string) (string, error) {
 	return fmt.Sprintf("could not remove git baseline rollback backup %s; it was left in place", path), nil
 }
 
-func (workspace *Workspace) eraAWarning(oldPath, newPath string) (string, error) {
+func (workspace *Workspace) eraAWarning(ctx context.Context, oldPath, newPath string) (string, error) {
 	files, err := discoverRolloutFiles(workspace.home)
 	if err != nil {
 		return "", err
 	}
 	count := 0
 	for _, path := range files {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		_, eraA, err := planRolloutFile(path, oldPath, newPath, false)
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", path, err)

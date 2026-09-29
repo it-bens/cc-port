@@ -48,7 +48,7 @@ type Tx struct {
 
 // Open opens path with a zero busy timeout and folds its WAL into the main
 // database before any caller can observe its contents.
-func Open(path string) (*DB, error) {
+func Open(ctx context.Context, path string) (*DB, error) {
 	database, err := sql.Open("sqlite", FileDSN(path, nil))
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database %q: %w", path, err)
@@ -63,15 +63,15 @@ func Open(path string) (*DB, error) {
 		return nil, operationErr
 	}
 
-	if _, err := database.ExecContext(context.Background(), "PRAGMA busy_timeout=0"); err != nil {
+	if _, err := database.ExecContext(ctx, "PRAGMA busy_timeout=0"); err != nil {
 		return closeOnError(fmt.Errorf("set SQLite busy timeout for %q: %w", path, err))
 	}
-	if err := checkpointTruncate(database); err != nil {
+	if err := checkpointTruncate(ctx, database); err != nil {
 		return closeOnError(fmt.Errorf("checkpoint SQLite database %q on open: %w", path, err))
 	}
 
 	var version string
-	if err := database.QueryRowContext(context.Background(), "SELECT sqlite_version()").Scan(&version); err != nil {
+	if err := database.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&version); err != nil {
 		return closeOnError(fmt.Errorf("query SQLite version for %q: %w", path, err))
 	}
 	if err := validateSQLiteVersion(version); err != nil {
@@ -92,12 +92,14 @@ func (database *DB) Close() error {
 	return nil
 }
 
-// Begin starts a transaction for one or more rewrite operations.
-func (database *DB) Begin() (*Tx, error) {
+// Begin starts a transaction whose statements run non-cancellable, under
+// context.WithoutCancel(ctx): SQLite rolls an explicit transaction back on
+// its own when a statement in it is interrupted.
+func (database *DB) Begin(ctx context.Context) (*Tx, error) {
 	if database == nil || database.database == nil {
 		return nil, fmt.Errorf("begin SQLite rewrite transaction: database is nil")
 	}
-	transaction, err := database.database.BeginTx(context.Background(), nil)
+	transaction, err := database.database.BeginTx(context.WithoutCancel(ctx), nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin SQLite rewrite transaction: %w", err)
 	}
@@ -127,11 +129,11 @@ func (transaction *Tx) Rollback() error {
 }
 
 // CheckpointTruncate folds the WAL into the main database and truncates it.
-func (database *DB) CheckpointTruncate() error {
+func (database *DB) CheckpointTruncate(ctx context.Context) error {
 	if database == nil || database.database == nil {
 		return fmt.Errorf("checkpoint SQLite database: database is nil")
 	}
-	if err := checkpointTruncate(database.database); err != nil {
+	if err := checkpointTruncate(ctx, database.database); err != nil {
 		return fmt.Errorf("checkpoint SQLite database: %w", err)
 	}
 	return nil
@@ -139,14 +141,14 @@ func (database *DB) CheckpointTruncate() error {
 
 // CountTextColumnRO counts rows whose TEXT/BLOB column contains a
 // boundary-aware reference to oldPath.
-func CountTextColumnRO(database *sql.DB, table, column, oldPath string) (int, error) {
+func CountTextColumnRO(ctx context.Context, database *sql.DB, table, column, oldPath string) (int, error) {
 	if err := validatePathArguments(oldPath, oldPath); err != nil {
 		return 0, err
 	}
 	if database == nil {
 		return 0, fmt.Errorf("count SQLite text column: database is nil")
 	}
-	if err := requireColumns(database, table, column); err != nil {
+	if err := requireColumns(ctx, database, table, column); err != nil {
 		return 0, err
 	}
 
@@ -155,7 +157,7 @@ func CountTextColumnRO(database *sql.DB, table, column, oldPath string) (int, er
 		"SELECT %s FROM %s WHERE instr(%s, ?) > 0",
 		quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column),
 	)
-	rows, err := database.QueryContext(context.Background(), selectQuery, oldPath)
+	rows, err := database.QueryContext(ctx, selectQuery, oldPath)
 	if err != nil {
 		return 0, fmt.Errorf("count text values in %s.%s: %w", table, column, err)
 	}
@@ -183,14 +185,20 @@ func CountTextColumnRO(database *sql.DB, table, column, oldPath string) (int, er
 
 // RewriteTextColumn rewrites path references in TEXT or BLOB values
 // and writes each changed row back by its declared primary key.
-func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error) {
+func (database *DB) RewriteTextColumn(
+	ctx context.Context, transaction *Tx, table, primaryKeyColumn, column, oldPath, newPath string,
+) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("rewrite SQLite text column: %w", err)
+	}
 	if err := validatePathArguments(oldPath, newPath); err != nil {
 		return 0, err
 	}
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("rewrite SQLite text column: transaction is nil")
 	}
-	if err := requirePrimaryKeyAndColumn(transaction.transaction, table, primaryKeyColumn, column); err != nil {
+	transactionCtx := context.WithoutCancel(ctx)
+	if err := requirePrimaryKeyAndColumn(transactionCtx, transaction.transaction, table, primaryKeyColumn, column); err != nil {
 		return 0, err
 	}
 
@@ -199,7 +207,7 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 		"SELECT %s, %s FROM %s WHERE instr(%s, ?) > 0",
 		quoteIdentifier(primaryKeyColumn), quoteIdentifier(column), quoteIdentifier(table), quoteIdentifier(column),
 	)
-	rows, err := transaction.transaction.QueryContext(context.Background(), selectQuery, oldPath)
+	rows, err := transaction.transaction.QueryContext(transactionCtx, selectQuery, oldPath)
 	if err != nil {
 		return 0, fmt.Errorf("stream text values from %s.%s: %w", table, column, err)
 	}
@@ -207,7 +215,7 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 
 	// #nosec G201 -- table and column names are quoted identifiers, never values.
 	updateQuery := fmt.Sprintf("UPDATE %s SET %s = ? WHERE %s = ?", quoteIdentifier(table), quoteIdentifier(column), quoteIdentifier(primaryKeyColumn))
-	statement, err := transaction.transaction.PrepareContext(context.Background(), updateQuery)
+	statement, err := transaction.transaction.PrepareContext(transactionCtx, updateQuery)
 	if err != nil {
 		return 0, fmt.Errorf("prepare text rewrite for %s.%s: %w", table, column, err)
 	}
@@ -228,7 +236,7 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 		if replacements == 0 {
 			continue
 		}
-		if _, err := statement.ExecContext(context.Background(), rewritten, primaryKey); err != nil {
+		if _, err := statement.ExecContext(transactionCtx, rewritten, primaryKey); err != nil {
 			return 0, fmt.Errorf("write rewritten text value to %s.%s: %w", table, column, err)
 		}
 		count++
@@ -246,7 +254,7 @@ func (database *DB) RewriteTextColumn(transaction *Tx, table, primaryKeyColumn, 
 // never inserts a row; callers use it for foreign derived stores where
 // reconstitution belongs to the owner.
 func (database *DB) UpdateColumnsByKey(
-	transaction *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any,
+	ctx context.Context, transaction *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any,
 ) (int, error) {
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("update SQLite columns by key: transaction is nil")
@@ -259,10 +267,11 @@ func (database *DB) UpdateColumnsByKey(
 	}
 	columns := sortedColumns(values)
 	required := append(sortedColumns(expected), columns...)
-	if err := requirePrimaryKeyAndColumns(transaction.transaction, table, primaryKeyColumn, required...); err != nil {
+	transactionCtx := context.WithoutCancel(ctx)
+	if err := requirePrimaryKeyAndColumns(transactionCtx, transaction.transaction, table, primaryKeyColumn, required...); err != nil {
 		return 0, err
 	}
-	return updateColumnsWhere(transaction, table, quoteIdentifier(primaryKeyColumn), primaryKey, columns, values, expected)
+	return updateColumnsWhere(transactionCtx, transaction, table, quoteIdentifier(primaryKeyColumn), primaryKey, columns, values, expected)
 }
 
 // UpdateColumnsByRowID updates columns on an existing row identified by its
@@ -272,7 +281,9 @@ func (database *DB) UpdateColumnsByKey(
 // rowid to a different row. A row that does not match counts as zero. It
 // refuses a WITHOUT ROWID table and a table declaring a column named rowid,
 // and never inserts a row.
-func (database *DB) UpdateColumnsByRowID(transaction *Tx, table string, rowID int64, values, expected map[string]any) (int, error) {
+func (database *DB) UpdateColumnsByRowID(
+	ctx context.Context, transaction *Tx, table string, rowID int64, values, expected map[string]any,
+) (int, error) {
 	if transaction == nil || transaction.transaction == nil {
 		return 0, fmt.Errorf("update SQLite columns by rowid: transaction is nil")
 	}
@@ -287,10 +298,11 @@ func (database *DB) UpdateColumnsByRowID(transaction *Tx, table string, rowID in
 	}
 	columns := sortedColumns(values)
 	required := append(sortedColumns(expected), columns...)
-	if err := requireRowIDTableAndColumns(transaction.transaction, table, required...); err != nil {
+	transactionCtx := context.WithoutCancel(ctx)
+	if err := requireRowIDTableAndColumns(transactionCtx, transaction.transaction, table, required...); err != nil {
 		return 0, err
 	}
-	return updateColumnsWhere(transaction, table, "rowid", rowID, columns, values, expected)
+	return updateColumnsWhere(transactionCtx, transaction, table, "rowid", rowID, columns, values, expected)
 }
 
 // refuseNilExpectedValues rejects a nil expected value, untyped or a typed
@@ -333,7 +345,7 @@ func sortedColumns(values map[string]any) []string {
 // declared with a case-insensitive collation cannot let a byte-different
 // current value pass the guard.
 func updateColumnsWhere(
-	transaction *Tx, table, keyExpression string, key any, columns []string, values, expected map[string]any,
+	ctx context.Context, transaction *Tx, table, keyExpression string, key any, columns []string, values, expected map[string]any,
 ) (int, error) {
 	assignments := make([]string, 0, len(columns))
 	arguments := make([]any, 0, len(columns)+1+len(expected))
@@ -352,7 +364,7 @@ func updateColumnsWhere(
 		"UPDATE %s SET %s WHERE %s",
 		quoteIdentifier(table), strings.Join(assignments, ", "), strings.Join(predicates, " AND "),
 	)
-	result, err := transaction.transaction.ExecContext(context.Background(), query, arguments...)
+	result, err := transaction.transaction.ExecContext(ctx, query, arguments...)
 	if err != nil {
 		return 0, fmt.Errorf("update columns in %s by %s: %w", table, keyExpression, err)
 	}
@@ -363,9 +375,9 @@ func updateColumnsWhere(
 	return int(count), nil
 }
 
-func checkpointTruncate(database *sql.DB) error {
+func checkpointTruncate(ctx context.Context, database *sql.DB) error {
 	var busy, logFrames, checkpointedFrames int
-	checkpoint := database.QueryRowContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)")
+	checkpoint := database.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 	if err := checkpoint.Scan(&busy, &logFrames, &checkpointedFrames); err != nil {
 		return fmt.Errorf("run WAL checkpoint truncate: %w", err)
 	}
@@ -432,8 +444,8 @@ type schemaQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-func requireColumns(querier schemaQuerier, table string, columns ...string) error {
-	observed, err := schema(querier, table)
+func requireColumns(ctx context.Context, querier schemaQuerier, table string, columns ...string) error {
+	observed, err := schema(ctx, querier, table)
 	if err != nil {
 		return err
 	}
@@ -450,11 +462,11 @@ func requireColumns(querier schemaQuerier, table string, columns ...string) erro
 // carries every column, failing with the observed schema exactly as
 // UpdateColumnsByKey does. A read-only plan calls it so a dry run refuses the
 // schema its apply would refuse.
-func RequirePrimaryKeyAndColumns(database *sql.DB, table, primaryKeyColumn string, columns ...string) error {
+func RequirePrimaryKeyAndColumns(ctx context.Context, database *sql.DB, table, primaryKeyColumn string, columns ...string) error {
 	if database == nil {
 		return fmt.Errorf("require SQLite schema: database is nil")
 	}
-	return requirePrimaryKeyAndColumns(database, table, primaryKeyColumn, columns...)
+	return requirePrimaryKeyAndColumns(ctx, database, table, primaryKeyColumn, columns...)
 }
 
 // RequireRowIDTableAndColumns checks, on the caller's read-only connection,
@@ -462,19 +474,19 @@ func RequirePrimaryKeyAndColumns(database *sql.DB, table, primaryKeyColumn strin
 // column that shadows rowid) and carries every column, failing with the
 // observed schema exactly as UpdateColumnsByRowID does. A read-only plan
 // calls it so a dry run refuses the schema its apply would refuse.
-func RequireRowIDTableAndColumns(database *sql.DB, table string, columns ...string) error {
+func RequireRowIDTableAndColumns(ctx context.Context, database *sql.DB, table string, columns ...string) error {
 	if database == nil {
 		return fmt.Errorf("require SQLite schema: database is nil")
 	}
-	return requireRowIDTableAndColumns(database, table, columns...)
+	return requireRowIDTableAndColumns(ctx, database, table, columns...)
 }
 
-func requirePrimaryKeyAndColumn(querier schemaQuerier, table, primaryKeyColumn, column string) error {
-	return requirePrimaryKeyAndColumns(querier, table, primaryKeyColumn, column)
+func requirePrimaryKeyAndColumn(ctx context.Context, querier schemaQuerier, table, primaryKeyColumn, column string) error {
+	return requirePrimaryKeyAndColumns(ctx, querier, table, primaryKeyColumn, column)
 }
 
-func requirePrimaryKeyAndColumns(querier schemaQuerier, table, primaryKeyColumn string, columns ...string) error {
-	observed, err := schema(querier, table)
+func requirePrimaryKeyAndColumns(ctx context.Context, querier schemaQuerier, table, primaryKeyColumn string, columns ...string) error {
+	observed, err := schema(ctx, querier, table)
 	if err != nil {
 		return err
 	}
@@ -501,8 +513,8 @@ func requirePrimaryKeyAndColumns(querier schemaQuerier, table, primaryKeyColumn 
 // named rowid answers that probe on a WITHOUT ROWID table and shadows the
 // real rowid in WHERE rowid = ? on a rowid table, so such a column is
 // refused. A column named oid or _rowid_ shadows only its own name.
-func requireRowIDTableAndColumns(querier schemaQuerier, table string, columns ...string) error {
-	observed, err := schema(querier, table)
+func requireRowIDTableAndColumns(ctx context.Context, querier schemaQuerier, table string, columns ...string) error {
+	observed, err := schema(ctx, querier, table)
 	if err != nil {
 		return err
 	}
@@ -511,7 +523,7 @@ func requireRowIDTableAndColumns(querier schemaQuerier, table string, columns ..
 			return fmt.Errorf("unexpected schema for table %q: declared column %q shadows the rowid; observed %s", table, name, formatSchema(observed))
 		}
 	}
-	rows, err := querier.QueryContext(context.Background(), "SELECT type, wr FROM pragma_table_list(?)", table)
+	rows, err := querier.QueryContext(ctx, "SELECT type, wr FROM pragma_table_list(?)", table)
 	if err != nil {
 		return fmt.Errorf("inspect SQLite table kind for table %q: %w", table, err)
 	}
@@ -550,9 +562,9 @@ type columnDefinition struct {
 	primaryKey int
 }
 
-func schema(querier schemaQuerier, table string) (map[string]columnDefinition, error) {
+func schema(ctx context.Context, querier schemaQuerier, table string) (map[string]columnDefinition, error) {
 	query := fmt.Sprintf("PRAGMA table_info(%s)", quoteIdentifier(table))
-	rows, err := querier.QueryContext(context.Background(), query)
+	rows, err := querier.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("inspect SQLite schema for table %q: %w", table, err)
 	}

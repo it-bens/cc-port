@@ -53,8 +53,8 @@ var removeAll = os.RemoveAll
 // on-disk project directory) to the new path and removing the originals —
 // and must run last so every reference surface has already been rewritten
 // against the still-present old data.
-func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, error) {
-	identity, err := workspace.resolveMoveIdentityState(req)
+func (workspace *Workspace) MoveSurfaces(ctx context.Context, req tool.MoveRequest) ([]tool.Surface, error) {
+	identity, err := workspace.resolveMoveIdentityState(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
 	}
@@ -68,11 +68,11 @@ func (workspace *Workspace) MoveSurfaces(req tool.MoveRequest) ([]tool.Surface, 
 		}
 	}
 	workspace.clearMoveWarnings()
-	locations, err := locateProjectForMove(workspace.home, locatePath)
+	locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 	if err != nil {
 		return nil, fmt.Errorf("locate project for file-history warning: %w", err)
 	}
-	snapshots, err := snapshotPaths(context.Background(), locations)
+	snapshots, err := snapshotPaths(ctx, locations)
 	if err != nil {
 		return nil, fmt.Errorf("inspect file-history snapshots: %w", err)
 	}
@@ -109,23 +109,22 @@ type moveIdentity struct {
 	identitySkipWarning string
 }
 
-func (workspace *Workspace) resolveMoveIdentity(req tool.MoveRequest) (string, error) {
-	identity, err := workspace.resolveMoveIdentityState(req)
+func (workspace *Workspace) resolveMoveIdentity(ctx context.Context, req tool.MoveRequest) (string, error) {
+	identity, err := workspace.resolveMoveIdentityState(ctx, req)
 	if err != nil {
 		return "", err
 	}
 	return identity.locatePath, nil
 }
 
-func (workspace *Workspace) resolveMoveIdentityState(req tool.MoveRequest) (moveIdentity, error) {
+func (workspace *Workspace) resolveMoveIdentityState(ctx context.Context, req tool.MoveRequest) (moveIdentity, error) {
 	claudeHome := workspace.home
-	ctx := context.Background()
 
 	oldDir := claudeHome.ProjectDir(req.OldPath)
 	sessionUUIDs, err := collectProjectDirEntries(ctx, &ProjectLocations{}, oldDir)
 	switch {
 	case err == nil:
-		skipWarning, err := verifyProjectMoveIdentity(claudeHome, req.OldPath, req.NewPath, sessionUUIDs)
+		skipWarning, err := verifyProjectMoveIdentity(ctx, claudeHome, req.OldPath, req.NewPath, sessionUUIDs)
 		if err != nil {
 			return moveIdentity{}, err
 		}
@@ -138,7 +137,7 @@ func (workspace *Workspace) resolveMoveIdentityState(req tool.MoveRequest) (move
 
 // ResidualWarnings implements tool.Mover: content a move preserves verbatim
 // and cannot fully rewrite.
-func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, error) {
+func (workspace *Workspace) ResidualWarnings(ctx context.Context, req tool.MoveRequest) ([]string, error) {
 	warnings := workspace.moveWarningSnapshot()
 	ruleWarnings, err := workspace.rulesWarnings(req.OldPath)
 	if err != nil {
@@ -147,15 +146,14 @@ func (workspace *Workspace) ResidualWarnings(req tool.MoveRequest) ([]string, er
 	for _, warning := range ruleWarnings {
 		warnings = appendUniqueMoveWarnings(warnings, warning)
 	}
-	ctx := context.Background()
-	locatePath, err := workspace.resolveMoveIdentity(req)
+	locatePath, err := workspace.resolveMoveIdentity(ctx, req)
 	if err != nil {
 		if errors.Is(err, tool.ErrProjectAbsent) {
 			return warnings, nil
 		}
 		return warnings, fmt.Errorf("locate project: %w", err)
 	}
-	locations, err := locateProjectForMove(workspace.home, locatePath)
+	locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 	if err != nil {
 		return warnings, fmt.Errorf("locate project: %w", err)
 	}
@@ -430,7 +428,7 @@ func (workspace *Workspace) sessionsSurface(req tool.MoveRequest, locatePath str
 	return tool.Surface{
 		Name: categorySessions,
 		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
-			locations, err := locateProjectForMove(workspace.home, locatePath)
+			locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
@@ -454,7 +452,7 @@ func (workspace *Workspace) sessionsSurface(req tool.MoveRequest, locatePath str
 			return tool.SurfaceResult{Count: count, Warnings: malformedSessionWarnings(locations.MalformedSessionFiles)}, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
-			locations, err := locateProjectForMove(workspace.home, locatePath)
+			locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
@@ -537,7 +535,7 @@ func (workspace *Workspace) sessionKeyedSurfaces(req tool.MoveRequest, locatePat
 		surfaces = append(surfaces, tool.Surface{
 			Name: group.Name,
 			Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
-				locations, err := locateProjectForMove(workspace.home, locatePath)
+				locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 				}
@@ -559,7 +557,7 @@ func (workspace *Workspace) sessionKeyedSurfaces(req tool.MoveRequest, locatePat
 				return tool.SurfaceResult{Count: count}, nil
 			},
 			Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
-				locations, err := locateProjectForMove(workspace.home, locatePath)
+				locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 				if err != nil {
 					return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 				}
@@ -648,7 +646,7 @@ func (workspace *Workspace) transcriptsSurface(req tool.MoveRequest, locatePath 
 	return tool.Surface{
 		Name: "transcripts",
 		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
-			locations, err := locateProjectForMove(workspace.home, locatePath)
+			locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
@@ -677,7 +675,7 @@ func (workspace *Workspace) transcriptsSurface(req tool.MoveRequest, locatePath 
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
 			// Project-directory runs last, so transcripts are rewritten in
 			// place under the old encoded directory before its later copy.
-			locations, err := locateProjectForMove(workspace.home, locatePath)
+			locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
@@ -707,7 +705,7 @@ func (workspace *Workspace) memorySurface(req tool.MoveRequest, locatePath strin
 	return tool.Surface{
 		Name: "memory",
 		Plan: func(ctx context.Context) (tool.SurfaceResult, error) {
-			locations, err := locateProjectForMove(workspace.home, locatePath)
+			locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}
@@ -730,7 +728,7 @@ func (workspace *Workspace) memorySurface(req tool.MoveRequest, locatePath strin
 			return tool.SurfaceResult{Count: total}, nil
 		},
 		Apply: func(ctx context.Context, undo *tool.Restorer) (tool.SurfaceResult, error) {
-			locations, err := locateProjectForMove(workspace.home, locatePath)
+			locations, err := locateProjectForMove(ctx, workspace.home, locatePath)
 			if err != nil {
 				return tool.SurfaceResult{}, fmt.Errorf("locate project: %w", err)
 			}

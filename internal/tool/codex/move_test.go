@@ -31,7 +31,7 @@ func planAndApply(t *testing.T, workspace *Workspace, req tool.MoveRequest) (pla
 	t.Helper()
 	ctx := context.Background()
 
-	planSurfaces, err := workspace.MoveSurfaces(req)
+	planSurfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	planCounts = make(map[string]int, len(planSurfaces))
 	for _, surface := range planSurfaces {
@@ -40,7 +40,7 @@ func planAndApply(t *testing.T, workspace *Workspace, req tool.MoveRequest) (pla
 		planCounts[surface.Name] = count.Count
 	}
 
-	applySurfaces, err := workspace.MoveSurfaces(req)
+	applySurfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
 	applyCounts = make(map[string]int, len(applySurfaces))
@@ -141,7 +141,7 @@ func TestMoveSurfacesLeavesOtherProjectRolloutUntouched(t *testing.T) {
 	before, err := os.Stat(path)
 	require.NoError(t, err)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project", DeepRewrite: true}
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	sessionsIndex := slices.IndexFunc(surfaces, func(surface tool.Surface) bool { return surface.Name == categorySessions })
 	require.NotEqual(t, -1, sessionsIndex)
@@ -182,7 +182,7 @@ func TestMoveSurfacesRefusesCompressedOnlyRollout(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
 	require.NoError(t, os.WriteFile(path, []byte("junk"), 0o600))
 
-	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"})
+	_, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"})
 
 	require.ErrorIs(t, err, ErrCompressedRolloutUnsupported)
 	assert.Contains(t, err.Error(), path)
@@ -234,7 +234,7 @@ func TestMoveSurfaces_UsesPreflightThreadMatchesAfterSourceRemoved(t *testing.T)
 	const threadID = "00000000-0000-4000-8000-0000000000dd"
 	insertThreadRowForProject(t, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName), threadID, aliasedCWD, threadRowMetadata{})
 
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: realProject, NewPath: newPath})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: realProject, NewPath: newPath})
 	require.NoError(t, err)
 	require.NoError(t, os.RemoveAll(realProject), "simulate Claude's earlier apply removing the source")
 	undo := tool.NewRestorer()
@@ -265,7 +265,7 @@ func TestMove_ConfigSymlinkAliasRewritesStoredTrustKey(t *testing.T) {
 		&Home{Dir: homeDir, SQLiteDir: filepath.Join(homeDir, "sqlite")}, fakeGetenv(nil), noProcesses,
 	)
 
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: realProject, NewPath: newPath})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: realProject, NewPath: newPath})
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
 	for _, surface := range surfaces {
@@ -286,7 +286,7 @@ func TestMoveSurfacesReportsProjectAbsentForUnknownProject(t *testing.T) {
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: "/Users/fixture/never-seen", NewPath: "/Users/fixture/also-never-seen"}
 
-	_, err := workspace.MoveSurfaces(req)
+	_, err := workspace.MoveSurfaces(t.Context(), req)
 
 	assert.ErrorIs(t, err, tool.ErrProjectAbsent)
 }
@@ -301,7 +301,7 @@ func TestMoveSurfaces_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *testin
 	workspace, project := divergentProfileUnknownProjectFixture(t)
 	req := tool.MoveRequest{OldPath: project, NewPath: "/Users/fixture/renamed-elsewhere"}
 
-	_, err := workspace.MoveSurfaces(req)
+	_, err := workspace.MoveSurfaces(t.Context(), req)
 
 	require.ErrorIs(t, err, ErrProjectAbsenceUnresolved)
 	assert.NotErrorIs(t, err, tool.ErrProjectAbsent,
@@ -317,7 +317,7 @@ func TestConfigSurfaceDiscoversProfileOverlay(t *testing.T) {
 	assert.Contains(t, files, filepath.Join(home.Dir, "work.config.toml"))
 
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	var configSurface *tool.Surface
 	for index := range surfaces {
@@ -336,7 +336,7 @@ func TestConfigSurfacePreservesCommentsAndOtherProjectsKey(t *testing.T) {
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
 	undo := tool.NewRestorer()
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	for _, surface := range surfaces {
 		if surface.Name != "config" {
@@ -576,7 +576,7 @@ func TestMemoriesWorktreeGitBaselineRefusalIsPerRoot(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr),
 		"memories_v2/.git has no remote and must still be invalidated independently of memories/.git's refusal")
 
-	warnings, err := workspace.ResidualWarnings(req)
+	warnings, err := workspace.ResidualWarnings(t.Context(), req)
 	require.NoError(t, err)
 	assert.Contains(t, warnings, "memories/.git carries a remote and was left in place; its worktree contents were rewritten",
 		"the warning must name the root that actually kept its baseline, not memories_v2")
@@ -598,7 +598,7 @@ func TestMemoriesWorktreeGitBaselineWarningNamesV2Root(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(home.Dir, memoriesWorktreeSubdir, gitDirName))
 	assert.True(t, os.IsNotExist(statErr), "memories/.git has no remote and must still be invalidated")
 
-	warnings, err := workspace.ResidualWarnings(req)
+	warnings, err := workspace.ResidualWarnings(t.Context(), req)
 	require.NoError(t, err)
 	assert.Contains(t, warnings, "memories_v2/.git carries a remote and was left in place; its worktree contents were rewritten",
 		"the warning must name memories_v2, not memories")
@@ -624,7 +624,7 @@ func TestMemoriesWorktreeGitBaselineWarningOmitsRewriteClauseWithZeroOccurrences
 	planAndApply(t, workspace, req)
 
 	assert.DirExists(t, filepath.Join(v2Root, gitDirName), "memories_v2/.git carries a remote and must be left in place")
-	warnings, err := workspace.ResidualWarnings(req)
+	warnings, err := workspace.ResidualWarnings(t.Context(), req)
 	require.NoError(t, err)
 	assert.Contains(t, warnings, "memories_v2/.git carries a remote and was left in place",
 		"a remote-carrying root with zero project occurrences must still be reported")
@@ -641,7 +641,7 @@ func TestMemoriesWorktreeGitBaselineWarningReportsPendingRewriteBeforeApply(t *t
 	buildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, memoriesWorktreeSubdir), fixtureGitConfigWithRemote)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
-	warnings, err := workspace.ResidualWarnings(req)
+	warnings, err := workspace.ResidualWarnings(t.Context(), req)
 
 	require.NoError(t, err)
 	assert.Contains(t, warnings, "memories/.git carries a remote and was left in place; its worktree contents are still to be rewritten")
@@ -666,7 +666,7 @@ func TestResidualWarningsReportsEraAAndGitBaselineLeftInPlace(t *testing.T) {
 	buildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, memoriesWorktreeSubdir), fixtureGitConfigWithRemote)
 
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	warnings, err := workspace.ResidualWarnings(req)
+	warnings, err := workspace.ResidualWarnings(t.Context(), req)
 
 	require.NoError(t, err)
 	assert.Len(t, warnings, 3, "era-A, marketplace residual, and git-baseline-left-in-place warnings: %v", warnings)
@@ -683,7 +683,7 @@ func TestResidualWarningsReportsBackupWarningPerRoot(t *testing.T) {
 	}
 
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	warnings, err := workspace.ResidualWarnings(req)
+	warnings, err := workspace.ResidualWarnings(t.Context(), req)
 
 	require.NoError(t, err)
 	found := 0
@@ -710,7 +710,7 @@ func TestResidualWarnings_WarnsOnDivergentProfileSQLiteHome(t *testing.T) {
 	))
 
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	warnings, err := workspace.ResidualWarnings(req)
+	warnings, err := workspace.ResidualWarnings(t.Context(), req)
 
 	require.NoError(t, err)
 	found := false
@@ -731,13 +731,13 @@ func TestGoalsWarningReportsOnlyPopulatedGoalsDatabases(t *testing.T) {
 	_, err = database.ExecContext(context.Background(), `CREATE TABLE goals (id INTEGER PRIMARY KEY)`)
 	require.NoError(t, err)
 
-	warning, err := goalsWarning(sqliteDir)
+	warning, err := goalsWarning(t.Context(), sqliteDir)
 	require.NoError(t, err)
 	assert.Empty(t, warning)
 
 	_, err = database.ExecContext(context.Background(), `INSERT INTO goals (id) VALUES (1)`)
 	require.NoError(t, err)
-	warning, err = goalsWarning(sqliteDir)
+	warning, err = goalsWarning(t.Context(), sqliteDir)
 	require.NoError(t, err)
 	assert.Equal(t, "goals present, not ported", warning)
 }
@@ -753,7 +753,7 @@ func TestGoalsWarningIgnoresSQLxMigrationRows(t *testing.T) {
 	_, err = database.ExecContext(context.Background(), `INSERT INTO _sqlx_migrations (version) VALUES (1)`)
 	require.NoError(t, err)
 
-	warning, err := goalsWarning(sqliteDir)
+	warning, err := goalsWarning(t.Context(), sqliteDir)
 
 	require.NoError(t, err)
 	assert.Empty(t, warning)
@@ -771,13 +771,13 @@ func TestCodexDevWarningRequiresPathReference(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	warning, err := codexDevWarning(path, FixtureProjectPath())
+	warning, err := codexDevWarning(t.Context(), path, FixtureProjectPath())
 	require.NoError(t, err)
 	assert.Empty(t, warning)
 
 	_, err = database.ExecContext(context.Background(), `INSERT INTO local_thread_catalog (cwd) VALUES (?)`, FixtureProjectPath())
 	require.NoError(t, err)
-	warning, err = codexDevWarning(path, FixtureProjectPath())
+	warning, err = codexDevWarning(t.Context(), path, FixtureProjectPath())
 	require.NoError(t, err)
 	assert.Equal(t, "codex-dev.db contains path references to the moved project and is never rewritten; refusing to move", warning)
 }
@@ -811,7 +811,7 @@ func TestCodexDevWarningDetectsSymlinkAliasedValue(t *testing.T) {
 	_, err = database.ExecContext(context.Background(), `INSERT INTO local_thread_catalog (cwd) VALUES (?)`, aliasedCWD)
 	require.NoError(t, err)
 
-	warning, err := codexDevWarning(path, realProject)
+	warning, err := codexDevWarning(t.Context(), path, realProject)
 
 	require.NoError(t, err)
 	assert.Equal(t, "codex-dev.db contains path references to the moved project and is never rewritten; refusing to move", warning)
@@ -842,10 +842,34 @@ func TestCodexDevWarningToleratesNullSourceCWD(t *testing.T) {
 	_, err = database.ExecContext(context.Background(), `INSERT INTO automation_runs (source_cwd) VALUES (?)`, FixtureProjectPath())
 	require.NoError(t, err)
 
-	warning, err := codexDevWarning(path, FixtureProjectPath())
+	warning, err := codexDevWarning(t.Context(), path, FixtureProjectPath())
 
 	require.NoError(t, err)
 	assert.Equal(t, "codex-dev.db contains path references to the moved project and is never rewritten; refusing to move", warning)
+}
+
+// A cancelled context fails requireTableColumn's schema read; the failure
+// surfaces as a wrapped context.Canceled with an empty warning, not as a
+// schema-drift refusal.
+func TestCodexDevWarningFailsOnCancelledContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex-dev.db")
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+	_, err = database.ExecContext(context.Background(), `
+		CREATE TABLE automations (cwds TEXT);
+		CREATE TABLE automation_runs (source_cwd TEXT);
+		CREATE TABLE local_thread_catalog (cwd TEXT NOT NULL);
+	`)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	warning, err := codexDevWarning(ctx, path, FixtureProjectPath())
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, warning)
 }
 
 func TestResidualWarningsReadsCodexDevFromHomeSQLiteSubdirectory(t *testing.T) {
@@ -864,7 +888,7 @@ func TestResidualWarningsReadsCodexDevFromHomeSQLiteSubdirectory(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	warnings, err := workspace.ResidualWarnings(tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"})
+	warnings, err := workspace.ResidualWarnings(t.Context(), tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"})
 
 	require.NoError(t, err)
 	assert.Contains(t, warnings, "codex-dev.db contains path references to the moved project and is never rewritten; refusing to move")
@@ -873,7 +897,7 @@ func TestResidualWarningsReadsCodexDevFromHomeSQLiteSubdirectory(t *testing.T) {
 func TestDatabaseTransactionsRollBackBeforeFinalSurface(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
 	for _, surface := range surfaces[:2] {
@@ -930,7 +954,7 @@ func TestFinalDatabaseSurfaceReportsSecondCommitPartialStateAndRerunConverges(t 
 	memoriesCount, countErr := countMemoriesDB(context.Background(), workspace.home.SQLiteDir, req.OldPath)
 	require.NoError(t, countErr)
 	assert.Zero(t, memoriesCount, "the first memories commit must persist before state fails")
-	_, err = workspace.MoveSurfaces(req)
+	_, err = workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err, "state remains the identity source after its commit fails")
 	_, applyCounts := planAndApply(t, workspace, req)
 	assert.Positive(t, applyCounts["state-db"])
@@ -947,12 +971,12 @@ func TestFinalDatabaseSurfaceReportsCheckpointFailureAsWarningAfterCommits(t *te
 	require.NoError(t, err)
 	_, err = workspace.memoriesDBSurface(req, pending).Apply(context.Background(), undo)
 	require.NoError(t, err)
-	pending.state[0].checkpoint = func() error { return assert.AnError }
+	pending.state[0].checkpoint = func(context.Context) error { return assert.AnError }
 
 	_, err = pending.commitSurface().Apply(context.Background(), undo)
 
 	require.NoError(t, err)
-	warnings, warningErr := workspace.ResidualWarnings(req)
+	warnings, warningErr := workspace.ResidualWarnings(t.Context(), req)
 	require.NoError(t, warningErr)
 	assert.Contains(t, warnings, "could not checkpoint "+pending.state[0].path+" after commit: assert.AnError general error for testing")
 }
@@ -964,7 +988,7 @@ func TestResidualWarningsKeepsCheckpointWarningWhenLaterScanFails(t *testing.T) 
 	require.NoError(t, os.WriteFile(badGoalsDB, []byte("not a sqlite database"), 0o600))
 
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	warnings, err := workspace.ResidualWarnings(req)
+	warnings, err := workspace.ResidualWarnings(t.Context(), req)
 
 	require.Error(t, err, "a malformed goals database must surface as an error, not be silently swallowed")
 	assert.Contains(t, warnings, "test checkpoint warning",
@@ -1171,7 +1195,7 @@ func TestPlanningLeavesDatabaseAndWALBytesUntouched(t *testing.T) {
 	beforeWAL, err := os.ReadFile(path + walSuffix) //nolint:gosec // G304: fixture path is test-controlled
 	require.NoError(t, err)
 
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"})
 	require.NoError(t, err)
 	for _, surface := range surfaces {
 		_, err := surface.Plan(context.Background())
@@ -1191,7 +1215,7 @@ func TestAgentsMarketplaceSurfaceSkippedWhenAgentsDirAbsent(t *testing.T) {
 	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses)
 	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
-	surfaces, err := workspace.MoveSurfaces(req)
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	for _, surface := range surfaces {
 		if surface.Name != "agents-marketplace" {

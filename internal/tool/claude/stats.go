@@ -40,7 +40,7 @@ func referenceSurfaceNames() []string {
 // additionally count the absolute encoded storage-dir form, mirroring
 // move's two-pass rewrite of those surfaces.
 func (workspace *Workspace) ReferenceSurfaces(ctx context.Context, project string) ([]tool.CountSurface, error) {
-	locations, err := LocateProject(workspace.home, project)
+	locations, err := LocateProject(ctx, workspace.home, project)
 	if err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
 	}
@@ -219,7 +219,7 @@ func (workspace *Workspace) countConfigReferences(ctx context.Context, projectPa
 
 // DiskCategories implements tool.Auditor.
 func (workspace *Workspace) DiskCategories(ctx context.Context, project string) ([]tool.SizeCategory, error) {
-	locations, err := LocateProject(workspace.home, project)
+	locations, err := LocateProject(ctx, workspace.home, project)
 	if err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
 	}

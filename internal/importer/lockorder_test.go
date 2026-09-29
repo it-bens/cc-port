@@ -168,13 +168,13 @@ func (workspace *lockOrderWorkspace) ActiveWriters() ([]tool.ActiveWriter, error
 	return workspace.active, nil
 }
 
-func (workspace *lockOrderWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error) {
+func (workspace *lockOrderWorkspace) MoveSurfaces(context.Context, tool.MoveRequest) ([]tool.Surface, error) {
 	return nil, nil
 }
-func (workspace *lockOrderWorkspace) ResidualWarnings(tool.MoveRequest) ([]string, error) {
+func (workspace *lockOrderWorkspace) ResidualWarnings(context.Context, tool.MoveRequest) ([]string, error) {
 	return nil, nil
 }
-func (workspace *lockOrderWorkspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
+func (workspace *lockOrderWorkspace) Placeholders(context.Context, string, map[string]bool) ([]manifest.Placeholder, error) {
 	return nil, nil
 }
 func (workspace *lockOrderWorkspace) Export(context.Context, string, map[string]bool, *archive.Sink) (tool.ExportResult, error) {

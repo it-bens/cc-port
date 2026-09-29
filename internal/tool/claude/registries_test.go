@@ -38,7 +38,7 @@ func TestSessionKeyedTargets_ZipPrefixesTerminatedWithSlash(t *testing.T) {
 func TestSessionKeyedTargets_FilesRootedUnderHomeBaseDir(t *testing.T) {
 	claudeHome := testutil.SetupFixture(t)
 
-	locations, err := claude.LocateProject(claudeHome, "/Users/test/Projects/myproject")
+	locations, err := claude.LocateProject(t.Context(), claudeHome, "/Users/test/Projects/myproject")
 	require.NoError(t, err)
 
 	for target := range claude.SessionKeyedGroups() {

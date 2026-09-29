@@ -71,7 +71,7 @@ func countMemoriesDB(ctx context.Context, sqliteDir, oldPath string) (int, error
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		count, err := countMemoriesDBFile(path, oldPath)
+		count, err := countMemoriesDBFile(ctx, path, oldPath)
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", path, err)
 		}
@@ -80,20 +80,20 @@ func countMemoriesDB(ctx context.Context, sqliteDir, oldPath string) (int, error
 	return total, nil
 }
 
-func countMemoriesDBFile(path, oldPath string) (int, error) {
+func countMemoriesDBFile(ctx context.Context, path, oldPath string) (int, error) {
 	database, err := openReadOnlyDatabase(path)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = database.Close() }()
 
-	return countMemoriesDBReadOnly(database, oldPath)
+	return countMemoriesDBReadOnly(ctx, database, oldPath)
 }
 
-func countMemoriesDBReadOnly(database *sql.DB, oldPath string) (int, error) {
+func countMemoriesDBReadOnly(ctx context.Context, database *sql.DB, oldPath string) (int, error) {
 	total := 0
 	for _, column := range []string{stage1RawMemoryColumn, stage1RolloutSummaryColumn} {
-		count, err := sqlrewrite.CountTextColumnRO(database, stage1OutputsTable, column, oldPath)
+		count, err := sqlrewrite.CountTextColumnRO(ctx, database, stage1OutputsTable, column, oldPath)
 		if err != nil {
 			return 0, fmt.Errorf("count stage1_outputs.%s: %w", column, err)
 		}
@@ -102,16 +102,12 @@ func countMemoriesDBReadOnly(database *sql.DB, oldPath string) (int, error) {
 	return total, nil
 }
 
-// rewriteStage1TextColumns matches startDatabaseRewrites' shared callback
-// signature (ctx, path); neither is used here since sqlrewrite.RewriteTextColumn
-// takes no context and stage1_outputs' free-text columns carry no cwd
-// canonicalization concern (unlike threads.cwd, see rewriteStateDBPathsWithPlan).
 func rewriteStage1TextColumns(
-	_ context.Context, _ string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string,
+	ctx context.Context, _ string, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, oldPath, newPath string,
 ) (int, error) {
 	total := 0
 	for _, column := range []string{stage1RawMemoryColumn, stage1RolloutSummaryColumn} {
-		count, err := database.RewriteTextColumn(transaction, stage1OutputsTable, stage1ThreadIDColumn, column, oldPath, newPath)
+		count, err := database.RewriteTextColumn(ctx, transaction, stage1OutputsTable, stage1ThreadIDColumn, column, oldPath, newPath)
 		if err != nil {
 			return 0, fmt.Errorf("rewrite stage1_outputs.%s: %w", column, err)
 		}

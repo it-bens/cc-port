@@ -21,9 +21,9 @@ package's types support.
   - `Workspace`: composes `Mover`, `Exporter`, `Importer`, `Auditor` plus
     `Root`, `LockPath`, `ActiveWriters`. One `Tool.Open` result serves every
     command.
-  - `Mover`: `MoveSurfaces(MoveRequest) ([]Surface, error)`,
-    `ResidualWarnings(MoveRequest) ([]string, error)`.
-  - `Exporter`: `Placeholders(project string, selected map[string]bool) ([]manifest.Placeholder, error)`,
+  - `Mover`: `MoveSurfaces(ctx, MoveRequest) ([]Surface, error)`,
+    `ResidualWarnings(ctx, MoveRequest) ([]string, error)`.
+  - `Exporter`: `Placeholders(ctx, project string, selected map[string]bool) ([]manifest.Placeholder, error)`,
     `Export(ctx, project string, selected map[string]bool, sink *archive.Sink) (ExportResult, error)`.
   - `Importer`: `PreflightDirs(project string) []string`,
     `ImplicitAnchors(project string) (map[string]string, error)`,

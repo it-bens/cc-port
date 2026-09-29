@@ -189,7 +189,7 @@ func buildCodexOnlyArchive(t *testing.T) []byte {
 	for _, category := range codexTool.Categories() {
 		selected[category.Name] = true
 	}
-	placeholders, err := workspace.Placeholders(codex.FixtureProjectPath(), selected)
+	placeholders, err := workspace.Placeholders(t.Context(), codex.FixtureProjectPath(), selected)
 	require.NoError(t, err)
 
 	var archiveBytes bytes.Buffer

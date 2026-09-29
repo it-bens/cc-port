@@ -50,10 +50,10 @@ type applyTestWorkspace struct {
 func (*applyTestWorkspace) Root() string                                { return "/apply-test" }
 func (workspace *applyTestWorkspace) LockPath() string                  { return workspace.lockPath }
 func (*applyTestWorkspace) ActiveWriters() ([]tool.ActiveWriter, error) { return nil, nil }
-func (workspace *applyTestWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error) {
+func (workspace *applyTestWorkspace) MoveSurfaces(context.Context, tool.MoveRequest) ([]tool.Surface, error) {
 	return workspace.surfaces, nil
 }
-func (workspace *applyTestWorkspace) ResidualWarnings(tool.MoveRequest) ([]string, error) {
+func (workspace *applyTestWorkspace) ResidualWarnings(context.Context, tool.MoveRequest) ([]string, error) {
 	if len(workspace.warningSequence) > 0 {
 		index := workspace.residualCallCount
 		workspace.residualCallCount++
@@ -68,7 +68,7 @@ func (workspace *applyTestWorkspace) ResidualWarnings(tool.MoveRequest) ([]strin
 	}
 	return workspace.warnings, workspace.warningErr
 }
-func (*applyTestWorkspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
+func (*applyTestWorkspace) Placeholders(context.Context, string, map[string]bool) ([]manifest.Placeholder, error) {
 	return nil, errors.New("not exercised")
 }
 func (*applyTestWorkspace) Export(context.Context, string, map[string]bool, *archive.Sink) (tool.ExportResult, error) {
@@ -165,7 +165,7 @@ func TestSessionsSurface_ReportsMalformedSessionFileWithoutChangingItsBytes(t *t
 	original := []byte(`{"cwd":`)
 	require.NoError(t, os.WriteFile(malformedPath, original, 0o600))
 	workspace := claude.NewWorkspace(home)
-	surfaces, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
+	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	var sessions tool.Surface
 	for _, surface := range surfaces {
@@ -233,7 +233,7 @@ func TestClaudeMoveSurfaces_AllowsPhysicalDestinationWhenSourceAlreadyGone(t *te
 	workspace := targets[0].Workspace
 	oldPath := testutil.FixtureProjectPath()
 
-	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: oldPath, NewPath: t.TempDir()})
+	_, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: t.TempDir()})
 
 	require.NoError(t, err)
 }
@@ -242,7 +242,7 @@ func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 
-	_, err := workspace.MoveSurfaces(tool.MoveRequest{OldPath: testutil.FixtureProjectPath(), NewPath: t.TempDir(), RefsOnly: true})
+	_, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: testutil.FixtureProjectPath(), NewPath: t.TempDir(), RefsOnly: true})
 
 	require.NoError(t, err)
 }
@@ -316,7 +316,7 @@ func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {
 		RefsOnly: true,
 	}
 
-	_, err := workspace.MoveSurfaces(req)
+	_, err := workspace.MoveSurfaces(t.Context(), req)
 
 	require.NoError(t, err)
 	for _, registry := range claude.Registries {

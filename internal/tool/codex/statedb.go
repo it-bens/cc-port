@@ -71,9 +71,7 @@ var (
 // requires every stateDBPathColumns column in every discovered database, so
 // a database missing one is a schema error whether or not another database
 // already knows the project. It is the state-database identity check for
-// both move (projectKnown) and stats/export (knowsProject). MoveSurfaces
-// receives no context, so the move path passes context.Background() and is
-// not cancellable.
+// both move (projectKnown) and stats/export (knowsProject).
 func stateDBKnowsProject(ctx context.Context, sqliteDir, project string) (bool, error) {
 	databases, err := discoverDatabases(sqliteDir, stateDBGlob)
 	if err != nil {
@@ -83,7 +81,7 @@ func stateDBKnowsProject(ctx context.Context, sqliteDir, project string) (bool, 
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		if err := requireStateDBPathColumns(path); err != nil {
+		if err := requireStateDBPathColumns(ctx, path); err != nil {
 			return false, fmt.Errorf("%s: %w", path, err)
 		}
 	}
@@ -109,7 +107,7 @@ func stateDBKnowsProject(ctx context.Context, sqliteDir, project string) (bool, 
 // target. Running the same checks Apply runs, for every discovered database
 // regardless of whether any row matches, makes a dry run fail on the same
 // schema error Apply would give (README §cwd matching).
-func requireStateDBPathColumns(path string) error {
+func requireStateDBPathColumns(ctx context.Context, path string) error {
 	database, err := openReadOnlyDatabase(path)
 	if err != nil {
 		return err
@@ -117,7 +115,7 @@ func requireStateDBPathColumns(path string) error {
 	defer func() { _ = database.Close() }()
 
 	for _, target := range stateDBPathColumns {
-		if err := target.requireSchema(database); err != nil {
+		if err := target.requireSchema(ctx, database); err != nil {
 			return err
 		}
 	}
@@ -126,12 +124,12 @@ func requireStateDBPathColumns(path string) error {
 
 // requireSchema checks the schema shape target.update will require at apply
 // time.
-func (target stateDBPathColumn) requireSchema(database *sql.DB) error {
+func (target stateDBPathColumn) requireSchema(ctx context.Context, database *sql.DB) error {
 	switch target.keyKind {
 	case textPrimaryKey:
-		return sqlrewrite.RequirePrimaryKeyAndColumns(database, target.table, target.keyColumn, target.column)
+		return sqlrewrite.RequirePrimaryKeyAndColumns(ctx, database, target.table, target.keyColumn, target.column)
 	case rowIDKey:
-		return sqlrewrite.RequireRowIDTableAndColumns(database, target.table, target.column)
+		return sqlrewrite.RequireRowIDTableAndColumns(ctx, database, target.table, target.column)
 	default:
 		return fmt.Errorf("unknown row key kind %d", target.keyKind)
 	}
@@ -216,9 +214,7 @@ func collectStateDBProjectPaths(ctx context.Context, path string, byCanonical ma
 // sqlrewrite.CountTextColumnRO's boundary-aware substring scan instead.
 // DISTINCT is forced to COLLATE BINARY so a column declared with a
 // case-insensitive collation cannot fold two byte-different stored values
-// into one before pathMatchesProject sees them. When ctx is a real
-// request context rather than context.Background(), cancellable per
-// iteration. A NULLABLE column (automation_runs.source_cwd, unlike
+// into one before pathMatchesProject sees them. A NULLABLE column (automation_runs.source_cwd, unlike
 // threads.cwd and local_thread_catalog.cwd, both NOT NULL) can store a NULL
 // row; that row is scanned into sql.NullString and skipped as a non-match
 // rather than treated as an error, matching the exclude-without-erroring
@@ -248,7 +244,7 @@ func matchingColumnValues(ctx context.Context, database *sql.DB, table, column, 
 // distinctColumnValues returns every distinct non-NULL value in
 // table.column, compared COLLATE BINARY, after requiring the column.
 func distinctColumnValues(ctx context.Context, database *sql.DB, table, column string) ([]string, error) {
-	if err := requireTableColumn(database, table, column); err != nil {
+	if err := requireTableColumn(ctx, database, table, column); err != nil {
 		return nil, err
 	}
 	// #nosec G201 -- table and column names are adapter constants, never values.
@@ -314,17 +310,6 @@ func countMatchingColumnRows(ctx context.Context, database *sql.DB, table, colum
 		total += count
 	}
 	return total, nil
-}
-
-// countMatchingColumnRowsBackground adapts countMatchingColumnRows to
-// sqlrewrite.CountTextColumnRO's signature shape so codexDevWarning
-// (move.go) can select either counting strategy per column in one
-// table-driven loop. codexDevWarning has no context of its own (move.go's
-// MoveSurfaces and ResidualWarnings, its only callers, take none), so this
-// always scans with context.Background(): bounded the same way every other
-// canonical match is, not cancellable.
-func countMatchingColumnRowsBackground(database *sql.DB, table, column, project string) (int, error) {
-	return countMatchingColumnRows(context.Background(), database, table, column, project)
 }
 
 // threadIDsForCWD returns the primary keys of every threads row whose cwd
@@ -399,19 +384,19 @@ func (target stateDBPathColumn) checkKey(key any) error {
 // the sqlrewrite primitive matching target.keyKind, and only while the row
 // still holds oldValue, the value the plan matched.
 func (target stateDBPathColumn) update(
-	database *sqlrewrite.DB, transaction *sqlrewrite.Tx, key any, oldValue, newValue string,
+	ctx context.Context, database *sqlrewrite.DB, transaction *sqlrewrite.Tx, key any, oldValue, newValue string,
 ) (int, error) {
 	values := map[string]any{target.column: newValue}
 	expected := map[string]any{target.column: oldValue}
 	switch target.keyKind {
 	case textPrimaryKey:
-		return database.UpdateColumnsByKey(transaction, target.table, target.keyColumn, key, values, expected)
+		return database.UpdateColumnsByKey(ctx, transaction, target.table, target.keyColumn, key, values, expected)
 	case rowIDKey:
 		rowID, ok := key.(int64)
 		if !ok {
 			return 0, fmt.Errorf("%s rowid is %T, not int64", target.table, key)
 		}
-		return database.UpdateColumnsByRowID(transaction, target.table, rowID, values, expected)
+		return database.UpdateColumnsByRowID(ctx, transaction, target.table, rowID, values, expected)
 	default:
 		return 0, fmt.Errorf("unknown row key kind %d", target.keyKind)
 	}
@@ -472,10 +457,9 @@ func stateDBRewritePlansForProject(ctx context.Context, sqliteDir, oldPath, newP
 // sqlrewrite.Tx exposes no ad-hoc SELECT — and closes it before returning,
 // so the write transaction never overlaps a read past this point. Its sole
 // caller, stateDBRewritePlansForProject, runs during MoveSurfaces' preflight
-// (captureMovePreflight, move.go) with context.Background() — MoveSurfaces
-// takes no context of its own — so the canonicalization always happens while
-// oldPath still exists, before any selected tool's apply could have removed
-// it; it is not cancellable from a caller's context.
+// (captureMovePreflight, move.go), so the canonicalization always happens
+// while oldPath still exists, before any selected tool's apply could have
+// removed it.
 func matchingPathRewrites(ctx context.Context, path, oldPath, newPath string) ([]stateDBPathRewrite, error) {
 	database, err := openReadOnlyDatabase(path)
 	if err != nil {
@@ -534,7 +518,7 @@ func rewriteStateDBPathsWithPlan(
 			return 0, err
 		}
 		target := pathRewrite.target
-		updated, err := target.update(database, transaction, pathRewrite.key, pathRewrite.oldValue, pathRewrite.newValue)
+		updated, err := target.update(ctx, database, transaction, pathRewrite.key, pathRewrite.oldValue, pathRewrite.newValue)
 		if err != nil {
 			return 0, fmt.Errorf("rewrite %s.%s for %s %v: %w", target.table, target.column, target.keyColumn, pathRewrite.key, err)
 		}

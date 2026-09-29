@@ -40,16 +40,18 @@ func (w *fakeWorkspace) Root() string                                { return "/
 func (w *fakeWorkspace) LockPath() string                            { return w.lockPath }
 func (w *fakeWorkspace) ActiveWriters() ([]tool.ActiveWriter, error) { return nil, nil }
 
-func (w *fakeWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error) {
+func (w *fakeWorkspace) MoveSurfaces(context.Context, tool.MoveRequest) ([]tool.Surface, error) {
 	if w.moveErr != nil {
 		return nil, w.moveErr
 	}
 	return nil, nil
 }
 
-func (w *fakeWorkspace) ResidualWarnings(tool.MoveRequest) ([]string, error) { return nil, nil }
+func (w *fakeWorkspace) ResidualWarnings(context.Context, tool.MoveRequest) ([]string, error) {
+	return nil, nil
+}
 
-func (w *fakeWorkspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
+func (w *fakeWorkspace) Placeholders(context.Context, string, map[string]bool) ([]manifest.Placeholder, error) {
 	return nil, errors.New("not exercised")
 }
 

@@ -9,40 +9,96 @@ opens and guards.
 
 ## Public API
 
-- `DB`, `Open(path string) (*DB, error)`: opens `path` (through `FileDSN`)
-  with a zero busy timeout and folds its WAL into the main database before
-  any caller can observe its contents.
+- `DB`, `Open(ctx context.Context, path string) (*DB, error)`: opens `path`
+  (through `FileDSN`) with a zero busy timeout and folds its WAL into the
+  main database before any caller can observe its contents.
 - `FileDSN(path string, params map[string]string) string`: encodes `path` as
   a `file:` URL DSN carrying `params` as its query string, so a `?` or other
   DSN-significant byte in `path` still addresses the intended file. Query
   keys are sorted, so the same `params` always produce the same DSN.
 - `(*DB).Close() error`
-- `(*DB).Begin() (*Tx, error)`, `Tx`, `(*Tx).Commit() error`, `(*Tx).Rollback() error`.
-- `(*DB).CheckpointTruncate() error`: folds the WAL into the main database
-  and truncates it. Called once more after a rewrite transaction commits.
-  - `CountTextColumnRO(db *sql.DB, table, column, oldPath string) (int, error)`:
+- `(*DB).Begin(ctx context.Context) (*Tx, error)`, `Tx`,
+  `(*Tx).Commit() error`, `(*Tx).Rollback() error`.
+- `(*DB).CheckpointTruncate(ctx context.Context) error`: folds the WAL into
+  the main database and truncates it. Called once more after a rewrite
+  transaction commits.
+  - `CountTextColumnRO(ctx context.Context, db *sql.DB, table, column, oldPath string) (int, error)`:
     counts TEXT or BLOB rows containing a boundary-aware reference to `oldPath`
     on the caller's read-only connection.
-- `(*DB).RewriteTextColumn(tx *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error)`:
+- `(*DB).RewriteTextColumn(ctx context.Context, tx *Tx, table, primaryKeyColumn, column, oldPath, newPath string) (int, error)`:
   streams matching TEXT or BLOB rows, applies `rewrite.ReplacePathInBytes` in
   Go, and writes each changed row back by its declared primary key.
-- `RequirePrimaryKeyAndColumns(db *sql.DB, table, primaryKeyColumn string, columns ...string) error`:
+- `RequirePrimaryKeyAndColumns(ctx context.Context, db *sql.DB, table, primaryKeyColumn string, columns ...string) error`:
   the schema check `UpdateColumnsByKey` runs, on the caller's read-only
   connection, so a read-only plan refuses the same schema its apply would.
-- `(*DB).UpdateColumnsByKey(tx *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any) (int, error)`:
+- `(*DB).UpdateColumnsByKey(ctx context.Context, tx *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any) (int, error)`:
   updates columns on an existing row identified by its single-column primary
   key, only while each `expected` column still holds its expected value; a
   nil or empty `expected` adds no condition. Never inserts.
-- `(*DB).UpdateColumnsByRowID(tx *Tx, table string, rowID int64, values, expected map[string]any) (int, error)`:
+- `(*DB).UpdateColumnsByRowID(ctx context.Context, tx *Tx, table string, rowID int64, values, expected map[string]any) (int, error)`:
   updates columns on an existing row identified by its SQLite rowid, for a
   table whose declared primary key is composite, only while each `expected`
   column still holds its expected value. `expected` must name at least one
   column. Never inserts.
-- `RequireRowIDTableAndColumns(db *sql.DB, table string, columns ...string) error`:
+- `RequireRowIDTableAndColumns(ctx context.Context, db *sql.DB, table string, columns ...string) error`:
   the schema check `UpdateColumnsByRowID` runs, on the caller's read-only
   connection, so a read-only plan refuses the same schema its apply would.
 
 ## Contracts
+
+### Cancellation
+
+**Handled.**
+
+- Every export that runs SQL takes `ctx` first — except `(*Tx).Commit` and
+  `(*Tx).Rollback`, below — and runs each `database/sql` call through its
+  `*Context` variant. Outside a transaction that call takes the caller's
+  live `ctx`: `Open` (its WAL fold and `sqlite_version()` read),
+  `(*DB).CheckpointTruncate`, `CountTextColumnRO`, and both read-only schema
+  checks. `Rows.Next` then stops on cancellation and `rows.Err()` returns it,
+  and `modernc.org/sqlite` interrupts the statement in flight.
+- The three transaction mutators — `(*DB).RewriteTextColumn`,
+  `(*DB).UpdateColumnsByKey`, and `(*DB).UpdateColumnsByRowID` — take `ctx`
+  but run none of their statements under it.
+  `(*DB).Begin` opens the transaction under `context.WithoutCancel(ctx)`,
+  and each mutator derives the same context for the statements it runs: the
+  schema read, `RewriteTextColumn`'s streaming select and prepared
+  statement, and every per-row update. An interrupted `UPDATE` inside an
+  explicit transaction makes SQLite roll the whole transaction back by
+  itself. Codex opens a transaction in one rewrite surface's Apply and
+  commits it in the later `commit-databases` surface. A Ctrl-C in between
+  would roll the transaction back behind the `Restorer`'s undo
+  registration, and its later `Rollback` would fail against a database that
+  is intact.
+  `TestTransactionCommitsAfterBeginContextIsCancelled` covers the rule.
+- `(*DB).RewriteTextColumn` checks `ctx.Err()` on entry and returns the
+  wrapped `context.Canceled`, leaving the transaction open, so the
+  `Restorer`'s `Rollback` still succeeds.
+
+**Refused.**
+
+- None. Outside a transaction a cancelled context surfaces as the
+  `context.Canceled` error the `*Context` call returns; inside one, only
+  `RewriteTextColumn`'s entry check raises it. Either is in the returned
+  error's chain.
+
+**Not covered.**
+
+- A cancel that lands while a mutator is inside its loop. The two keyed
+  mutators check nothing for cancellation and write under `WithoutCancel`,
+  so they do not observe one; their callers stop between calls instead,
+  checking `ctx.Err()` before each `UpdateColumnsByKey` or
+  `UpdateColumnsByRowID` call in `internal/tool/codex`'s queue and
+  state-database rewrite loops (`queue.go`, `statedb.go`);
+  `applyThreadSidecars` and `rearmBackfillState` (`export_import_stats.go`)
+  make one such call per database, right after a live-`ctx` `Open`, with no
+  check of their own.
+  `RewriteTextColumn` observes a later cancel no more than they do once its
+  entry check has passed.
+- `(*DB).Close`, `(*Tx).Commit`, and `(*Tx).Rollback` take no context, and
+  keep their signatures. `database/sql` exposes no context variant for
+  closing a handle or ending a transaction, so all three run to completion
+  regardless. `FileDSN` takes none either; it only builds a string.
 
 ### SQLite version floor
 
@@ -270,4 +326,8 @@ covering a TEXT and a BLOB column, the update-without-insert behavior of
 `UpdateColumnsByKey` and `UpdateColumnsByRowID`, `UpdateColumnsByRowID`
 updating one row of a composite-key table by rowid, both expected-value
 guards, `UpdateColumnsByRowID`'s refusal of a missing expected value, and
-its schema refusals.
+its schema refusals. The cancellation tests cover `Begin`'s transaction
+still committing once its own begin context is cancelled,
+`CountTextColumnRO` surfacing a cancelled context as `context.Canceled`,
+and `RewriteTextColumn` refusing a cancelled context on entry while leaving
+the transaction rollbackable, with its earlier update undone.

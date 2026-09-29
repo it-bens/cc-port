@@ -168,7 +168,7 @@ func TestProjectAbsence_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *test
 		{
 			name: "Placeholders",
 			call: func(_ *testing.T, workspace *Workspace, project string) error {
-				_, err := workspace.Placeholders(project, nil)
+				_, err := workspace.Placeholders(t.Context(), project, nil)
 				return err
 			},
 		},
@@ -855,7 +855,7 @@ func TestStatsAndExportIdentityFailForPre0049DatabaseEvenWhenARolloutMatches(t *
 	const schemaErr = `unexpected schema for table "project_roots": table is missing; observed no columns`
 
 	_, statsErr := workspace.ReferenceSurfaces(t.Context(), FixtureProjectPath())
-	_, exportErr := workspace.Placeholders(FixtureProjectPath(), nil)
+	_, exportErr := workspace.Placeholders(t.Context(), FixtureProjectPath(), nil)
 
 	require.ErrorContains(t, statsErr, schemaErr)
 	require.ErrorContains(t, exportErr, schemaErr)
@@ -1114,7 +1114,7 @@ func exportFixtureArchive(t *testing.T, home *Home) []byte {
 	t.Helper()
 	workspace := quietTestWorkspace(home)
 	selected := map[string]bool{categorySessions: true, categoryHistory: true}
-	placeholders, err := workspace.Placeholders(FixtureProjectPath(), selected)
+	placeholders, err := workspace.Placeholders(t.Context(), FixtureProjectPath(), selected)
 	require.NoError(t, err)
 	adapter := New()
 	var output bytes.Buffer

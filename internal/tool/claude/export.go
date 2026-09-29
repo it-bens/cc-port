@@ -27,13 +27,13 @@ import (
 // unconditional {{PROJECT_DIR}} anchor for the project's encoded storage
 // directory. Returns tool.ErrProjectAbsent when the project is unknown to
 // Claude Code.
-func (workspace *Workspace) Placeholders(project string, selected map[string]bool) ([]manifest.Placeholder, error) {
-	locations, err := LocateProject(workspace.home, project)
+func (workspace *Workspace) Placeholders(ctx context.Context, project string, selected map[string]bool) ([]manifest.Placeholder, error) {
+	locations, err := LocateProject(ctx, workspace.home, project)
 	if err != nil {
 		return nil, fmt.Errorf("locate project: %w", err)
 	}
 
-	content, err := gatherDiscoveryContent(locations, selected)
+	content, err := gatherDiscoveryContent(ctx, locations, selected)
 	if err != nil {
 		return nil, err
 	}
@@ -58,10 +58,13 @@ func (workspace *Workspace) Placeholders(project string, selected map[string]boo
 	return placeholders, nil
 }
 
-func gatherDiscoveryContent(locations *ProjectLocations, selected map[string]bool) ([]byte, error) {
+func gatherDiscoveryContent(ctx context.Context, locations *ProjectLocations, selected map[string]bool) ([]byte, error) {
 	var content []byte
 	if selected[categorySessions] {
 		for _, transcriptPath := range locations.SessionTranscripts {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			data, err := os.ReadFile(transcriptPath) //nolint:gosec // G304: path constructed from trusted internal data
 			if err != nil {
 				return nil, fmt.Errorf("read transcript %s: %w", transcriptPath, err)
@@ -71,6 +74,9 @@ func gatherDiscoveryContent(locations *ProjectLocations, selected map[string]boo
 	}
 	if selected[categoryMemory] {
 		for _, memoryFilePath := range locations.MemoryFiles {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			data, err := os.ReadFile(memoryFilePath) //nolint:gosec // G304: path constructed from trusted internal data
 			if err != nil {
 				return nil, fmt.Errorf("read memory file %s: %w", memoryFilePath, err)
@@ -79,6 +85,9 @@ func gatherDiscoveryContent(locations *ProjectLocations, selected map[string]boo
 		}
 	}
 	for _, sessionFilePath := range locations.SessionFiles {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // G304: path constructed from trusted internal data
 		if err != nil {
 			return nil, fmt.Errorf("read session file %s: %w", sessionFilePath, err)
@@ -88,6 +97,9 @@ func gatherDiscoveryContent(locations *ProjectLocations, selected map[string]boo
 	for group, path := range locations.AllFlatFiles() {
 		if !selected[group.Category] {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		data, err := os.ReadFile(path) //nolint:gosec // G304: path from trusted ProjectLocations
 		if err != nil {
@@ -111,7 +123,7 @@ func (workspace *Workspace) Export(
 		return result, fmt.Errorf("canceled: %w", err)
 	}
 
-	locations, err := LocateProject(workspace.home, project)
+	locations, err := LocateProject(ctx, workspace.home, project)
 	if err != nil {
 		return result, fmt.Errorf("locate project: %w", err)
 	}

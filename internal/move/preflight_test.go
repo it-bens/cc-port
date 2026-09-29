@@ -72,7 +72,7 @@ func (workspace *preflightWorkspace) ActiveWriters() ([]tool.ActiveWriter, error
 	}
 	return nil, nil
 }
-func (workspace *preflightWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surface, error) {
+func (workspace *preflightWorkspace) MoveSurfaces(context.Context, tool.MoveRequest) ([]tool.Surface, error) {
 	*workspace.events = append(*workspace.events, "surface:"+workspace.name)
 	surface := tool.Surface{
 		Name: "one",
@@ -84,10 +84,10 @@ func (workspace *preflightWorkspace) MoveSurfaces(tool.MoveRequest) ([]tool.Surf
 	}
 	return []tool.Surface{surface}, nil
 }
-func (workspace *preflightWorkspace) ResidualWarnings(tool.MoveRequest) ([]string, error) {
+func (workspace *preflightWorkspace) ResidualWarnings(context.Context, tool.MoveRequest) ([]string, error) {
 	return nil, nil
 }
-func (workspace *preflightWorkspace) Placeholders(string, map[string]bool) ([]manifest.Placeholder, error) {
+func (workspace *preflightWorkspace) Placeholders(context.Context, string, map[string]bool) ([]manifest.Placeholder, error) {
 	return nil, nil
 }
 func (workspace *preflightWorkspace) Export(context.Context, string, map[string]bool, *archive.Sink) (tool.ExportResult, error) {

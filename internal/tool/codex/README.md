@@ -727,15 +727,7 @@ shapes themselves.
   stale.
 - `codexDevWarning` reuses `countMatchingColumnRows`, and through it
   `matchingColumnValues`, for `codex-dev.db`'s `local_thread_catalog.cwd`
-  and `automation_runs.source_cwd`. The
-  export/stats path (`countStateDBColumnRows`, `projectThreadIDs`,
-  `projectThreadIDSet`, and `knowsProject` → `stateDBKnowsProject` outside
-  `Placeholders`) carries a real request context rather than
-  `context.Background()` and checks `ctx.Err()` per row. `matchingPathRewrites`
-  checks `ctx.Err()` too, but its sole caller,
-  `stateDBRewritePlansForProject`, runs from `MoveSurfaces`' own preflight
-  with `context.Background()` (`MoveSurfaces` itself takes no context), so
-  it is never cancellable.
+  and `automation_runs.source_cwd`.
 
 **Refused.**
 
@@ -824,15 +816,6 @@ shapes themselves.
   skipped as a forward ordinal gap and lost (`:268-285`). Codex resets the
   offsets only by deleting the thread's history
   (`delete_thread`, `thread-store/src/local/thread_history.rs:244-281`).
-- Cancellation on every call path whose entry point carries no context,
-  since the interface it implements declares no `context.Context`
-  parameter. Two chains reach `matchingColumnValues` via
-  `context.Background()`: `MoveSurfaces` → `projectKnown` →
-  `stateDBKnowsProject` → `stateDBFileKnowsProject` (statedb.go), and
-  `Placeholders` → `knowsProject` → `stateDBKnowsProject`
-  (export_import_stats.go). Neither is
-  cancellable mid-scan or bounded, so a scan over a corrupt or hostile own
-  state database runs to completion.
 - Occurrence counts, not identity (byte positions): a step that introduces
   one new match for a later source while consuming an existing occurrence
   of that source elsewhere in the line nets to no change, so

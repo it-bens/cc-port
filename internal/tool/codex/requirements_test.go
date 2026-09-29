@@ -1097,7 +1097,7 @@ func openFixtureWithExpiredCloudCache(t *testing.T) *Workspace {
 func TestResidualWarningsReportUncheckedCloudRequirement(t *testing.T) {
 	workspace := openFixtureWithExpiredCloudCache(t)
 
-	warnings, err := workspace.ResidualWarnings(tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/test/Projects/renamed"})
+	warnings, err := workspace.ResidualWarnings(t.Context(), tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/test/Projects/renamed"})
 
 	require.NoError(t, err)
 	assert.Contains(t, fmt.Sprint(warnings), "cloud-managed sqlite_home could not be checked")

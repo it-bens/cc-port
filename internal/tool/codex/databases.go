@@ -123,10 +123,10 @@ func isSQLiteBusyCode(code int) bool {
 	return code&0xff == sqliteBusyCode
 }
 
-func requireTableColumn(database *sql.DB, table, column string) error {
+func requireTableColumn(ctx context.Context, database *sql.DB, table, column string) error {
 	// #nosec G201 -- table is an adapter constant, not user input.
 	query := fmt.Sprintf(`PRAGMA table_info(%q)`, table)
-	rows, err := database.QueryContext(context.Background(), query)
+	rows, err := database.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("read schema for %s: %w", table, err)
 	}
@@ -154,7 +154,7 @@ func requireTableColumn(database *sql.DB, table, column string) error {
 	return fmt.Errorf("required column %s.%s is missing (observed columns: %s)", table, column, strings.Join(observed, ", "))
 }
 
-func goalsDatabaseHasRows(path string) (bool, error) {
+func goalsDatabaseHasRows(ctx context.Context, path string) (bool, error) {
 	database, err := openReadOnlyDatabase(path)
 	if err != nil {
 		return false, err
@@ -162,7 +162,7 @@ func goalsDatabaseHasRows(path string) (bool, error) {
 	defer func() { _ = database.Close() }()
 	const userTablesQuery = `SELECT name FROM sqlite_master
 		WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != '_sqlx_migrations'`
-	rows, err := database.QueryContext(context.Background(), userTablesQuery)
+	rows, err := database.QueryContext(ctx, userTablesQuery)
 	if err != nil {
 		return false, fmt.Errorf("list user tables: %w", err)
 	}
@@ -186,7 +186,7 @@ func goalsDatabaseHasRows(path string) (bool, error) {
 		// #nosec G201 -- table name came from SQLite's own sqlite_master.
 		query := fmt.Sprintf(`SELECT 1 FROM %q LIMIT 1`, table)
 		var value int
-		err := database.QueryRowContext(context.Background(), query).Scan(&value)
+		err := database.QueryRowContext(ctx, query).Scan(&value)
 		if err == nil {
 			return true, nil
 		}

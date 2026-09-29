@@ -149,7 +149,7 @@ func planContainsProjectDirectory(plan *Plan) bool {
 func planTarget(ctx context.Context, target tool.Target, req tool.MoveRequest) (ToolPlan, error) {
 	toolPlan := ToolPlan{Tool: target.Tool.Name()}
 
-	surfaces, err := target.Workspace.MoveSurfaces(req)
+	surfaces, err := target.Workspace.MoveSurfaces(ctx, req)
 	if err != nil {
 		if errors.Is(err, tool.ErrProjectAbsent) {
 			toolPlan.Absent = true
@@ -166,7 +166,7 @@ func planTarget(ctx context.Context, target tool.Target, req tool.MoveRequest) (
 		toolPlan.Warnings = appendUniqueWarnings(toolPlan.Warnings, surfaceResult.Warnings)
 	}
 
-	warnings, err := target.Workspace.ResidualWarnings(req)
+	warnings, err := target.Workspace.ResidualWarnings(ctx, req)
 	if err != nil {
 		return ToolPlan{}, fmt.Errorf("residual warnings: %w", err)
 	}
@@ -243,7 +243,7 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		surfaces, err := target.Workspace.MoveSurfaces(req)
+		surfaces, err := target.Workspace.MoveSurfaces(ctx, req)
 		absent := false
 		if err != nil {
 			if errors.Is(err, tool.ErrProjectAbsent) {
@@ -292,7 +292,7 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surface, req tool.MoveRequest, reporter progress.Reporter) ToolResult {
 	toolResult := ToolResult{Tool: target.Tool.Name()}
 	phase := reporter.Phase(target.Tool.Name(), int64(len(surfaces)), progress.UnitItems)
-	_, preApplyWarningErr := target.Workspace.ResidualWarnings(req)
+	_, preApplyWarningErr := target.Workspace.ResidualWarnings(ctx, req)
 	if preApplyWarningErr != nil {
 		toolResult.Warnings = append(toolResult.Warnings, fmt.Sprintf("could not inspect residual warnings: %v", preApplyWarningErr))
 	}
@@ -320,7 +320,7 @@ func applyTarget(ctx context.Context, target tool.Target, surfaces []tool.Surfac
 	}
 	phase.End("")
 
-	postApplyWarnings, postApplyWarningErr := target.Workspace.ResidualWarnings(req)
+	postApplyWarnings, postApplyWarningErr := target.Workspace.ResidualWarnings(ctx, req)
 	// Post-apply inspection is authoritative: Apply can remove pre-existing
 	// findings and Codex records checkpoint warnings while it runs.
 	toolResult.Warnings = appendUniqueWarnings(toolResult.Warnings, postApplyWarnings)
