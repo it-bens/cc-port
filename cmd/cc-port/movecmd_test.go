@@ -235,3 +235,20 @@ func TestMoveApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheMoveSucceeds(t 
 	require.NoError(t, err)
 	assert.Contains(t, stderr, ignoredLine)
 }
+
+// Move renders its result table before the ignored writers, so this case pins
+// that the render error reaches the caller instead of being dropped; import and
+// pull are the commands whose later output a failed render could suppress.
+func TestMoveApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLinesFail(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+	failingStderr := &ignoredWriterFailer{}
+
+	stdout, err := executeCmdStreams(t, failingStderr,
+		"move", testutil.FixtureProjectPath(), testutil.FixtureProjectPath()+"-renamed",
+		"--tool", "claude", "--claude-home", home.Dir, "--refs-only", "--apply", "--ignore-live-sessions",
+	)
+
+	require.ErrorContains(t, err, "write ignored writer")
+	assert.Contains(t, stdout, "[claude] OK")
+}

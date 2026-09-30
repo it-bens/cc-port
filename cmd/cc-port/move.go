@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -70,8 +69,7 @@ func newMoveCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 			if applyResult != nil {
 				renderApplyResult(cmd.OutOrStdout(), applyResult)
 			}
-			renderErr := renderIgnoredWriters(cmd.ErrOrStderr(), targets, ignored)
-			return errors.Join(withLiveSessionsHint(runErr), renderErr)
+			return endApplyPath(cmd.ErrOrStderr(), targets, ignored, runErr)
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "execute the move (default is dry-run)")

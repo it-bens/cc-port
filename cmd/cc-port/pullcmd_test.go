@@ -503,3 +503,25 @@ func TestPull_ApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenThePullSucceeds(t
 	require.NoError(t, err)
 	assert.Contains(t, stderr, ignoredLine)
 }
+
+func TestPullApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLinesFail(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	failingStderr := &ignoredWriterFailer{}
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	resolvedTarget, resolveErr := tool.ResolveProjectPath(targetPath)
+	require.NoError(t, resolveErr)
+
+	stdout, err := executeCmdStreams(t, failingStderr,
+		"pull", "myproj",
+		"--tool", "claude", "--claude-home", home.Dir,
+		"--to", targetPath,
+		"--remote", url,
+		"--apply", "--ignore-live-sessions",
+	)
+
+	require.ErrorContains(t, err, "write ignored writer")
+	assert.Contains(t, stdout, "Pulled: "+resolvedTarget)
+}

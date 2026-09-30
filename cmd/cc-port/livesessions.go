@@ -73,3 +73,13 @@ func withLiveSessionsHint(err error) error {
 	}
 	return fmt.Errorf("%w; pass --ignore-live-sessions to proceed anyway", err)
 }
+
+// endApplyPath ends the apply path of move, import and pull: it renders the
+// ignored live writers to stderr and returns runErr carrying the hint, joined
+// with the render error. Callers print the rest of their output after it and
+// join their own write errors onto its result, so a failed render never drops
+// a result, note or warning that would otherwise have been printed.
+func endApplyPath(stderr io.Writer, targets []tool.Target, ignored *lock.IgnoredWriters, runErr error) error {
+	renderErr := renderIgnoredWriters(stderr, targets, ignored)
+	return errors.Join(withLiveSessionsHint(runErr), renderErr)
+}

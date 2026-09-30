@@ -150,25 +150,23 @@ func runImportApply(cmd *cobra.Command, toolSet *tool.Set, targets []tool.Target
 		result = runResult
 		return nil
 	})
-	if err := renderIgnoredWriters(cmd.ErrOrStderr(), targets, options.IgnoredWriters); err != nil {
-		return errors.Join(withLiveSessionsHint(progErr), err)
-	}
+	applyErr := endApplyPath(cmd.ErrOrStderr(), targets, options.IgnoredWriters, progErr)
 	if progErr != nil {
-		return withLiveSessionsHint(progErr)
+		return applyErr
 	}
 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Imported to %s\n", options.TargetPath); err != nil {
-		return fmt.Errorf("write success line: %w", err)
+		return errors.Join(applyErr, fmt.Errorf("write success line: %w", err))
 	}
 	if len(result.SkippedTools) > 0 {
 		_, err := fmt.Fprintf(
 			cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "),
 		)
 		if err != nil {
-			return fmt.Errorf("write skipped-tools note: %w", err)
+			return errors.Join(applyErr, fmt.Errorf("write skipped-tools note: %w", err))
 		}
 	}
-	return renderImportWarnings(cmd.ErrOrStderr(), targets, result.Warnings)
+	return errors.Join(applyErr, renderImportWarnings(cmd.ErrOrStderr(), targets, result.Warnings))
 }
 
 func renderImportWarnings(stderr io.Writer, targets []tool.Target, warningsByTool map[string][]string) error {

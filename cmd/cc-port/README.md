@@ -147,6 +147,13 @@ renders them, with the writer through `tool.ActiveWriter.String()`;
 `livesessions.go:newIgnoredWriters` builds the collector and rejects
 `--ignore-live-sessions` without `--apply` as a usage error.
 
+`livesessions.go:endApplyPath` ends the apply path of all three commands. It
+renders those lines and returns the run error, carrying the refusal hint,
+joined with the render error. A failed render is returned rather than aborting
+the command, so after a successful run `move`, `import`, and `pull` still print
+their result, notes, and warnings, and return the render error joined with any
+later write error.
+
 ## Stream routing
 
 Every cmd write goes through `cmd.OutOrStdout()` for normal output and
@@ -202,5 +209,7 @@ without `--apply` is a usage error on `move`, `import`, and `pull`, and
 `renderIgnoredWriters` prints one `Warning: ignored live <DisplayName> writer`
 line per recorded writer. The `move`, `import`, and `pull` command tests add a
 refusal-hint case, an ignored-writer line printed after a failed apply and
-after a successful one, and a dry-run `move` printing a busy database and a
-quoted cwd.
+after a successful one, and a case per command whose stderr (`ignoredWriterFailer`)
+fails only on the ignored-writer lines, asserting the command still prints its
+result and returns the render error. A dry-run `move` prints a busy database
+and a quoted cwd.

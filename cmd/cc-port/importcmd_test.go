@@ -277,3 +277,20 @@ func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportSucceed
 	require.NoError(t, err)
 	assert.Contains(t, stderr, ignoredLine)
 }
+
+func TestImportApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLinesFail(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+	failingStderr := &ignoredWriterFailer{}
+	targetPath := filepath.Join(t.TempDir(), "new-project")
+	resolvedTarget, resolveErr := tool.ResolveProjectPath(targetPath)
+	require.NoError(t, resolveErr)
+
+	stdout, err := executeCmdStreams(t, failingStderr,
+		"import", testutil.WriteFixtureArchive(t), targetPath,
+		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
+	)
+
+	require.ErrorContains(t, err, "write ignored writer")
+	assert.Contains(t, stdout, "Imported to "+resolvedTarget)
+}

@@ -205,15 +205,17 @@ func renderPullOutcome(
 	}
 
 	if apply {
-		progErr = withLiveSessionsHint(progErr)
-		if werr := renderIgnoredWriters(cmd.ErrOrStderr(), opts.Targets, opts.IgnoredWriters); werr != nil {
-			progErr = errors.Join(progErr, werr)
-		}
+		progErr = endApplyPath(cmd.ErrOrStderr(), opts.Targets, opts.IgnoredWriters, progErr)
 	}
 
 	if apply && result != nil {
 		if len(result.SkippedTools) > 0 {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "))
+			_, werr := fmt.Fprintf(
+				cmd.ErrOrStderr(), "note: archive has no data for: %s\n", strings.Join(result.SkippedTools, ", "),
+			)
+			if werr != nil {
+				progErr = errors.Join(progErr, fmt.Errorf("write skipped-tools note: %w", werr))
+			}
 		}
 		if werr := renderImportWarnings(cmd.ErrOrStderr(), opts.Targets, result.Warnings); werr != nil {
 			progErr = errors.Join(progErr, werr)
