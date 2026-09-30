@@ -59,7 +59,12 @@ func Open(ctx context.Context, path string) (*DB, error) {
 }
 
 func open(ctx context.Context, path string, busyTimeout time.Duration) (*DB, error) {
-	database, err := sql.Open("sqlite", FileDSN(path, map[string]string{"_txlock": "immediate"}))
+	// Both settings ride the DSN, so the driver sets them on every
+	// connection it opens, before the first statement runs.
+	database, err := sql.Open("sqlite", FileDSN(path, map[string]string{
+		"_busy_timeout": strconv.FormatInt(busyTimeout.Milliseconds(), 10),
+		"_txlock":       "immediate",
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database %q: %w", path, err)
 	}
@@ -73,9 +78,6 @@ func open(ctx context.Context, path string, busyTimeout time.Duration) (*DB, err
 		return nil, operationErr
 	}
 
-	if _, err := database.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeout.Milliseconds())); err != nil {
-		return closeOnError(fmt.Errorf("set SQLite busy timeout for %q: %w", path, err))
-	}
 	if err := checkpointTruncate(ctx, database); err != nil {
 		return closeOnError(fmt.Errorf("checkpoint SQLite database %q on open: %w", path, err))
 	}

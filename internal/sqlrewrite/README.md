@@ -129,7 +129,8 @@ opens and guards.
 - `FileDSN` builds a `file:` URL through `net/url`, so a `?` inside `path`
   is percent-encoded as part of the URL's path component rather than left as
   a literal byte the DSN parser could mistake for the query separator.
-  `Open` calls `FileDSN(path, map[string]string{"_txlock": "immediate"})`;
+  `Open` passes `_busy_timeout` and `_txlock=immediate` to `FileDSN`, never
+  `FileDSN(path, nil)`;
   `internal/tool/codex`'s
   `openReadOnlyDatabase` calls `FileDSN(path, map[string]string{"mode": "ro"})`;
   its `probeDatabaseBusy` calls `FileDSN(path, nil)` and passes the result to
@@ -159,9 +160,11 @@ opens and guards.
 
 - `Open` calls the unexported `open` with a 5 s busy timeout, the timeout
   Codex sets on its own state connections
-  (`codex-rs/state/src/sqlite.rs:305`). `open` sets `PRAGMA busy_timeout`
-  from its parameter; no package state holds the timeout, so the in-package
-  tests pass a shorter one.
+  (`codex-rs/state/src/sqlite.rs:305`). `open` carries the timeout in the DSN,
+  as `_busy_timeout` in milliseconds, so the driver applies it on every
+  connection it opens, before any other statement. `open` runs no separate
+  `PRAGMA busy_timeout`. No package state holds the timeout, so the
+  in-package tests pass a shorter one.
 - The DSN carries `_txlock=immediate`, so `Begin` issues `BEGIN IMMEDIATE`
   and takes the write lock at once. A Codex write in progress is waited out
   at `Begin` instead of surfacing as `SQLITE_BUSY_SNAPSHOT` at cc-port's
