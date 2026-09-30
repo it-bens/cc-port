@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 func TestBundledSQLiteVersionMeetsRequiredFloor(t *testing.T) {
@@ -22,31 +23,69 @@ func TestBundledSQLiteVersionMeetsRequiredFloor(t *testing.T) {
 	assert.GreaterOrEqual(t, sqliteVersionNumber(t, version), sqliteVersionNumber(t, "3.51.3"))
 }
 
-func TestOpenRefusesBusyWriterImmediately(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "busy.sqlite")
-	database := openSQLite(t, path)
-	require.NoError(t, prepareWAL(database))
-	require.NoError(t, database.Close())
+func TestOpenFailsBusyAfterWaitingOutItsTimeout(t *testing.T) {
+	path := walDatabase(t, "busy.sqlite")
+	holdWriteLock(t, path)
 
-	writerDatabase := openSQLite(t, path)
-	writerConnection, err := writerDatabase.Conn(context.Background())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, writerConnection.Close()) })
-	require.NoError(t, executeContext(writerConnection, "BEGIN IMMEDIATE"))
-	t.Cleanup(func() { _, _ = writerConnection.ExecContext(context.Background(), "ROLLBACK") })
-
-	// The busy-wait a regression would introduce happens inside SQLite's C
-	// busy loop, not on a Go clock this test can inject, and a connection's
-	// busy_timeout cannot be read back through database/sql. A bounded
-	// wall-clock measurement is the only mechanism available to prove Open
-	// refused immediately rather than waiting out a nonzero busy_timeout.
+	// The wait happens inside SQLite's C busy loop, not on a Go clock this
+	// test can inject, so only a wall-clock measurement shows that open
+	// waited out its busy timeout before failing.
 	started := time.Now()
-	_, err = Open(t.Context(), path)
+	_, err := open(t.Context(), path, 100*time.Millisecond)
 	elapsed := time.Since(started)
 
-	require.Error(t, err)
-	assert.True(t, strings.Contains(strings.ToLower(err.Error()), "busy") || strings.Contains(strings.ToLower(err.Error()), "locked"))
-	assert.Less(t, elapsed, time.Second, "busy_timeout=0 must make Open on a busy database fail immediately, not wait")
+	require.ErrorContains(t, err, "SQLite busy")
+	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond)
+}
+
+func TestOpenAndBeginSucceedOnceTheWriterReleasesWithinTheTimeout(t *testing.T) {
+	path := walDatabase(t, "released.sqlite")
+	writerConnection := holdWriteLock(t, path)
+
+	// The wait happens inside SQLite's C busy loop, which no Go clock can
+	// drive; the test depends on the scheduler releasing the writer within
+	// the 2 s timeout, once while open waits and once while Begin waits.
+	releasedDuringOpen := releaseWriteLockAfter(writerConnection, 20*time.Millisecond)
+	rewriter, err := open(t.Context(), path, 2*time.Second)
+	require.NoError(t, <-releasedDuringOpen)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	require.NoError(t, executeContext(writerConnection, "BEGIN IMMEDIATE"))
+	releasedDuringBegin := releaseWriteLockAfter(writerConnection, 20*time.Millisecond)
+	transaction, err := rewriter.Begin(t.Context())
+	require.NoError(t, <-releasedDuringBegin)
+
+	require.NoError(t, err)
+	assert.NoError(t, transaction.Rollback())
+}
+
+func TestBeginFailsBusyWhileAnotherConnectionHoldsTheWriteLock(t *testing.T) {
+	path := walDatabase(t, "begin-busy.sqlite")
+	rewriter, err := open(t.Context(), path, 100*time.Millisecond)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	holdWriteLock(t, path)
+
+	_, err = rewriter.Begin(t.Context())
+
+	assertBusy(t, err)
+}
+
+func TestBeginTakesTheWriteLockBeforeAnyStatementRuns(t *testing.T) {
+	path := walDatabase(t, "immediate.sqlite")
+	rewriter, err := open(t.Context(), path, 100*time.Millisecond)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
+	transaction, err := rewriter.Begin(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, transaction.Rollback()) })
+	competitor, err := openSQLite(t, path).Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, competitor.Close()) })
+
+	err = executeContext(competitor, "BEGIN IMMEDIATE")
+
+	assertBusy(t, err)
 }
 
 func TestOpenFoldsWALBeforeMainDatabaseIsObserved(t *testing.T) {
@@ -575,8 +614,8 @@ func execute(database *sql.DB, query string, arguments ...any) error {
 	return err
 }
 
-func executeContext(connection *sql.Conn, query string, arguments ...any) error {
-	_, err := connection.ExecContext(context.Background(), query, arguments...)
+func executeContext(connection *sql.Conn, query string) error {
+	_, err := connection.ExecContext(context.Background(), query)
 	return err
 }
 
@@ -614,4 +653,44 @@ func sqliteVersionNumber(t *testing.T, version string) int {
 	_, err := fmt.Sscanf(version, "%d.%d.%d", &major, &minor, &patch)
 	require.NoError(t, err)
 	return major*1_000_000 + minor*1_000 + patch
+}
+
+// walDatabase creates a WAL-mode database under t.TempDir and returns its path.
+func walDatabase(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	database := openSQLite(t, path)
+	require.NoError(t, prepareWAL(database))
+	require.NoError(t, database.Close())
+	return path
+}
+
+// holdWriteLock opens a second connection to path and holds its write lock
+// until the test ends or the caller rolls the returned connection back.
+func holdWriteLock(t *testing.T, path string) *sql.Conn {
+	t.Helper()
+	writerConnection, err := openSQLite(t, path).Conn(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, writerConnection.Close()) })
+	require.NoError(t, executeContext(writerConnection, "BEGIN IMMEDIATE"))
+	t.Cleanup(func() { _, _ = writerConnection.ExecContext(context.Background(), "ROLLBACK") })
+	return writerConnection
+}
+
+// releaseWriteLockAfter rolls back the write lock writerConnection holds once
+// delay has passed, and reports the rollback's result on the returned channel.
+func releaseWriteLockAfter(writerConnection *sql.Conn, delay time.Duration) <-chan error {
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(delay)
+		released <- executeContext(writerConnection, "ROLLBACK")
+	}()
+	return released
+}
+
+func assertBusy(t *testing.T, err error) {
+	t.Helper()
+	var sqliteErr *sqlite.Error
+	require.ErrorAs(t, err, &sqliteErr)
+	assert.Equal(t, sqlite3.SQLITE_BUSY, sqliteErr.Code()&0xff)
 }

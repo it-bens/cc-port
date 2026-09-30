@@ -352,7 +352,10 @@ shapes themselves.
 **Not covered.**
 
 - A cooperative shutdown protocol. Detection is evidence only; the actual
-  database write is separately protected by `sqlrewrite`'s `busy_timeout=0`.
+  database write is separately protected by `sqlrewrite`'s 5 s busy timeout
+  and immediate transactions (`internal/sqlrewrite/README.md` §Busy
+  handling). The busy probe keeps its own `busy_timeout=0` connection,
+  because it answers whether a writer is present now.
 
 ### Queue database
 
@@ -622,6 +625,11 @@ shapes themselves.
   `status='pending'` and `last_watermark=NULL`. The warning distinguishes no
   state database, missing rows with backfill re-armed, and missing rows with
   no rollout files to rebuild from.
+- A checkpoint failure after a sidecar or backfill update commits is a
+  warning naming the database, as in move's `commit-databases`: the
+  committed update stands, and the next `sqlrewrite.Open` folds the WAL in.
+  The loop continues with the next database and sidecar. An `Open`,
+  `Begin`, update, commit, or `Close` failure still fails `Finalize`.
 
 **Refused.**
 
@@ -1078,7 +1086,10 @@ upstream's ASCII-only case folding), a queued text item and its byte ranges
 left untouched, a prefix-sharing skill path left alone, apply failing when a
 planned payload changed after the plan, the queue rewrite rolling back
 before `commit-databases`, the queue schema and payload errors in preflight,
-and the busy probe covering `queue_*.sqlite` and `thread_history_*.sqlite`.
+the busy probe covering `queue_*.sqlite` and `thread_history_*.sqlite`, and
+a checkpoint that fails after the sidecar or backfill update has committed
+becoming a warning that names the database while both state databases keep
+the update, with `Finalize` reporting both warnings.
 
 `mcp_test.go` covers `MCPServers`: the fixture's stdio and streamable-HTTP
 tables, a config without an `[mcp_servers]` table, an empty one, an absent

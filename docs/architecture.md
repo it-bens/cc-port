@@ -23,7 +23,7 @@ cc-port/
 │   ├── remote/             gocloud.dev-backed remote source and sink stages
 │   ├── rewrite/            Byte-level and TOML rewrite primitives + SafeRenamePromoter
 │   ├── scan/               Read-only scanner for ~/.claude/rules/*.md
-│   ├── sqlrewrite/         SQL-level path rewriting on SQLite (busy_timeout=0, checkpoint discipline)
+│   ├── sqlrewrite/         SQL-level path rewriting on SQLite (5 s busy timeout, checkpoint discipline)
 │   ├── stats/              Generic project-footprint orchestration (read-only)
 │   ├── sync/               Push and pull orchestration: plan, execute, plan-summary rendering
 │   ├── testutil/           Test fixture helper

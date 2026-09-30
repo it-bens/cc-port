@@ -649,14 +649,17 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 			return nil, err
 		}
 	}
-	unapplied, err := applyThreadSidecars(ctx, sidecars, databases)
+	unapplied, sidecarWarnings, err := applyThreadSidecars(ctx, sidecars, databases)
 	if err != nil {
 		return nil, err
 	}
+	warnings = append(warnings, sidecarWarnings...)
 	if workspace.rolloutsStaged && len(databases) > 0 {
-		if err := rearmBackfillState(ctx, databases); err != nil {
+		backfillWarnings, err := rearmBackfillState(ctx, databases)
+		if err != nil {
 			return nil, err
 		}
+		warnings = append(warnings, backfillWarnings...)
 	}
 	switch {
 	case unapplied == 0:
@@ -872,19 +875,22 @@ func (workspace *Workspace) parseThreadSidecars() ([]threadSidecar, error) {
 	return sidecars, nil
 }
 
-func applyThreadSidecars(ctx context.Context, sidecars []threadSidecar, databases []string) (int, error) {
-	unapplied := 0
+// checkpointAfterCommit is the post-commit WAL fold. Tests swap it to inject
+// a checkpoint failure.
+var checkpointAfterCommit = (*sqlrewrite.DB).CheckpointTruncate
+
+func applyThreadSidecars(ctx context.Context, sidecars []threadSidecar, databases []string) (unapplied int, warnings []string, err error) {
 	for _, sidecar := range sidecars {
 		applied := false
 		for _, path := range databases {
 			database, err := sqlrewrite.Open(ctx, path)
 			if err != nil {
-				return 0, fmt.Errorf("open state database %s: %w", path, err)
+				return 0, nil, fmt.Errorf("open state database %s: %w", path, err)
 			}
 			transaction, err := database.Begin(ctx)
 			if err != nil {
 				_ = database.Close()
-				return 0, err
+				return 0, nil, fmt.Errorf("apply threads sidecar for %s to %s: %w", sidecar.ThreadID, path, err)
 			}
 			values := sidecarColumns(sidecar)
 			count, err := database.UpdateColumnsByKey(ctx, transaction, threadsTable, "id", sidecar.ThreadID, values, nil)
@@ -894,14 +900,14 @@ func applyThreadSidecars(ctx context.Context, sidecars []threadSidecar, database
 				_ = transaction.Rollback()
 			}
 			if err == nil {
-				err = database.CheckpointTruncate(ctx)
+				warnings = appendCheckpointWarning(ctx, warnings, database, path, "applying the threads sidecar")
 			}
 			closeErr := database.Close()
 			if err == nil {
 				err = closeErr
 			}
 			if err != nil {
-				return 0, fmt.Errorf("apply threads sidecar for %s: %w", sidecar.ThreadID, err)
+				return 0, nil, fmt.Errorf("apply threads sidecar for %s to %s: %w", sidecar.ThreadID, path, err)
 			}
 			applied = applied || count > 0
 		}
@@ -909,19 +915,19 @@ func applyThreadSidecars(ctx context.Context, sidecars []threadSidecar, database
 			unapplied++
 		}
 	}
-	return unapplied, nil
+	return unapplied, warnings, nil
 }
 
-func rearmBackfillState(ctx context.Context, databases []string) error {
+func rearmBackfillState(ctx context.Context, databases []string) (warnings []string, err error) {
 	for _, path := range databases {
 		database, err := sqlrewrite.Open(ctx, path)
 		if err != nil {
-			return fmt.Errorf("open state database %s: %w", path, err)
+			return nil, fmt.Errorf("open state database %s: %w", path, err)
 		}
 		transaction, err := database.Begin(ctx)
 		if err != nil {
 			_ = database.Close()
-			return fmt.Errorf("re-arm backfill state for %s: %w", path, err)
+			return nil, fmt.Errorf("re-arm backfill state for %s: %w", path, err)
 		}
 		_, err = database.UpdateColumnsByKey(ctx, transaction, backfillStateTable, "id", 1, map[string]any{
 			"status": "pending", "last_watermark": nil,
@@ -932,17 +938,27 @@ func rearmBackfillState(ctx context.Context, databases []string) error {
 			_ = transaction.Rollback()
 		}
 		if err == nil {
-			err = database.CheckpointTruncate(ctx)
+			warnings = appendCheckpointWarning(ctx, warnings, database, path, "re-arming the backfill state")
 		}
 		closeErr := database.Close()
 		if err == nil {
 			err = closeErr
 		}
 		if err != nil {
-			return fmt.Errorf("re-arm backfill state for %s: %w", path, err)
+			return nil, fmt.Errorf("re-arm backfill state for %s: %w", path, err)
 		}
 	}
-	return nil
+	return warnings, nil
+}
+
+// appendCheckpointWarning checkpoints a database whose update has committed.
+// A failure is a warning, as in move's commit-databases: the committed rows
+// stand, and the next Open folds the WAL in.
+func appendCheckpointWarning(ctx context.Context, warnings []string, database *sqlrewrite.DB, path, committed string) []string {
+	if err := checkpointAfterCommit(database, ctx); err != nil {
+		return append(warnings, fmt.Sprintf("could not checkpoint %s after %s: %v", path, committed, err))
+	}
+	return warnings
 }
 
 func sidecarColumns(sidecar threadSidecar) map[string]any {
