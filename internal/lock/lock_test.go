@@ -2,6 +2,7 @@ package lock
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,7 +71,7 @@ func TestWithLock_AbortsWhenSessionPIDIsAlive(t *testing.T) {
 	var liveErr *LiveSessionsError
 	require.ErrorAs(t, err, &liveErr)
 	assert.Len(t, liveErr.Sessions, 1)
-	assert.ErrorContains(t, err, "live writer process")
+	assert.ErrorContains(t, err, "live writer(s)")
 }
 
 // recheckWorkspace stands in for a tool workspace. The recheck reaches only
@@ -91,7 +92,7 @@ func TestRecheckActiveWriters_AllQuietReturnsNil(t *testing.T) {
 		{Workspace: &recheckWorkspace{}},
 	}
 
-	require.NoError(t, RecheckActiveWriters(targets))
+	require.NoError(t, RecheckActiveWriters(targets, nil))
 }
 
 func TestRecheckActiveWriters_AggregatesLiveWritersInTargetOrder(t *testing.T) {
@@ -101,7 +102,7 @@ func TestRecheckActiveWriters_AggregatesLiveWritersInTargetOrder(t *testing.T) {
 		{Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{{Pid: 202, Cwd: "/writer/beta"}}}},
 	}
 
-	err := RecheckActiveWriters(targets)
+	err := RecheckActiveWriters(targets, nil)
 
 	var liveErr *LiveSessionsError
 	require.ErrorAs(t, err, &liveErr)
@@ -118,12 +119,165 @@ func TestRecheckActiveWriters_ScanFailureDoesNotHideLiveWriters(t *testing.T) {
 		{Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{{Pid: 303, Cwd: "/writer/gamma"}}}},
 	}
 
-	err := RecheckActiveWriters(targets)
+	err := RecheckActiveWriters(targets, nil)
 
 	require.ErrorIs(t, err, scanFailure)
 	var liveErr *LiveSessionsError
 	require.ErrorAs(t, err, &liveErr)
 	assert.Equal(t, []tool.ActiveWriter{{Pid: 303, Cwd: "/writer/gamma"}}, liveErr.Sessions)
+}
+
+// recheckTool stands in for a tool. The collector reaches only Name, so the
+// embedded interface stays nil.
+type recheckTool struct {
+	tool.Tool
+	name string
+}
+
+func (fake *recheckTool) Name() string { return fake.name }
+
+func TestRecheckActiveWriters_CollectorRecordsLiveWritersAndReturnsNil(t *testing.T) {
+	targets := []tool.Target{
+		{Tool: &recheckTool{name: "claude"}, Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{{Pid: 101, Cwd: "/writer/alpha"}}}},
+		{Tool: &recheckTool{name: "codex"}, Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{{Detail: "busy database state_5.sqlite"}}}},
+	}
+	ignored := &IgnoredWriters{}
+
+	err := RecheckActiveWriters(targets, ignored)
+
+	require.NoError(t, err)
+	assert.Equal(t, []IgnoredWriter{
+		{Tool: "claude", Writer: tool.ActiveWriter{Pid: 101, Cwd: "/writer/alpha"}},
+		{Tool: "codex", Writer: tool.ActiveWriter{Detail: "busy database state_5.sqlite"}},
+	}, ignored.List())
+}
+
+func TestRecheckActiveWriters_CollectorStillReturnsScanFailure(t *testing.T) {
+	scanFailure := fmt.Errorf("%w: sessions directory unreadable", tool.ErrNoWitness)
+	targets := []tool.Target{
+		{Tool: &recheckTool{name: "claude"}, Workspace: &recheckWorkspace{err: scanFailure}},
+		{Tool: &recheckTool{name: "codex"}, Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{{Pid: 303}}}},
+	}
+	ignored := &IgnoredWriters{}
+
+	err := RecheckActiveWriters(targets, ignored)
+
+	require.ErrorIs(t, err, scanFailure)
+	var liveErr *LiveSessionsError
+	assert.NotErrorAs(t, err, &liveErr, "an ignored live writer must not surface as a LiveSessionsError")
+	assert.Equal(t, []IgnoredWriter{{Tool: "codex", Writer: tool.ActiveWriter{Pid: 303}}}, ignored.List())
+}
+
+func TestWitnessFor_NilCollectorPassesWritersThrough(t *testing.T) {
+	writers := []tool.ActiveWriter{{Pid: 42, Cwd: "/work/other"}, {Detail: "busy database state_5.sqlite"}}
+	target := tool.Target{Tool: &recheckTool{name: "codex"}, Workspace: &recheckWorkspace{writers: writers}}
+
+	active, err := WitnessFor(target, nil)()
+
+	require.NoError(t, err)
+	assert.Equal(t, writers, active)
+}
+
+func TestWitnessFor_CollectorRecordsWritersAndReportsNone(t *testing.T) {
+	writers := []tool.ActiveWriter{{Pid: 42, Cwd: "/work/other"}, {Detail: "busy database state_5.sqlite"}}
+	target := tool.Target{Tool: &recheckTool{name: "codex"}, Workspace: &recheckWorkspace{writers: writers}}
+	ignored := &IgnoredWriters{}
+
+	active, err := WitnessFor(target, ignored)()
+
+	require.NoError(t, err)
+	assert.Empty(t, active)
+	assert.Equal(t, []IgnoredWriter{
+		{Tool: "codex", Writer: tool.ActiveWriter{Pid: 42, Cwd: "/work/other"}},
+		{Tool: "codex", Writer: tool.ActiveWriter{Detail: "busy database state_5.sqlite"}},
+	}, ignored.List())
+}
+
+func TestWitnessFor_NilCollectorPassesWitnessErrorThroughUnchanged(t *testing.T) {
+	witnessErr := fmt.Errorf("%w: sessions directory unreadable", tool.ErrNoWitness)
+	target := tool.Target{Tool: &recheckTool{name: "claude"}, Workspace: &recheckWorkspace{err: witnessErr}}
+
+	_, err := WitnessFor(target, nil)()
+
+	require.ErrorIs(t, err, tool.ErrNoWitness)
+	assert.Same(t, witnessErr, err)
+}
+
+func TestWitnessFor_CollectorPassesWitnessErrorThroughAndRecordsNothing(t *testing.T) {
+	witnessErr := fmt.Errorf("%w: sessions directory unreadable", tool.ErrNoWitness)
+	target := tool.Target{
+		Tool:      &recheckTool{name: "claude"},
+		Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{{Pid: 42}}, err: witnessErr},
+	}
+	ignored := &IgnoredWriters{}
+
+	_, err := WitnessFor(target, ignored)()
+
+	require.ErrorIs(t, err, tool.ErrNoWitness)
+	assert.Same(t, witnessErr, err)
+	assert.Empty(t, ignored.List())
+}
+
+// The preflight witness and the re-check report the same writers, so each
+// target is witnessed twice here, as a move or import does.
+func TestIgnoredWritersList_DeduplicatesInFirstRecordedOrder(t *testing.T) {
+	claudeTarget := tool.Target{
+		Tool:      &recheckTool{name: "claude"},
+		Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{{Pid: 42, Cwd: "/work/other"}}},
+	}
+	codexTarget := tool.Target{
+		Tool: &recheckTool{name: "codex"},
+		Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{
+			{Detail: "busy database state_5.sqlite"},
+			{Detail: "busy database logs_2.sqlite"},
+		}},
+	}
+	ignored := &IgnoredWriters{}
+
+	for range 2 {
+		for _, target := range []tool.Target{claudeTarget, codexTarget} {
+			_, err := WitnessFor(target, ignored)()
+			require.NoError(t, err)
+		}
+	}
+
+	assert.Equal(t, []IgnoredWriter{
+		{Tool: "claude", Writer: tool.ActiveWriter{Pid: 42, Cwd: "/work/other"}},
+		{Tool: "codex", Writer: tool.ActiveWriter{Detail: "busy database state_5.sqlite"}},
+		{Tool: "codex", Writer: tool.ActiveWriter{Detail: "busy database logs_2.sqlite"}},
+	}, ignored.List())
+}
+
+// The rendered line names the tool, so Tool is part of the dedup key: one
+// writer descriptor reported by two tools is two entries, not one.
+func TestIgnoredWritersList_KeepsTheSameWriterOncePerTool(t *testing.T) {
+	writer := tool.ActiveWriter{Pid: 42, Cwd: "/work/other"}
+	ignored := &IgnoredWriters{}
+
+	for _, name := range []string{"claude", "codex"} {
+		target := tool.Target{
+			Tool:      &recheckTool{name: name},
+			Workspace: &recheckWorkspace{writers: []tool.ActiveWriter{writer}},
+		}
+		_, err := WitnessFor(target, ignored)()
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, []IgnoredWriter{
+		{Tool: "claude", Writer: writer},
+		{Tool: "codex", Writer: writer},
+	}, ignored.List())
+}
+
+func TestLiveSessionsError_ListsEveryWriter(t *testing.T) {
+	liveErr := &LiveSessionsError{Sessions: []tool.ActiveWriter{
+		{Pid: 42, Cwd: "/work/other"},
+		{Detail: "busy database state_5.sqlite"},
+	}}
+
+	assert.Equal(t,
+		`refusing to run: 2 live writer(s) detected: [pid=42 cwd="/work/other"; busy database state_5.sqlite]`,
+		liveErr.Error())
 }
 
 func TestWithLock_AbortsWhenAnotherCCPortHoldsTheLock(t *testing.T) {

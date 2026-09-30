@@ -22,16 +22,18 @@ import (
 // newImportCmd returns the import subcommand with closure-scoped flag locals.
 func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 	var (
-		apply          bool
-		fromManifest   string
-		passphraseEnv  string
-		passphraseFile string
+		apply              bool
+		ignoreLiveSessions bool
+		fromManifest       string
+		passphraseEnv      string
+		passphraseFile     string
 	)
 	cmd := &cobra.Command{
 		Use:   "import <archive.zip> <target-path>",
 		Short: "Import a project from a cc-port ZIP archive",
 		Long: "Imports project data across every selected tool from a ZIP archive into the given " +
-			"target path. Dry-run by default; pass --apply to commit.",
+			"target path. Dry-run by default; pass --apply to commit.\n\n" +
+			importAndPullLiveSessionsHelp,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
 				return &usageError{err: err}
@@ -39,6 +41,11 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			ignored, err := newIgnoredWriters(ignoreLiveSessions, apply)
+			if err != nil {
+				return err
+			}
+
 			archivePath := args[0]
 			targetPath, err := tool.ResolveProjectPath(args[1])
 			if err != nil {
@@ -78,11 +85,12 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 			}
 
 			importOptions := importer.Options{
-				Source:       source.ReaderAt,
-				Size:         source.Size,
-				TargetPath:   targetPath,
-				Caps:         archive.DefaultCaps(),
-				FromManifest: fromManifestMeta,
+				Source:         source.ReaderAt,
+				Size:           source.Size,
+				TargetPath:     targetPath,
+				Caps:           archive.DefaultCaps(),
+				FromManifest:   fromManifestMeta,
+				IgnoredWriters: ignored,
 			}
 
 			if !apply {
@@ -95,6 +103,7 @@ func newImportCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 		&apply, "apply", false,
 		"commit the import (default is dry-run)",
 	)
+	cmd.Flags().BoolVar(&ignoreLiveSessions, ignoreLiveSessionsFlag, false, ignoreLiveSessionsUsage)
 	cmd.Flags().StringVar(
 		&fromManifest, "from-manifest", "",
 		"path to a manifest XML file with pre-filled resolutions",
@@ -141,8 +150,11 @@ func runImportApply(cmd *cobra.Command, toolSet *tool.Set, targets []tool.Target
 		result = runResult
 		return nil
 	})
+	if err := renderIgnoredWriters(cmd.ErrOrStderr(), targets, options.IgnoredWriters); err != nil {
+		return errors.Join(withLiveSessionsHint(progErr), err)
+	}
 	if progErr != nil {
-		return progErr
+		return withLiveSessionsHint(progErr)
 	}
 
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Imported to %s\n", options.TargetPath); err != nil {

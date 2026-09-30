@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/export"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -229,4 +232,48 @@ func buildMinimalArchive(t *testing.T) string {
 	require.NoError(t, archiveFile.Close())
 
 	return archivePath
+}
+
+func TestImportApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+
+	_, err := executeCmd(t,
+		"import", testutil.WriteFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
+		"--tool", "claude", "--claude-home", home.Dir, "--apply",
+	)
+
+	_, ok := errors.AsType[*lock.LiveSessionsError](err)
+	require.True(t, ok, "err = %v, want *lock.LiveSessionsError", err)
+	assert.True(t, strings.HasSuffix(err.Error(), "; pass --ignore-live-sessions to proceed anyway"), err.Error())
+}
+
+func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportFails(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+	// The importer first reads the archive under the lock, so an archive that
+	// is not a ZIP fails after the witness ran.
+	archivePath := filepath.Join(t.TempDir(), "not-a-zip.zip")
+	require.NoError(t, os.WriteFile(archivePath, []byte("not a zip archive"), 0o600))
+
+	stderr, err := executeCmd(t,
+		"import", archivePath, filepath.Join(t.TempDir(), "new-project"),
+		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
+	)
+
+	require.ErrorContains(t, err, "read metadata from archive")
+	assert.Contains(t, stderr, ignoredLine)
+}
+
+func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportSucceeds(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+
+	stderr, err := executeCmd(t,
+		"import", testutil.WriteFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
+		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
+	)
+
+	require.NoError(t, err)
+	assert.Contains(t, stderr, ignoredLine)
 }

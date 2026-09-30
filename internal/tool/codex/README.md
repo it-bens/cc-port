@@ -345,9 +345,14 @@ shapes themselves.
   thread_history globs (§Glob, don't pin). `thread_history_*.sqlite` is
   probed only; no move surface reads or rewrites it, although it holds byte
   offsets into the rollouts a move rewrites (§cwd matching, Not covered).
+- A busy database is one writer with no process behind it. The probe sets its
+  `Detail` to `busy database <file name>`, for example
+  `busy database state_5.sqlite`, and leaves `Pid` 0 and `Cwd` empty; two busy
+  databases are two writers.
 - If either source cannot be consulted, `ActiveWriters` returns an error
-  wrapping `tool.ErrNoWitness`. Mutation treats that failure like positive
-  liveness evidence rather than assuming there are no writers.
+  wrapping `tool.ErrNoWitness`. Mutation refuses on that failure rather than
+  assuming there are no writers, also under `--ignore-live-sessions`, which
+  overrides only positive liveness evidence.
 
 **Not covered.**
 
@@ -1059,7 +1064,8 @@ structured rollout field list per line type and its default-mode rewrite
 with matching dry-run and apply counts, a writable root outside the project
 left unchanged, the
 process-table and busy-probe witness sources driven through the injected
-process lister rather than the live process table, `codex-dev.db` refusal on both a
+process lister rather than the live process table, the busy probe reporting
+one writer per busy database with its `Detail`, `codex-dev.db` refusal on both a
 path-reference hit and a schema-drift case, the sidecar's apply-and-remainder
 counting, `config.toml` byte-identity across an import, a divergent profile
 overlay's `sqlite_home` warning, `discoverRolloutFiles` suppressing a

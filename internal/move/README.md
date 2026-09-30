@@ -30,7 +30,9 @@ as "the project") lives in the owning adapter's `MoveSurfaces` (for example
 - `Options`: `OldPath`, `NewPath`, `RefsOnly`, `DeepRewrite` (the CLI's
   `--deep` flag: extends rewriting into narrative bodies such as session
   transcripts), `Reporter` (progress and warning sink, unused by `DryRun`;
-  nil-handling follows `internal/progress/README.md` §Reporter injection).
+  nil-handling follows `internal/progress/README.md` §Reporter injection),
+  `IgnoredWriters` (`*lock.IgnoredWriters`: non-nil makes `Apply` record
+  live writers instead of refusing; see §Apply contract).
 - `Plan`: `ByTool []ToolPlan`. `ToolPlan`: `Tool`, `Absent` (true when the
   target reported `tool.ErrProjectAbsent`: it simply does not know this
   project, and `Surfaces` is empty rather than fabricated), `Surfaces
@@ -57,6 +59,12 @@ witness-then-flock ordering that guards `Apply`.
 - After the preflight loop, `lock.RecheckActiveWriters` fails the move before
   any write when a live writer is present (see
   [`internal/lock/README.md`](../lock/README.md) §Concurrency guard).
+- With `Options.IgnoredWriters` set, `Apply` builds every witness through
+  `lock.WitnessFor`, so the preflight witness and the re-check both record live
+  writers instead of refusing and the move proceeds; the caller prints the
+  recorded writers (see
+  [`internal/lock/README.md`](../lock/README.md) §Concurrency guard). A
+  witness that cannot run still refuses the move.
 - Each target's surfaces apply in the order its adapter returned them, each
   registering its own rollback with a fresh `tool.Restorer`; a surface
   failure rolls back only that target's own `Restorer` (see
@@ -87,8 +95,11 @@ Coverage: `DryRun`/`Apply` across single- and multi-target sweeps, the
 `tool.ErrProjectAbsent` absent-target path in both dry-run and apply,
 preflight ordering (surfaces before lock, lock acquisition in registry
 order), lock release in reverse order regardless of apply outcome, per-tool
-failure isolation (`ApplyResult.Failed`), and residual-warning propagation
-into both `Plan` and `ApplyResult`.
+failure isolation (`ApplyResult.Failed`), residual-warning propagation into
+both `Plan` and `ApplyResult`, and, with `Options.IgnoredWriters` set, a
+writer reported at the preflight and again at the re-check letting every
+surface apply and being listed once; a witness error still refuses before any
+surface applies.
 
 Per-adapter move behavior (which files move, malformed-history handling,
 file-history preservation, source mtime preservation) is tested in each

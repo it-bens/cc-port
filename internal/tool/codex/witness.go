@@ -28,7 +28,8 @@ var codexProcessNames = map[string]bool{
 // the order documented at spec §6.4. Every source runs regardless of an
 // earlier source's outcome, so a dry-run can report every signal at once;
 // but a source that cannot be read makes the whole call fail, wrapping
-// tool.ErrNoWitness, which blocks mutation exactly like a positive result.
+// tool.ErrNoWitness, which blocks mutation like a positive result and, unlike
+// one, also under --ignore-live-sessions.
 func (workspace *Workspace) ActiveWriters() ([]tool.ActiveWriter, error) {
 	var active []tool.ActiveWriter
 	var readErrs []error
@@ -69,7 +70,8 @@ func (workspace *Workspace) processTableWitness() ([]tool.ActiveWriter, error) {
 
 // busyProbeWitness is evidence source 2: SQLITE_BUSY on a BEGIN IMMEDIATE
 // probe against each discovered database, backstopping the process table for
-// a writer this witness otherwise cannot see.
+// a writer this witness otherwise cannot see. Each busy database is one
+// writer with no pid, named by its Detail.
 func (workspace *Workspace) busyProbeWitness() ([]tool.ActiveWriter, error) {
 	databases, err := workspace.allDatabasePaths()
 	if err != nil {
@@ -82,7 +84,7 @@ func (workspace *Workspace) busyProbeWitness() ([]tool.ActiveWriter, error) {
 			return nil, probeErr
 		}
 		if busy {
-			active = append(active, tool.ActiveWriter{})
+			active = append(active, tool.ActiveWriter{Detail: "busy database " + filepath.Base(database)})
 		}
 	}
 	return active, nil

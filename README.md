@@ -1,6 +1,6 @@
 ![cc-port banner: two piers labeled with old and new project paths, a gantry crane carrying a container between them](docs/images/banner.png)
 
-`cc-port` ports Claude Code and OpenAI Codex project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into each tool's session, history, and config files. cc-port rewrites the references safely across every installed tool: boundary-aware substring replacement, SQL-level rewriting for Codex's SQLite index, and atomic writes with rollback. Every command that mutates a tool's local state (`move --apply`, `import --apply`, `pull --apply`) locks and refuses while a Claude Code session or Codex process is live, while `export`, `push`, and `stats` read local state without a lock and `push` writes only to the remote you configure, never to local tool state.
+`cc-port` ports Claude Code and OpenAI Codex project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into each tool's session, history, and config files. cc-port rewrites the references safely across every installed tool: boundary-aware substring replacement, SQL-level rewriting for Codex's SQLite index, and atomic writes with rollback. Every command that mutates a tool's local state (`move --apply`, `import --apply`, `pull --apply`) locks and refuses while a live writer is present, unless `--ignore-live-sessions` is passed; `export`, `push`, and `stats` read local state without a lock and `push` writes only to the remote you configure, never to local tool state.
 
 > [!IMPORTANT]
 > Back up `~/.claude/` and `~/.codex/` before running any mutating command, so you can restore them if something goes wrong.
@@ -56,7 +56,7 @@ Persistent progress flags are available on every subcommand: `--quiet` (`-q`) su
 
 ![cc-port move: rename a project folder, then run cc-port move to repoint every detected tool's state to the new path](docs/images/demo-move.gif)
 
-`cc-port move <old-path> <new-path> [--apply] [--refs-only] [--deep] [--tool <name>]`
+`cc-port move <old-path> <new-path> [--apply] [--ignore-live-sessions] [--refs-only] [--deep] [--tool <name>]`
 
 Rewrite every reference to `<old-path>` to `<new-path>`, across every detected tool. Default is dry-run. `--apply` copies, verifies, then deletes the old encoded directory (Claude) or rewrites the relevant SQLite and TOML state in place (Codex). `--refs-only` updates references only and leaves the project directory in place on disk. `--deep` also rewrites paths inside narrative bodies such as session transcripts.
 
@@ -94,7 +94,7 @@ cc-port export manifest /Users/me/project --output /tmp/project.xml
 
 (See the `cc-port export` section above for an end-to-end export → import demo.)
 
-`cc-port import <archive.zip> <target-path> [--apply] [--tool <name>]`
+`cc-port import <archive.zip> <target-path> [--apply] [--ignore-live-sessions] [--tool <name>]`
 
 Apply an archive to `<target-path>`, across every tool the archive has data for. Dry-run by default; `--apply` commits the import.
 
@@ -136,7 +136,7 @@ cc-port push /Users/me/project --as project --remote s3://bucket?region=us-east-
 
 (See the `cc-port push` section above for an end-to-end push → pull demo.)
 
-`cc-port pull <name> --to <target-path> --remote <url> [--apply] [--tool <name>] [--passphrase-env <NAME> | --passphrase-file <PATH>] [--from-manifest <path>]`
+`cc-port pull <name> --to <target-path> --remote <url> [--apply] [--ignore-live-sessions] [--tool <name>] [--passphrase-env <NAME> | --passphrase-file <PATH>] [--from-manifest <path>]`
 
 Pull the archive named `<name>` from `<url>` and apply it to `<target-path>`, across every tool the archive has data for. Dry-run by default. `--apply` commits the import. `--from-manifest` follows the same contract as `cc-port import`.
 

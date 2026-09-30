@@ -38,6 +38,7 @@ func newPullCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 			"(file:// or s3://) and applies it, across every selected tool, to the local " +
 			"target path. Dry-run by default; pass --apply to commit. " +
 			"Refuses to apply when declared placeholders remain unresolved.\n\n" +
+			importAndPullLiveSessionsHelp + "\n\n" +
 			remote.URLDoc,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
@@ -55,6 +56,7 @@ func newPullCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 		"remote URL (file:// or s3://; see --help for examples and provider setup)")
 	cmd.Flags().BoolVar(&apply, "apply", false,
 		"commit the import (default is dry-run)")
+	cmd.Flags().Bool(ignoreLiveSessionsFlag, false, ignoreLiveSessionsUsage)
 	cmd.Flags().StringVar(&passphraseEnv, "passphrase-env", "",
 		"name of env var containing the encryption passphrase "+
 			"(mutually exclusive with --passphrase-file)")
@@ -101,11 +103,17 @@ func openArchiveSource(
 // runPullCmd is the pull subcommand body.
 func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *toolFlags) (err error) {
 	apply, _ := cmd.Flags().GetBool("apply")
+	ignoreLiveSessions, _ := cmd.Flags().GetBool(ignoreLiveSessionsFlag)
+	ignored, err := newIgnoredWriters(ignoreLiveSessions, apply)
+	if err != nil {
+		return err
+	}
 
 	opts, r, passphrase, err := buildPullOptions(cmd, args[0], toolSet, flags)
 	if err != nil {
 		return err
 	}
+	opts.IgnoredWriters = ignored
 	defer func() {
 		if cerr := r.Close(); cerr != nil {
 			err = errors.Join(err, fmt.Errorf("close remote: %w", cerr))
@@ -180,10 +188,11 @@ func runPullCmd(cmd *cobra.Command, args []string, toolSet *tool.Set, flags *too
 	return renderPullOutcome(cmd, opts, result, apply, progErr)
 }
 
-// renderPullOutcome writes the trailing dry-run hint or, on apply, the tool
-// warnings and the "Pulled:" confirmation. The plan summary itself has already
-// been written by the time it runs, because an operator must see it before
-// ExecutePull writes rather than after.
+// renderPullOutcome writes the trailing dry-run hint or, on apply, the
+// ignored live writers, the tool warnings and the "Pulled:" confirmation.
+// The plan summary itself has already been written by the time it runs,
+// because an operator must see it before ExecutePull writes rather than
+// after.
 //
 //nolint:gocritic // hugeParam: by-value PullOptions mirrors the public Plan/Execute contract.
 func renderPullOutcome(
@@ -192,6 +201,13 @@ func renderPullOutcome(
 	if progErr == nil && !apply {
 		if _, werr := fmt.Fprintln(cmd.OutOrStdout(), "(no changes; pass --apply to commit)"); werr != nil {
 			progErr = errors.Join(progErr, fmt.Errorf("write apply hint: %w", werr))
+		}
+	}
+
+	if apply {
+		progErr = withLiveSessionsHint(progErr)
+		if werr := renderIgnoredWriters(cmd.ErrOrStderr(), opts.Targets, opts.IgnoredWriters); werr != nil {
+			progErr = errors.Join(progErr, werr)
 		}
 	}
 

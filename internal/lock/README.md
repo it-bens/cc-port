@@ -3,25 +3,45 @@
 ## Purpose
 
 Acquires an exclusive advisory lock at a caller-provided path. A caller-provided
-witness blocks mutation while a live writer is present.
+witness blocks mutation while a live writer is present, unless the caller passes
+an ignored-writer collector, which records those writers instead and lets the run
+proceed.
 
 ## Public API
 
-- `Acquire(lockPath string, witness func() ([]tool.ActiveWriter, error)) (*Held, error)`:
+- `Acquire(lockPath string, witness Witness) (*Held, error)`:
   the lower-level entry point. Runs `witness` first, then acquires `lockPath`
   via `gofrs/flock`, and returns the held lock for the caller to release
   explicitly. Used directly where a caller must hold several tools' locks at
   once (see §Concurrency guard).
+- `Witness func() ([]tool.ActiveWriter, error)`: gathers one tool's liveness
+  evidence. A non-empty result refuses `Acquire` and `WithLock`; so does an
+  error.
 - `Held`: an acquired lock. `Release() error` frees it; later calls are
   no-ops.
-- `RecheckActiveWriters(targets []tool.Target) error`: re-runs every target's
-  `Workspace.ActiveWriters` and aggregates the results. Scan failures and live
-  writers join into one error, with every live writer across all targets
-  carried by a single `LiveSessionsError`. Returns nil only when every target's
-  witness succeeds and reports no writers. Used by `importer.Run` immediately
-  before batch promotion and by `move.Apply` before its first surface applies
-  (see §Concurrency guard).
-- `WithLock(lockPath string, witness func() ([]tool.ActiveWriter, error), fn func() error) error`:
+- `IgnoredWriter`: a live writer a witness reported and the caller chose to
+  proceed past. `Tool string` is the tool's wire name; `Writer
+  tool.ActiveWriter` is the writer.
+- `IgnoredWriters`: collects the writers ignored across one command
+  invocation. `(*IgnoredWriters).List() []IgnoredWriter` returns them in
+  first-recorded order, each `(Tool, Pid, Cwd, Detail)` tuple once: the
+  preflight witness and the re-check usually report the same writers. A nil
+  `*IgnoredWriters` is the refusing mode; there is no separate boolean.
+- `WitnessFor(target tool.Target, ignored *IgnoredWriters) Witness`: with a
+  nil `ignored` it returns `target.Workspace.ActiveWriters`. Otherwise it
+  returns a witness that records every writer the workspace reports under
+  `target.Tool.Name()` and reports none. A witness error passes through
+  unchanged, so a witness that cannot run still refuses.
+- `RecheckActiveWriters(targets []tool.Target, ignored *IgnoredWriters) error`:
+  re-runs every target's `WitnessFor(target, ignored)` and aggregates the
+  results. Scan failures and live writers join into one error, with every live
+  writer across all targets carried by a single `LiveSessionsError`; with a
+  non-nil `ignored`, live writers are recorded instead and never produce one.
+  Returns nil only when every target's witness succeeds and either reports no
+  writers or has its writers recorded in `ignored`.
+  Used by `importer.Run` immediately before batch promotion and by `move.Apply`
+  before its first surface applies (see §Concurrency guard).
+- `WithLock(lockPath string, witness Witness, fn func() error) error`:
   the single-lock convenience wrapper around `Acquire` and a deferred
   `Held.Release`. Calls `fn` with the lock held. It also runs the deferred
   release after a panic in `fn` that a caller recovers. Error precedence:
@@ -34,7 +54,8 @@ witness blocks mutation while a live writer is present.
      operational error takes precedence.
   4. `fn` returns nil: a deferred unlock error surfaces wrapped as
      `release cc-port lock: %w`.
-- `tool.ActiveWriter`: witness result with `Pid int` and `Cwd string`. Each
+- `tool.ActiveWriter`: witness result. Its fields and its `String()` renderer
+  live in `internal/tool/README.md` §Public API. Each
   tool supplies its own witness through `Workspace.ActiveWriters`:
   `internal/tool/claude.FindActive` for Claude Code, and
   `internal/tool/codex`'s process-table and busy-probe witness (see
@@ -48,7 +69,8 @@ witness blocks mutation while a live writer is present.
 - `LiveSessionsError`: typed error reporting detected live writers.
   `WithLock` returns it when the witness finds writers before the lock is
   taken; `RecheckActiveWriters` returns it, writers aggregated across all
-  targets, while the locks are held. `Sessions` carries the witness list as
+  targets, while the locks are held. Neither does so when the caller passed
+  an ignored-writer collector. `Sessions` carries the witness list as
   `[]tool.ActiveWriter`; tests assert via `errors.As`. `WithLock` takes the
   lock only when the list is empty. Reachable from `move.Apply` through both
   its preflight `Acquire` and its post-preflight `RecheckActiveWriters`.
@@ -71,7 +93,8 @@ and releases them in reverse order.
 
 `Acquire` runs the witness before flock acquisition. `WithLock` is the
 single-lock convenience wrapper around `Acquire` and deferred `Held.Release`.
-Any witness result blocks the invocation before it writes files.
+A witness result blocks the invocation before it writes files, unless the
+caller passed an ignored-writer collector; a witness error refuses either way.
 
 Lock-time witness evidence goes stale while a multi-target apply does its
 work. The flock stops concurrent cc-port runs but not the tools themselves,
@@ -90,6 +113,13 @@ also has the promotion and finalize span; a move also has the apply span.
 
 A session started after a move's re-check can lose a write to a file the move
 rewrites; closing the gap requires tool-side locking.
+
+An ignored-writer collector overrides that evidence. A caller that passes one
+records every writer the witnesses report instead of refusing, and prints the
+recorded list afterwards. The CLI builds one for `move --apply`,
+`import --apply`, and `pull --apply` under `--ignore-live-sessions`. The
+collector reaches the witnesses through `WitnessFor`, so a witness that cannot
+run still refuses, with or without it.
 
 The kernel releases the lock when cc-port exits, so a crash does not leave a
 stale block on the next invocation.
@@ -139,7 +169,8 @@ Called by:
 
 #### Refused
 
-- Skip the witness. `WithLock` requires a non-nil witness before taking the lock.
+- Skip the witness. `WithLock` requires a non-nil witness before taking the
+  lock, and an ignored-writer collector still runs it.
 - Take the lock without invoking `fn`. Every code path that reaches `TryLock`
   follows through to `fn` and the deferred release.
 
@@ -177,6 +208,16 @@ failure:
 - `RecheckActiveWriters`: all-quiet targets return nil; live writers on
   several targets aggregate into one `LiveSessionsError` in target order; a
   scan failure propagates without hiding live writers found by other targets.
+- `WitnessFor`: a nil collector passes the workspace's writers through; a
+  collector records them under the tool's name and reports none; a witness
+  error passes through unchanged, including `tool.ErrNoWitness`.
+- `RecheckActiveWriters` with a collector records live writers and returns
+  nil, while a scan failure still propagates and never surfaces a
+  `LiveSessionsError`.
+- `IgnoredWriters.List` deduplicates on `(Tool, Pid, Cwd, Detail)` in
+  first-recorded order; two busy databases stay two entries.
+- `LiveSessionsError.Error()` lists every writer through
+  `ActiveWriter.String()`.
 
 ## References
 

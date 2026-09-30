@@ -2,6 +2,7 @@ package move_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -56,6 +57,40 @@ func TestApply_SecondWitnessRefusalPreventsFirstMutation(t *testing.T) {
 	assert.Equal(t, []string{"surface:first", "witness:first", "surface:second", "witness:second"}, events)
 }
 
+func TestApply_IgnoredWriterReportedAtPreflightAndRecheckLetsEverySurfaceApply(t *testing.T) {
+	events := []string{}
+	first := newPreflightTarget(t, "first", &events, 1)
+	second := newPreflightTarget(t, "second", &events, 0)
+	ignored := &lock.IgnoredWriters{}
+
+	result, err := move.Apply(t.Context(), []tool.Target{first, second}, move.Options{
+		OldPath: "/old", NewPath: "/new", IgnoredWriters: ignored,
+	})
+
+	require.NoError(t, err)
+	assert.False(t, result.Failed())
+	assert.Equal(t, []string{
+		"surface:first", "witness:first", "surface:second", "witness:second", "witness:first", "witness:second", "apply:first", "apply:second",
+	}, events)
+	assert.Equal(t, []lock.IgnoredWriter{{Tool: "first", Writer: tool.ActiveWriter{Pid: 1, Cwd: "/writer"}}}, ignored.List(),
+		"a writer reported at preflight and again at the re-check must be listed once")
+}
+
+func TestApply_WitnessErrorRefusesBeforeAnySurfaceAppliesWithIgnoredWriters(t *testing.T) {
+	events := []string{}
+	first := newPreflightTarget(t, "first", &events, 0)
+	second := newPreflightTarget(t, "second", &events, 0)
+	witnessErr := fmt.Errorf("%w: process table unreadable", tool.ErrNoWitness)
+	second.Workspace.(*preflightWorkspace).witnessErr = witnessErr
+
+	_, err := move.Apply(t.Context(), []tool.Target{first, second}, move.Options{
+		OldPath: "/old", NewPath: "/new", IgnoredWriters: &lock.IgnoredWriters{},
+	})
+
+	require.ErrorIs(t, err, tool.ErrNoWitness)
+	assert.Equal(t, []string{"surface:first", "witness:first", "surface:second", "witness:second"}, events)
+}
+
 type preflightTool struct{ name string }
 
 func (preflight *preflightTool) Name() string                        { return preflight.name }
@@ -74,6 +109,8 @@ type preflightWorkspace struct {
 	// call onward — 2 models a session started after the lock-time witness.
 	refuseFrom   int
 	witnessCalls int
+	// witnessErr, when set, fails every witness call.
+	witnessErr error
 }
 
 func newPreflightTarget(t *testing.T, name string, events *[]string, refuseFrom int) tool.Target {
@@ -89,6 +126,9 @@ func (workspace *preflightWorkspace) LockPath() string { return workspace.lockPa
 func (workspace *preflightWorkspace) ActiveWriters() ([]tool.ActiveWriter, error) {
 	*workspace.events = append(*workspace.events, "witness:"+workspace.name)
 	workspace.witnessCalls++
+	if workspace.witnessErr != nil {
+		return nil, workspace.witnessErr
+	}
 	if workspace.refuseFrom > 0 && workspace.witnessCalls >= workspace.refuseFrom {
 		return []tool.ActiveWriter{{Pid: 1, Cwd: "/writer"}}, nil
 	}

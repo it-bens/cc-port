@@ -24,6 +24,10 @@ type Options struct {
 	// Reporter receives the progress event stream during Apply. Defaults
 	// to progress.Noop() when nil. DryRun does not use it.
 	Reporter progress.Reporter
+
+	// IgnoredWriters, when non-nil, makes Apply proceed past live writers
+	// and records them instead. nil refuses on any live writer.
+	IgnoredWriters *lock.IgnoredWriters
 }
 
 func (options Options) request() tool.MoveRequest {
@@ -235,14 +239,14 @@ func Apply(ctx context.Context, targets []tool.Target, options Options) (result 
 	}()
 
 	var err error
-	preparedTargets, err = preflightTargets(ctx, targets, req)
+	preparedTargets, err = preflightTargets(ctx, targets, req, options.IgnoredWriters)
 	if err != nil {
 		return nil, err
 	}
 
 	// The lock-time witness is stale after preflight, and the flocks do not
 	// stop the tools themselves from starting.
-	if err := lock.RecheckActiveWriters(targets); err != nil {
+	if err := lock.RecheckActiveWriters(targets, options.IgnoredWriters); err != nil {
 		return nil, fmt.Errorf("recheck live writers: %w", err)
 	}
 
@@ -287,7 +291,9 @@ type preparedTarget struct {
 // preflightTargets prepares every target in registry order — MoveSurfaces,
 // then witness-first lock.Acquire — before any target applies. On error it
 // returns the targets prepared so far, so the caller can release their locks.
-func preflightTargets(ctx context.Context, targets []tool.Target, req tool.MoveRequest) ([]preparedTarget, error) {
+func preflightTargets(
+	ctx context.Context, targets []tool.Target, req tool.MoveRequest, ignored *lock.IgnoredWriters,
+) ([]preparedTarget, error) {
 	preparedTargets := make([]preparedTarget, 0, len(targets))
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
@@ -303,7 +309,7 @@ func preflightTargets(ctx context.Context, targets []tool.Target, req tool.MoveR
 				return preparedTargets, fmt.Errorf("preflight %s: %w", target.Tool.Name(), err)
 			}
 		}
-		held, err := lock.Acquire(target.Workspace.LockPath(), target.Workspace.ActiveWriters)
+		held, err := lock.Acquire(target.Workspace.LockPath(), lock.WitnessFor(target, ignored))
 		if err != nil {
 			return preparedTargets, fmt.Errorf("preflight %s: %w", target.Tool.Name(), err)
 		}

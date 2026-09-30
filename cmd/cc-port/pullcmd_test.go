@@ -12,14 +12,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/credentials"
 	"github.com/it-bens/cc-port/internal/encrypt"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/progress"
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
+	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
@@ -437,4 +440,66 @@ func TestOpenArchiveSource_PlaintextNoPassphraseSucceeds(t *testing.T) {
 
 	ends := progresstest.OfType[progress.PhaseEnd](recorder.Events())
 	assert.Len(t, ends, 1, "expected exactly one PhaseEnd")
+}
+
+func TestPull_ApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+
+	_, err := executeCmd(t,
+		"pull", "myproj",
+		"--tool", "claude", "--claude-home", home.Dir,
+		"--to", filepath.Join(t.TempDir(), "pulled-project"),
+		"--remote", url,
+		"--apply",
+	)
+
+	_, ok := errors.AsType[*lock.LiveSessionsError](err)
+	require.True(t, ok, "err = %v, want *lock.LiveSessionsError", err)
+	assert.True(t, strings.HasSuffix(err.Error(), "; pass --ignore-live-sessions to proceed anyway"), err.Error())
+}
+
+func TestPull_ApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenThePullFails(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	resolvedTarget, err := tool.ResolveProjectPath(targetPath)
+	require.NoError(t, err)
+	// A regular file where the target's project storage directory belongs
+	// fails staging, which runs under the lock after the witness.
+	require.NoError(t, os.MkdirAll(filepath.Dir(home.ProjectDir(resolvedTarget)), 0o750))
+	require.NoError(t, os.WriteFile(home.ProjectDir(resolvedTarget), []byte("blocks the project directory"), 0o600))
+
+	stderr, err := executeCmd(t,
+		"pull", "myproj",
+		"--tool", "claude", "--claude-home", home.Dir,
+		"--to", targetPath,
+		"--remote", url,
+		"--apply", "--ignore-live-sessions",
+	)
+
+	require.ErrorIs(t, err, archive.ErrStagingFailed)
+	assert.Contains(t, stderr, ignoredLine)
+}
+
+func TestPull_ApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenThePullSucceeds(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+	url := "file://" + t.TempDir()
+	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
+
+	stderr, err := executeCmd(t,
+		"pull", "myproj",
+		"--tool", "claude", "--claude-home", home.Dir,
+		"--to", filepath.Join(t.TempDir(), "pulled-project"),
+		"--remote", url,
+		"--apply", "--ignore-live-sessions",
+	)
+
+	require.NoError(t, err)
+	assert.Contains(t, stderr, ignoredLine)
 }

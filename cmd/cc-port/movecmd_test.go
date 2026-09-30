@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -13,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/archive"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/testutil"
@@ -133,20 +136,29 @@ func TestRunMoveDryRun_PrintsPerToolSurfacesAndApplyHint(t *testing.T) {
 
 func TestRunMoveDryRun_WarnsAboutActiveWriter(t *testing.T) {
 	home := testutil.SetupFixture(t)
-	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
-	writer, err := json.Marshal(claude.SessionFile{Cwd: testutil.FixtureProjectPath(), Pid: os.Getpid()})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "live.json"), writer, 0o600))
+	writeLiveClaudeSession(t, home, testutil.FixtureProjectPath())
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 	var stdout bytes.Buffer
 
-	err = runMoveDryRun(t.Context(), &stdout, targets, move.Options{
+	err := runMoveDryRun(t.Context(), &stdout, targets, move.Options{
 		OldPath: testutil.FixtureProjectPath(), NewPath: testutil.FixtureProjectPath() + "-renamed",
 	})
 
 	require.NoError(t, err)
-	assert.Contains(t, stdout.String(), "active Claude Code writer")
-	assert.Contains(t, stdout.String(), "pid=")
+	assert.Contains(t, stdout.String(),
+		fmt.Sprintf("    ! active Claude Code writer: pid=%d cwd=%q\n", os.Getpid(), testutil.FixtureProjectPath()))
+}
+
+func TestRunMoveDryRun_WarnsAboutBusyDatabase(t *testing.T) {
+	targets := []tool.Target{{Tool: &codexOnlyTool{}, Workspace: &liveWriterWorkspace{
+		writers: []tool.ActiveWriter{{Detail: "busy database state_5.sqlite"}},
+	}}}
+	var stdout bytes.Buffer
+
+	err := runMoveDryRun(t.Context(), &stdout, targets, move.Options{OldPath: "/old", NewPath: "/new"})
+
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), "    ! active OpenAI Codex writer: busy database state_5.sqlite\n")
 }
 
 func TestRunMoveDryRun_CodexOnlyWarnsNoPhysicalProjectMove(t *testing.T) {
@@ -177,4 +189,49 @@ func TestRenderApplyResult_PrintsNoPhysicalProjectMoveWarning(t *testing.T) {
 	renderApplyResult(&stdout, &move.ApplyResult{Warnings: []string{move.NoPhysicalMoveWarning}})
 
 	assert.Contains(t, stdout.String(), move.NoPhysicalMoveWarning)
+}
+
+func TestMoveApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+
+	_, err := executeCmd(t,
+		"move", testutil.FixtureProjectPath(), "/Users/test/Projects/relocated",
+		"--tool", "claude", "--claude-home", home.Dir, "--refs-only", "--apply",
+	)
+
+	_, ok := errors.AsType[*lock.LiveSessionsError](err)
+	require.True(t, ok, "err = %v, want *lock.LiveSessionsError", err)
+	assert.True(t, strings.HasSuffix(err.Error(), "; pass --ignore-live-sessions to proceed anyway"), err.Error())
+}
+
+func TestMoveApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheMoveFails(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+	// The fixture project has no directory on disk, so the physical move
+	// fails when the surfaces apply, after the witness ran.
+	newPath := filepath.Join(t.TempDir(), "relocated")
+
+	stderr, err := executeCmd(t,
+		"move", testutil.FixtureProjectPath(), newPath,
+		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
+	)
+
+	require.ErrorContains(t, err, "one or more tools failed to move")
+	assert.Contains(t, stderr, ignoredLine)
+}
+
+func TestMoveApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheMoveSucceeds(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
+
+	// --refs-only skips the physical project-directory move, which the fixture
+	// project's absence from disk would otherwise fail.
+	stderr, err := executeCmd(t,
+		"move", testutil.FixtureProjectPath(), testutil.FixtureProjectPath()+"-renamed",
+		"--tool", "claude", "--claude-home", home.Dir, "--refs-only", "--apply", "--ignore-live-sessions",
+	)
+
+	require.NoError(t, err)
+	assert.Contains(t, stderr, ignoredLine)
 }

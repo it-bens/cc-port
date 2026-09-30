@@ -46,3 +46,20 @@ func TestLaunchLineQuotesAnEmptyArgument(t *testing.T) {
 
 	assert.Equal(t, `run a "" b`, server.LaunchLine())
 }
+
+func TestActiveWriterStringRendersOnlyTheIdentifyingParts(t *testing.T) {
+	cases := []struct {
+		name   string
+		writer tool.ActiveWriter
+		want   string
+	}{
+		{"process with a working directory", tool.ActiveWriter{Pid: 42, Cwd: "/work/other"}, `pid=42 cwd="/work/other"`},
+		{"process without a working directory", tool.ActiveWriter{Pid: 5102}, "pid=5102"},
+		{"evidence with no process behind it", tool.ActiveWriter{Detail: "busy database state_5.sqlite"}, "busy database state_5.sqlite"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, testCase.writer.String())
+		})
+	}
+}

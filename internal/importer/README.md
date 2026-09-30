@@ -26,10 +26,13 @@ not satisfy it.
   staged files have promoted as one batch.
 - `Options`: `Source io.ReaderAt`, `Size int64` (the archive bytes; `Run`
   constructs the `*zip.Reader` directly and never opens files itself),
-  `TargetPath string`, `FromManifest *manifest.Metadata` (optional per-tool
+  `TargetPath string`, `Caps archive.Caps` (the decompression caps `Run`
+  enforces), `FromManifest *manifest.Metadata` (optional per-tool
   placeholder `Resolve` overrides read from a `--from-manifest` file; nil
   means no override), `Reporter progress.Reporter` (nil-handling follows
-  `internal/progress/README.md` §Reporter injection).
+  `internal/progress/README.md` §Reporter injection), `IgnoredWriters`
+  (`*lock.IgnoredWriters`: non-nil makes `Run` record live writers instead of
+  refusing; see §Import contract).
 - `Result`: `SkippedTools []string` (tools selected for this run whose
   manifest carried no `<tool>` block: the archive simply has no data for
   them) and `Warnings map[string][]string` (non-fatal `Finalize` notices,
@@ -113,7 +116,12 @@ reversed from the saved pre-promote bytes of each replaced destination.
 Between staging and promotion, `runLocked` re-runs every selected target's
 witness once, aggregated, via `lock.RecheckActiveWriters`. A live writer at
 the re-check aborts with `lock.LiveSessionsError`: staged temps are removed
-and nothing is promoted or finalized. The rationale and the residual window
+and nothing is promoted or finalized. With `Options.IgnoredWriters` set,
+`Run` builds every witness through `lock.WitnessFor`, so the lock-time
+witness and the re-check both record live writers instead of refusing and the
+import proceeds; the caller prints the recorded writers. A witness that
+cannot run (`tool.ErrNoWitness`, or any other witness error) still refuses,
+with or without the collector. The rationale and the residual window
 are documented in
 [`internal/lock/README.md`](../lock/README.md) §Concurrency guard.
 
@@ -151,7 +159,9 @@ These paths abort before any write:
   created, with staged temps created so far cleaned up via `cleanupStaged`.
 - A witness that turns live between lock acquisition and promotion: the
   pre-promotion re-check aborts with `lock.LiveSessionsError`, staged temps
-  are cleaned up via `cleanupStaged`, and no destination is written.
+  are cleaned up via `cleanupStaged`, and no destination is written. With
+  `Options.IgnoredWriters` set the writer is recorded and the import
+  continues instead.
 
 #### Not covered
 
@@ -324,7 +334,8 @@ staging-path construction lives in each adapter, driven by
 ## Tests
 
 Unit tests in `importer_test.go`, `plan_test.go`, `merge_resolutions_test.go`, and the
-internal `checkmissing_internal_test.go` and `filehistory_drift_internal_test.go`. Coverage:
+internal `checkmissing_internal_test.go`, `filehistory_drift_internal_test.go`,
+and `ignorewriters_test.go`. Coverage:
 
 - Basic round-trip, including a multi-tool archive importing into Claude and
   Codex targets in the same run.
@@ -338,6 +349,9 @@ internal `checkmissing_internal_test.go` and `filehistory_drift_internal_test.go
 - A witness that turns live between lock acquisition and promotion aborts
   with `lock.LiveSessionsError`, promotes nothing, and leaves no staging
   temps.
+- With `Options.IgnoredWriters` set, a writer reported at lock time and again
+  at the re-check is recorded and the staged files still promote; a witness
+  error still refuses with nothing promoted.
 - Atomic rollback on failure, across every tool's staged files.
 - An unregistered manifest tool name fails hard.
 - Oversized-entry and aggregate-cap rejection, enforced by `internal/archive`'s

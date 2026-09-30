@@ -111,7 +111,7 @@ cannot participate:
 |---|---|---|
 | `tool.ErrToolAbsent` | The tool has no state on this machine. | A tool named explicitly via `--tool` fails hard on it; an undetected tool in the default (no `--tool`) sweep is silently skipped by `cmd/cc-port/toolselect.go:resolveTargets`. |
 | `tool.ErrProjectAbsent` | This tool has no record of the requested project. | Every command treats this as a legitimate empty result, not a failure: export writes an empty `<tool>` manifest block, move reports the target `Absent` with no surfaces, stats reports a zero, `Absent: true` footprint. |
-| `tool.ErrNoWitness` | Liveness evidence could not be read (a witness source failed, not merely found nothing). | Blocks mutation exactly like a positive liveness result. An unreadable witness cannot be treated as "no writers"; refusing is the only safe response. |
+| `tool.ErrNoWitness` | Liveness evidence could not be read (a witness source failed, not merely found nothing). | Blocks mutation like a positive liveness result, except that `--ignore-live-sessions` overrides a positive result and not this one. An unreadable witness cannot be treated as "no writers"; refusing is the only safe response. |
 
 `tool.ErrProjectAbsent` is deliberately not fatal because it is the common
 case: a project workspace is not necessarily open in every installed tool,
@@ -158,7 +158,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 | An import or pull plan names every MCP server definition new to the destination, with its launch command line, before anything is written | [`internal/importer/README.md`](../internal/importer/README.md) §Plan surface |
 | A move's per-tool apply is a crash-safe, idempotent bracket; cross-tool rollback does not exist | §Crash and idempotence contract, [`internal/move/README.md`](../internal/move/README.md) §Apply contract |
 | A `.git` object store inside a tool's state is never rewritten at the byte level | §Git-repo-in-state policy (cross-cutting) |
-| Mutating commands lock + refuse during live writer activity | [`internal/lock/README.md`](../internal/lock/README.md)                          |
+| Mutating commands lock + refuse during live writer activity, unless `--ignore-live-sessions` is passed | [`internal/lock/README.md`](../internal/lock/README.md) §Concurrency guard |
 | Session-keyed user-wide directories follow the project  | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §Project enumeration |
 | User-wide files are rewritten via a polymorphic registry | [`internal/tool/claude/README.md`](../internal/tool/claude/README.md) §User-wide registry |
 | Sync conflict-detection metadata stays inside the archive | [`internal/sync/README.md`](../internal/sync/README.md) §Plan-and-execute split |

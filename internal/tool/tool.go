@@ -47,10 +47,33 @@ type MoveRequest struct {
 	DeepRewrite bool
 }
 
-// ActiveWriter is liveness evidence for a running tool process.
+// ActiveWriter is liveness evidence for one live writer of a tool's state:
+// a running process, or evidence with no process behind it, such as a busy
+// database.
 type ActiveWriter struct {
 	Pid int
 	Cwd string
+
+	// Detail is adapter-supplied text for evidence that has no process
+	// behind it; empty when Pid and Cwd identify the writer.
+	Detail string
+}
+
+// String renders the writer as its non-empty parts joined by spaces:
+// pid=<n> when Pid is non-zero, cwd=<quoted> when Cwd is non-empty, and
+// Detail verbatim.
+func (writer ActiveWriter) String() string {
+	var parts []string
+	if writer.Pid != 0 {
+		parts = append(parts, "pid="+strconv.Itoa(writer.Pid))
+	}
+	if writer.Cwd != "" {
+		parts = append(parts, "cwd="+strconv.Quote(writer.Cwd))
+	}
+	if writer.Detail != "" {
+		parts = append(parts, writer.Detail)
+	}
+	return strings.Join(parts, " ")
 }
 
 // MCPServer is one MCP server definition a tool launches at session start,
