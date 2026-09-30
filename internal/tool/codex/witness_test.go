@@ -113,7 +113,7 @@ func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
 	active, err := workspace.ActiveWriters()
 
 	require.NoError(t, err)
-	assert.NotEmpty(t, active)
+	assert.Equal(t, []tool.ActiveWriter{{Detail: "busy database state_5.sqlite"}}, active)
 }
 
 func TestActiveWritersDetectsBusyQueueAndThreadHistoryDatabases(t *testing.T) {
@@ -135,7 +135,41 @@ func TestActiveWritersDetectsBusyQueueAndThreadHistoryDatabases(t *testing.T) {
 			active, err := workspace.ActiveWriters()
 
 			require.NoError(t, err)
-			assert.NotEmpty(t, active)
+			assert.Equal(t, []tool.ActiveWriter{{Detail: "busy database " + fileName}}, active)
 		})
 	}
+}
+
+func TestActiveWritersReportsOneWriterPerBusyDatabase(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "dotcodex")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	statePath := filepath.Join(dir, "state_5.sqlite")
+	buildFixtureStateDB(t, statePath)
+	holdWriteLock(t, statePath)
+	queuePath := filepath.Join(dir, "queue_1.sqlite")
+	holdWriteLock(t, queuePath)
+	workspace := newWorkspace(&Home{Dir: dir, SQLiteDir: dir}, fakeGetenv(nil), noProcesses)
+
+	active, err := workspace.ActiveWriters()
+
+	require.NoError(t, err)
+	assert.Equal(t, []tool.ActiveWriter{
+		{Detail: "busy database state_5.sqlite"},
+		{Detail: "busy database queue_1.sqlite"},
+	}, active)
+}
+
+// holdWriteLock takes a BEGIN IMMEDIATE lock on the database at path,
+// creating it when absent, and holds it until the test ends: the lock a live
+// Codex writer holds.
+func holdWriteLock(t *testing.T, path string) {
+	t.Helper()
+	blocker, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blocker.Close() })
+	_, err = blocker.ExecContext(context.Background(), "CREATE TABLE IF NOT EXISTS marker (value INTEGER)")
+	require.NoError(t, err)
+	_, err = blocker.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = blocker.ExecContext(context.Background(), "ROLLBACK") })
 }

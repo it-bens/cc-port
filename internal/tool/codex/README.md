@@ -345,14 +345,22 @@ shapes themselves.
   thread_history globs (§Glob, don't pin). `thread_history_*.sqlite` is
   probed only; no move surface reads or rewrites it, although it holds byte
   offsets into the rollouts a move rewrites (§cwd matching, Not covered).
+- A busy database is one writer with no process behind it. The probe sets its
+  `Detail` to `busy database <file name>`, for example
+  `busy database state_5.sqlite`, and leaves `Pid` 0 and `Cwd` empty; two busy
+  databases are two writers.
 - If either source cannot be consulted, `ActiveWriters` returns an error
-  wrapping `tool.ErrNoWitness`. Mutation treats that failure like positive
-  liveness evidence rather than assuming there are no writers.
+  wrapping `tool.ErrNoWitness`. Mutation refuses on that failure rather than
+  assuming there are no writers, also under `--ignore-live-sessions`, which
+  overrides only positive liveness evidence.
 
 **Not covered.**
 
 - A cooperative shutdown protocol. Detection is evidence only; the actual
-  database write is separately protected by `sqlrewrite`'s `busy_timeout=0`.
+  database write is separately protected by `sqlrewrite`'s 5 s busy timeout
+  and immediate transactions (`internal/sqlrewrite/README.md` §Busy
+  handling). The busy probe keeps its own `busy_timeout=0` connection,
+  because it answers whether a writer is present now.
 
 ### Queue database
 
@@ -622,6 +630,15 @@ shapes themselves.
   `status='pending'` and `last_watermark=NULL`. The warning distinguishes no
   state database, missing rows with backfill re-armed, and missing rows with
   no rollout files to rebuild from.
+- `Finalize` opens each state database once, and only when there is a
+  sidecar row to apply or a backfill to re-arm. One transaction per database
+  carries every sidecar update and the re-arm. A sidecar counts as applied
+  when its update matched a row in any state database.
+- A checkpoint failure after the commit is a warning naming the database, as
+  in move's `commit-databases`: the committed updates stand, and the next
+  `sqlrewrite.Open` folds the WAL in. The loop continues with the next
+  database. An `Open`, `Begin`, update, commit, or `Close` failure still fails
+  `Finalize`.
 
 **Refused.**
 
@@ -1051,7 +1068,8 @@ structured rollout field list per line type and its default-mode rewrite
 with matching dry-run and apply counts, a writable root outside the project
 left unchanged, the
 process-table and busy-probe witness sources driven through the injected
-process lister rather than the live process table, `codex-dev.db` refusal on both a
+process lister rather than the live process table, the busy probe reporting
+one writer per busy database with its `Detail`, `codex-dev.db` refusal on both a
 path-reference hit and a schema-drift case, the sidecar's apply-and-remainder
 counting, `config.toml` byte-identity across an import, a divergent profile
 overlay's `sqlite_home` warning, `discoverRolloutFiles` suppressing a
@@ -1078,7 +1096,12 @@ upstream's ASCII-only case folding), a queued text item and its byte ranges
 left untouched, a prefix-sharing skill path left alone, apply failing when a
 planned payload changed after the plan, the queue rewrite rolling back
 before `commit-databases`, the queue schema and payload errors in preflight,
-and the busy probe covering `queue_*.sqlite` and `thread_history_*.sqlite`.
+the busy probe covering `queue_*.sqlite` and `thread_history_*.sqlite`, and
+a checkpoint that fails after the first state database's commit becoming one
+`Finalize` warning that names it while both state databases keep the sidecar
+update and the backfill re-arm, each state database opened once for two
+sidecars, and a sidecar matching no row in any state database counted as
+unapplied.
 
 `mcp_test.go` covers `MCPServers`: the fixture's stdio and streamable-HTTP
 tables, a config without an `[mcp_servers]` table, an empty one, an absent

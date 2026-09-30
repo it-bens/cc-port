@@ -16,6 +16,7 @@ import (
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/progress"
@@ -76,6 +77,10 @@ type PullOptions struct {
 	// (it is a pure pre-flight read); ExecutePull defaults a nil Reporter to
 	// progress.Noop().
 	Reporter progress.Reporter
+
+	// IgnoredWriters is forwarded to importer.Options by ExecutePull; see
+	// internal/importer/README.md §Import contract.
+	IgnoredWriters *lock.IgnoredWriters
 }
 
 // PullPlan is the read-only result of PlanPull. Render writes the plan
@@ -302,12 +307,13 @@ func ExecutePull(ctx context.Context, opts PullOptions, plan *PullPlan, source p
 
 	importPhase := opts.Reporter.Phase("import", 0, progress.UnitItems)
 	result, err := importer.Run(ctx, opts.AllTools, opts.Targets, &importer.Options{
-		Source:       source.ReaderAt,
-		Size:         source.Size,
-		TargetPath:   opts.TargetPath,
-		Caps:         archive.DefaultCaps(),
-		FromManifest: opts.FromManifest,
-		Reporter:     importPhase,
+		Source:         source.ReaderAt,
+		Size:           source.Size,
+		TargetPath:     opts.TargetPath,
+		Caps:           archive.DefaultCaps(),
+		FromManifest:   opts.FromManifest,
+		Reporter:       importPhase,
+		IgnoredWriters: opts.IgnoredWriters,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sync.ExecutePull: import: %w", err)

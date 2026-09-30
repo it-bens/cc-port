@@ -54,6 +54,10 @@ type Options struct {
 	// Reporter receives the import progress event stream. Defaults to
 	// progress.Noop() when nil.
 	Reporter progress.Reporter
+
+	// IgnoredWriters, when non-nil, makes Run proceed past live writers and
+	// records them instead. nil refuses on any live writer.
+	IgnoredWriters *lock.IgnoredWriters
 }
 
 // Result summarizes the observable outcome of a successful import.
@@ -90,7 +94,7 @@ func Run(ctx context.Context, allTools *tool.Set, targets []tool.Target, options
 	}
 
 	var result *Result
-	err := withAllLocks(targets, func() error {
+	err := withAllLocks(targets, options.IgnoredWriters, func() error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("canceled: %w", err)
 		}
@@ -109,13 +113,13 @@ func Run(ctx context.Context, allTools *tool.Set, targets []tool.Target, options
 
 // withAllLocks acquires every target's advisory lock, innermost call last,
 // so the effective acquisition order matches registry (targets) order.
-func withAllLocks(targets []tool.Target, fn func() error) error {
+func withAllLocks(targets []tool.Target, ignored *lock.IgnoredWriters, fn func() error) error {
 	if len(targets) == 0 {
 		return fn()
 	}
 	first := targets[0]
-	return lock.WithLock(first.Workspace.LockPath(), first.Workspace.ActiveWriters, func() error {
-		return withAllLocks(targets[1:], fn)
+	return lock.WithLock(first.Workspace.LockPath(), lock.WitnessFor(first, ignored), func() error {
+		return withAllLocks(targets[1:], ignored, fn)
 	})
 }
 
@@ -190,8 +194,9 @@ func runLocked(ctx context.Context, allTools *tool.Set, targets []tool.Target, o
 	// The lock-time witness ran before any archive byte was read, and the
 	// flocks do not stop the tools themselves from launching. Re-check every
 	// selected target once here so a session started since then aborts the
-	// import before promotion and the finalize splices write anything.
-	if err := lock.RecheckActiveWriters(targets); err != nil {
+	// import before promotion and the finalize splices write anything, or is
+	// recorded when the caller passed IgnoredWriters.
+	if err := lock.RecheckActiveWriters(targets, options.IgnoredWriters); err != nil {
 		return nil, cleanupStaged(stagedSet, err)
 	}
 

@@ -20,6 +20,7 @@ import (
 	portexport "github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
 	"github.com/it-bens/cc-port/internal/manifest"
+	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
@@ -626,6 +627,73 @@ func TestCodexFinalizeWithoutSidecarsOrRolloutsSkipsStateDBDiscovery(t *testing.
 
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
+}
+
+func TestCodexFinalizeCheckpointFailureAfterCommitWarnsAndKeepsTheUpdates(t *testing.T) {
+	home := SetupFixture(t)
+	firstDatabase := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
+	secondDatabase := filepath.Join(home.SQLiteDir, "state_6.sqlite")
+	buildFixtureStateDB(t, secondDatabase)
+	workspace := quietTestWorkspace(home)
+	failFirstCheckpointAfterCommit(t, workspace)
+	workspace.sidecarAppends = [][]byte{sidecarLine(fixtureThreadOne, "imported title")}
+	workspace.rolloutsStaged = true
+
+	warnings, err := workspace.Finalize(t.Context(), FixtureProjectPath(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"could not checkpoint " + firstDatabase + " after commit: checkpoint failed"}, warnings)
+	for _, database := range []string{firstDatabase, secondDatabase} {
+		assert.Equal(t, "imported title", threadTitle(t, database, fixtureThreadOne))
+		assertBackfillState(t, database, "pending", nil)
+	}
+}
+
+// Every Open is followed by exactly one post-commit checkpoint, so the
+// checkpoint call count is the number of times a state database was opened.
+func TestCodexFinalizeOpensEachStateDatabaseOnce(t *testing.T) {
+	home := SetupFixture(t)
+	firstDatabase := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
+	secondDatabase := filepath.Join(home.SQLiteDir, "state_6.sqlite")
+	buildFixtureStateDB(t, secondDatabase)
+	insertThreadRow(t, firstDatabase, fixtureThreadTwo, threadRowMetadata{})
+	insertThreadRow(t, secondDatabase, fixtureThreadTwo, threadRowMetadata{})
+	workspace := quietTestWorkspace(home)
+	opens := 0
+	workspace.checkpointAfterCommit = func(database *sqlrewrite.DB, ctx context.Context) error {
+		opens++
+		return database.CheckpointTruncate(ctx)
+	}
+	workspace.sidecarAppends = [][]byte{
+		sidecarLine(fixtureThreadOne, "first imported title"),
+		sidecarLine(fixtureThreadTwo, "second imported title"),
+	}
+
+	warnings, err := workspace.Finalize(t.Context(), FixtureProjectPath(), nil)
+
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	assert.Equal(t, 2, opens)
+}
+
+func TestCodexFinalizeCountsSidecarMatchingNoStateDatabaseAsUnapplied(t *testing.T) {
+	home := SetupFixture(t)
+	secondDatabase := filepath.Join(home.SQLiteDir, "state_6.sqlite")
+	buildFixtureStateDB(t, secondDatabase)
+	insertThreadRow(t, secondDatabase, fixtureThreadTwo, threadRowMetadata{})
+	workspace := quietTestWorkspace(home)
+	workspace.sidecarAppends = [][]byte{
+		sidecarLine(fixtureThreadTwo, "matches only the second database"),
+		sidecarLine("00000000-0000-4000-8000-000000000099", "matches no database"),
+	}
+
+	warnings, err := workspace.Finalize(t.Context(), FixtureProjectPath(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"1 threads sidecar row(s) could not be applied because their thread rows do not exist and this " +
+			"archive carries no rollout files to rebuild them from",
+	}, warnings)
 }
 
 func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
@@ -1346,4 +1414,33 @@ func assertBackfillState(t *testing.T, path, expectedStatus string, expectedWate
 	}
 	assert.True(t, watermark.Valid)
 	assert.Equal(t, *expectedWatermark, watermark.String)
+}
+
+// failFirstCheckpointAfterCommit makes workspace's first post-commit
+// checkpoint fail and lets every later one run for real.
+func failFirstCheckpointAfterCommit(t *testing.T, workspace *Workspace) {
+	t.Helper()
+	calls := 0
+	workspace.checkpointAfterCommit = func(database *sqlrewrite.DB, ctx context.Context) error {
+		calls++
+		if calls == 1 {
+			return errors.New("checkpoint failed")
+		}
+		return database.CheckpointTruncate(ctx)
+	}
+}
+
+func sidecarLine(threadID, title string) []byte {
+	return []byte(`{"thread_id":"` + threadID + `","archived_at":null,` +
+		`"title":"` + title + `","git":{"sha":null,"branch":null,"origin_url":null}}` + "\n")
+}
+
+func threadTitle(t *testing.T, path, id string) string {
+	t.Helper()
+	database, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+	var title string
+	require.NoError(t, database.QueryRowContext(t.Context(), "SELECT title FROM threads WHERE id = ?", id).Scan(&title))
+	return title
 }

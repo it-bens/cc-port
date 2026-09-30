@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	// modernc registers the pure-Go SQLite database/sql driver.
 	_ "modernc.org/sqlite"
@@ -18,6 +19,10 @@ import (
 )
 
 const minimumSQLiteVersion = "3.51.3"
+
+// writerBusyTimeout matches the busy_timeout Codex sets on its own state
+// connections (state/src/sqlite.rs:305).
+const writerBusyTimeout = 5 * time.Second
 
 // FileDSN encodes path as a `file:` URL DSN carrying params as its query
 // string, so a path containing '?' or other DSN-significant bytes opens the
@@ -46,10 +51,20 @@ type Tx struct {
 	transaction *sql.Tx
 }
 
-// Open opens path with a zero busy timeout and folds its WAL into the main
-// database before any caller can observe its contents.
+// Open opens path with a 5 s busy timeout and immediate transactions, and
+// folds its WAL into the main database before any caller can observe its
+// contents. A database still busy after the timeout fails Open or Begin.
 func Open(ctx context.Context, path string) (*DB, error) {
-	database, err := sql.Open("sqlite", FileDSN(path, nil))
+	return open(ctx, path, writerBusyTimeout)
+}
+
+func open(ctx context.Context, path string, busyTimeout time.Duration) (*DB, error) {
+	// Both settings ride the DSN, so the driver sets them on every
+	// connection it opens, before the first statement runs.
+	database, err := sql.Open("sqlite", FileDSN(path, map[string]string{
+		"_busy_timeout": strconv.FormatInt(busyTimeout.Milliseconds(), 10),
+		"_txlock":       "immediate",
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database %q: %w", path, err)
 	}
@@ -63,9 +78,6 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		return nil, operationErr
 	}
 
-	if _, err := database.ExecContext(ctx, "PRAGMA busy_timeout=0"); err != nil {
-		return closeOnError(fmt.Errorf("set SQLite busy timeout for %q: %w", path, err))
-	}
 	if err := checkpointTruncate(ctx, database); err != nil {
 		return closeOnError(fmt.Errorf("checkpoint SQLite database %q on open: %w", path, err))
 	}
@@ -92,9 +104,10 @@ func (database *DB) Close() error {
 	return nil
 }
 
-// Begin starts a transaction whose statements run non-cancellable, under
-// context.WithoutCancel(ctx): SQLite rolls an explicit transaction back on
-// its own when a statement in it is interrupted.
+// Begin starts an immediate transaction, which takes the write lock at once,
+// and runs its statements non-cancellable, under context.WithoutCancel(ctx):
+// SQLite rolls an explicit transaction back on its own when a statement in it
+// is interrupted.
 func (database *DB) Begin(ctx context.Context) (*Tx, error) {
 	if database == nil || database.database == nil {
 		return nil, fmt.Errorf("begin SQLite rewrite transaction: database is nil")

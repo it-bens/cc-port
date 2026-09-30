@@ -123,7 +123,8 @@ round-trip with sync fields, export-warning propagation), the pull-side Plan pat
 discovery across multiple tools, resolution coverage by sender `Resolve` and
 by `--from-manifest`, and the new-MCP list against a destination that does
 and does not already declare the archive's definitions), a push-pull
-round-trip via `file://`, and the sentinel errors. Pipeline-open dispatch tests (remote-not-found,
+round-trip via `file://`, the pull-side Execute path with an ignored-writer
+collector and a live writer, and the sentinel errors. Pipeline-open dispatch tests (remote-not-found,
 encrypted-no-passphrase, plaintext-with-passphrase) live in
 `cmd/cc-port/pushcmd_test.go` and `cmd/cc-port/pullcmd_test.go` because cmd
 owns the dispatch. `render_test.go` covers Render output via substring

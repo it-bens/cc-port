@@ -649,15 +649,11 @@ func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *arc
 			return nil, err
 		}
 	}
-	unapplied, err := applyThreadSidecars(ctx, sidecars, databases)
+	unapplied, databaseWarnings, err := workspace.updateStateDatabases(ctx, databases, sidecars, workspace.rolloutsStaged)
 	if err != nil {
 		return nil, err
 	}
-	if workspace.rolloutsStaged && len(databases) > 0 {
-		if err := rearmBackfillState(ctx, databases); err != nil {
-			return nil, err
-		}
-	}
+	warnings = append(warnings, databaseWarnings...)
 	switch {
 	case unapplied == 0:
 	case len(databases) == 0:
@@ -872,77 +868,103 @@ func (workspace *Workspace) parseThreadSidecars() ([]threadSidecar, error) {
 	return sidecars, nil
 }
 
-func applyThreadSidecars(ctx context.Context, sidecars []threadSidecar, databases []string) (int, error) {
-	unapplied := 0
-	for _, sidecar := range sidecars {
-		applied := false
-		for _, path := range databases {
-			database, err := sqlrewrite.Open(ctx, path)
-			if err != nil {
-				return 0, fmt.Errorf("open state database %s: %w", path, err)
-			}
-			transaction, err := database.Begin(ctx)
-			if err != nil {
-				_ = database.Close()
-				return 0, err
-			}
-			values := sidecarColumns(sidecar)
-			count, err := database.UpdateColumnsByKey(ctx, transaction, threadsTable, "id", sidecar.ThreadID, values, nil)
-			if err == nil {
-				err = transaction.Commit()
-			} else {
-				_ = transaction.Rollback()
-			}
-			if err == nil {
-				err = database.CheckpointTruncate(ctx)
-			}
-			closeErr := database.Close()
-			if err == nil {
-				err = closeErr
-			}
-			if err != nil {
-				return 0, fmt.Errorf("apply threads sidecar for %s: %w", sidecar.ThreadID, err)
-			}
-			applied = applied || count > 0
+// updateStateDatabases opens each state database once and, in one
+// transaction, applies every sidecar and, when rearm is set, the backfill
+// re-arm. A sidecar that matched no row in any database counts as unapplied.
+func (workspace *Workspace) updateStateDatabases(
+	ctx context.Context,
+	databases []string,
+	sidecars []threadSidecar,
+	rearm bool,
+) (unapplied int, warnings []string, err error) {
+	applied := make([]bool, len(sidecars))
+	for _, path := range databases {
+		matched, warning, err := workspace.updateStateDatabase(ctx, path, sidecars, rearm)
+		if err != nil {
+			return 0, nil, err
 		}
-		if !applied {
+		for index := range applied {
+			applied[index] = applied[index] || matched[index]
+		}
+		if warning != "" {
+			warnings = append(warnings, warning)
+		}
+	}
+	for _, sidecarApplied := range applied {
+		if !sidecarApplied {
 			unapplied++
 		}
 	}
-	return unapplied, nil
+	return unapplied, warnings, nil
 }
 
-func rearmBackfillState(ctx context.Context, databases []string) error {
-	for _, path := range databases {
-		database, err := sqlrewrite.Open(ctx, path)
-		if err != nil {
-			return fmt.Errorf("open state database %s: %w", path, err)
-		}
-		transaction, err := database.Begin(ctx)
-		if err != nil {
-			_ = database.Close()
-			return fmt.Errorf("re-arm backfill state for %s: %w", path, err)
-		}
-		_, err = database.UpdateColumnsByKey(ctx, transaction, backfillStateTable, "id", 1, map[string]any{
-			"status": "pending", "last_watermark": nil,
-		}, nil)
-		if err == nil {
-			err = transaction.Commit()
-		} else {
+// updateStateDatabase returns which sidecars matched a row in path. A
+// checkpoint failure after the commit is a warning, as in move's
+// commit-databases: the committed rows stand, and the next Open folds the
+// WAL in.
+func (workspace *Workspace) updateStateDatabase(
+	ctx context.Context,
+	path string,
+	sidecars []threadSidecar,
+	rearm bool,
+) (matched []bool, warning string, err error) {
+	database, err := sqlrewrite.Open(ctx, path)
+	if err != nil {
+		return nil, "", fmt.Errorf("open state database %s: %w", path, err)
+	}
+	matched, err = commitStateDatabaseUpdates(ctx, database, path, sidecars, rearm)
+	if err != nil {
+		_ = database.Close()
+		return nil, "", err
+	}
+	if err := workspace.checkpointAfterCommit(database, ctx); err != nil {
+		warning = fmt.Sprintf("could not checkpoint %s after commit: %v", path, err)
+	}
+	if err := database.Close(); err != nil {
+		return nil, "", fmt.Errorf("close state database %s: %w", path, err)
+	}
+	return matched, warning, nil
+}
+
+func commitStateDatabaseUpdates(
+	ctx context.Context,
+	database *sqlrewrite.DB,
+	path string,
+	sidecars []threadSidecar,
+	rearm bool,
+) ([]bool, error) {
+	transaction, err := database.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin state database %s: %w", path, err)
+	}
+	matched := make([]bool, len(sidecars))
+	for index, sidecar := range sidecars {
+		if err := ctx.Err(); err != nil {
 			_ = transaction.Rollback()
+			return nil, err
 		}
-		if err == nil {
-			err = database.CheckpointTruncate(ctx)
-		}
-		closeErr := database.Close()
-		if err == nil {
-			err = closeErr
-		}
+		count, err := database.UpdateColumnsByKey(ctx, transaction, threadsTable, "id", sidecar.ThreadID, sidecarColumns(sidecar), nil)
 		if err != nil {
-			return fmt.Errorf("re-arm backfill state for %s: %w", path, err)
+			_ = transaction.Rollback()
+			return nil, fmt.Errorf("apply threads sidecar for %s to %s: %w", sidecar.ThreadID, path, err)
+		}
+		matched[index] = count > 0
+	}
+	if rearm {
+		if err := ctx.Err(); err != nil {
+			_ = transaction.Rollback()
+			return nil, err
+		}
+		pending := map[string]any{"status": "pending", "last_watermark": nil}
+		if _, err := database.UpdateColumnsByKey(ctx, transaction, backfillStateTable, "id", 1, pending, nil); err != nil {
+			_ = transaction.Rollback()
+			return nil, fmt.Errorf("re-arm backfill state for %s: %w", path, err)
 		}
 	}
-	return nil
+	if err := transaction.Commit(); err != nil {
+		return nil, fmt.Errorf("commit state database %s: %w", path, err)
+	}
+	return matched, nil
 }
 
 func sidecarColumns(sidecar threadSidecar) map[string]any {

@@ -138,6 +138,22 @@ the tool's `DisplayName` only when more than one target ran this
 invocation. Move and stats print warnings as `    ! ` lines inside the
 tool's `[<tool>]` block on stdout instead.
 
+The ignored-writer lines take neither path. With `--ignore-live-sessions`,
+`move`, `import`, and `pull` record every live writer their witnesses report
+and write one `Warning: ignored live <DisplayName> writer: <writer>` line per
+writer to stderr, whatever the outcome and whatever the target count, so an
+ignored writer always names its tool. `livesessions.go:renderIgnoredWriters`
+renders them, with the writer through `tool.ActiveWriter.String()`;
+`livesessions.go:newIgnoredWriters` builds the collector and rejects
+`--ignore-live-sessions` without `--apply` as a usage error.
+
+`livesessions.go:endApplyPath` ends the apply path of all three commands. It
+renders those lines and returns the run error, carrying the refusal hint,
+joined with the render error. A failed render is returned rather than aborting
+the command, so after a successful run `move`, `import`, and `pull` still print
+their result, notes, and warnings, and return the render error joined with any
+later write error.
+
 ## Stream routing
 
 Every cmd write goes through `cmd.OutOrStdout()` for normal output and
@@ -187,3 +203,13 @@ because the dispatch is owned here. `stats_test.go` pins the stats result
 stream routing and the `--json` DTO shape; `stats_integration_test.go`
 drives both stats modes end-to-end over the fixture. `integration_test.go`
 at the repo root runs full CLI end-to-end against a fixture `~/.claude`.
+
+`livesessions_test.go` covers `--ignore-live-sessions` wiring: the flag
+without `--apply` is a usage error on `move`, `import`, and `pull`, and
+`renderIgnoredWriters` prints one `Warning: ignored live <DisplayName> writer`
+line per recorded writer. The `move`, `import`, and `pull` command tests add a
+refusal-hint case, an ignored-writer line printed after a failed apply and
+after a successful one, and a case per command whose stderr (`ignoredWriterFailer`)
+fails only on the ignored-writer lines, asserting the command still prints its
+result and returns the render error. A dry-run `move` prints a busy database
+and a quoted cwd.

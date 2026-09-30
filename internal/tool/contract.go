@@ -56,8 +56,10 @@ type Workspace interface {
 	LockPath() string // cc-port's advisory flock for this tool
 
 	// ActiveWriters gathers liveness evidence. Any non-empty result blocks
-	// every mutating command. An evidence source that cannot be read
-	// returns an error wrapping ErrNoWitness, which also blocks.
+	// every mutating command unless the command runs with
+	// --ignore-live-sessions. An evidence source that cannot be read
+	// returns an error wrapping ErrNoWitness, which blocks with or without
+	// the flag.
 	ActiveWriters() ([]ActiveWriter, error)
 
 	Mover

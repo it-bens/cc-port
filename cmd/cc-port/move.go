@@ -14,12 +14,13 @@ import (
 
 // newMoveCmd returns the move subcommand with closure-scoped flag locals.
 func newMoveCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
-	var apply bool
+	var apply, ignoreLiveSessions bool
 	cmd := &cobra.Command{
 		Use:   "move <old-path> <new-path>",
 		Short: "Move a project and update references across every selected tool",
 		Long: "Renames a project directory and rewrites every selected tool's references.\n" +
-			"Default is dry-run — use --apply to execute.",
+			"Default is dry-run — use --apply to execute.\n\n" +
+			moveLiveSessionsHelp,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
 				return &usageError{err: err}
@@ -29,10 +30,16 @@ func newMoveCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
+			ignored, err := newIgnoredWriters(ignoreLiveSessions, apply)
+			if err != nil {
+				return err
+			}
+
 			moveOptions, err := parseMoveOptions(cmd, args)
 			if err != nil {
 				return err
 			}
+			moveOptions.IgnoredWriters = ignored
 
 			targets, err := resolveTargets(toolSet, flags)
 			if err != nil {
@@ -62,10 +69,11 @@ func newMoveCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 			if applyResult != nil {
 				renderApplyResult(cmd.OutOrStdout(), applyResult)
 			}
-			return runErr
+			return endApplyPath(cmd.ErrOrStderr(), targets, ignored, runErr)
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "execute the move (default is dry-run)")
+	cmd.Flags().BoolVar(&ignoreLiveSessions, ignoreLiveSessionsFlag, false, ignoreLiveSessionsUsage)
 	cmd.Flags().Bool(
 		"refs-only", false,
 		"update references only, do not move project directory on disk",
@@ -142,7 +150,7 @@ func runMoveDryRun(ctx context.Context, stdout io.Writer, targets []tool.Target,
 			_, _ = fmt.Fprintf(stdout, "    ! could not inspect active writers: %v\n", witnessErr)
 		}
 		for _, writer := range activeWriters[toolPlan.Tool] {
-			_, _ = fmt.Fprintf(stdout, "    ! active %s writer: pid=%d cwd=%s\n", displayName(targets, toolPlan.Tool), writer.Pid, writer.Cwd)
+			_, _ = fmt.Fprintf(stdout, "    ! active %s writer: %s\n", displayName(targets, toolPlan.Tool), writer.String())
 		}
 		_, _ = fmt.Fprintln(stdout)
 	}

@@ -20,9 +20,11 @@ import (
 
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/importer"
+	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
@@ -579,4 +581,44 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(homeB.Dir, "projects", encodedDir)); err != nil {
 		t.Fatalf("encoded project dir missing after pull: %v", err)
 	}
+}
+
+func TestExecutePull_IgnoredWritersProceedsPastALiveWriter(t *testing.T) {
+	r := newFileRemote(t)
+	injectArchiveWithPusher(t, r, "k", "other-user@other-host", time.Now().UTC())
+	homeB := buildTestHomeBlank(t)
+	require.NoError(t, os.MkdirAll(homeB.SessionsDir(), 0o750))
+	witness := []byte(`{"cwd":"/Users/test/Projects/other","pid":4242}`)
+	require.NoError(t, os.WriteFile(filepath.Join(homeB.SessionsDir(), "4242.json"), witness, 0o600))
+	fakeUserHome := t.TempDir()
+	workspace := claude.NewWorkspaceForTest(homeB,
+		func(key string) string {
+			if key == "HOME" {
+				return fakeUserHome
+			}
+			return ""
+		},
+		func(int) bool { return true },
+		func(int) (time.Time, error) {
+			t.Fatal("the witness session file carries no procStart, so its start time must not be read")
+			return time.Time{}, nil
+		})
+	targets := []tool.Target{{Tool: claude.New(), Workspace: workspace}}
+	targetPath := filepath.Join(t.TempDir(), "pulled-project")
+	source := openSourceForTest(t, r, "k", "")
+	plan, err := PlanPull(context.Background(), PullOptions{
+		AllTools: toolSetForTest(), Targets: targets, Name: "k", TargetPath: targetPath,
+	}, source)
+	require.NoError(t, err)
+	ignored := &lock.IgnoredWriters{}
+
+	result, err := ExecutePull(context.Background(), PullOptions{
+		AllTools: toolSetForTest(), Targets: targets, Name: "k", TargetPath: targetPath, IgnoredWriters: ignored,
+	}, plan, source)
+
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, []lock.IgnoredWriter{
+		{Tool: "claude", Writer: tool.ActiveWriter{Pid: 4242, Cwd: "/Users/test/Projects/other"}},
+	}, ignored.List())
 }

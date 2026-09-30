@@ -10,8 +10,9 @@ opens and guards.
 ## Public API
 
 - `DB`, `Open(ctx context.Context, path string) (*DB, error)`: opens `path`
-  (through `FileDSN`) with a zero busy timeout and folds its WAL into the
-  main database before any caller can observe its contents.
+  (through `FileDSN`) with a 5 s busy timeout and immediate transactions,
+  and folds its WAL into the main database before any caller can observe
+  its contents.
 - `FileDSN(path string, params map[string]string) string`: encodes `path` as
   a `file:` URL DSN carrying `params` as its query string, so a `?` or other
   DSN-significant byte in `path` still addresses the intended file. Query
@@ -88,11 +89,9 @@ opens and guards.
   mutators check nothing for cancellation and write under `WithoutCancel`,
   so they do not observe one; their callers stop between calls instead,
   checking `ctx.Err()` before each `UpdateColumnsByKey` or
-  `UpdateColumnsByRowID` call in `internal/tool/codex`'s queue and
-  state-database rewrite loops (`queue.go`, `statedb.go`);
-  `applyThreadSidecars` and `rearmBackfillState` (`export_import_stats.go`)
-  make one such call per database, right after a live-`ctx` `Open`, with no
-  check of their own.
+  `UpdateColumnsByRowID` call in `internal/tool/codex`'s queue,
+  state-database rewrite, and import state-database update loops
+  (`queue.go`, `statedb.go`, `export_import_stats.go`).
   `RewriteTextColumn` observes a later cancel no more than they do once its
   entry check has passed.
 - `(*DB).Close`, `(*Tx).Commit`, and `(*Tx).Rollback` take no context, and
@@ -130,7 +129,9 @@ opens and guards.
 - `FileDSN` builds a `file:` URL through `net/url`, so a `?` inside `path`
   is percent-encoded as part of the URL's path component rather than left as
   a literal byte the DSN parser could mistake for the query separator.
-  `Open` calls `FileDSN(path, nil)`; `internal/tool/codex`'s
+  `Open` passes `_busy_timeout` and `_txlock=immediate` to `FileDSN`, never
+  `FileDSN(path, nil)`;
+  `internal/tool/codex`'s
   `openReadOnlyDatabase` calls `FileDSN(path, map[string]string{"mode": "ro"})`;
   its `probeDatabaseBusy` calls `FileDSN(path, nil)` and passes the result to
   `sql.Open` directly, since it needs a write connection this package's
@@ -157,23 +158,45 @@ opens and guards.
 
 **Handled.**
 
-- `Open` sets `PRAGMA busy_timeout=0` immediately after opening the
-  connection, so any `SQLITE_BUSY` from a concurrent writer returns
-  immediately as a hard error rather than blocking. `TestOpenRefusesBusyWriterImmediately`
-  asserts the refusal completes in under a second against a held writer
-  transaction.
+- `Open` calls the unexported `open` with a 5 s busy timeout, the timeout
+  Codex sets on its own state connections
+  (`codex-rs/state/src/sqlite.rs:305`). `open` carries the timeout in the DSN,
+  as `_busy_timeout` in milliseconds, so the driver applies it on every
+  connection it opens, before any other statement. `open` runs no separate
+  `PRAGMA busy_timeout`. No package state holds the timeout, so the
+  in-package tests pass a shorter one.
+- The DSN carries `_txlock=immediate`, so `Begin` issues `BEGIN IMMEDIATE`
+  and takes the write lock at once. A Codex write in progress is waited out
+  at `Begin` instead of surfacing as `SQLITE_BUSY_SNAPSHOT` at cc-port's
+  first `UPDATE`. `TestBeginTakesTheWriteLockBeforeAnyStatementRuns` pins
+  the DSN parameter.
+- The write lock is held from `Begin` until the caller commits or rolls
+  back. A move holds it on every database it opens from the rewrite surface
+  until `commit-databases`, including databases with no matching rows. A
+  Codex write blocked for longer than its own 5 s busy timeout fails, and a
+  Codex transaction that reads before it writes fails at once.
+- A writer that releases within the timeout lets `Open` and `Begin`
+  proceed. `TestOpenAndBeginSucceedOnceTheWriterReleasesWithinTheTimeout`
+  covers it.
 - The connection pool is capped to one connection (`SetMaxOpenConns(1)`,
   `SetMaxIdleConns(1)`), so cc-port's own internal concurrency cannot
   self-contend against the same handle.
 
 **Refused.**
 
-- Waiting on a busy database. A zero busy timeout is a deliberate refusal to
-  retry: cc-port's caller (the move apply bracket) needs a definite answer,
-  not a stall, when another writer holds the database.
+- A database still busy after the timeout. At `Open` the failure is
+  `checkpointTruncate`'s busy result (`SQLite busy (N log frames, M
+  checkpointed frames)`); at `Begin` it is the driver's `SQLITE_BUSY` error.
+  Both propagate like any other `Open` or `Begin` error.
+  `TestOpenFailsBusyAfterWaitingOutItsTimeout` and
+  `TestBeginFailsBusyWhileAnotherConnectionHoldsTheWriteLock` cover the two
+  failures.
 
 **Not covered.**
 
+- A retry beyond the single timeout.
+- Cancelling `Begin`'s wait. `Begin` runs under `context.WithoutCancel`
+  (§Cancellation), so a cancel takes effect only after the wait ends.
 - Detecting *which* process holds the busy lock. The busy error reports that
   a writer exists, not its identity; identifying a live Codex process is the
   witness's job (`internal/tool/codex/README.md` §Witness evidence order),
@@ -319,7 +342,7 @@ opens and guards.
 ## Tests
 
 Unit tests in `sqlrewrite_test.go`: the version-floor drift test, the
-busy-refusal timing test, the checkpoint-on-open test against a fixture
+busy-handling tests (§Busy handling), the checkpoint-on-open test against a fixture
 database with a synthetic `-wal`, `FileDSN` round-tripping a table through a
 path whose directory segment contains `?`, `RewriteTextColumn` fixtures
 covering a TEXT and a BLOB column, the update-without-insert behavior of

@@ -51,7 +51,11 @@ package's types support.
     `--include`, picker selection, or a manifest that marks it included).
   - `Qualified`: `Tool`, `Category` (one `<tool>/<category>` pair).
   - `MoveRequest`: `OldPath`, `NewPath`, `RefsOnly`, `DeepRewrite`.
-  - `ActiveWriter`: `Pid`, `Cwd` (one piece of liveness evidence).
+  - `ActiveWriter`: `Pid`, `Cwd`, `Detail` (one piece of liveness
+    evidence). `Detail` is adapter-supplied text for evidence that has no
+    process behind it, such as a busy database. `String()` renders the
+    writer's non-empty parts joined by spaces: `pid=<n>`, `cwd=<quoted>`,
+    then the `Detail` text verbatim. It is the one renderer for a writer.
   - `MCPServer`: `Name` plus at most one transport, either `Command`+`Args`
     or `URL`. `LaunchLine()` renders whichever the definition carries, and
     reports a definition naming neither as having no launch target rather
@@ -233,7 +237,8 @@ A third adapter is one new package (`internal/tool/<name>`) plus one line in
 
 ## Tests
 
-Unit tests in `path_test.go`, `restorer_test.go`, `set_test.go`. Coverage:
+Unit tests in `path_test.go`, `restorer_test.go`, `set_test.go`, and
+`tool_test.go`. Coverage:
 `ResolveProjectPath` tilde expansion and symlink resolution, `Restorer`'s
 in-memory vs. sibling-backup threshold and reverse-order restore including a
 mixed file-and-undo registration sequence, `ReplaceFile`'s no-op for
@@ -241,4 +246,5 @@ identical bytes, `ReplacePathInFile`'s rewrite and failure modes, and
 `NewSet`'s empty-registry,
 empty-name, duplicate-name, duplicate-qualified-category, and duplicate-key
 panic conditions alongside its
-`ByName`/`Detected` accessors and the package-level `ParseQualified` parser.
+`ByName`/`Detected` accessors, the package-level `ParseQualified` parser, and
+`ActiveWriter.String()`'s pid-and-cwd, pid-only, and detail-only renderings.
