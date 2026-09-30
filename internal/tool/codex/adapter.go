@@ -2,6 +2,7 @@
 package codex
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/it-bens/cc-port/internal/lock"
+	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 )
 
@@ -128,20 +130,26 @@ func newWorkspace(
 	getenv func(string) string,
 	listProcesses ProcessLister,
 ) *Workspace {
-	return &Workspace{home: home, getenv: getenv, listProcesses: listProcesses}
+	return &Workspace{
+		home: home, getenv: getenv, listProcesses: listProcesses,
+		checkpointAfterCommit: (*sqlrewrite.DB).CheckpointTruncate,
+	}
 }
 
 // Workspace implements tool.Workspace for one resolved Codex home.
 type Workspace struct {
-	home           *Home
-	getenv         func(string) string
-	listProcesses  ProcessLister
-	applyWarnings  []string
-	warningMutex   sync.Mutex
-	historyAppends [][]byte
-	indexAppends   [][]byte
-	sidecarAppends [][]byte
-	rolloutsStaged bool
+	home          *Home
+	getenv        func(string) string
+	listProcesses ProcessLister
+	// checkpointAfterCommit folds a state database's WAL after Finalize
+	// commits; in-package tests set it to inject a failure.
+	checkpointAfterCommit func(*sqlrewrite.DB, context.Context) error
+	applyWarnings         []string
+	warningMutex          sync.Mutex
+	historyAppends        [][]byte
+	indexAppends          [][]byte
+	sidecarAppends        [][]byte
+	rolloutsStaged        bool
 }
 
 // Root implements tool.Workspace.

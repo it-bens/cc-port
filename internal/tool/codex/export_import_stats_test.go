@@ -629,60 +629,70 @@ func TestCodexFinalizeWithoutSidecarsOrRolloutsSkipsStateDBDiscovery(t *testing.
 	assert.Empty(t, warnings)
 }
 
-func TestCodexSidecarCheckpointFailureAfterCommitWarnsAndKeepsTheUpdate(t *testing.T) {
+func TestCodexFinalizeCheckpointFailureAfterCommitWarnsAndKeepsTheUpdates(t *testing.T) {
 	home := SetupFixture(t)
 	firstDatabase := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
-	secondDatabase := filepath.Join(home.SQLiteDir, "state_12.sqlite")
+	secondDatabase := filepath.Join(home.SQLiteDir, "state_6.sqlite")
 	buildFixtureStateDB(t, secondDatabase)
-	failFirstCheckpointAfterCommit(t)
-	title := "imported title"
-	sidecars := []threadSidecar{{ThreadID: fixtureThreadOne, Title: &title}}
-
-	unapplied, warnings, err := applyThreadSidecars(t.Context(), sidecars, []string{firstDatabase, secondDatabase})
-
-	require.NoError(t, err)
-	assert.Zero(t, unapplied)
-	assert.Equal(t, []string{
-		"could not checkpoint " + firstDatabase + " after applying the threads sidecar: checkpoint failed",
-	}, warnings)
-	assert.Equal(t, "imported title", threadTitle(t, firstDatabase, fixtureThreadOne))
-	assert.Equal(t, "imported title", threadTitle(t, secondDatabase, fixtureThreadOne))
-}
-
-func TestCodexBackfillCheckpointFailureAfterCommitWarnsAndKeepsTheUpdate(t *testing.T) {
-	home := SetupFixture(t)
-	firstDatabase := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
-	secondDatabase := filepath.Join(home.SQLiteDir, "state_12.sqlite")
-	buildFixtureStateDB(t, secondDatabase)
-	failFirstCheckpointAfterCommit(t)
-
-	warnings, err := rearmBackfillState(t.Context(), []string{firstDatabase, secondDatabase})
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{
-		"could not checkpoint " + firstDatabase + " after re-arming the backfill state: checkpoint failed",
-	}, warnings)
-	assertBackfillState(t, firstDatabase, "pending", nil)
-	assertBackfillState(t, secondDatabase, "pending", nil)
-}
-
-func TestCodexFinalizeReportsSidecarAndBackfillCheckpointWarnings(t *testing.T) {
-	home := SetupFixture(t)
-	database := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
-	originalCheckpoint := checkpointAfterCommit
-	t.Cleanup(func() { checkpointAfterCommit = originalCheckpoint })
-	checkpointAfterCommit = func(*sqlrewrite.DB, context.Context) error { return errors.New("checkpoint failed") }
 	workspace := quietTestWorkspace(home)
-	workspace.sidecarAppends = [][]byte{[]byte(`{"thread_id":"` + fixtureThreadOne + `","archived_at":null,` +
-		`"title":"imported title","git":{"sha":null,"branch":null,"origin_url":null}}` + "\n")}
+	failFirstCheckpointAfterCommit(t, workspace)
+	workspace.sidecarAppends = [][]byte{sidecarLine(fixtureThreadOne, "imported title")}
 	workspace.rolloutsStaged = true
 
 	warnings, err := workspace.Finalize(t.Context(), FixtureProjectPath(), nil)
 
 	require.NoError(t, err)
+	assert.Equal(t, []string{"could not checkpoint " + firstDatabase + " after commit: checkpoint failed"}, warnings)
+	for _, database := range []string{firstDatabase, secondDatabase} {
+		assert.Equal(t, "imported title", threadTitle(t, database, fixtureThreadOne))
+		assertBackfillState(t, database, "pending", nil)
+	}
+}
+
+// Every Open is followed by exactly one post-commit checkpoint, so the
+// checkpoint call count is the number of times a state database was opened.
+func TestCodexFinalizeOpensEachStateDatabaseOnce(t *testing.T) {
+	home := SetupFixture(t)
+	firstDatabase := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
+	secondDatabase := filepath.Join(home.SQLiteDir, "state_6.sqlite")
+	buildFixtureStateDB(t, secondDatabase)
+	insertThreadRow(t, firstDatabase, fixtureThreadTwo, threadRowMetadata{})
+	insertThreadRow(t, secondDatabase, fixtureThreadTwo, threadRowMetadata{})
+	workspace := quietTestWorkspace(home)
+	opens := 0
+	workspace.checkpointAfterCommit = func(database *sqlrewrite.DB, ctx context.Context) error {
+		opens++
+		return database.CheckpointTruncate(ctx)
+	}
+	workspace.sidecarAppends = [][]byte{
+		sidecarLine(fixtureThreadOne, "first imported title"),
+		sidecarLine(fixtureThreadTwo, "second imported title"),
+	}
+
+	warnings, err := workspace.Finalize(t.Context(), FixtureProjectPath(), nil)
+
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	assert.Equal(t, 2, opens)
+}
+
+func TestCodexFinalizeCountsSidecarMatchingNoStateDatabaseAsUnapplied(t *testing.T) {
+	home := SetupFixture(t)
+	secondDatabase := filepath.Join(home.SQLiteDir, "state_6.sqlite")
+	buildFixtureStateDB(t, secondDatabase)
+	insertThreadRow(t, secondDatabase, fixtureThreadTwo, threadRowMetadata{})
+	workspace := quietTestWorkspace(home)
+	workspace.sidecarAppends = [][]byte{
+		sidecarLine(fixtureThreadTwo, "matches only the second database"),
+		sidecarLine("00000000-0000-4000-8000-000000000099", "matches no database"),
+	}
+
+	warnings, err := workspace.Finalize(t.Context(), FixtureProjectPath(), nil)
+
+	require.NoError(t, err)
 	assert.Equal(t, []string{
-		"could not checkpoint " + database + " after applying the threads sidecar: checkpoint failed",
-		"could not checkpoint " + database + " after re-arming the backfill state: checkpoint failed",
+		"1 threads sidecar row(s) could not be applied because their thread rows do not exist and this " +
+			"archive carries no rollout files to rebuild them from",
 	}, warnings)
 }
 
@@ -1406,20 +1416,23 @@ func assertBackfillState(t *testing.T, path, expectedStatus string, expectedWate
 	assert.Equal(t, *expectedWatermark, watermark.String)
 }
 
-// failFirstCheckpointAfterCommit makes the first post-commit checkpoint fail
-// and lets every later one run for real.
-func failFirstCheckpointAfterCommit(t *testing.T) {
+// failFirstCheckpointAfterCommit makes workspace's first post-commit
+// checkpoint fail and lets every later one run for real.
+func failFirstCheckpointAfterCommit(t *testing.T, workspace *Workspace) {
 	t.Helper()
-	originalCheckpoint := checkpointAfterCommit
-	t.Cleanup(func() { checkpointAfterCommit = originalCheckpoint })
 	calls := 0
-	checkpointAfterCommit = func(database *sqlrewrite.DB, ctx context.Context) error {
+	workspace.checkpointAfterCommit = func(database *sqlrewrite.DB, ctx context.Context) error {
 		calls++
 		if calls == 1 {
 			return errors.New("checkpoint failed")
 		}
-		return originalCheckpoint(database, ctx)
+		return database.CheckpointTruncate(ctx)
 	}
+}
+
+func sidecarLine(threadID, title string) []byte {
+	return []byte(`{"thread_id":"` + threadID + `","archived_at":null,` +
+		`"title":"` + title + `","git":{"sha":null,"branch":null,"origin_url":null}}` + "\n")
 }
 
 func threadTitle(t *testing.T, path, id string) string {

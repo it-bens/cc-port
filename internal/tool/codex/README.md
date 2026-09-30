@@ -630,11 +630,15 @@ shapes themselves.
   `status='pending'` and `last_watermark=NULL`. The warning distinguishes no
   state database, missing rows with backfill re-armed, and missing rows with
   no rollout files to rebuild from.
-- A checkpoint failure after a sidecar or backfill update commits is a
-  warning naming the database, as in move's `commit-databases`: the
-  committed update stands, and the next `sqlrewrite.Open` folds the WAL in.
-  The loop continues with the next database and sidecar. An `Open`,
-  `Begin`, update, commit, or `Close` failure still fails `Finalize`.
+- `Finalize` opens each state database once, and only when there is a
+  sidecar row to apply or a backfill to re-arm. One transaction per database
+  carries every sidecar update and the re-arm. A sidecar counts as applied
+  when its update matched a row in any state database.
+- A checkpoint failure after the commit is a warning naming the database, as
+  in move's `commit-databases`: the committed updates stand, and the next
+  `sqlrewrite.Open` folds the WAL in. The loop continues with the next
+  database. An `Open`, `Begin`, update, commit, or `Close` failure still fails
+  `Finalize`.
 
 **Refused.**
 
@@ -1093,9 +1097,11 @@ left untouched, a prefix-sharing skill path left alone, apply failing when a
 planned payload changed after the plan, the queue rewrite rolling back
 before `commit-databases`, the queue schema and payload errors in preflight,
 the busy probe covering `queue_*.sqlite` and `thread_history_*.sqlite`, and
-a checkpoint that fails after the sidecar or backfill update has committed
-becoming a warning that names the database while both state databases keep
-the update, with `Finalize` reporting both warnings.
+a checkpoint that fails after the first state database's commit becoming one
+`Finalize` warning that names it while both state databases keep the sidecar
+update and the backfill re-arm, each state database opened once for two
+sidecars, and a sidecar matching no row in any state database counted as
+unapplied.
 
 `mcp_test.go` covers `MCPServers`: the fixture's stdio and streamable-HTTP
 tables, a config without an `[mcp_servers]` table, an empty one, an absent

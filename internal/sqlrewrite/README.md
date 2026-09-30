@@ -89,11 +89,9 @@ opens and guards.
   mutators check nothing for cancellation and write under `WithoutCancel`,
   so they do not observe one; their callers stop between calls instead,
   checking `ctx.Err()` before each `UpdateColumnsByKey` or
-  `UpdateColumnsByRowID` call in `internal/tool/codex`'s queue and
-  state-database rewrite loops (`queue.go`, `statedb.go`);
-  `applyThreadSidecars` and `rearmBackfillState` (`export_import_stats.go`)
-  make one such call per database, right after a live-`ctx` `Open`, with no
-  check of their own.
+  `UpdateColumnsByRowID` call in `internal/tool/codex`'s queue,
+  state-database rewrite, and import state-database update loops
+  (`queue.go`, `statedb.go`, `export_import_stats.go`).
   `RewriteTextColumn` observes a later cancel no more than they do once its
   entry check has passed.
 - `(*DB).Close`, `(*Tx).Commit`, and `(*Tx).Rollback` take no context, and
