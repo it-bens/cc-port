@@ -11,17 +11,18 @@ Claude Code is closed source. cc-port rewrites files that Claude Code also write
 | 3 | Does Claude Code write a stale copy of `.claude.json` back? | No. Every write merges into the content on disk |
 | 4 | Where is the config lock without a custom config directory? | `.claude.json.lock` next to `~/.claude.json` |
 | 5 | Which other Claude files are written under a lock? | `known_marketplaces.json` only; `settings.json` and `installed_plugins.json` are not |
-| 6 | What does Claude Code do when its lock is held by someone else? | It defers the write to the next append, and removes a lock with an old mtime |
+| 6 | What does Claude Code do when its history lock is held by someone else? | It defers the write to the next append, and removes a lock with an old mtime |
+| 7 | What does Claude Code do when its config lock is held by someone else? | It defers its config writes without blocking the session, and removes the lock at about 10 s old |
 
 ## Materials and methods
 
 ### Subject
 
-Claude Code v2.1.284 on macOS, signed in with a subscription account. Every result applies to this version only. The lock protocol and write patterns are internal to Claude Code and not a documented contract.
+Claude Code v2.1.284 on macOS, signed in with a subscription account, for Experiments 1 to 6, and v2.1.285 for Experiment 7. Every result applies to the version it was measured on. The lock protocol and write patterns are internal to Claude Code and not a documented contract.
 
 ### Isolated configuration
 
-Experiments 1, 2, 3, 5 and 6 ran against a scratch configuration directory selected with `CLAUDE_CONFIG_DIR`, with a scratch project as the working directory. With that variable set, Claude Code keeps `.claude.json`, `history.jsonl`, `settings.json` and the `plugins` directory inside the scratch directory, so no experiment touched the real configuration. For Experiments 5 and 6, the session was started with a minimal environment, so it inherited no settings or credentials from the shell that launched it.
+Experiments 1, 2, 3, 5, 6 and 7 ran against a scratch configuration directory selected with `CLAUDE_CONFIG_DIR`, with a scratch project as the working directory. With that variable set, Claude Code keeps `.claude.json`, `history.jsonl`, `settings.json` and the `plugins` directory inside the scratch directory, so no experiment touched the real configuration. For Experiments 5, 6 and 7, the session was started with a minimal environment, so it inherited no settings or credentials from the shell that launched it.
 
 Experiment 4 observed the real configuration without changing it.
 
@@ -134,17 +135,35 @@ During the uninstall, a lock directory `.storage-write.lock` appeared in the con
 
 **Result.** Claude Code does not wait for a held lock and does not drop the entry. It keeps the entry in memory and writes it with the next append that gets the lock. A lock with an old mtime is treated as stale and removed. The age at which a lock counts as stale lies between about 1 s, at which the held lock was not removed, and one hour.
 
+## Experiment 7: contended config lock
+
+**Question.** What does Claude Code do when `.claude.json.lock` is held by another process?
+
+**Procedure.** The extended watcher ran during each step.
+
+1. **Baseline.** With no lock present, a session was started and sent one prompt.
+2. **Held lock.** `.claude.json.lock` was created by hand before a session started and then left alone.
+3. **Refreshed lock.** `.claude.json.lock` was created by hand before a session started, and its mtime was set to the current time every second for 45 s. The session's screen was checked every 5 s. The refreshes then stopped.
+
+**Observations.**
+
+1. During startup, `.claude.json` was replaced about ten times within 3 s, each time under `.claude.json.lock`. The prompt caused no write of `.claude.json`.
+2. For 13 s after the lock was created, `.claude.json` was not written. Claude Code then removed the lock, took it, replaced `.claude.json` once and released it.
+3. The session showed its prompt within 5 s. `.claude.json` was not written while the lock was refreshed. About 11 s after the last refresh, Claude Code removed the lock and replaced `.claude.json` once.
+
+**Result.** A held config lock does not block the session. Claude Code defers its config writes and, once it holds the lock, makes one replacement instead of about ten. It removes the lock when the lock's mtime is about 10 s old, not after a fixed wait. Whether that one replacement carries every deferred change was not checked.
+
 ## Relevance to cc-port
 
 cc-port's move rewrites `history.jsonl` and `.claude.json` by reading the file, rewriting it in memory and renaming a new file over it.
 
 - Experiments 2 and 3 limit what a running Claude Code session can lose during a move. It cannot write to a file cc-port has replaced, and it cannot revert cc-port's change afterwards. An append or config write that lands between cc-port's read and its rename is lost.
-- Experiments 1, 4, 5 and 6 show that cc-port could take Claude Code's own lock for `history.jsonl`, `.claude.json` and `known_marketplaces.json` around its read and rename. Claude Code would then defer its history write instead of losing it. The two lockless exit writes of `.claude.json`, and all writes of `settings.json` and `installed_plugins.json`, stay outside that protection. The change is tracked in #105.
+- Experiments 1, 4, 5, 6 and 7 show that cc-port could take Claude Code's own lock for `history.jsonl`, `.claude.json` and `known_marketplaces.json` around its read and rename. Claude Code would then defer its history write instead of losing it. The two lockless exit writes of `.claude.json`, and all writes of `settings.json` and `installed_plugins.json`, stay outside that protection. Experiment 7 shows that a config write blocked by cc-port's lock is deferred until the lock is gone, and that a config lock left behind by cc-port holds Claude Code's config writes back for about 10 s. The change is tracked in #105.
 
 ## Open questions
 
-- Contention on `.claude.json.lock` was not tested. Experiment 6 covered only the history lock.
-- The exact age at which a lock counts as stale.
+- The exact age at which a history lock counts as stale. For the config lock it is about 10 s.
+- Whether the one config replacement after a held lock carries every deferred change.
 - Whether a history entry deferred by a held lock is written when the session exits before its next append.
 - What Claude Code does after its once-per-second check finds that `.claude.json` changed.
 
