@@ -30,22 +30,28 @@ type LedgerRenderer struct {
 }
 
 // NewLedgerRenderer builds a LedgerRenderer writing to output and starts its
-// bubbletea program in a goroutine. Input stays disabled; the pinned bubbletea
-// v2.0.10 gates every reply-expecting query on that, so no terminal reply leaks
-// to the shell prompt after exit. Never entering raw mode keeps Ctrl-C a
-// SIGINT rather than a key press, at the cost of cooked-mode echo: typed keys
-// and ^C echo over the repainted region. That safety belongs to the pinned
-// version, not to disabled input: on v2.0.9 the same startup probe took the
-// ungated p.execute path. WithoutSignalHandler leaves SIGINT to the composition
-// root; the Cancelled event drives the interrupted render.
+// bubbletea program in a goroutine. Input stays disabled so bubbletea sends no
+// reply-expecting terminal query; a reply would land on the shell prompt after
+// exit. Never entering raw mode keeps Ctrl-C a SIGINT rather than a key press,
+// at the cost of cooked-mode echo: typed keys and ^C echo over the repainted
+// region. WithoutSignalHandler leaves SIGINT to the composition root; the
+// Cancelled event drives the interrupted render.
 func NewLedgerRenderer(output io.Writer) *LedgerRenderer {
+	return newLedgerRenderer(output)
+}
+
+// newLedgerRenderer appends opts after the fixed program options, so a test can
+// set a window size on a non-TTY writer.
+func newLedgerRenderer(output io.Writer, opts ...tea.ProgramOption) *LedgerRenderer {
 	events := make(chan Event, ledgerChannelDepth)
 	model := newLedgerModel(events)
 	program := tea.NewProgram(
 		model,
-		tea.WithOutput(output),
-		tea.WithInput(nil),
-		tea.WithoutSignalHandler(),
+		append([]tea.ProgramOption{
+			tea.WithOutput(output),
+			tea.WithInput(nil),
+			tea.WithoutSignalHandler(),
+		}, opts...)...,
 	)
 	renderer := &LedgerRenderer{
 		events: events,
