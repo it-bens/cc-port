@@ -26,10 +26,11 @@ cc-port/
 │   ├── sqlrewrite/         SQL-level path rewriting on SQLite (5 s busy timeout, checkpoint discipline)
 │   ├── stats/              Generic project-footprint orchestration (read-only)
 │   ├── sync/               Push and pull orchestration: plan, execute, plan-summary rendering
-│   ├── tool/claude/claudetest/  Claude test fixture helper
 │   ├── tool/               The tool contract (Tool, Workspace, Surface, Restorer) + tool.Set registry
 │   │   ├── claude/         Claude Code adapter: path encoding, locations, schemas, move/export/import/stats
+│   │   │   └── claudetest/ Claude Code test fixture helpers
 │   │   └── codex/          OpenAI Codex adapter: SQLite + TOML + rollout JSONL, move/export/import/stats
+│   │       └── codextest/  Codex test fixture helpers
 │   └── ui/                 Interactive prompts (charm.land/huh v2)
 ├── integration_test.go     End-to-end CLI tests
 └── testdata/dotclaude/     Minimal ~/.claude fixture for tests

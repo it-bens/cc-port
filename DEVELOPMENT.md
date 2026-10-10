@@ -88,7 +88,7 @@ Other recommended plugins:
 - Fixtures via `internal/tool/claude/claudetest.SetupFixture`.
 - Run the full suite (unit + integration, expected before any commit): `go test -tags integration ./...`.
 - Run unit tests only (fast iteration): `go test ./...`.
-- Lint: `~/go/bin/golangci-lint run ./...`.
+- Lint: `make lint` (two golangci-lint passes; the second adds the `logo` build tag).
 - Fuzz targets in `internal/rewrite/rewrite_fuzz_test.go` and `internal/importer/resolve_fuzz_test.go`. Seeds replay as deterministic subtests under `go test ./...`. The unbounded mutation loop is local-only, one target per run: `go test ./internal/rewrite -run=^$ -fuzz=^FuzzReplacePathInBytes$ -fuzztime=2m`. Commit any `testdata/fuzz/FuzzXxx/<hash>` file produced by a real regression so every future run replays it.
 
 ## Local S3 backend
