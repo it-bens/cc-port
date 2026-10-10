@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/tidwall/gjson"
+
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -27,6 +29,10 @@ var ErrEncodedDirAmbiguous = errors.New("refusing to move: old and new paths enc
 // ErrEncodedDirCollision is returned when the new project's encoded
 // directory already exists because another real path encodes to the same name.
 var ErrEncodedDirCollision = errors.New("refusing to move: new project directory already exists")
+
+// ErrConfigEntryCollision is returned when the new project path already has a
+// projects entry in the user config while the old path's entry remains.
+var ErrConfigEntryCollision = errors.New("refusing to move: new project path already has a config entry")
 
 // ErrResidualSourceDir is returned when the encoded project data is already
 // removed but the on-disk source directory cannot be deleted.
@@ -60,6 +66,9 @@ func (workspace *Workspace) MoveSurfaces(ctx context.Context, req tool.MoveReque
 	}
 	locatePath := identity.locatePath
 	if err := checkEncodedDirCollision(workspace.home, req.OldPath, req.NewPath); err != nil {
+		return nil, err
+	}
+	if err := checkConfigEntryCollision(workspace.home, req.OldPath, req.NewPath); err != nil {
 		return nil, err
 	}
 	if !req.RefsOnly {
@@ -236,6 +245,26 @@ func checkEncodedDirCollision(claudeHome *Home, oldPath, newPath string) error {
 		return fmt.Errorf(
 			"%w: destination %s already exists while source %s remains; deleting the destination and re-running is always safe",
 			ErrEncodedDirCollision, newEncodedDir, oldEncodedDir,
+		)
+	}
+	return nil
+}
+
+func checkConfigEntryCollision(claudeHome *Home, oldPath, newPath string) error {
+	data, err := os.ReadFile(claudeHome.ConfigFile)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read config file: %w", err)
+	}
+	if !gjson.ValidBytes(data) {
+		return &InvalidConfigJSONError{Path: claudeHome.ConfigFile}
+	}
+	if gjson.GetBytes(data, projectConfigPath(oldPath)).Exists() && gjson.GetBytes(data, projectConfigPath(newPath)).Exists() {
+		return fmt.Errorf(
+			"%w: %s has an entry for %q while the entry for %q remains; remove or merge one of the two entries by hand and re-run",
+			ErrConfigEntryCollision, claudeHome.ConfigFile, newPath, oldPath,
 		)
 	}
 	return nil
