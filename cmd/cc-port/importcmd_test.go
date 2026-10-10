@@ -113,7 +113,7 @@ func TestImport_WithoutApplyLeavesTheDestinationUntouched(t *testing.T) {
 	claudeHome, targetPath := filepath.Join(t.TempDir(), "dotclaude"), filepath.Join(t.TempDir(), "new-project")
 	require.NoError(t, os.MkdirAll(claudeHome, 0o750))
 
-	stdout := driveImport(t, testutil.WriteFixtureArchive(t), targetPath, claudeHome)
+	stdout := driveImport(t, writeFixtureArchive(t), targetPath, claudeHome)
 
 	assert.Contains(t, stdout, "cc-port import (dry-run)")
 	entries, err := os.ReadDir(claudeHome)
@@ -128,7 +128,7 @@ func TestImport_WithApplyCommits(t *testing.T) {
 	claudeHome, targetPath := filepath.Join(t.TempDir(), "dotclaude"), filepath.Join(t.TempDir(), "new-project")
 	require.NoError(t, os.MkdirAll(claudeHome, 0o750))
 
-	stdout := driveImport(t, testutil.WriteFixtureArchive(t), targetPath, claudeHome, "--apply")
+	stdout := driveImport(t, writeFixtureArchive(t), targetPath, claudeHome, "--apply")
 
 	resolvedTarget, err := tool.ResolveProjectPath(targetPath)
 	require.NoError(t, err)
@@ -241,7 +241,7 @@ func TestImportApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 
 	_, err := executeCmd(t,
-		"import", testutil.WriteFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
+		"import", writeFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
 		"--tool", "claude", "--claude-home", home.Dir, "--apply",
 	)
 
@@ -272,7 +272,7 @@ func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportSucceed
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 
 	stderr, err := executeCmd(t,
-		"import", testutil.WriteFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
+		"import", writeFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
 		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
 	)
 
@@ -289,7 +289,7 @@ func TestImportApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLines
 	require.NoError(t, resolveErr)
 
 	stdout, err := executeCmdStreams(t, failingStderr,
-		"import", testutil.WriteFixtureArchive(t), targetPath,
+		"import", writeFixtureArchive(t), targetPath,
 		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
 	)
 

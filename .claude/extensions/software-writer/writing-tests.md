@@ -5,7 +5,7 @@
 - `tests.fixture_sources` =
   - `testutil.SetupFixture(t)` — staged `~/.claude` tree from the repo `testdata/dotclaude/` tree.
   - `codextest.SetupFixture(t)` — stages `~/.codex` from `internal/tool/codex/testdata/dotcodex/` and returns the codex home directory (callers build the `Home` from it); the SQLite databases and the `memories/.git` baseline are built at runtime by the helper — never add on-disk copies to the fixture tree.
-  - `testutil.WriteFixtureArchive(t)` — a known-good export archive.
+  - `writeFixtureArchive(t)` in `cmd/cc-port` tests — a known-good export archive.
   - `testutil.FixtureProjectPath()` / `codextest.FixtureProjectPath()` — the canonical project key the fixture trees are staged around.
   - Extend these helpers before inventing a new one.
 - `tests.parallelism` = No test calls `t.Parallel()`. `TestMain` exists only in `cmd/cc-port/main_test.go` and the root `integration_test.go`, where it runs `testutil.IsolateHome()` so command tests never observe the live `~/.claude` or `~/.codex` (fixture homes still travel by explicit flags), and in `internal/tool/codex/requirements_test.go`, where it points `systemConfigDir` and `managedPreferencesDir` at a scratch directory so no codex test reads the real `/etc/codex` or `/Library/Managed Preferences`. Tests in other packages that reach `codex.Open` (`cmd/cc-port`, the root integration suite) still read those real paths; they are absent on the maintainer's machine, and a host with a Codex MDM profile or files under `/etc/codex` would change those tests' results. Guard independence as if order were randomized and concurrent anyway.

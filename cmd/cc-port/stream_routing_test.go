@@ -29,7 +29,7 @@ func TestStreamRouting_ExportManifestSuccessLineRoutedToCobraStdout(t *testing.T
 // TestStreamRouting_ImportManifestSuccessLineRoutedToCobraStdout pins the
 // same property for the import-manifest cmd.
 func TestStreamRouting_ImportManifestSuccessLineRoutedToCobraStdout(t *testing.T) {
-	archivePath := testutil.WriteFixtureArchive(t)
+	archivePath := writeFixtureArchive(t)
 
 	var stdout, stderr bytes.Buffer
 	cmd := newImportManifestCmd()
