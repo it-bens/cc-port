@@ -3,9 +3,13 @@ package progress
 import (
 	"bytes"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	teatest "github.com/charmbracelet/x/exp/teatest/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -191,4 +195,69 @@ func TestLedgerFinalizeSucceedsAfterCleanRun(t *testing.T) {
 	renderer.Consume(Done{})
 
 	assert.NoError(t, renderer.Finalize())
+}
+
+// frameWatcher captures everything the renderer writes and closes painted the
+// first time the captured bytes contain marker.
+type frameWatcher struct {
+	mutex   sync.Mutex
+	buffer  bytes.Buffer
+	marker  string
+	painted chan struct{}
+	closed  bool
+}
+
+func newFrameWatcher(marker string) *frameWatcher {
+	return &frameWatcher{marker: marker, painted: make(chan struct{})}
+}
+
+func (watcher *frameWatcher) Write(data []byte) (int, error) {
+	watcher.mutex.Lock()
+	defer watcher.mutex.Unlock()
+	written, err := watcher.buffer.Write(data)
+	if !watcher.closed && strings.Contains(watcher.buffer.String(), watcher.marker) {
+		watcher.closed = true
+		close(watcher.painted)
+	}
+	return written, err
+}
+
+func (watcher *frameWatcher) captured() string {
+	watcher.mutex.Lock()
+	defer watcher.mutex.Unlock()
+	return watcher.buffer.String()
+}
+
+// TestLedgerRendererSendsNoQueries pins the property NewLedgerRenderer relies
+// on: with input disabled, bubbletea writes neither the synchronized-output
+// mode probe nor the Kitty keyboard query, so no reply can land on the shell
+// prompt after exit. TERM names kitty so the mode probe is armed and only
+// disabled input holds it back. The keyboard query is written only on a live
+// flush, never the closing one, so the test waits until a frame carrying the
+// phase label has been painted before it finishes the run.
+func TestLedgerRendererSendsNoQueries(t *testing.T) {
+	t.Setenv("TERM", "xterm-kitty")
+
+	output := newFrameWatcher("copy")
+	renderer := newLedgerRenderer(output, tea.WithWindowSize(80, 24))
+	renderer.Consume(PhaseStart{Path: []string{"copy"}, Total: 2, Unit: UnitFiles, At: time.Now()})
+	renderer.Consume(PhaseAdvance{Path: []string{"copy"}, Done: 2})
+	renderer.Consume(PhaseEnd{Path: []string{"copy"}, Summary: "2 files", Dur: time.Second})
+
+	select {
+	case <-output.painted:
+	case <-renderer.done:
+		require.FailNow(t, "ledger program exited before painting a frame",
+			"run error: %v; captured output: %q", renderer.runErr, output.captured())
+	case <-time.After(5 * time.Second):
+		renderer.Consume(Done{})
+		_ = renderer.Finalize()
+		require.FailNow(t, "no ledger frame was painted", "captured output: %q", output.captured())
+	}
+
+	renderer.Consume(Done{})
+	require.NoError(t, renderer.Finalize())
+
+	assert.NotContains(t, output.captured(), ansi.RequestModeSynchronizedOutput)
+	assert.NotContains(t, output.captured(), ansi.RequestKittyKeyboard)
 }
