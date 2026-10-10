@@ -3,11 +3,13 @@ version: "2"
 run:
   build-tags:
     - integration
+    - large
 
 linters:
   enable:
     - bodyclose
     - copyloopvar
+    - depguard
     - dogsled
     - dupl
     - errcheck
@@ -43,6 +45,353 @@ linters:
           - gosec
         text: "G703"
   settings:
+    # This block is the source of truth for package import boundaries.
+    #
+    # depguard evaluates rules in name order and golangci-lint keeps one report
+    # per line, so an import blocked by two rules reports one of them. Package
+    # entries are raw string prefixes; a trailing `$` matches exactly. A deny
+    # list must never hold two entries where one prefixes the other.
+    depguard:
+      rules:
+        # Stage packages are leaves that compose only through internal/pipeline.
+        stage-packages-import-only-pipeline:
+          list-mode: lax
+          files:
+            - "**/internal/encrypt/**"
+            - "**/internal/file/**"
+            - "**/internal/remote/**"
+            - "!$test"
+          allow:
+            - github.com/it-bens/cc-port/internal/pipeline
+          deny:
+            - pkg: github.com/it-bens/cc-port
+              desc: "internal/encrypt, internal/file and internal/remote import only internal/pipeline; cmd/cc-port composes them"
+        pipeline-leaf:
+          list-mode: lax
+          files:
+            - "**/internal/pipeline/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/it-bens/cc-port
+              desc: "internal/pipeline owns the interfaces and runners that stages import, so it imports no other cc-port package"
+        contract-and-lock-no-adapters:
+          list-mode: lax
+          files:
+            - "**/internal/tool/*.go"
+            - "**/internal/lock/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/tool/claude
+              desc: "the internal/tool contract and internal/lock are tool-agnostic; callers supply the adapter-specific witnesses"
+            - pkg: github.com/it-bens/cc-port/internal/tool/codex
+              desc: "the internal/tool contract and internal/lock are tool-agnostic; callers supply the adapter-specific witnesses"
+        ui-and-lock-import-only-tool-contract:
+          list-mode: lax
+          files:
+            - "**/internal/ui/**"
+            - "**/internal/lock/**"
+            - "!$test"
+          allow:
+            - github.com/it-bens/cc-port/internal/tool$
+          deny:
+            - pkg: github.com/it-bens/cc-port
+              desc: "internal/ui and internal/lock import only the internal/tool contract among cc-port packages"
+        wire-substrate-no-tool:
+          list-mode: lax
+          files:
+            - "**/internal/manifest/**"
+            - "**/internal/archive/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/tool
+              desc: "internal/manifest and internal/archive are the wire substrate and depend on neither the tool contract nor any adapter"
+        progress-no-tool:
+          list-mode: lax
+          files:
+            - "**/internal/progress/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/tool
+              desc: "internal/progress renders command events and stays tool-agnostic"
+        seed-home-no-codex-adapter:
+          list-mode: lax
+          files:
+            - "**/docs/videos/fixtures/cmd/seed-home/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/tool/codex$
+              desc: "the demo seeder builds Codex databases from internal/tool/codex/codexschema and never imports the codex adapter"
+        # Adapters are peers behind internal/tool.
+        claude-adapter-no-codex:
+          list-mode: lax
+          files:
+            - "**/internal/tool/claude/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/tool/codex
+              desc: "adapters are peers behind internal/tool; internal/tool/claude never imports internal/tool/codex"
+        codex-adapter-no-claude:
+          list-mode: lax
+          files:
+            - "**/internal/tool/codex/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/tool/claude
+              desc: "adapters are peers behind internal/tool; internal/tool/codex never imports internal/tool/claude"
+        # Test-only code stays out of production files. The three test-support
+        # packages are exempt because their own non-test files use testing; the
+        # `*.go` globs exempt those directories only, not subpackages.
+        test-only-packages:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/progress/progresstest/*.go"
+            - "!**/internal/tool/claude/claudetest/*.go"
+            - "!**/internal/tool/codex/codextest/*.go"
+          deny:
+            - pkg: testing$
+              desc: "production code must not import testing; it registers test flags in the shipped binary"
+            - pkg: github.com/stretchr/testify
+              desc: "test dependency; import it from _test.go files and the progresstest, claudetest and codextest packages only"
+            - pkg: github.com/google/go-cmp
+              desc: "test dependency; import it from _test.go files only"
+            - pkg: github.com/charmbracelet/x/exp/teatest
+              desc: "test dependency; import it from _test.go files only"
+            - pkg: github.com/charmbracelet/x/ansi
+              desc: "test-only dependency; import it from _test.go files only"
+            - pkg: gocloud.dev/blob/memblob
+              desc: "in-memory test driver; production code opens buckets through internal/remote"
+            - pkg: github.com/it-bens/cc-port/internal/progress/progresstest
+              desc: "internal/progress/progresstest is a recording Renderer for tests; import it from _test.go files only"
+            - pkg: github.com/it-bens/cc-port/internal/tool/claude/claudetest
+              desc: "internal/tool/claude/claudetest holds Claude fixtures for tests; import it from _test.go files only"
+            - pkg: github.com/it-bens/cc-port/internal/tool/codex/codextest
+              desc: "internal/tool/codex/codextest holds Codex fixtures for tests; import it from _test.go files only"
+        # Adapter boundary: among binary-linked code only cmd/cc-port imports an
+        # adapter. Each test-support package sits inside its own adapter
+        # directory, which is exempt.
+        adapter-boundary:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/cmd/cc-port/**"
+            - "!**/docs/videos/fixtures/cmd/seed-home/**"
+            - "!**/internal/tool/claude/**"
+            - "!**/internal/tool/codex/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/tool/claude
+              desc: "only cmd/cc-port imports internal/tool/claude; other packages use the internal/tool contract"
+            - pkg: github.com/it-bens/cc-port/internal/tool/codex
+              desc: "only cmd/cc-port imports internal/tool/codex, including internal/tool/codex/codexschema; other packages use the internal/tool contract"
+        # Command layering: cmd/cc-port composes; command packages are siblings.
+        commands-composed-in-cmd:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/cmd/cc-port/**"
+            - "!**/internal/sync/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/export
+              desc: "only cmd/cc-port and internal/sync compose internal/export"
+            - pkg: github.com/it-bens/cc-port/internal/importer
+              desc: "only cmd/cc-port and internal/sync compose internal/importer"
+            - pkg: github.com/it-bens/cc-port/internal/move
+              desc: "only cmd/cc-port composes internal/move; command packages are siblings"
+            - pkg: github.com/it-bens/cc-port/internal/stats
+              desc: "only cmd/cc-port composes internal/stats; command packages are siblings"
+            - pkg: github.com/it-bens/cc-port/internal/sync
+              desc: "only cmd/cc-port composes internal/sync"
+        sync-composes-only-export-importer:
+          list-mode: lax
+          files:
+            - "**/internal/sync/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/move
+              desc: "internal/sync composes internal/export and internal/importer only"
+            - pkg: github.com/it-bens/cc-port/internal/stats
+              desc: "internal/sync composes internal/export and internal/importer only"
+        cmd-owns-io-stages:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/cmd/cc-port/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/credentials
+              desc: "cmd/cc-port resolves credentials; internal/remote takes an aws.CredentialsProvider from its caller"
+            - pkg: github.com/it-bens/cc-port/internal/encrypt
+              desc: "cmd/cc-port composes the internal/encrypt writer and reader stages"
+            - pkg: github.com/it-bens/cc-port/internal/file
+              desc: "cmd/cc-port composes the internal/file stages"
+            - pkg: github.com/it-bens/cc-port/internal/remote
+              desc: "cmd/cc-port opens remote pipelines; command packages take a pre-opened pipeline.Source or pipeline.Sink"
+            - pkg: github.com/it-bens/cc-port/internal/ui
+              desc: "cmd/cc-port wires the interactive prompts of internal/ui"
+        progress-command-layer-only:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/cmd/cc-port/**"
+            - "!**/internal/move/**"
+            - "!**/internal/export/**"
+            - "!**/internal/importer/**"
+            - "!**/internal/sync/**"
+            - "!**/internal/progress/**"
+          deny:
+            # Anchored so internal/progress/progresstest stays importable by tests.
+            - pkg: github.com/it-bens/cc-port/internal/progress$
+              desc: "the internal/progress Reporter is threaded through the move, export, importer and sync options only; adapters, internal/tool, internal/stats and the substrate do not import it"
+        read-only-commands-take-no-lock:
+          list-mode: lax
+          files:
+            - "**/internal/export/**"
+            - "**/internal/stats/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/lock
+              desc: "internal/export and internal/stats read local state and take no internal/lock lock"
+        # SQLite: path mutation goes through internal/sqlrewrite and driver
+        # access stays in its owners. `database/sql` also covers
+        # `database/sql/driver`.
+        sqlrewrite-adapters-only:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/tool/claude/**"
+            - "!**/internal/tool/codex/**"
+            - "!**/internal/sqlrewrite/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/sqlrewrite
+              desc: "SQLite path mutation through internal/sqlrewrite is reachable only from tool adapters; command packages use the internal/tool contract"
+        sqlite-confinement:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/sqlrewrite/**"
+            - "!**/internal/tool/codex/*.go"
+            - "!**/internal/tool/codex/codextest/*.go"
+            - "!**/docs/videos/fixtures/cmd/seed-home/**"
+          deny:
+            - pkg: database/sql
+              desc: "SQL access is confined to internal/sqlrewrite, the internal/tool/codex adapter, its codextest fixtures and the demo seeder; mutate user paths only through internal/sqlrewrite"
+            - pkg: modernc.org/sqlite
+              desc: "the SQLite driver is confined to internal/sqlrewrite, the internal/tool/codex adapter, its codextest fixtures and the demo seeder"
+        # Third-party libraries with a single owning package.
+        flock-owned-by-lock:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/lock/**"
+          deny:
+            - pkg: github.com/gofrs/flock
+              desc: "file locking goes through internal/lock (Acquire, WithLock, WitnessFor)"
+        age-owned-by-encrypt:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/encrypt/**"
+          deny:
+            - pkg: filippo.io/age
+              desc: "only internal/encrypt imports age, so callers see a single passphrase error"
+        # The S3 client and the gocloud blob layer stay in internal/remote.
+        # Separate from the aws-sdk-core rule because a deny list must not hold an
+        # entry that prefixes another; the name sorts first so S3 imports are
+        # reported here.
+        aws-s3-and-gocloud-owned-by-remote:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/remote/**"
+          deny:
+            - pkg: gocloud.dev
+              desc: "internal/remote wraps gocloud.dev/blob and translates its errors; new backends go in internal/remote"
+            - pkg: github.com/aws/aws-sdk-go-v2/service/s3
+              desc: "the S3 client is opened by internal/remote"
+        aws-sdk-core-and-smithy-owned-by-remote-and-credentials:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/remote/**"
+            - "!**/internal/credentials/**"
+          deny:
+            - pkg: github.com/aws/aws-sdk-go-v2
+              desc: "the AWS SDK core and credential types are used only by internal/remote and internal/credentials"
+            - pkg: github.com/aws/smithy-go
+              desc: "the AWS SDK error and middleware layer is used only by internal/remote and internal/credentials"
+        json-path-libs-in-adapters:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/tool/claude/**"
+            - "!**/internal/tool/codex/**"
+          deny:
+            - pkg: github.com/tidwall/gjson
+              desc: "JSON-path reads of tool-owned files belong in internal/tool/claude and internal/tool/codex"
+            - pkg: github.com/tidwall/sjson
+              desc: "JSON-path edits of tool-owned files belong in internal/tool/claude and internal/tool/codex"
+        tui-owned-by-progress:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/progress/**"
+          deny:
+            - pkg: charm.land/bubbles
+              desc: "bubbles widgets belong to internal/progress; commands hold a progress.Reporter"
+            - pkg: charm.land/bubbletea
+              desc: "bubbletea belongs to internal/progress; commands hold a progress.Reporter"
+        huh-owned-by-ui:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/ui/**"
+          deny:
+            - pkg: charm.land/huh
+              desc: "huh forms live in internal/ui behind its TTY check"
+        lipgloss-owned-by-logo:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/internal/logo/**"
+          deny:
+            - pkg: charm.land/lipgloss
+              desc: "lipgloss and its OSC 11 background query stay in internal/logo"
+        logo-composition-root-only:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/cmd/cc-port/banner_logo.go"
+            - "!**/internal/logo/**"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/logo
+              desc: "only cmd/cc-port/banner_logo.go (//go:build logo) imports internal/logo; other code takes a ui.Banner"
+        cobra-owned-by-cmd:
+          list-mode: lax
+          files:
+            - $all
+            - "!**/cmd/cc-port/**"
+          deny:
+            - pkg: github.com/spf13/cobra
+              desc: "cmd/cc-port owns flag parsing; internal packages stay CLI-framework-free"
+        subprocess-in-codex-witness:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/tool/codex/*.go"
+          deny:
+            - pkg: os/exec
+              desc: "subprocess spawning is confined to the internal/tool/codex process-table witness"
+        zip-owned-by-archive:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/archive/**"
+            - "!**/internal/export/**"
+            - "!**/internal/manifest/**"
+          deny:
+            - pkg: archive/zip
+              desc: "ZIP reading goes through internal/archive (caps, os.Root containment); only internal/export (writer) and internal/manifest (capped metadata.xml read) import it directly"
     dogsled:
       max-blank-identifiers: 3
     funlen:

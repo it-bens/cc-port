@@ -38,8 +38,9 @@ test-all: ## Run unit, integration, and large-archive tests
 vet: ## Run go vet
 	go vet ./...
 
-lint: ## Run golangci-lint
+lint: ## Run golangci-lint, plus a pass over the logo-tagged banner
 	$(GOLANGCI) run ./...
+	$(GOLANGCI) run --build-tags=integration,large,logo ./...
 
 fmt: ## Apply gofmt + goimports via golangci-lint fmt
 	$(GOLANGCI) fmt
