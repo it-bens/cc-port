@@ -474,7 +474,7 @@ func (workspace *Workspace) finalizeConfigGrants(project string) error {
 	if err != nil {
 		return err
 	}
-	path := "projects." + rewrite.EscapeSJSONKey(project) + "." + allowedToolsKey
+	path := projectConfigPath(project) + "." + allowedToolsKey
 	merged, err := sjson.SetRawBytes(existing, path, []byte(grants.Raw))
 	if err != nil {
 		return fmt.Errorf("splice %s into config file %q: %w", allowedToolsKey, configPath, err)
@@ -556,7 +556,7 @@ func mergeProjectConfigBytes(existingData []byte, configPath, targetPath string,
 		return nil, fmt.Errorf("invalid JSON in archive config block for %q", targetPath)
 	}
 
-	path := "projects." + rewrite.EscapeSJSONKey(targetPath)
+	path := projectConfigPath(targetPath)
 	for _, key := range destinationOwnedProjectKeys {
 		blockData, err = sjson.DeleteBytes(blockData, key)
 		if err != nil {

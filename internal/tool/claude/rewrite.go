@@ -110,6 +110,16 @@ func RewriteSessionFile(data []byte, oldProject, newProject string) (rewritten [
 	return body, count > 0, nil
 }
 
+// projectConfigPath returns the gjson/sjson path of project's entry in the user
+// config's projects object. The project path is escaped into a single literal key
+// segment: an unescaped '.' would split it into nested segments, and any of
+// '*', '?', '#', '@', '|' makes sjson treat the path as non-simple and fall back
+// to a match-existing-only write that silently drops the value (unchanged bytes,
+// nil error) when no key matches, while gjson wildcard-matches a sibling key.
+func projectConfigPath(project string) string {
+	return "projects." + gjson.Escape(project)
+}
+
 // RewriteUserConfig re-keys the oldProject entry in ~/.claude.json to
 // newProject and rewrites bounded project-path references inside that entry.
 func RewriteUserConfig(data []byte, oldProject, newProject string) (updated []byte, rekeyed bool, err error) {
@@ -117,7 +127,7 @@ func RewriteUserConfig(data []byte, oldProject, newProject string) (updated []by
 		return nil, false, fmt.Errorf("invalid user config JSON")
 	}
 
-	oldPath := "projects." + rewrite.EscapeSJSONKey(oldProject)
+	oldPath := projectConfigPath(oldProject)
 	existing := gjson.GetBytes(data, oldPath)
 	if !existing.Exists() {
 		return data, false, nil
@@ -129,7 +139,7 @@ func RewriteUserConfig(data []byte, oldProject, newProject string) (updated []by
 	if err != nil {
 		return nil, false, fmt.Errorf("delete old project key: %w", err)
 	}
-	newPath := "projects." + rewrite.EscapeSJSONKey(newProject)
+	newPath := projectConfigPath(newProject)
 	updated, err = sjson.SetRawBytes(updated, newPath, rewrittenBlock)
 	if err != nil {
 		return nil, false, fmt.Errorf("insert new project key: %w", err)

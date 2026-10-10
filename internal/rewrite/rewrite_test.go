@@ -443,33 +443,6 @@ func failOnCallN(n int) func(oldpath, newpath string) error {
 	}
 }
 
-func TestEscapeSJSONKey(t *testing.T) {
-	t.Run("escapes dots so they are not read as nested keys", func(t *testing.T) {
-		assert.Equal(t, `/Users/x/proj\.v2`, rewrite.EscapeSJSONKey("/Users/x/proj.v2"))
-	})
-
-	t.Run("escapes backslashes before dots", func(t *testing.T) {
-		// Order matters: backslash escape must run before dot escape, otherwise
-		// the backslash inserted by dot-escaping would be doubled a second time.
-		assert.Equal(t, `a\\b\.c`, rewrite.EscapeSJSONKey(`a\b.c`))
-	})
-
-	t.Run("escapes wildcard and query metacharacters so the key stays literal", func(t *testing.T) {
-		// Unescaped, `*` and `?` wildcard-match sibling keys and `# @ |` route
-		// sjson onto its match-existing-only fallback, which silently drops
-		// the write for a key that does not exist yet.
-		assert.Equal(t, `/a/x\*y\?z\#n\@m\|end`, rewrite.EscapeSJSONKey(`/a/x*y?z#n@m|end`))
-	})
-
-	t.Run("leaves keys without metacharacters untouched", func(t *testing.T) {
-		assert.Equal(t, "/plain/key", rewrite.EscapeSJSONKey("/plain/key"))
-	})
-
-	t.Run("handles empty input", func(t *testing.T) {
-		assert.Empty(t, rewrite.EscapeSJSONKey(""))
-	})
-}
-
 func TestContainsBoundedPath(t *testing.T) {
 	projectPath := "/Users/x/myproject"
 

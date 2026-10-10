@@ -281,6 +281,28 @@ func TestUserConfig(t *testing.T) {
 		assert.Equal(t, "global", decoded["globalSetting"])
 	})
 
+	t.Run("treats metacharacters in project paths as literal key text", func(t *testing.T) {
+		input := []byte(`{
+			"projects": {
+				"/Users/test/proj.v2x": {"setting": "sibling"},
+				"/Users/test/proj.v2*": {"setting": "moved"}
+			}
+		}`)
+
+		result, changed, err := claude.RewriteUserConfig(input, "/Users/test/proj.v2*", "/Users/test/new?proj#1")
+		require.NoError(t, err)
+		assert.True(t, changed)
+
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(result, &decoded))
+
+		projects := decoded["projects"].(map[string]any)
+		assert.Equal(t, map[string]any{"setting": "moved"}, projects["/Users/test/new?proj#1"])
+		assert.NotContains(t, projects, "/Users/test/proj.v2*")
+		assert.Equal(t, map[string]any{"setting": "sibling"}, projects["/Users/test/proj.v2x"])
+		assert.Contains(t, string(result), `"/Users/test/proj.v2x": {"setting": "sibling"}`)
+	})
+
 	t.Run("returns false when old project key does not exist", func(t *testing.T) {
 		input := []byte(`{"projects": {"/other/project": {}}}`)
 		_, changed, err := claude.RewriteUserConfig(input, "/old/project", "/new/project")

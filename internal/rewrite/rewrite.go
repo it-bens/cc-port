@@ -15,25 +15,6 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// EscapeSJSONKey escapes `\` and the gjson/sjson path metacharacters
-// (`.`, `*`, `?`, `#`, `@`, `|`) so an arbitrary string can be used as a
-// single literal key segment in a gjson/sjson path expression. `.` would
-// split the key into nested segments; the other five make sjson treat the
-// path as non-simple and fall back to a match-existing-only write that
-// silently drops the value (unchanged bytes, nil error) when no key matches,
-// while gjson wildcard-matches a sibling key instead of the literal one.
-//
-// Exported because both the move rewrite path and the import config merge path
-// build sjson expressions from user-supplied project paths; one source of truth
-// avoids drift between the call sites.
-func EscapeSJSONKey(key string) string {
-	key = strings.ReplaceAll(key, `\`, `\\`)
-	for _, meta := range []string{`.`, `*`, `?`, `#`, `@`, `|`} {
-		key = strings.ReplaceAll(key, meta, `\`+meta)
-	}
-	return key
-}
-
 // isPathContinuationByte reports whether b can extend a path component.
 // The `.` byte is excluded here: ReplacePathInBytes uses a two-byte lookahead
 // so sentence-terminating dots (prose) can be distinguished from
