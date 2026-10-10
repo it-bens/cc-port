@@ -1,5 +1,11 @@
 # Developing cc-port
 
+## Setup
+
+Required tools: Go, `golangci-lint`, and [pre-commit](https://pre-commit.com) (`pipx install pre-commit` or `brew install pre-commit`).
+
+The first `make` run of a build, test, lint, or format target installs the pre-push git hook via `make hooks`. The hook runs `make lint` before every push, and CI runs the same lint. `make hooks` fails when `pre-commit` is not installed and is skipped when `CI` is set.
+
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for the module layout, contract index, and cross-cutting file-history policy.

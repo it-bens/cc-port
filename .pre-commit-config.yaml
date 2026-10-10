@@ -1,0 +1,14 @@
+# The hook runs `make lint`, the one lint invocation, including the logo-tagged
+# second pass. golangci-lint's published hook runs `--fix`, which would edit
+# files during a push.
+default_install_hook_types: [pre-push]
+repos:
+  - repo: local
+    hooks:
+      - id: lint
+        name: make lint
+        entry: make lint
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
