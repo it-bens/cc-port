@@ -13,30 +13,15 @@ import (
 	"github.com/it-bens/cc-port/internal/rewrite"
 	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
-
-// memoriesWorktreeSubdir is the v1 memory worktree root, $CODEX_HOME/memories
-// (protocol/src/memory_version.rs:19, MemoryVersion::V1.directory_name()).
-const memoriesWorktreeSubdir = "memories"
-
-// memoriesWorktreeV2Subdir is the v2 memory worktree root,
-// $CODEX_HOME/memories_v2 (protocol/src/memory_version.rs:20,
-// MemoryVersion::V2.directory_name()). Codex writes it when
-// config.memories.version = "v2" or config.memories.dual_write = true
-// (memories/write/src/start.rs:40-48).
-const memoriesWorktreeV2Subdir = "memories_v2"
 
 // memoriesWorktreeSubdirs is every memory worktree root move surfaces walk,
 // sibling roots kept independent per memory_version.rs:16's own rationale
 // ("Sibling roots keep v1 cleanup and rollback independent of v2
 // artifacts"). Each root is optional: an absent one is a legitimate
 // "surface not present", exactly as an absent v1 memories/ is handled today.
-var memoriesWorktreeSubdirs = []string{memoriesWorktreeSubdir, memoriesWorktreeV2Subdir}
-
-// gitDirName is the git-baseline metadata directory move must never
-// rewrite bytes inside, and may move to a rollback backup only behind the probe in
-// hasNoRemoteGitBaseline.
-const gitDirName = ".git"
+var memoriesWorktreeSubdirs = []string{codexschema.MemoriesWorktreeSubdir, codexschema.MemoriesWorktreeV2Subdir}
 
 // gitBackupSuffix reuses rewrite.RollbackSuffix: both the Restorer's file
 // sibling and this git baseline backup are cc-port rollback artifacts,
@@ -132,7 +117,7 @@ func worktreeFiles(root string) ([]string, error) {
 			return err
 		}
 		if entry.IsDir() {
-			if entry.Name() == gitDirName || rewrite.IsArtifactPath(entry.Name()) {
+			if entry.Name() == codexschema.GitDirName || rewrite.IsArtifactPath(entry.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -220,7 +205,7 @@ func applyMemoriesWorktree(ctx context.Context, root, oldPath, newPath string, u
 // its post-commit cleanup. This run has not renamed its baseline yet, so the
 // backup is never needed for this run's rollback.
 func reconcileStrandedGitBackup(root string) error {
-	backup := filepath.Join(root, gitDirName) + gitBackupSuffix
+	backup := filepath.Join(root, codexschema.GitDirName) + gitBackupSuffix
 	if err := os.RemoveAll(backup); err != nil {
 		return fmt.Errorf("reconcile stranded git backup %s: %w", backup, err)
 	}
@@ -236,7 +221,7 @@ func reconcileStrandedGitBackup(root string) error {
 // invoked from memories/write/src/workspace.rs:21) — not something Codex's
 // own source encodes as a "[remote" check itself.
 func hasNoRemoteGitBaseline(root string) (bool, error) {
-	configPath := filepath.Join(root, gitDirName, "config")
+	configPath := filepath.Join(root, codexschema.GitDirName, "config")
 	data, err := os.ReadFile(configPath) //nolint:gosec // G304: path constructed from resolved codex home
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

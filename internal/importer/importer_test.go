@@ -24,6 +24,7 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func allSelected(t tool.Tool) map[string]bool {
@@ -155,7 +156,7 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 // carries the one entry the plan's destination-configuration read recognizes.
 func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	t.Helper()
-	sharedProject = codex.FixtureProjectPath()
+	sharedProject = codextest.FixtureProjectPath()
 	claudeSource := testutil.SetupFixture(t)
 	claudeTool, codexTool := claude.New(), codex.New()
 
@@ -168,7 +169,8 @@ func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	claudeSelection := map[string]bool{"sessions": true, "config": true}
 	codexSelection := map[string]bool{"sessions": true}
 	claudeWorkspace := claude.NewWorkspace(claudeSource)
-	codexWorkspace := quietCodexWorkspace(codex.SetupFixture(t))
+	codexDir := codextest.SetupFixture(t)
+	codexWorkspace := quietCodexWorkspace(&codex.Home{Dir: codexDir, SQLiteDir: codexDir})
 	claudePlaceholders, err := claudeWorkspace.Placeholders(t.Context(), sharedProject, claudeSelection)
 	require.NoError(t, err)
 	codexPlaceholders, err := codexWorkspace.Placeholders(t.Context(), sharedProject, codexSelection)

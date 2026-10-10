@@ -1,5 +1,7 @@
-// Package codexschema holds the Codex SQLite DDL and database file names that
-// the codex package's test fixtures and the demo seeder both create.
+// Package codexschema holds the Codex on-disk names and SQLite DDL shared
+// across cc-port: the codex adapter and its codextest fixtures resolve the
+// same memory worktree layout names, and codextest and the demo seeder build
+// their databases from the same file names and DDL.
 package codexschema
 
 // StateDBFileName, MemoriesDBFileName, and QueueDBFileName are the database
@@ -12,6 +14,21 @@ const (
 	MemoriesDBFileName = "memories_1.sqlite"
 	QueueDBFileName    = "queue_1.sqlite"
 )
+
+// MemoriesWorktreeSubdir is the v1 memory worktree root, $CODEX_HOME/memories
+// (protocol/src/memory_version.rs:19, MemoryVersion::V1.directory_name()).
+const MemoriesWorktreeSubdir = "memories"
+
+// MemoriesWorktreeV2Subdir is the v2 memory worktree root,
+// $CODEX_HOME/memories_v2 (protocol/src/memory_version.rs:20,
+// MemoryVersion::V2.directory_name()). Codex writes it when
+// config.memories.version = "v2" or config.memories.dual_write = true
+// (memories/write/src/start.rs:40-48).
+const MemoriesWorktreeV2Subdir = "memories_v2"
+
+// GitDirName is the git baseline metadata directory under each memory
+// worktree root.
+const GitDirName = ".git"
 
 // StateDBSchema creates the state database tables the fixtures populate:
 // the threads table of state/migrations/0001_threads.sql and the

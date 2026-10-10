@@ -29,7 +29,7 @@ import (
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
-	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 const (
@@ -207,14 +207,14 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 // mutation run from this test process correctly sees the running Codex CLI in
 // its process-table witness and must refuse the operation.
 func TestIntegration_MultiToolArchiveExportsClaudeAndCodex(t *testing.T) {
-	sharedProject := codex.FixtureProjectPath()
+	sharedProject := codextest.FixtureProjectPath()
 	claudeSource := testutil.SetupFixture(t)
 	moveResult, err := move.Apply(t.Context(), targetsFor(claudeSource), move.Options{
 		OldPath: fixtureProjectPath, NewPath: sharedProject, RefsOnly: true,
 	})
 	require.NoError(t, err)
 	require.False(t, moveResult.Failed())
-	codexSource := codex.SetupFixture(t)
+	codexSourceDir := codextest.SetupFixture(t)
 
 	archivePath := filepath.Join(t.TempDir(), "multi-tool.zip")
 	//nolint:gosec // G204: every argument is a test-controlled fixture or temporary path.
@@ -223,7 +223,7 @@ func TestIntegration_MultiToolArchiveExportsClaudeAndCodex(t *testing.T) {
 		"--tool", "claude",
 		"--tool", "codex",
 		"--claude-home", claudeSource.Dir,
-		"--codex-home", codexSource.Dir,
+		"--codex-home", codexSourceDir,
 		"--all",
 		"--output", archivePath,
 	)

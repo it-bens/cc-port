@@ -1,4 +1,10 @@
-package codex
+// Package codextest provides the Codex adapter's test fixture: a staged
+// ~/.codex tree with its SQLite databases and memory worktree git baselines
+// built at runtime, plus helpers that read and write the staged state
+// database. It does not import package codex, because codex's own tests
+// import it; the helpers take and return directories, and callers build the
+// codex.Home from them.
+package codextest
 
 import (
 	"context"
@@ -23,16 +29,17 @@ func FixtureProjectPath() string {
 	return "/Users/fixture/codexproject"
 }
 
-// SetupFixture stages testdata/dotcodex under t.TempDir() and builds
-// fixture state_5.sqlite, memories_1.sqlite, and queue_1.sqlite databases, plus a no-remote
-// .git baseline under each memory worktree root (memories/ and
-// memories_v2/), alongside it — SQLite files are binary and nested .git
-// directories are untrackable by the outer repo, so all of it is built by
-// test code rather than committed, following the testutil.SetupFixture
-// pattern. sqlite_home resolves to the same directory (config.toml
-// declares no sqlite_home key and $CODEX_SQLITE_HOME is unset in the
-// fixture environment).
-func SetupFixture(t *testing.T) *Home {
+// SetupFixture stages internal/tool/codex/testdata/dotcodex under
+// t.TempDir() and builds fixture state_5.sqlite, memories_1.sqlite, and
+// queue_1.sqlite databases, plus a no-remote .git baseline under each memory
+// worktree root (memories/ and memories_v2/), alongside it — SQLite files
+// are binary and nested .git directories are untrackable by the outer repo,
+// so all of it is built by test code rather than committed, following the
+// testutil.SetupFixture pattern. It returns the staged codex home directory,
+// which is also the fixture's SQLite directory: sqlite_home resolves to the
+// same directory (config.toml declares no sqlite_home key and
+// $CODEX_SQLITE_HOME is unset in the fixture environment).
+func SetupFixture(t *testing.T) string {
 	t.Helper()
 
 	codexDir := filepath.Join(t.TempDir(), "dotcodex")
@@ -41,22 +48,22 @@ func SetupFixture(t *testing.T) *Home {
 		t.Fatalf("copy fixture directory: %v", err)
 	}
 
-	buildFixtureStateDB(t, filepath.Join(codexDir, codexschema.StateDBFileName))
+	BuildFixtureStateDB(t, filepath.Join(codexDir, codexschema.StateDBFileName))
 	buildFixtureMemoriesDB(t, filepath.Join(codexDir, codexschema.MemoriesDBFileName))
 	buildFixtureQueueDB(t, filepath.Join(codexDir, codexschema.QueueDBFileName))
-	buildFixtureMemoriesGitBaseline(t, filepath.Join(codexDir, memoriesWorktreeSubdir), fixtureGitConfigNoRemote)
-	buildFixtureMemoriesV2Worktree(t, filepath.Join(codexDir, memoriesWorktreeV2Subdir))
+	BuildFixtureMemoriesGitBaseline(t, filepath.Join(codexDir, codexschema.MemoriesWorktreeSubdir), FixtureGitConfigNoRemote)
+	buildFixtureMemoriesV2Worktree(t, filepath.Join(codexDir, codexschema.MemoriesWorktreeV2Subdir))
 
-	return &Home{Dir: codexDir, SQLiteDir: codexDir}
+	return codexDir
 }
 
-// InsertThreadRow inserts a threads row with id and cwd directly into
-// home's fixture state database, for tests exercising a project
+// InsertThreadRow inserts a threads row with id and cwd directly into the
+// fixture state database under sqliteDir, for tests exercising a project
 // SetupFixture's canned fixture does not cover, such as a symlink-aliased
 // cwd built under t.TempDir() by a cross-package end-to-end move test.
-func InsertThreadRow(t *testing.T, home *Home, id, cwd string) {
+func InsertThreadRow(t *testing.T, sqliteDir, id, cwd string) {
 	t.Helper()
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(sqliteDir, codexschema.StateDBFileName))
 	if err != nil {
 		t.Fatalf("open fixture state db: %v", err)
 	}
@@ -74,11 +81,11 @@ func InsertThreadRow(t *testing.T, home *Home, id, cwd string) {
 	}
 }
 
-// ThreadCWD reads back threads.cwd for id from home's fixture state
-// database, for tests asserting a move rewrote it.
-func ThreadCWD(t *testing.T, home *Home, id string) string {
+// ThreadCWD reads back threads.cwd for id from the fixture state database
+// under sqliteDir, for tests asserting a move rewrote it.
+func ThreadCWD(t *testing.T, sqliteDir, id string) string {
 	t.Helper()
-	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
+	database, err := sql.Open("sqlite", filepath.Join(sqliteDir, codexschema.StateDBFileName))
 	if err != nil {
 		t.Fatalf("open fixture state db: %v", err)
 	}
@@ -130,23 +137,23 @@ func findFixtureDir(t *testing.T) string {
 	}
 }
 
-// fixtureGitConfigNoRemote is a local-only baseline config, the shape
-// hasNoRemoteGitBaseline accepts.
-const fixtureGitConfigNoRemote = "[core]\n\trepositoryformatversion = 0\n"
+// FixtureGitConfigNoRemote is a local-only baseline config, the shape the
+// codex adapter's hasNoRemoteGitBaseline probe accepts.
+const FixtureGitConfigNoRemote = "[core]\n\trepositoryformatversion = 0\n"
 
-// fixtureGitConfigWithRemote attaches the baseline to a remote, the shape a
+// FixtureGitConfigWithRemote attaches the baseline to a remote, the shape a
 // move leaves in place.
-const fixtureGitConfigWithRemote = fixtureGitConfigNoRemote +
+const FixtureGitConfigWithRemote = FixtureGitConfigNoRemote +
 	"[remote \"origin\"]\n\turl = https://example.invalid/repo.git\n"
 
-// buildFixtureMemoriesGitBaseline creates a .git baseline under root whose
+// BuildFixtureMemoriesGitBaseline creates a .git baseline under root whose
 // config is config, at runtime: git never tracks a nested .git directory, so
 // — like the SQLite fixtures below — test code builds it instead of
 // committing it. Calling it on a root that already has a baseline replaces
 // that baseline's config.
-func buildFixtureMemoriesGitBaseline(t *testing.T, root, config string) {
+func BuildFixtureMemoriesGitBaseline(t *testing.T, root, config string) {
 	t.Helper()
-	gitDir := filepath.Join(root, gitDirName)
+	gitDir := filepath.Join(root, codexschema.GitDirName)
 	if err := os.MkdirAll(gitDir, 0o750); err != nil {
 		t.Fatalf("create fixture memories git baseline: %v", err)
 	}
@@ -196,14 +203,18 @@ func buildFixtureMemoriesV2Worktree(t *testing.T, root string) {
 		t.Fatalf("write fixture memories_v2 memory_summary.md: %v", err)
 	}
 
-	buildFixtureMemoriesGitBaseline(t, root, fixtureGitConfigNoRemote)
+	BuildFixtureMemoriesGitBaseline(t, root, FixtureGitConfigNoRemote)
 }
 
-// fixtureProjectID is the projects.id of the fixture's one Codex project,
+// FixtureProjectID is the projects.id of the fixture's one Codex project,
 // whose single project_roots row holds FixtureProjectPath.
-const fixtureProjectID = "primary-project"
+const FixtureProjectID = "primary-project"
 
-func buildFixtureStateDB(t *testing.T, path string) {
+// BuildFixtureStateDB creates the fixture state database at path: the
+// codexschema.StateDBSchema tables holding one thread whose cwd is
+// FixtureProjectPath, the FixtureProjectID project with its one root, and a
+// complete backfill_state row.
+func BuildFixtureStateDB(t *testing.T, path string) {
 	t.Helper()
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -230,14 +241,14 @@ func buildFixtureStateDB(t *testing.T, path string) {
 
 	_, err = database.ExecContext(context.Background(),
 		`INSERT INTO projects (id, name, metadata, position, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?)`,
-		fixtureProjectID, "codexproject", "{}", 0, now*1000, now*1000,
+		FixtureProjectID, "codexproject", "{}", 0, now*1000, now*1000,
 	)
 	if err != nil {
 		t.Fatalf("insert fixture project: %v", err)
 	}
 	_, err = database.ExecContext(context.Background(),
 		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`,
-		fixtureProjectID, 0, FixtureProjectPath(),
+		FixtureProjectID, 0, FixtureProjectPath(),
 	)
 	if err != nil {
 		t.Fatalf("insert fixture project root: %v", err)
@@ -280,11 +291,11 @@ func buildFixtureMemoriesDB(t *testing.T, path string) {
 	}
 }
 
-// fixtureQueuedItemID and fixtureQueuedMentionItemID are the queued_items
+// FixtureQueuedItemID and FixtureQueuedMentionItemID are the queued_items
 // rows SetupFixture seeds.
 const (
-	fixtureQueuedItemID        = "fixture-queued-skill-item"
-	fixtureQueuedMentionItemID = "fixture-queued-mention-item"
+	FixtureQueuedItemID        = "fixture-queued-skill-item"
+	FixtureQueuedMentionItemID = "fixture-queued-mention-item"
 )
 
 // buildFixtureQueueDB writes two queued turns whose payload_json is the
@@ -304,9 +315,9 @@ func buildFixtureQueueDB(t *testing.T, path string) {
 	}
 
 	payloads := []struct{ id, payload string }{
-		{fixtureQueuedItemID, `{"UserInput":{"content":[{"type":"skill","name":"deploy","path":"` +
+		{FixtureQueuedItemID, `{"UserInput":{"content":[{"type":"skill","name":"deploy","path":"` +
 			FixtureProjectPath() + `/.codex/skills/deploy/SKILL.md"}],"client_id":"fixture-client"}}`},
-		{fixtureQueuedMentionItemID, `{"UserInput":{"content":[{"type":"mention","name":"release","path":"` +
+		{FixtureQueuedMentionItemID, `{"UserInput":{"content":[{"type":"mention","name":"release","path":"` +
 			FixtureProjectPath() + `/.codex/skills/release/SKILL.md"}],"client_id":"fixture-client"}}`},
 	}
 	now := time.Now().UnixMilli()

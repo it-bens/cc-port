@@ -22,6 +22,7 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 // newTestToolSet mirrors newToolSet's registration but wires Codex through
@@ -181,7 +182,8 @@ func redirectProgressSink(t *testing.T) {
 func buildCodexOnlyArchive(t *testing.T) []byte {
 	t.Helper()
 
-	sourceHome := codex.SetupFixture(t)
+	sourceDir := codextest.SetupFixture(t)
+	sourceHome := &codex.Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	workspace := codex.NewWorkspace(
 		sourceHome,
 		func(string) string { return "" },
@@ -192,12 +194,12 @@ func buildCodexOnlyArchive(t *testing.T) []byte {
 	for _, category := range codexTool.Categories() {
 		selected[category.Name] = true
 	}
-	placeholders, err := workspace.Placeholders(t.Context(), codex.FixtureProjectPath(), selected)
+	placeholders, err := workspace.Placeholders(t.Context(), codextest.FixtureProjectPath(), selected)
 	require.NoError(t, err)
 
 	var archiveBytes bytes.Buffer
 	_, err = export.Run(t.Context(), []tool.Target{{Tool: codexTool, Workspace: workspace}}, &export.Options{
-		ProjectPath:  codex.FixtureProjectPath(),
+		ProjectPath:  codextest.FixtureProjectPath(),
 		Output:       &archiveBytes,
 		Selected:     map[string]map[string]bool{codexTool.Name(): selected},
 		Placeholders: map[string][]manifest.Placeholder{codexTool.Name(): placeholders},

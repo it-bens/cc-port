@@ -13,6 +13,7 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 // TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovingSource
@@ -38,13 +39,13 @@ func TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovin
 	claudeHome := testutil.SetupFixture(t)
 	setUpClaudeProjectFixture(t, claudeHome, realProject)
 
-	codexHome := codex.SetupFixture(t)
+	codexDir := codextest.SetupFixture(t)
 	const threadID = "00000000-0000-4000-8000-0000000000ee"
-	codex.InsertThreadRow(t, codexHome, threadID, aliasedCWD)
+	codextest.InsertThreadRow(t, codexDir, threadID, aliasedCWD)
 
 	targets := []tool.Target{
 		{Tool: claude.New(), Workspace: claude.NewWorkspace(claudeHome)},
-		{Tool: codex.New(), Workspace: quietCodexWorkspace(codexHome)},
+		{Tool: codex.New(), Workspace: quietCodexWorkspace(&codex.Home{Dir: codexDir, SQLiteDir: codexDir})},
 	}
 
 	result, err := move.Apply(t.Context(), targets, move.Options{OldPath: realProject, NewPath: newPath})
@@ -63,7 +64,7 @@ func TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovin
 		}
 	}
 	assert.Positive(t, stateDBCount, "sanity: codex's state-db surface must have counted the symlink-aliased thread")
-	assert.Equal(t, newPath, codex.ThreadCWD(t, codexHome, threadID),
+	assert.Equal(t, newPath, codextest.ThreadCWD(t, codexDir, threadID),
 		"Codex's own preflight-captured plan must still rewrite the symlink-aliased thread row after Claude removed the source")
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 // TestMain points the machine-wide Codex locations at a scratch directory
@@ -1085,7 +1086,8 @@ func TestDefaultSQLiteDirThatDoesNotExistReadsAsNoDatabases(t *testing.T) {
 // cache, so resolution records the cloud-cache warning.
 func openFixtureWithExpiredCloudCache(t *testing.T) *Workspace {
 	t.Helper()
-	fixtureHome := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	fixtureHome := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	signInToCloudAccount(t, fixtureHome.Dir)
 	expired := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	writeCloudCache(t, filepath.Join(fixtureHome.Dir, cloudConfigBundleCacheFile), expired, requirementsBundle())
@@ -1097,7 +1099,9 @@ func openFixtureWithExpiredCloudCache(t *testing.T) *Workspace {
 func TestResidualWarningsReportUncheckedCloudRequirement(t *testing.T) {
 	workspace := openFixtureWithExpiredCloudCache(t)
 
-	warnings, err := workspace.ResidualWarnings(t.Context(), tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/test/Projects/renamed"})
+	warnings, err := workspace.ResidualWarnings(t.Context(), tool.MoveRequest{
+		OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/test/Projects/renamed",
+	})
 
 	require.NoError(t, err)
 	assert.Contains(t, fmt.Sprint(warnings), "cloud-managed sqlite_home could not be checked")
@@ -1106,7 +1110,7 @@ func TestResidualWarningsReportUncheckedCloudRequirement(t *testing.T) {
 func TestFinalizeReportsUncheckedCloudRequirement(t *testing.T) {
 	workspace := openFixtureWithExpiredCloudCache(t)
 
-	warnings, err := workspace.Finalize(context.Background(), FixtureProjectPath(), nil)
+	warnings, err := workspace.Finalize(context.Background(), codextest.FixtureProjectPath(), nil)
 
 	require.NoError(t, err)
 	assert.Contains(t, fmt.Sprint(warnings), "cloud-managed sqlite_home could not be checked")

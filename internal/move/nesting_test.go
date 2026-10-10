@@ -15,6 +15,7 @@ import (
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func TestNestedMovePrecondition(t *testing.T) {
@@ -43,8 +44,9 @@ func TestNestedMovePrecondition(t *testing.T) {
 		{
 			name: "codex",
 			setup: func(t *testing.T) (tool.Target, string) {
-				home := codex.SetupFixture(t)
-				return tool.Target{Tool: codex.New(), Workspace: quietCodexWorkspace(home)}, codex.FixtureProjectPath()
+				codexDir := codextest.SetupFixture(t)
+				home := &codex.Home{Dir: codexDir, SQLiteDir: codexDir}
+				return tool.Target{Tool: codex.New(), Workspace: quietCodexWorkspace(home)}, codextest.FixtureProjectPath()
 			},
 		},
 	}
