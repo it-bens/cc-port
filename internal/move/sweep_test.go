@@ -12,9 +12,9 @@ import (
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // fakeTool and fakeWorkspace are a minimal, self-contained tool.Tool /
@@ -105,12 +105,12 @@ var (
 // layer. A swept-out tool is never added to that slice, so no special case is
 // needed here.
 func TestDryRun_MultiTargetIndependence(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{
 		{Tool: claude.New(), Workspace: claude.NewWorkspace(home)},
 		{Tool: &fakeTool{name: "fake"}, Workspace: &fakeWorkspace{moveErr: tool.ErrProjectAbsent, lockPath: filepath.Join(t.TempDir(), ".cc-port.lock")}},
 	}
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 
 	plan, err := move.DryRun(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath})
@@ -134,12 +134,12 @@ func TestDryRun_MultiTargetIndependence(t *testing.T) {
 // not counted as a failure by Failed()) while the real target still
 // applies normally.
 func TestApply_MultiTargetIndependence(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{
 		{Tool: claude.New(), Workspace: claude.NewWorkspace(home)},
 		{Tool: &fakeTool{name: "fake"}, Workspace: &fakeWorkspace{moveErr: tool.ErrProjectAbsent, lockPath: filepath.Join(t.TempDir(), ".cc-port.lock")}},
 	}
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 
 	result, err := move.Apply(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})

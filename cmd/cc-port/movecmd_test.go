@@ -18,9 +18,9 @@ import (
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 type codexOnlyTool struct{}
@@ -117,7 +117,7 @@ func newMoveCmdForTest(t *testing.T) *cobra.Command {
 }
 
 func TestRunMoveDryRun_PrintsPerToolSurfacesAndApplyHint(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 	var stdout bytes.Buffer
 
@@ -135,18 +135,18 @@ func TestRunMoveDryRun_PrintsPerToolSurfacesAndApplyHint(t *testing.T) {
 }
 
 func TestRunMoveDryRun_WarnsAboutActiveWriter(t *testing.T) {
-	home := testutil.SetupFixture(t)
-	writeLiveClaudeSession(t, home, testutil.FixtureProjectPath())
+	home := claudetest.SetupFixture(t)
+	writeLiveClaudeSession(t, home, claudetest.FixtureProjectPath())
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 	var stdout bytes.Buffer
 
 	err := runMoveDryRun(t.Context(), &stdout, targets, move.Options{
-		OldPath: testutil.FixtureProjectPath(), NewPath: testutil.FixtureProjectPath() + "-renamed",
+		OldPath: claudetest.FixtureProjectPath(), NewPath: claudetest.FixtureProjectPath() + "-renamed",
 	})
 
 	require.NoError(t, err)
 	assert.Contains(t, stdout.String(),
-		fmt.Sprintf("    ! active Claude Code writer: pid=%d cwd=%q\n", os.Getpid(), testutil.FixtureProjectPath()))
+		fmt.Sprintf("    ! active Claude Code writer: pid=%d cwd=%q\n", os.Getpid(), claudetest.FixtureProjectPath()))
 }
 
 func TestRunMoveDryRun_WarnsAboutBusyDatabase(t *testing.T) {
@@ -192,11 +192,11 @@ func TestRenderApplyResult_PrintsNoPhysicalProjectMoveWarning(t *testing.T) {
 }
 
 func TestMoveApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 
 	_, err := executeCmd(t,
-		"move", testutil.FixtureProjectPath(), "/Users/test/Projects/relocated",
+		"move", claudetest.FixtureProjectPath(), "/Users/test/Projects/relocated",
 		"--tool", "claude", "--claude-home", home.Dir, "--refs-only", "--apply",
 	)
 
@@ -206,14 +206,14 @@ func TestMoveApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
 }
 
 func TestMoveApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheMoveFails(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	// The fixture project has no directory on disk, so the physical move
 	// fails when the surfaces apply, after the witness ran.
 	newPath := filepath.Join(t.TempDir(), "relocated")
 
 	stderr, err := executeCmd(t,
-		"move", testutil.FixtureProjectPath(), newPath,
+		"move", claudetest.FixtureProjectPath(), newPath,
 		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
 	)
 
@@ -222,13 +222,13 @@ func TestMoveApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheMoveFails(t *te
 }
 
 func TestMoveApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheMoveSucceeds(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 
 	// --refs-only skips the physical project-directory move, which the fixture
 	// project's absence from disk would otherwise fail.
 	stderr, err := executeCmd(t,
-		"move", testutil.FixtureProjectPath(), testutil.FixtureProjectPath()+"-renamed",
+		"move", claudetest.FixtureProjectPath(), claudetest.FixtureProjectPath()+"-renamed",
 		"--tool", "claude", "--claude-home", home.Dir, "--refs-only", "--apply", "--ignore-live-sessions",
 	)
 
@@ -240,12 +240,12 @@ func TestMoveApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheMoveSucceeds(t 
 // that the render error reaches the caller instead of being dropped; import and
 // pull are the commands whose later output a failed render could suppress.
 func TestMoveApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLinesFail(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	failingStderr := &ignoredWriterFailer{}
 
 	stdout, err := executeCmdStreams(t, failingStderr,
-		"move", testutil.FixtureProjectPath(), testutil.FixtureProjectPath()+"-renamed",
+		"move", claudetest.FixtureProjectPath(), claudetest.FixtureProjectPath()+"-renamed",
 		"--tool", "claude", "--claude-home", home.Dir, "--refs-only", "--apply", "--ignore-live-sessions",
 	)
 

@@ -18,9 +18,9 @@ import (
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
 	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
@@ -237,7 +237,7 @@ func buildMinimalArchive(t *testing.T) string {
 }
 
 func TestImportApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 
 	_, err := executeCmd(t,
@@ -251,7 +251,7 @@ func TestImportApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
 }
 
 func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportFails(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	// The importer first reads the archive under the lock, so an archive that
 	// is not a ZIP fails after the witness ran.
@@ -268,7 +268,7 @@ func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportFails(t
 }
 
 func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportSucceeds(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 
 	stderr, err := executeCmd(t,
@@ -281,7 +281,7 @@ func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportSucceed
 }
 
 func TestImportApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLinesFail(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	failingStderr := &ignoredWriterFailer{}
 	targetPath := filepath.Join(t.TempDir(), "new-project")

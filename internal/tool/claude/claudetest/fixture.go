@@ -1,5 +1,5 @@
-// Package testutil provides test helpers for setting up Claude Code fixture data.
-package testutil
+// Package claudetest provides test helpers for setting up Claude Code fixture data.
+package claudetest
 
 import (
 	"context"

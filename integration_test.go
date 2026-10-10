@@ -26,9 +26,9 @@ import (
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/rewrite"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
@@ -41,7 +41,7 @@ const (
 )
 
 func TestMain(m *testing.M) {
-	restore, err := testutil.IsolateHome()
+	restore, err := claudetest.IsolateHome()
 	if err != nil {
 		panic(err)
 	}
@@ -142,7 +142,7 @@ func runImport(t *testing.T, home *claude.Home, options *importer.Options) *impo
 
 // TestIntegration_MoveRoundTrip verifies a full dry-run + apply move cycle using real packages.
 func TestIntegration_MoveRoundTrip(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 	targets := targetsFor(sourceHome)
 
 	oldPath := fixtureProjectPath
@@ -183,7 +183,7 @@ func TestIntegration_MoveRoundTrip(t *testing.T) {
 
 // TestIntegration_ExportImportRoundTrip verifies a full export + import cycle using real packages.
 func TestIntegration_ExportImportRoundTrip(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 
 	archivePath := filepath.Join(t.TempDir(), "export.zip")
 
@@ -208,7 +208,7 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 // its process-table witness and must refuse the operation.
 func TestIntegration_MultiToolArchiveExportsClaudeAndCodex(t *testing.T) {
 	sharedProject := codextest.FixtureProjectPath()
-	claudeSource := testutil.SetupFixture(t)
+	claudeSource := claudetest.SetupFixture(t)
 	moveResult, err := move.Apply(t.Context(), targetsFor(claudeSource), move.Options{
 		OldPath: fixtureProjectPath, NewPath: sharedProject, RefsOnly: true,
 	})
@@ -371,7 +371,7 @@ func verifyImportedProject(t *testing.T, destinationHome *claude.Home, destinati
 // TestIntegration_MoveRefsOnly verifies that a refs-only move updates ClaudeHome data
 // without touching the actual project directory on disk.
 func TestIntegration_MoveRefsOnly(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 
 	oldPath := fixtureProjectPath
 	newPath := "/Users/test/Projects/renamed-refsonly"
@@ -406,7 +406,7 @@ func TestIntegration_MoveRefsOnly(t *testing.T) {
 // every category lands in the destination and that path rewriting worked
 // inside at least one session-keyed body (usage-data/session-meta).
 func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "export-all-categories.zip")
 
 	archiveFile, err := os.Create(archivePath) //nolint:gosec // G304: test-controlled tempdir path
@@ -543,7 +543,7 @@ func assertFileHistorySnapshotsByteIdentical(t *testing.T, sourceRoots, destinat
 // idempotent, so a re-run into the same home is the documented recovery
 // path for a partially failed import.
 func TestIntegration_ImportIsRerunnable(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 
 	archivePath := filepath.Join(t.TempDir(), "export-rerun.zip")
 
@@ -587,7 +587,7 @@ func TestIntegration_ImportIsRerunnable(t *testing.T) {
 
 func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
 	const passphrase = "round-trip-passphrase"
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 
 	sid := stageFixtureWorkflowTree(t, sourceHome)
 
@@ -696,7 +696,7 @@ func assertImportedMtime(t *testing.T, path string, want time.Time, label string
 // survive promotion. The merge-result files (history.jsonl, .claude.json) are
 // asserted not to carry source mtimes — their mtime reflects import time.
 func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 	encodedSourceProjectDir := sourceHome.ProjectDir(fixtureProjectPath)
 
 	// Pin known mtimes on one representative source file per in-scope
@@ -709,7 +709,7 @@ func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
 	fileHistoryMtime := time.Date(2025, 5, 3, 12, 0, 0, 0, time.UTC)
 	todosMtime := time.Date(2025, 5, 4, 13, 0, 0, 0, time.UTC)
 
-	// fixtureSessionFile is a session JSONL the testutil fixture stages
+	// fixtureSessionFile is a session JSONL the claudetest fixture stages
 	// under the encoded project dir. Use its real filename so the source
 	// file the export reads — and the destination file we re-stat — agree.
 	const fixtureSessionFile = "a1b2c3d4-0000-0000-0000-000000000001.jsonl"
@@ -840,7 +840,7 @@ func stageFixtureWorkflowTree(t *testing.T, home *claude.Home) string {
 // dedicated category: they ride the sessions category through the sessions/
 // staging path on both export and import.
 func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 
 	sid := stageFixtureWorkflowTree(t, sourceHome)
 
@@ -907,7 +907,7 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 // transcripts. It also rewrites the encoded storage-dir segment (e.g. a run
 // record's scriptPath) from the old encoded dir to the new one.
 func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
-	sourceHome := testutil.SetupFixture(t)
+	sourceHome := claudetest.SetupFixture(t)
 
 	sid := stageFixtureWorkflowTree(t, sourceHome)
 

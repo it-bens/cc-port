@@ -9,14 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/manifest"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func testTargets(t *testing.T) []tool.Target {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 }
 
@@ -40,7 +40,7 @@ func TestApplyCategorySelection_FromManifestAloneAccepted(t *testing.T) {
 	cmd := newTestCmdWithCategoryFlags(t)
 	require.NoError(t, cmd.Flags().Set("from-manifest", manifestPath))
 
-	gotSelection, gotPlaceholders, err := applyCategorySelection(cmd, targets, testutil.FixtureProjectPath(), noopBanner{})
+	gotSelection, gotPlaceholders, err := applyCategorySelection(cmd, targets, claudetest.FixtureProjectPath(), noopBanner{})
 
 	require.NoError(t, err)
 	assert.True(t, gotSelection["claude"]["sessions"], "manifest with --all categories must select sessions")
@@ -53,7 +53,7 @@ func TestApplyCategorySelection_FromManifestRejectsAllFlag(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("from-manifest", "/tmp/m.xml"))
 	require.NoError(t, cmd.Flags().Set("all", "true"))
 
-	_, _, err := applyCategorySelection(cmd, targets, testutil.FixtureProjectPath(), noopBanner{})
+	_, _, err := applyCategorySelection(cmd, targets, claudetest.FixtureProjectPath(), noopBanner{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--from-manifest is mutually exclusive")
@@ -66,7 +66,7 @@ func TestApplyCategorySelection_FromManifestRejectsIncludeFlag(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("from-manifest", "/tmp/m.xml"))
 	require.NoError(t, cmd.Flags().Set("include", "claude/sessions"))
 
-	_, _, err := applyCategorySelection(cmd, targets, testutil.FixtureProjectPath(), noopBanner{})
+	_, _, err := applyCategorySelection(cmd, targets, claudetest.FixtureProjectPath(), noopBanner{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--from-manifest is mutually exclusive")

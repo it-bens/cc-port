@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func TestSessionKeyedTargets_ZipPrefixesUnique(t *testing.T) {
@@ -36,7 +36,7 @@ func TestSessionKeyedTargets_ZipPrefixesTerminatedWithSlash(t *testing.T) {
 }
 
 func TestSessionKeyedTargets_FilesRootedUnderHomeBaseDir(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	locations, err := claude.LocateProject(t.Context(), claudeHome, "/Users/test/Projects/myproject")
 	require.NoError(t, err)

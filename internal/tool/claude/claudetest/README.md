@@ -1,4 +1,4 @@
-# internal/testutil
+# internal/tool/claude/claudetest
 
 ## Purpose
 

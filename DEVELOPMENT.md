@@ -79,7 +79,7 @@ Other recommended plugins:
 
 - Unit tests live next to the code they cover (`*_test.go` in each `internal/*` directory).
 - `integration_test.go` at the repo root runs the full CLI end-to-end against a fixture `~/.claude`. It is gated by a `//go:build integration` tag, so it is excluded from a plain `go test ./...` run.
-- Fixtures via `internal/testutil.SetupFixture`.
+- Fixtures via `internal/tool/claude/claudetest.SetupFixture`.
 - Run the full suite (unit + integration, expected before any commit): `go test -tags integration ./...`.
 - Run unit tests only (fast iteration): `go test ./...`.
 - Lint: `~/go/bin/golangci-lint run ./...`.

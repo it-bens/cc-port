@@ -17,14 +17,14 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/rewrite"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func fixtureTargets(t *testing.T) []tool.Target {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 }
 
@@ -112,7 +112,7 @@ func applyTestTarget(t *testing.T, workspace *applyTestWorkspace) []tool.Target 
 
 func TestDryRun_ReportsSurfaceCountsPerTool(t *testing.T) {
 	targets := fixtureTargets(t)
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 
 	plan, err := move.DryRun(context.Background(), targets, move.Options{OldPath: oldPath, NewPath: newPath})
@@ -132,8 +132,8 @@ func TestDryRun_ReportsSurfaceCountsPerTool(t *testing.T) {
 }
 
 func TestDryRun_ReportsMalformedHistoryLineWarning(t *testing.T) {
-	home := testutil.SetupFixture(t)
-	oldPath := testutil.FixtureProjectPath()
+	home := claudetest.SetupFixture(t)
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	records := []byte(`{"project":"` + oldPath + `"}` + "\nnot json\n" + `{"project":"` + oldPath + `"}` + "\n")
 	require.NoError(t, os.WriteFile(home.HistoryFile(), records, 0o600))
@@ -146,8 +146,8 @@ func TestDryRun_ReportsMalformedHistoryLineWarning(t *testing.T) {
 }
 
 func TestApply_ReportsMalformedHistoryLineWarning(t *testing.T) {
-	home := testutil.SetupFixture(t)
-	oldPath := testutil.FixtureProjectPath()
+	home := claudetest.SetupFixture(t)
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	records := []byte(`{"project":"` + oldPath + `"}` + "\nnot json\n" + `{"project":"` + oldPath + `"}` + "\n")
 	require.NoError(t, os.WriteFile(home.HistoryFile(), records, 0o600))
@@ -160,8 +160,8 @@ func TestApply_ReportsMalformedHistoryLineWarning(t *testing.T) {
 }
 
 func TestSessionsSurface_ReportsMalformedSessionFileWithoutChangingItsBytes(t *testing.T) {
-	home := testutil.SetupFixture(t)
-	oldPath := testutil.FixtureProjectPath()
+	home := claudetest.SetupFixture(t)
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	malformedPath := filepath.Join(home.SessionsDir(), "malformed-session.json")
 	original := []byte(`{"cwd":`)
@@ -201,7 +201,7 @@ func TestDryRun_AbsentProjectReportsZeroSurfaces(t *testing.T) {
 
 func TestApply_MovesProjectAndUpdatesReferences(t *testing.T) {
 	targets := fixtureTargets(t)
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 
 	claudeWorkspace := targets[0].Workspace
@@ -233,7 +233,7 @@ func TestApply_MovesProjectAndUpdatesReferences(t *testing.T) {
 func TestClaudeMoveSurfaces_AllowsPhysicalDestinationWhenSourceAlreadyGone(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 
 	_, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: t.TempDir()})
 
@@ -244,7 +244,7 @@ func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 
-	_, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: testutil.FixtureProjectPath(), NewPath: t.TempDir(), RefsOnly: true})
+	_, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: claudetest.FixtureProjectPath(), NewPath: t.TempDir(), RefsOnly: true})
 
 	require.NoError(t, err)
 }
@@ -253,7 +253,7 @@ func TestClaudeMove_DryRunLeavesStrandedStagingForApply(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	staging := home.ProjectDir(newPath) + rewrite.StagingSuffix
 	require.NoError(t, os.MkdirAll(staging, 0o750))
@@ -277,7 +277,7 @@ func TestClaudeMoveApply_RemovesStagingDirectoryBeforePromoting(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	staging := home.ProjectDir(newPath) + ".cc-port-staging.tmp"
 	require.NoError(t, os.MkdirAll(staging, 0o750))
@@ -294,7 +294,7 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	oldEncodedDir := home.ProjectDir(oldPath)
 	newEncodedDir := home.ProjectDir(newPath)
@@ -310,11 +310,11 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 }
 
 func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	workspace := claude.NewWorkspace(home)
 	req := tool.MoveRequest{
-		OldPath:  testutil.FixtureProjectPath(),
-		NewPath:  testutil.FixtureProjectPath() + "-renamed",
+		OldPath:  claudetest.FixtureProjectPath(),
+		NewPath:  claudetest.FixtureProjectPath() + "-renamed",
 		RefsOnly: true,
 	}
 
@@ -337,7 +337,7 @@ func TestClaudeMoveApply_RefusesForeignEncodedDestinationAndPreservesSource(t *t
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	oldEncodedDir := home.ProjectDir(oldPath)
 	newEncodedDir := home.ProjectDir(newPath)
@@ -361,7 +361,7 @@ func TestClaudeMove_RefusesExistingConfigEntryAtNewPathAndPreservesState(t *test
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	options := move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true}
 

@@ -22,9 +22,9 @@ import (
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
 	"github.com/it-bens/cc-port/internal/remote"
 	syncc "github.com/it-bens/cc-port/internal/sync"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func TestPull_RejectsMissingTo(t *testing.T) {
@@ -443,7 +443,7 @@ func TestOpenArchiveSource_PlaintextNoPassphraseSucceeds(t *testing.T) {
 }
 
 func TestPull_ApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
@@ -462,7 +462,7 @@ func TestPull_ApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
 }
 
 func TestPull_ApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenThePullFails(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
@@ -487,7 +487,7 @@ func TestPull_ApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenThePullFails(t *t
 }
 
 func TestPull_ApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenThePullSucceeds(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
@@ -505,7 +505,7 @@ func TestPull_ApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenThePullSucceeds(t
 }
 
 func TestPullApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLinesFail(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	url := "file://" + t.TempDir()
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")

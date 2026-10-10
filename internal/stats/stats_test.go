@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/stats"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
 	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
@@ -38,7 +38,7 @@ func (ctx *cancelAfterFirstCheckContext) Err() error {
 
 func fixtureTargets(t *testing.T) []tool.Target {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 }
 

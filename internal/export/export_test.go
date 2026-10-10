@@ -10,16 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/export"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func fixtureTargets(t *testing.T) (targets []tool.Target, projectPath string) {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	claudeTool := claude.New()
-	return []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}, testutil.FixtureProjectPath()
+	return []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}, claudetest.FixtureProjectPath()
 }
 
 func allSelected(t tool.Tool) map[string]bool {

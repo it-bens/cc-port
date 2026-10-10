@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // TestStreamRouting_ExportManifestSuccessLineRoutedToCobraStdout asserts that
@@ -20,7 +20,7 @@ import (
 // reaches a buffer set via cmd.SetOut, not os.Stdout. A bare fmt.Printf
 // would bypass the buffer and the assertion would fail.
 func TestStreamRouting_ExportManifestSuccessLineRoutedToCobraStdout(t *testing.T) {
-	_, stdout, manifestPath := driveExportManifest(t, testutil.FixtureProjectPath())
+	_, stdout, manifestPath := driveExportManifest(t, claudetest.FixtureProjectPath())
 
 	assert.Contains(t, stdout, "Manifest written to "+manifestPath,
 		"success line did not reach cmd.OutOrStdout buffer; bare fmt.Printf regression?")
@@ -70,7 +70,7 @@ func stageMinimalHome(t *testing.T, projectPath string) *claude.Home {
 // export-manifest command with --all to a temp manifest, and returns the home,
 // the command's stdout, and the manifest path.
 //
-// It stages a minimal home rather than testutil.SetupFixture: the canonical
+// It stages a minimal home rather than claudetest.SetupFixture: the canonical
 // fixture's session and memory bodies reference sibling project paths (e.g.
 // /Users/test/Projects/myproject-extras) that the placeholder discoverer
 // surfaces as {{UNRESOLVED_N}} prompts, blocking a no-TTY drive of the cmd.

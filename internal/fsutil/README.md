@@ -37,7 +37,7 @@ A relative path (including the empty string) is a programmer error at the caller
 
 `CopyDir` replicates symlinks as symlinks. It calls `os.Readlink` on the source and `Root.Symlink` on the destination. A source tree containing `link -> /etc/passwd` produces a destination symlink pointing at `/etc/passwd`. The linked file's bytes are never read.
 
-Called by `internal/move` (`move/execute.go`) and `internal/testutil` (`testutil/fixture.go`).
+Called by `internal/move` (`move/execute.go`) and `internal/tool/claude/claudetest` (`claudetest/fixture.go`).
 
 #### Handled
 

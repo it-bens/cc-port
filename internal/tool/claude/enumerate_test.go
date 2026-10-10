@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // resolvedPathByEncodedName indexes an enumeration slice by encoded directory
@@ -25,7 +25,7 @@ func resolvedPathByEncodedName(enumerations []claude.ProjectEnumeration) map[str
 }
 
 func TestEnumerateProjects_ResolvesWitnessLabels(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)
@@ -42,7 +42,7 @@ func TestEnumerateProjects_ResolvesWitnessLabels(t *testing.T) {
 }
 
 func TestEnumerateProjects_PopulatesDiskLocations(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)

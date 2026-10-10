@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/archive"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // writeLimitCloser passes the first limit bytes through to inner then fails
@@ -112,7 +112,7 @@ func TestExport_FileHistoryFailsWhenSnapshotUnreadable(t *testing.T) {
 		t.Skip("chmod bits bypassed when running as root")
 	}
 
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	_, snapshotPath := firstFileHistorySnapshot(t, home)
 	chmodScoped(t, snapshotPath, 0)
 
@@ -136,7 +136,7 @@ func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
 		t.Skip("chmod bits bypassed when running as root")
 	}
 
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	firstDir, _ := firstFileHistorySnapshot(t, home)
 	chmodScoped(t, firstDir, 0)
 
@@ -154,7 +154,7 @@ func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
 func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
 	sentinel := errors.New("synthetic file-history write failure")
 
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	_, bigSnapshotPath := firstFileHistorySnapshot(t, home)
 
 	// zip.Writer wraps output in a 4 KiB bufio.Writer, so a small fixture
@@ -184,7 +184,7 @@ func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
 }
 
 func TestExport_FileHistoryHonorsContextCancelMidWalk(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	_, bigSnapshotPath := firstFileHistorySnapshot(t, home)
 
 	// Same incompressible-body technique as the write-fault test above,

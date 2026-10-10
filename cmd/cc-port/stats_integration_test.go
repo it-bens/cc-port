@@ -7,19 +7,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // TestStatsIntegration_SingleProjectHumanOutput drives `stats <project>` end to
 // end over the fixture and asserts the rendered table reports the project's
 // footprint, with the prefix-sibling references excluded from its tally.
 func TestStatsIntegration_SingleProjectHumanOutput(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 
-	stdout, err := driveStats(t, home.Dir, testutil.FixtureProjectPath())
+	stdout, err := driveStats(t, home.Dir, claudetest.FixtureProjectPath())
 	require.NoError(t, err)
 
-	assert.Contains(t, stdout, "cc-port stats: "+testutil.FixtureProjectPath())
+	assert.Contains(t, stdout, "cc-port stats: "+claudetest.FixtureProjectPath())
 	assert.Contains(t, stdout, "file-history")
 	// The sibling /Users/test/Projects/myproject-extras must never be rendered
 	// as part of this project's footprint.
@@ -30,7 +30,7 @@ func TestStatsIntegration_SingleProjectHumanOutput(t *testing.T) {
 // and asserts every fixture project is ranked, the richest first, with the
 // witness-resolved spelling of the lossy encoded directory.
 func TestStatsIntegration_AllProjectsHumanOutput(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 
 	stdout, err := driveStats(t, home.Dir)
 	require.NoError(t, err)

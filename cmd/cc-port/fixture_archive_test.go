@@ -11,9 +11,9 @@ import (
 
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // writeFixtureArchive runs an in-process export against the fixture project
@@ -22,7 +22,7 @@ import (
 // rather than constructing one inline.
 func writeFixtureArchive(t *testing.T) string {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "fixture.zip")
 
 	file, err := os.Create(archivePath) //nolint:gosec // path under t.TempDir
@@ -41,7 +41,7 @@ func writeFixtureArchive(t *testing.T) string {
 	}
 
 	options := export.Options{
-		ProjectPath: testutil.FixtureProjectPath(),
+		ProjectPath: claudetest.FixtureProjectPath(),
 		Output:      file,
 		Selected:    map[string]map[string]bool{claudeTool.Name(): selected},
 	}

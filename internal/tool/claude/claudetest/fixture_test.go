@@ -1,4 +1,4 @@
-package testutil_test
+package claudetest_test
 
 import (
 	"encoding/json"
@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func TestSetupFixture(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 
 	info, err := os.Stat(home.Dir)
 	require.NoError(t, err)
@@ -34,5 +34,5 @@ func TestSetupFixture(t *testing.T) {
 }
 
 func TestFixtureProjectPath_StableValue(t *testing.T) {
-	assert.Equal(t, "/Users/test/Projects/myproject", testutil.FixtureProjectPath())
+	assert.Equal(t, "/Users/test/Projects/myproject", claudetest.FixtureProjectPath())
 }

@@ -14,19 +14,19 @@ import (
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // setupCmdFixture stages the dotclaude fixture and returns the home dir
 // path (suitable for $HOME) plus the canonical project path inside the
-// fixture. testutil.SetupFixture lays out home.Dir at <tempdir>/dotclaude
+// fixture. claudetest.SetupFixture lays out home.Dir at <tempdir>/dotclaude
 // and home.ConfigFile at <tempdir>/dotclaude.json, so filepath.Dir(home.Dir)
 // is the parent that maps to $HOME for cmd-layer tests.
 func setupCmdFixture(t *testing.T) (homeParent, projectPath string) {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	homeParent = filepath.Dir(home.Dir)
 	return homeParent, "/Users/test/Projects/myproject"
 }
@@ -58,7 +58,7 @@ func injectArchiveWithDeclaredPlaceholderAtURL(t *testing.T, url, name, key, ori
 
 func buildCmdArchiveBytes(t *testing.T, pusher, pass string, placeholders map[string][]manifest.Placeholder) []byte {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 	var buf bytes.Buffer
 	stages := []pipeline.WriterStage{

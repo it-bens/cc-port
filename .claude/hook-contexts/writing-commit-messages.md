@@ -6,7 +6,7 @@
 
 Infer the scope from cc-port's vocabulary instead of the top-level-directory default:
 
-- `internal/<module>/**` → the module basename (`importer`, `move`, `export`, `sync`, `stats`, `lock`, `manifest`, `rewrite`, `sqlrewrite`, `archive`, `scan`, `fsutil`, `testutil`, `ui`, ...); adapters map to their tool: `internal/tool/claude/**` → `claude`, `internal/tool/codex/**` → `codex`.
+- `internal/<module>/**` → the module basename (`importer`, `move`, `export`, `sync`, `stats`, `lock`, `manifest`, `rewrite`, `sqlrewrite`, `archive`, `scan`, `fsutil`, `ui`, ...); adapters map to their tool: `internal/tool/claude/**` → `claude`, `internal/tool/codex/**` → `codex`.
 - `cmd/cc-port/**` → `cmd`.
 - Dependency bumps (`go.mod`/`go.sum`, GitHub Action versions) → `deps`.
 - Other `.github/workflows/**` changes → `ci`; `.goreleaser.yml` and release signing → `release`.

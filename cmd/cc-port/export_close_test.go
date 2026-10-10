@@ -11,9 +11,9 @@ import (
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // closeFailingSinkStage is a pipeline leaf whose writer accepts every byte
@@ -37,7 +37,7 @@ func (c *closeFailingCloser) Close() error {
 // the cmd-layer helper directly so the deferred writer.Close error path
 // surfaces.
 func TestRunExportWithStages_OutputCloseErrorWrapsAsCloseOutputPipeline(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 
 	_, err := runExportWithStages(

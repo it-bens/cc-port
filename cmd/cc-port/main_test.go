@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func TestMain(m *testing.M) {
-	restore, err := testutil.IsolateHome()
+	restore, err := claudetest.IsolateHome()
 	if err != nil {
 		panic(err)
 	}

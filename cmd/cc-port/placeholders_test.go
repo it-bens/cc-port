@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/manifest"
-	"github.com/it-bens/cc-port/internal/testutil"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // TestExportManifest_AlwaysDeclaresProjectDir asserts the written export
@@ -15,7 +15,7 @@ import (
 // discoverable anchor. The encoded dir lives in session-subdir bodies that
 // discovery does not scan, so the adapter declares it unconditionally.
 func TestExportManifest_AlwaysDeclaresProjectDir(t *testing.T) {
-	home, _, manifestPath := driveExportManifest(t, testutil.FixtureProjectPath())
+	home, _, manifestPath := driveExportManifest(t, claudetest.FixtureProjectPath())
 
 	metadata, err := manifest.ReadManifest(manifestPath)
 	require.NoError(t, err)
@@ -30,5 +30,5 @@ func TestExportManifest_AlwaysDeclaresProjectDir(t *testing.T) {
 		}
 	}
 	require.NotNil(t, projectDir, "{{PROJECT_DIR}} must always be declared")
-	assert.Equal(t, home.ProjectDir(testutil.FixtureProjectPath()), projectDir.Original)
+	assert.Equal(t, home.ProjectDir(claudetest.FixtureProjectPath()), projectDir.Original)
 }

@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/stats"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
@@ -33,28 +33,28 @@ func driveStats(t *testing.T, claudeDir string, args ...string) (stdout string, 
 }
 
 func TestStatsCmd_ResultRoutedToStdout(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 
-	stdout, err := driveStats(t, home.Dir, testutil.FixtureProjectPath())
+	stdout, err := driveStats(t, home.Dir, claudetest.FixtureProjectPath())
 	require.NoError(t, err)
 
 	// A bare fmt.Println would write to os.Stdout and leave this buffer empty.
-	assert.Contains(t, stdout, "cc-port stats: "+testutil.FixtureProjectPath())
+	assert.Contains(t, stdout, "cc-port stats: "+claudetest.FixtureProjectPath())
 	assert.Contains(t, stdout, "[claude]")
 	assert.Contains(t, stdout, "References")
 	assert.Contains(t, stdout, "Disk footprint")
 }
 
 func TestStatsCmd_JSONFlagEmitsFootprintDTO(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 
-	stdout, err := driveStats(t, home.Dir, "--json", testutil.FixtureProjectPath())
+	stdout, err := driveStats(t, home.Dir, "--json", claudetest.FixtureProjectPath())
 	require.NoError(t, err)
 
 	var footprint stats.Footprint
 	require.NoError(t, json.Unmarshal([]byte(stdout), &footprint))
 
-	assert.Equal(t, testutil.FixtureProjectPath(), footprint.ProjectPath)
+	assert.Equal(t, claudetest.FixtureProjectPath(), footprint.ProjectPath)
 	require.Len(t, footprint.ByTool, 1)
 	claudeFootprint := footprint.ByTool[0]
 	assert.Equal(t, "claude", claudeFootprint.Tool)
@@ -64,7 +64,7 @@ func TestStatsCmd_JSONFlagEmitsFootprintDTO(t *testing.T) {
 }
 
 func TestStatsCmd_JSONFlagEmitsAllProjectsDTO(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 
 	stdout, err := driveStats(t, home.Dir, "--json")
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func TestStatsCmd_HumanizesDiskFootprintAcrossMagnitudes(t *testing.T) {
 // interrupt: cancellation reaches the scan and surfaces as context.Canceled,
 // which would fail if stats stopped threading cmd.Context() into ComputeFootprint.
 func TestStatsCmd_CancelledRootContextAbortsScan(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -151,7 +151,7 @@ func TestStatsCmd_CancelledRootContextAbortsScan(t *testing.T) {
 	rootCmd := newRootCmd(noopBanner{})
 	rootCmd.SetOut(&outBuffer)
 	rootCmd.SetErr(&errBuffer)
-	rootCmd.SetArgs([]string{"stats", "--claude-home", home.Dir, testutil.FixtureProjectPath()})
+	rootCmd.SetArgs([]string{"stats", "--claude-home", home.Dir, claudetest.FixtureProjectPath()})
 
 	err := rootCmd.ExecuteContext(ctx)
 
@@ -159,7 +159,7 @@ func TestStatsCmd_CancelledRootContextAbortsScan(t *testing.T) {
 }
 
 func TestStatsCmd_TooManyArgsIsUsageError(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 
 	_, err := driveStats(t, home.Dir, "/one", "/two")
 	require.Error(t, err)

@@ -35,7 +35,7 @@ func FixtureProjectPath() string {
 // worktree root (memories/ and memories_v2/), alongside it — SQLite files
 // are binary and nested .git directories are untrackable by the outer repo,
 // so all of it is built by test code rather than committed, following the
-// testutil.SetupFixture pattern. It returns the staged codex home directory,
+// claudetest.SetupFixture pattern. It returns the staged codex home directory,
 // which is also the fixture's SQLite directory: sqlite_home resolves to the
 // same directory (config.toml declares no sqlite_home key and
 // $CODEX_SQLITE_HOME is unset in the fixture environment).

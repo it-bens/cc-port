@@ -1115,7 +1115,7 @@ machine; a host with a Codex MDM profile or files under `/etc/codex` would
 change those tests' results.
 
 Fixtures come from `testdata/dotcodex/`, staged by the `codextest`
-subpackage's `SetupFixture` following the `testutil.SetupFixture` pattern.
+subpackage's `SetupFixture` following the `claudetest.SetupFixture` pattern.
 `codextest` does not import this package, because this package's own tests
 import it. `SetupFixture(t) string` therefore returns the staged directory,
 which is both the codex home and the SQLite directory, and callers build
