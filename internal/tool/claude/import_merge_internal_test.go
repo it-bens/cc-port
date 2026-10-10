@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
-
-	"github.com/it-bens/cc-port/internal/rewrite"
 )
 
 // newMergeTestWorkspace returns a Workspace rooted at a fresh temp home, with
@@ -223,7 +221,7 @@ func TestMergeProjectConfigBytes_DropsIncomingApprovalGatesOnFreshDestination(t 
 	merged, err := mergeProjectConfigBytes(nil, "/fake/config", projectPath, block)
 
 	require.NoError(t, err)
-	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	path := "projects." + gjson.Escape(projectPath)
 	for _, key := range destinationOwnedProjectKeys {
 		assert.False(t, gjson.GetBytes(merged, path+"."+key).Exists())
 	}
@@ -242,7 +240,7 @@ func TestMergeProjectConfigBytes_PreservesDestinationApprovalGateValues(t *testi
 	merged, err := mergeProjectConfigBytes(existing, "/fake/config", projectPath, block)
 
 	require.NoError(t, err)
-	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	path := "projects." + gjson.Escape(projectPath)
 	assert.True(t, gjson.GetBytes(merged, path+".hasTrustDialogAccepted").Bool())
 	assert.False(t, gjson.GetBytes(merged, path+".hasClaudeMdExternalIncludesApproved").Bool())
 	assert.Equal(t, []any{"Bash(go:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
@@ -260,7 +258,7 @@ func TestMergeProjectConfigBytes_DropsIncomingApprovalGatesWhenDestinationProjec
 	merged, err := mergeProjectConfigBytes(existing, "/fake/config", projectPath, block)
 
 	require.NoError(t, err)
-	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	path := "projects." + gjson.Escape(projectPath)
 	for _, key := range destinationOwnedProjectKeys {
 		assert.False(t, gjson.GetBytes(merged, path+"."+key).Exists())
 	}
@@ -298,7 +296,7 @@ func TestFinalizeConfigGrants_SplicesIncomingAllowedToolsOverDestination(t *test
 
 	merged, err := os.ReadFile(workspace.home.ConfigFile)
 	require.NoError(t, err)
-	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	path := "projects." + gjson.Escape(projectPath)
 	assert.Equal(t, []any{"Bash(rm:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
 		"a selected config-grants category must port the incoming grants over the destination's")
 	assert.Equal(t, "kept", gjson.GetBytes(merged, path+".setting").String())
@@ -374,7 +372,7 @@ func TestFinalize_ConfigGrantsSpliceWinsOverDestinationOwnedHandling(t *testing.
 
 	merged, err := os.ReadFile(workspace.home.ConfigFile)
 	require.NoError(t, err)
-	path := "projects." + rewrite.EscapeSJSONKey(projectPath)
+	path := "projects." + gjson.Escape(projectPath)
 	assert.Equal(t, []any{"Bash(granted:*)"}, gjson.GetBytes(merged, path+".allowedTools").Value(),
 		"the grants entry's value must land, not the config block's destination-owned copy")
 	assert.Equal(t, "ported", gjson.GetBytes(merged, path+".setting").String())

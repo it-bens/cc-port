@@ -14,7 +14,6 @@ Every path-rewriting command routes through this package so the boundary contrac
   - `ReplaceBoundedPrefix(value, oldPath, newPath string) (string, bool)`: splices `newPath` onto `value`'s suffix past `oldPath` when `value` is `oldPath` or a path-boundary descendant of it, else reports `ok=false`. `oldPath` must be a clean absolute path without a trailing separator, as every caller's is; the splice starts at `len(oldPath)`, so a trailing separator would be dropped. The single-value counterpart to `ReplacePathInBytes`, for callers rewriting one already-matched string rather than scanning a buffer.
   - `CountPathInBytes(data []byte, path string) int`: counts bounded occurrences without rewriting, scanning without a rewritten copy. The counting analogue of `ReplacePathInBytes`.
   - `CountPathInBytesWithJSONEscape(data []byte, path string) int`: counts bounded occurrences across both the raw and JSON-escaped forms. The counting analogue of `ReplacePathInBytesWithJSONEscape`.
-  - `EscapeSJSONKey(key string) string`: escapes a key for use as a single segment in an sjson path expression.
 - **TOML rewrite**
   - `TOMLPathRewrite(data []byte, oldPath, newPath string) (rewritten []byte, count int, err error)`: rewrites bounded path references in raw TOML while preserving the original formatting and comments.
 - **Atomic rename**
@@ -171,11 +170,11 @@ path. `move`'s project-directory surface is its only caller
 Unit tests in `rewrite_test.go` cover `PromoteDir`'s staging, copy, atomic
 rename, and rollback behavior. Tests also cover
 `ReplacePathInBytes` (including dot-boundary lookahead),
-`SafeRenamePromoter` (files, rollback path), `EscapeSJSONKey`,
-`ContainsBoundedPath`, `ReplaceBoundedPrefix` (equal value, a nested
-descendant's preserved suffix, and the continuation-byte and unrelated-path
-refusals), the `Count*` primitives (boundary cases, the JSON-escaped form,
-and parity with their `Replace*` counterparts), and `SafeWriteFile`.
+`SafeRenamePromoter` (files, rollback path), `ContainsBoundedPath`,
+`ReplaceBoundedPrefix` (equal value, a nested descendant's preserved suffix,
+and the continuation-byte and unrelated-path refusals), the `Count*`
+primitives (boundary cases, the JSON-escaped form, and parity with their
+`Replace*` counterparts), and `SafeWriteFile`.
 
 Unit tests in `toml_test.go` cover `TOMLPathRewrite`: table-key and
 value-position renames, comment and formatting preservation, project-local
