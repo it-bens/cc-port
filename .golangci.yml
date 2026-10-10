@@ -415,6 +415,9 @@ linters:
       locale: US
       ignore-rules:
         - cancelled
+    nolintlint:
+      require-explanation: true
+      require-specific: true
     goconst:
       ignore-tests: true
     gocritic:
