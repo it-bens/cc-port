@@ -4,9 +4,7 @@
 
 Implements the ZIP layout every tool shares: a `<tool>/` namespace per
 registered tool, decompression caps, `os.Root` containment for staged writes,
-and placeholder substitution. Both command packages (`internal/export`,
-`internal/importer`) and tool adapters depend on this package; it depends on
-neither.
+and placeholder substitution.
 
 ## Public API
 
@@ -158,8 +156,8 @@ neither.
 **Not covered.**
 
 - Validating that the tool name in an entry's prefix is a registered tool.
-  That check belongs to the caller (`internal/importer`), which has the
-  registry this package does not depend on.
+  That check belongs to the caller (`internal/importer`), which holds the
+  tool registry.
 
 ### Placeholder machinery
 

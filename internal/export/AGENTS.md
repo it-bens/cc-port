@@ -2,7 +2,7 @@
 
 ## Before editing
 
-- This package is generic orchestration; it must never import a tool adapter. Per-tool export logic (zip prefixes, home base directories, category bodies) lives in each adapter (e.g. `internal/tool/claude`). (README §Category coverage)
+- Keep per-tool export logic (zip prefixes, home base directories, category bodies) in each adapter (e.g. `internal/tool/claude`); this package is generic orchestration. (README §Category coverage)
 - Route every tool's category declarations through `manifest.BuildToolCategoryEntries`; never hand-roll a parallel category literal. (README §Category coverage)
 - A target reporting `tool.ErrProjectAbsent` writes an empty tool block; it must not fail the whole run. (README §Category coverage)
 

@@ -2,11 +2,7 @@
 
 ## Purpose
 
-Owns the `metadata.xml` wire format and per-tool category validation. Both
-`internal/export` (producer, via each tool's `Placeholders`/`Export`) and
-`internal/importer` (consumer) depend on this package. It depends on neither
-`internal/tool` nor any adapter, so every tool agrees on the wire contract
-through a neutral third party.
+Owns the `metadata.xml` wire format and per-tool category validation.
 
 ## Public API
 
@@ -82,10 +78,6 @@ through a neutral third party.
 ## Contracts
 
 ### Category manifest
-
-Called by each tool adapter (producer, via `BuildToolCategoryEntries` inside
-its `Export`/`Placeholders` composition in `internal/export`) and
-`internal/importer` (consumer, via `ApplyToolCategories`).
 
 #### Handled
 

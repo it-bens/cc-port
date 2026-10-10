@@ -90,8 +90,6 @@ validation (`VerifyManifestTools`) constructs and wraps it directly. See
 
 ### Import contract
 
-Caller: `cmd/cc-port`.
-
 `cc-port import` treats every archive as a closed contract per tool. Every
 placeholder token a tool's bodies contain must be accounted for before any
 destination is written.
@@ -177,8 +175,6 @@ These paths abort before any write:
   Claude instance.
 
 ### Plan surface
-
-Caller: `cmd/cc-port`.
 
 `cc-port import` plans by default and commits under `--apply`. `DryRun` runs
 the manifest, entry-tool, category, anchor, resolution, and staging-directory

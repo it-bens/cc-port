@@ -25,8 +25,6 @@ The error inventory follows the project's typed-errors discipline established by
 
 ### Source layering and precedence
 
-Used by `cmd/cc-port` push and pull.
-
 #### Handled
 
 - File source (when `Path` set) parses `KEY=VALUE` lines, recognizes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`. File mode must be at most 0600.

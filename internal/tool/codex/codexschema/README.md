@@ -6,8 +6,6 @@ The one copy of the Codex SQLite DDL and database file names that cc-port create
 
 It also holds the memory worktree directory names, which the codex adapter and its `codextest` fixtures both use.
 
-The package has no imports, so the seeder binary and the codex adapter, which the shipped binary links, can both import it.
-
 ## Public API
 
 - `StateDBFileName`, `MemoriesDBFileName`, `QueueDBFileName`: `state_5.sqlite`, `memories_1.sqlite`, `queue_1.sqlite`, the names in `codex-rs/state/src/sqlite.rs`. Only fixture builders pin them; the codex adapter globs (see `internal/tool/codex/README.md` §Glob, don't pin).

@@ -18,3 +18,7 @@ When a behavior hides behind the current exported API, match against the seams p
 ## Post-Step-3
 
 Use the project's descriptive-identifier shapes: project paths as `/Users/test/Projects/<name>`, session IDs as `"primary-session"` / `"orphaned-session"`, file-history keys as `"edited-file"`, manifest entries as `"first-snapshot"`.
+
+## Post-Step-6
+
+Run `make lint`: test files are linted too, and the `test-only-packages` depguard rule in `.golangci.yml` covers test dependencies and the test-support packages.

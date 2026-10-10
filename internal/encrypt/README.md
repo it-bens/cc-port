@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Streaming wrappers around `filippo.io/age` for cc-port archives plus self-skipping pipeline stage types. Symmetric (passphrase) mode only. Key-recipient mode is intentionally out of scope. Higher-level callers like `cmd/cc-port` and `internal/sync` consume this package, never the reverse.
+Streaming wrappers around `filippo.io/age` for cc-port archives plus self-skipping pipeline stage types. Symmetric (passphrase) mode only. Key-recipient mode is intentionally out of scope.
 
 ## Public API
 

@@ -45,8 +45,7 @@ as "the project") lives in the owning adapter's `MoveSurfaces` (for example
 
 ### Apply contract
 
-Callers: `cc-port move --apply` command in `cmd/cc-port`. See
-[`internal/lock/README.md`](../lock/README.md) §Concurrency guard for the
+See [`internal/lock/README.md`](../lock/README.md) §Concurrency guard for the
 witness-then-flock ordering that guards `Apply`.
 
 #### Handled

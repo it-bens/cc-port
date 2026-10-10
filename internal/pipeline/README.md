@@ -19,8 +19,6 @@ Composes write-side `io.Writer` chains and read-side `View` chains for cc-port's
 
 ### Stage composition
 
-Used by `cmd/cc-port` to assemble per-command pipelines.
-
 #### Handled
 
 - Stage list with at least one element. Source/sink stages may sit at any position; the runner does not enforce ordering policy.

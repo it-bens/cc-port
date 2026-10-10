@@ -34,7 +34,7 @@ assembles the shared manifest.
 
 ### Category coverage
 
-Called by `cmd/cc-port`. Delegates to `internal/manifest` (see
+Delegates to `internal/manifest` (see
 [`internal/manifest/README.md`](../manifest/README.md) §Category manifest)
 for the per-tool enum validation and write helper.
 

@@ -1,8 +1,8 @@
 // Package encrypt wraps filippo.io/age streams for cc-port archives.
 // Symmetric (passphrase) mode only; key-recipient mode is intentionally
-// out of scope. The package contributes streaming primitives, pipeline
+// out of scope. The package contributes streaming primitives and pipeline
 // stage types whose ReaderStage owns the read-side dispatch matrix
-// internally, used by cmd/cc-port and (via the sync plan) cmd/cc-port pull.
+// internally.
 package encrypt
 
 import (

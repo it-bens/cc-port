@@ -19,9 +19,9 @@ import (
 
 // fileHistoryTool is the wire name of the one tool whose export ever writes
 // an entry under fileHistoryEntryPrefix (internal/tool/claude's private
-// toolName constant, duplicated here). This package is generic
-// orchestration and must never import a tool adapter (see this package's
-// AGENTS.md), so the name can't be looked up from the tool contract, and
+// toolName constant, duplicated here). This package cannot import a tool
+// adapter (depguard rule `adapter-boundary` in .golangci.yml), so the name
+// can't be looked up from the tool contract, and
 // tool.Category (Name, Description, DefaultSelected) has no field a tool
 // could use to declare a category's bodies opaque — adding one would be a
 // new abstraction built for this single case. Scoping the prefix check to

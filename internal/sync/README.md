@@ -45,8 +45,6 @@ This package has no tool-specific knowledge; it drives `internal/export` and
 
 ### Plan-and-execute split
 
-Used by `cmd/cc-port` push and pull.
-
 #### Handled
 
 - Plan reads remote state (or notes its absence) and populates the plan
