@@ -499,8 +499,8 @@ func readExistingOrEmpty(path string) ([]byte, error) {
 	return data, nil
 }
 
-// InvalidConfigJSONError reports that a config splice rejected the existing
-// config file because it is not valid JSON.
+// InvalidConfigJSONError reports that the config file at Path is not valid
+// JSON.
 type InvalidConfigJSONError struct {
 	Path string
 }

@@ -51,6 +51,63 @@ func TestConfigSurfacePlan_PropagatesUnreadableConfigFile(t *testing.T) {
 	assert.ErrorContains(t, err, "read config file")
 }
 
+func TestCheckConfigEntryCollision(t *testing.T) {
+	const oldPath = "/Users/test/Projects/old?"
+	const newPath = "/Users/test/Projects/new?"
+
+	tests := []struct {
+		name   string
+		config string
+		// missing leaves the config file absent instead of writing config.
+		missing bool
+		wantErr error
+	}{
+		{
+			name:   "literal new key absent next to a sibling the unescaped wildcard would match",
+			config: `{"projects":{"/Users/test/Projects/old?":{},"/Users/test/Projects/newx":{}}}`,
+		},
+		{
+			name:   "new key present while old key absent",
+			config: `{"projects":{"/Users/test/Projects/new?":{}}}`,
+		},
+		{
+			name:    "both literal keys present",
+			config:  `{"projects":{"/Users/test/Projects/old?":{},"/Users/test/Projects/new?":{}}}`,
+			wantErr: ErrConfigEntryCollision,
+		},
+		{name: "missing config file", missing: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := &Home{Dir: t.TempDir(), ConfigFile: filepath.Join(t.TempDir(), "claude.json")}
+			if !test.missing {
+				require.NoError(t, os.WriteFile(home.ConfigFile, []byte(test.config), 0o600))
+			}
+
+			err := checkConfigEntryCollision(home, oldPath, newPath)
+
+			if test.wantErr == nil {
+				assert.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, test.wantErr)
+			assert.ErrorContains(t, err, home.ConfigFile)
+		})
+	}
+}
+
+func TestCheckConfigEntryCollision_RejectsInvalidJSON(t *testing.T) {
+	home := &Home{Dir: t.TempDir(), ConfigFile: filepath.Join(t.TempDir(), "claude.json")}
+	require.NoError(t, os.WriteFile(home.ConfigFile, []byte(`{"projects":`), 0o600))
+
+	err := checkConfigEntryCollision(home, "/old", "/new")
+
+	var invalid *InvalidConfigJSONError
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, home.ConfigFile, invalid.Path)
+}
+
 func TestHistorySurfaceApply_IsIdempotent(t *testing.T) {
 	home := &Home{Dir: t.TempDir()}
 	require.NoError(t, os.WriteFile(home.HistoryFile(), []byte(`{"project":"/old/project"}`+"\n"), 0o600))

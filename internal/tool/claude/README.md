@@ -513,6 +513,14 @@ passes it the bytes it read alongside the rewritten bytes.
   new encoded directory already exists while its old source is still present:
   refused before any write via `checkEncodedDirCollision`. The refusal names
   both paths and instructs users to delete the destination and re-run.
+- A `projects` entry for `NewPath` in the config file while the entry for
+  `OldPath` remains: `checkConfigEntryCollision` refuses with
+  `ErrConfigEntryCollision` before any write, in dry-run and apply, with or
+  without `--refs-only`. `RewriteUserConfig` would otherwise replace the
+  destination entry. The refusal names both paths and instructs users to
+  remove or merge one of the two entries by hand and re-run. A re-run after
+  the config surface already re-keyed the entry converges, because the old
+  entry is gone.
 - A session witness naming neither `OldPath` nor `NewPath`:
   `verifyProjectMoveIdentity` refuses before any write, the same guard
   `verifyProjectIdentity` applies to a single expected path. Two distinct

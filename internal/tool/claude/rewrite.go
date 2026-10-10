@@ -122,6 +122,7 @@ func projectConfigPath(project string) string {
 
 // RewriteUserConfig re-keys the oldProject entry in ~/.claude.json to
 // newProject and rewrites bounded project-path references inside that entry.
+// An existing newProject entry is replaced.
 func RewriteUserConfig(data []byte, oldProject, newProject string) (updated []byte, rekeyed bool, err error) {
 	if !gjson.ValidBytes(data) {
 		return nil, false, fmt.Errorf("invalid user config JSON")

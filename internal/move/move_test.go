@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/manifest"
@@ -353,6 +355,36 @@ func TestClaudeMoveApply_RefusesForeignEncodedDestinationAndPreservesSource(t *t
 	require.NoError(t, readErr, "the refused collision must leave the source untouched")
 	assert.Equal(t, "source data", string(data))
 	assert.FileExists(t, filepath.Join(newEncodedDir, "unrelated.txt"))
+}
+
+func TestClaudeMove_RefusesExistingConfigEntryAtNewPathAndPreservesState(t *testing.T) {
+	targets := fixtureTargets(t)
+	workspace := targets[0].Workspace
+	home := claudeWorkspaceHome(t, workspace)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	options := move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true}
+
+	config, err := os.ReadFile(home.ConfigFile)
+	require.NoError(t, err)
+	config, err = sjson.SetRawBytes(config, "projects."+gjson.Escape(newPath), []byte(`{"allowedTools":["Bash(ls:*)"]}`))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(home.ConfigFile, config, 0o600))
+	history, err := os.ReadFile(home.HistoryFile())
+	require.NoError(t, err)
+
+	_, dryRunErr := move.DryRun(t.Context(), targets, options)
+	_, applyErr := move.Apply(t.Context(), targets, options)
+
+	require.ErrorIs(t, dryRunErr, claude.ErrConfigEntryCollision)
+	require.ErrorIs(t, applyErr, claude.ErrConfigEntryCollision)
+	configAfter, err := os.ReadFile(home.ConfigFile)
+	require.NoError(t, err)
+	assert.Equal(t, config, configAfter)
+	historyAfter, err := os.ReadFile(home.HistoryFile())
+	require.NoError(t, err)
+	assert.Equal(t, history, historyAfter)
+	assert.DirExists(t, home.ProjectDir(oldPath))
 }
 
 func TestApply_CancellationRestoresCompletedSurfaces(t *testing.T) {

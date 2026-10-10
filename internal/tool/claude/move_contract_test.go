@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
@@ -23,8 +24,9 @@ import (
 // reports from what its apply actually does.
 func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
 	tests := []struct {
-		name    string
-		arrange func(t *testing.T, workspace *claude.Workspace, req tool.MoveRequest)
+		name       string
+		arrange    func(t *testing.T, workspace *claude.Workspace, req tool.MoveRequest)
+		wantCounts map[string]int
 	}{
 		{name: "fresh", arrange: func(*testing.T, *claude.Workspace, tool.MoveRequest) {}},
 		{
@@ -51,6 +53,14 @@ func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
 				undo.Cleanup()
 			},
 		},
+		{
+			name: "resume after config re-key",
+			arrange: func(t *testing.T, workspace *claude.Workspace, req tool.MoveRequest) {
+				t.Helper()
+				applyConfigSurfaceOnly(t, workspace, req)
+			},
+			wantCounts: map[string]int{"config": 0},
+		},
 	}
 
 	for _, test := range tests {
@@ -64,8 +74,43 @@ func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
 			applied := surfaceCounts(t, workspace, req, true)
 
 			assert.Equal(t, planned, applied)
+			for surfaceName, want := range test.wantCounts {
+				assert.Equal(t, want, planned[surfaceName], "planned %s count", surfaceName)
+				assert.Equal(t, want, applied[surfaceName], "applied %s count", surfaceName)
+			}
 		})
 	}
+}
+
+// TestMove_ResumesAfterConfigRekey pins the converged re-run after a crash
+// that left only the config surface applied: ~/.claude.json already holds the
+// entry at NewPath and none at OldPath, so the config collision check passes
+// and the full move completes.
+func TestMove_ResumesAfterConfigRekey(t *testing.T) {
+	home := testutil.SetupFixture(t)
+	workspace := claude.NewWorkspace(home)
+	oldPath := testutil.FixtureProjectPath()
+	newPath := oldPath + "-renamed"
+	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true}
+	applyConfigSurfaceOnly(t, workspace, req)
+
+	resumedSurfaces, err := workspace.MoveSurfaces(t.Context(), req)
+	require.NoError(t, err, "a move whose config entry is already re-keyed must converge")
+	undo := tool.NewRestorer()
+	for _, surface := range resumedSurfaces {
+		_, err := surface.Apply(context.Background(), undo)
+		require.NoError(t, err, "apply %s", surface.Name)
+	}
+	undo.Cleanup()
+
+	config, err := os.ReadFile(home.ConfigFile)
+	require.NoError(t, err)
+	assert.False(t, gjson.GetBytes(config, "projects."+gjson.Escape(oldPath)).Exists(), "old config entry must be gone")
+	rewrittenBlock := gjson.GetBytes(config, "projects."+gjson.Escape(newPath))
+	require.True(t, rewrittenBlock.Exists(), "new config entry must be present")
+	assert.NotEmpty(t, rewrittenBlock.Get("allowedTools").Array(), "the re-keyed block must carry the original entry's content")
+	assert.DirExists(t, home.ProjectDir(newPath), "the resumed move must promote the encoded project directory")
+	assert.NoDirExists(t, home.ProjectDir(oldPath), "the resumed move must remove the old encoded project directory")
 }
 
 func TestMoveSurfaces_SecondApplyReportsProjectAbsent(t *testing.T) {
@@ -267,6 +312,27 @@ func TestMove_LeavesFilesWithoutOldPathReferenceUntouched(t *testing.T) {
 		assert.True(t, os.SameFile(before[index].info, info), "%s must keep its inode", path)
 		assert.Equal(t, before[index].info.ModTime(), info.ModTime(), "%s must keep its mtime", path)
 	}
+}
+
+// applyConfigSurfaceOnly simulates a crash right after the config surface
+// commits: it applies only that surface and leaves every other file untouched.
+func applyConfigSurfaceOnly(t *testing.T, workspace *claude.Workspace, req tool.MoveRequest) {
+	t.Helper()
+	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
+	require.NoError(t, err)
+	undo := tool.NewRestorer()
+	applied := false
+	for _, surface := range surfaces {
+		if surface.Name != "config" {
+			continue
+		}
+		result, err := surface.Apply(context.Background(), undo)
+		require.NoError(t, err)
+		require.Positive(t, result.Count, "sanity: the simulated crash point must have re-keyed the config entry")
+		applied = true
+	}
+	require.True(t, applied, "sanity: MoveSurfaces must include the config surface")
+	undo.Cleanup()
 }
 
 func surfaceCounts(t *testing.T, workspace *claude.Workspace, req tool.MoveRequest, apply bool) map[string]int {

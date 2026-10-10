@@ -77,10 +77,10 @@ witness-then-flock ordering that guards `Apply`.
 - A project cannot be moved into itself or a path-boundary descendant of
   itself. This generic precondition is checked once before any adapter surface
   runs, for every mode.
-- Beyond that nesting precondition, a target's own encoded-directory collision
-  and identity checks are the adapter's responsibility (see
-  `internal/tool/claude/README.md` for the Claude instance); this package does
-  not special-case any tool's refusal conditions.
+- Beyond that nesting precondition, a target's own encoded-directory collision,
+  config-entry collision, and identity checks are the adapter's responsibility
+  (see `internal/tool/claude/README.md` for the Claude instance); this package
+  does not special-case any tool's refusal conditions.
 
 #### Not covered
 
