@@ -19,3 +19,5 @@
 ## Post-Step-6
 
 A comment referencing material in a different module uses `see internal/<module>/README.md §<heading>` — file plus heading, never line numbers. Backlinks to the module's own adjacent README stay banned.
+
+Run `make lint` after the change. A depguard finding means the change crosses a package import boundary defined in `.golangci.yml`: move the code into the package that owns the import, and change a depguard rule only when the maintainer decides to.

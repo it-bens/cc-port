@@ -25,8 +25,6 @@ Wraps `gocloud.dev/blob` with a narrow consumer-defined surface. Exposes a `Remo
 
 ### Backend dispatch and error normalization
 
-Used by `internal/sync` and `cmd/cc-port` push and pull.
-
 #### Handled
 
 - URL parsing and bucket construction via a cc-port-owned `*blob.URLMux` (`buildMux` in `mux.go`). Schemes registered in one place: `file://` via the stock `&fileblob.URLOpener{}`; `s3://` via the cc-port-owned `s3Opener`.

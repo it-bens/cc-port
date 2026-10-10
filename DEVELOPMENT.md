@@ -1,5 +1,11 @@
 # Developing cc-port
 
+## Setup
+
+Required tools: Go, `golangci-lint`, and [pre-commit](https://pre-commit.com) (`pipx install pre-commit` or `brew install pre-commit`).
+
+Every user-facing `make` target except `help`, `clean`, `hooks` and the `s3-*` targets first installs the pre-push git hook when the hook file is missing; later runs find the file and skip the install. That install is skipped when `CI` or `PRE_COMMIT` is non-empty (pre-commit sets `PRE_COMMIT` while it runs a hook) and stops with an error outside a git checkout. `make hooks` always runs `pre-commit install` and fails when `pre-commit` is not installed or `core.hooksPath` is set (pre-commit refuses to install then). On `git push` of new commits, the hook runs `make pre-push`. Lint checks the working tree, so `make pre-push` refuses while tracked files outside submodules have changes or untracked `.go`, `go.mod`, `go.sum` or `.golangci.yml` files exist: commit or stash them first. CI runs the same two golangci-lint passes.
+
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for the module layout, contract index, and cross-cutting file-history policy.
@@ -79,10 +85,10 @@ Other recommended plugins:
 
 - Unit tests live next to the code they cover (`*_test.go` in each `internal/*` directory).
 - `integration_test.go` at the repo root runs the full CLI end-to-end against a fixture `~/.claude`. It is gated by a `//go:build integration` tag, so it is excluded from a plain `go test ./...` run.
-- Fixtures via `internal/testutil.SetupFixture`.
+- Fixtures via `internal/tool/claude/claudetest.SetupFixture`.
 - Run the full suite (unit + integration, expected before any commit): `go test -tags integration ./...`.
 - Run unit tests only (fast iteration): `go test ./...`.
-- Lint: `~/go/bin/golangci-lint run ./...`.
+- Lint: `make lint` (two golangci-lint passes; the second adds the `logo` build tag).
 - Fuzz targets in `internal/rewrite/rewrite_fuzz_test.go` and `internal/importer/resolve_fuzz_test.go`. Seeds replay as deterministic subtests under `go test ./...`. The unbounded mutation loop is local-only, one target per run: `go test ./internal/rewrite -run=^$ -fuzz=^FuzzReplacePathInBytes$ -fuzztime=2m`. Commit any `testdata/fuzz/FuzzXxx/<hash>` file produced by a real regression so every future run replays it.
 
 ## Local S3 backend

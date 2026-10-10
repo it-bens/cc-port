@@ -11,10 +11,11 @@ import (
 
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/rewrite"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func TestNestedMovePrecondition(t *testing.T) {
@@ -36,15 +37,16 @@ func TestNestedMovePrecondition(t *testing.T) {
 		{
 			name: "claude",
 			setup: func(t *testing.T) (tool.Target, string) {
-				home := testutil.SetupFixture(t)
-				return tool.Target{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}, testutil.FixtureProjectPath()
+				home := claudetest.SetupFixture(t)
+				return tool.Target{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}, claudetest.FixtureProjectPath()
 			},
 		},
 		{
 			name: "codex",
 			setup: func(t *testing.T) (tool.Target, string) {
-				home := codex.SetupFixture(t)
-				return tool.Target{Tool: codex.New(), Workspace: quietCodexWorkspace(home)}, codex.FixtureProjectPath()
+				codexDir := codextest.SetupFixture(t)
+				home := &codex.Home{Dir: codexDir, SQLiteDir: codexDir}
+				return tool.Target{Tool: codex.New(), Workspace: quietCodexWorkspace(home)}, codextest.FixtureProjectPath()
 			},
 		},
 	}
@@ -125,9 +127,9 @@ func TestMove_RefusesRootNestedMove(t *testing.T) {
 }
 
 func TestApply_RejectedNestedMoveLeavesClaudeStateUnchangedAcrossRetries(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
-	oldPath := testutil.FixtureProjectPath()
+	oldPath := claudetest.FixtureProjectPath()
 	before, err := os.ReadFile(home.HistoryFile())
 	require.NoError(t, err)
 

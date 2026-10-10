@@ -8,13 +8,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func TestMCPServersReportsUserScopeDefinitions(t *testing.T) {
-	workspace := claude.NewWorkspace(testutil.SetupFixture(t))
+	workspace := claude.NewWorkspace(claudetest.SetupFixture(t))
 
 	servers, err := workspace.MCPServers()
 	require.NoError(t, err)

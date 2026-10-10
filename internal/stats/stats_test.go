@@ -10,10 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/stats"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 const fixtureProject = "/Users/test/Projects/myproject"
@@ -37,7 +38,7 @@ func (ctx *cancelAfterFirstCheckContext) Err() error {
 
 func fixtureTargets(t *testing.T) []tool.Target {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
 }
 
@@ -199,7 +200,8 @@ func TestComputeFootprint_ClaudeReportsNoAuditWarnings(t *testing.T) {
 // through Auditor.AuditWarnings.
 func divergentCodexTargets(t *testing.T) []tool.Target {
 	t.Helper()
-	home := codex.SetupFixture(t)
+	codexDir := codextest.SetupFixture(t)
+	home := &codex.Home{Dir: codexDir, SQLiteDir: codexDir}
 	overlay := "sqlite_home = \"" + filepath.Join(t.TempDir(), "elsewhere") + "\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, "work.config.toml"), []byte(overlay), 0o600))
 	noProcesses := func() ([]codex.ProcessInfo, error) { return nil, nil }
@@ -210,7 +212,7 @@ func divergentCodexTargets(t *testing.T) []tool.Target {
 func TestComputeFootprint_CarriesCodexAuditWarnings(t *testing.T) {
 	targets := divergentCodexTargets(t)
 
-	footprint, err := stats.ComputeFootprint(t.Context(), targets, codex.FixtureProjectPath())
+	footprint, err := stats.ComputeFootprint(t.Context(), targets, codextest.FixtureProjectPath())
 
 	require.NoError(t, err)
 	require.Len(t, footprint.ByTool, 1)

@@ -13,8 +13,8 @@ import (
 
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/rewrite"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 const testProjectPath = "/Users/test/Projects/myproject"
@@ -30,7 +30,7 @@ func containsBaseName(items []string, baseName string) bool {
 }
 
 func TestLocateProject(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestLocateProject(t *testing.T) {
 }
 
 func TestLocateProject_NotFound(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	absentProjectPath := filepath.Join(t.TempDir(), "absent-project")
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, absentProjectPath)
@@ -75,7 +75,7 @@ func TestLocateProject_NotFound(t *testing.T) {
 }
 
 func TestLocateProject_CollectsUsageData(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestLocateProject_CollectsUsageData(t *testing.T) {
 }
 
 func TestLocateProject_CollectsPluginsData(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestLocateProject_CollectsPluginsData(t *testing.T) {
 }
 
 func TestLocateProject_CollectsTaskFiles(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestLocateProject_CollectsTaskFiles(t *testing.T) {
 }
 
 func TestLocateProject_CollectsTodos(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestLocateProject_CollectsTodos(t *testing.T) {
 }
 
 func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 	memoryDir := filepath.Join(claudeHome.ProjectDir(testProjectPath), "memory")
 	artifactName := "MEMORY.md" + rewrite.RollbackSuffix
 	require.NoError(t, os.WriteFile(filepath.Join(memoryDir, artifactName), []byte("stale rollback content"), 0o600))
@@ -150,7 +150,7 @@ func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
 }
 
 func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 	workspace := claude.NewWorkspace(claudeHome)
 	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -228,7 +228,7 @@ func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
 	// session's sessionId e5f6a7b8-0000-0000-0000-000000000005 appears in
 	// the encoded dir as a transcript, so the identity check sees the
 	// mismatched cwd and must refuse.
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	_, err := claude.LocateProject(t.Context(), claudeHome, "/Users/test/Projects/my-project")
 
@@ -239,7 +239,7 @@ func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
 }
 
 func TestLocateProject_PassesOnMatchingSessionCwd(t *testing.T) {
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 
 	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 
@@ -249,7 +249,7 @@ func TestLocateProject_PassesOnMatchingSessionCwd(t *testing.T) {
 
 func TestLocateProject_EmitsWarningOnNoSessionFiles(t *testing.T) {
 	// Arrange: wipe every session JSON so no witness exists for the encoded dir.
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 	entries, err := os.ReadDir(claudeHome.SessionsDir())
 	require.NoError(t, err)
 	for _, entry := range entries {

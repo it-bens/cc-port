@@ -20,10 +20,11 @@ import (
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/move"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func allSelected(t tool.Tool) map[string]bool {
@@ -36,10 +37,10 @@ func allSelected(t tool.Tool) map[string]bool {
 
 func buildArchive(t *testing.T) (body []byte, projectPath string) {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	claudeTool := claude.New()
 	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
-	projectPath = testutil.FixtureProjectPath()
+	projectPath = claudetest.FixtureProjectPath()
 
 	var buf bytes.Buffer
 	_, err := export.Run(context.Background(), targets, &export.Options{
@@ -155,20 +156,21 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 // carries the one entry the plan's destination-configuration read recognizes.
 func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	t.Helper()
-	sharedProject = codex.FixtureProjectPath()
-	claudeSource := testutil.SetupFixture(t)
+	sharedProject = codextest.FixtureProjectPath()
+	claudeSource := claudetest.SetupFixture(t)
 	claudeTool, codexTool := claude.New(), codex.New()
 
 	moveResult, err := move.Apply(t.Context(), []tool.Target{{
 		Tool: claudeTool, Workspace: claude.NewWorkspace(claudeSource),
-	}}, move.Options{OldPath: testutil.FixtureProjectPath(), NewPath: sharedProject, RefsOnly: true})
+	}}, move.Options{OldPath: claudetest.FixtureProjectPath(), NewPath: sharedProject, RefsOnly: true})
 	require.NoError(t, err)
 	require.False(t, moveResult.Failed())
 
 	claudeSelection := map[string]bool{"sessions": true, "config": true}
 	codexSelection := map[string]bool{"sessions": true}
 	claudeWorkspace := claude.NewWorkspace(claudeSource)
-	codexWorkspace := quietCodexWorkspace(codex.SetupFixture(t))
+	codexDir := codextest.SetupFixture(t)
+	codexWorkspace := quietCodexWorkspace(&codex.Home{Dir: codexDir, SQLiteDir: codexDir})
 	claudePlaceholders, err := claudeWorkspace.Placeholders(t.Context(), sharedProject, claudeSelection)
 	require.NoError(t, err)
 	codexPlaceholders, err := codexWorkspace.Placeholders(t.Context(), sharedProject, codexSelection)

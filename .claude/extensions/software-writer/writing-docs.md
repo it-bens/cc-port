@@ -16,3 +16,7 @@
 ## Pre-Step-1
 
 Procedural artifacts under `docs/superpowers/` (plans and specs) are not documentation surfaces. Do not edit them with this skill and never register or cross-reference them from a registered surface.
+
+## Pre-Step-3
+
+Never describe package import boundaries or list which packages import a package; the depguard rules in `.golangci.yml` are their single source of truth.

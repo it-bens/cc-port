@@ -17,9 +17,9 @@ import (
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/importer"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
@@ -301,7 +301,7 @@ func TestDryRun_DuplicateConfigEntriesReportOnlyTheLastEntrysDefinitions(t *test
 // config.json entry carries a project block with no MCP definitions.
 func buildArchiveWithoutMCPServers(t *testing.T) (body []byte, projectPath string) {
 	t.Helper()
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	stripMCPServersKeys(t, home.ConfigFile)
 	claudeTool := claude.New()
 
@@ -309,12 +309,12 @@ func buildArchiveWithoutMCPServers(t *testing.T) (body []byte, projectPath strin
 	_, err := export.Run(t.Context(), []tool.Target{
 		{Tool: claudeTool, Workspace: claude.NewWorkspace(home)},
 	}, &export.Options{
-		ProjectPath: testutil.FixtureProjectPath(),
+		ProjectPath: claudetest.FixtureProjectPath(),
 		Output:      &buf,
 		Selected:    map[string]map[string]bool{claudeTool.Name(): allSelected(claudeTool)},
 	})
 	require.NoError(t, err)
-	return buf.Bytes(), testutil.FixtureProjectPath()
+	return buf.Bytes(), claudetest.FixtureProjectPath()
 }
 
 // stripMCPServersKeys removes the top-level mcpServers key and every project

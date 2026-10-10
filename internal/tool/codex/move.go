@@ -12,6 +12,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
 
 // MoveSurfaces implements tool.Mover.
@@ -354,11 +355,11 @@ func (workspace *Workspace) memoriesWorktreeSurface(req tool.MoveRequest, pendin
 // place. commitSurface removes the backup after every database transaction
 // commits.
 func moveGitBaselineToBackup(root, newPath string, undo *tool.Restorer) (string, error) {
-	if _, err := os.Stat(filepath.Join(root, gitDirName)); err != nil {
+	if _, err := os.Stat(filepath.Join(root, codexschema.GitDirName)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil
 		}
-		return "", fmt.Errorf("stat %s: %w", filepath.Join(root, gitDirName), err)
+		return "", fmt.Errorf("stat %s: %w", filepath.Join(root, codexschema.GitDirName), err)
 	}
 	safe, err := hasNoRemoteGitBaseline(root)
 	if err != nil {
@@ -380,7 +381,7 @@ func moveGitBaselineToBackup(root, newPath string, undo *tool.Restorer) (string,
 	if !reflectsNewPath {
 		return "", nil
 	}
-	gitPath := filepath.Join(root, gitDirName)
+	gitPath := filepath.Join(root, codexschema.GitDirName)
 	backup := gitPath + gitBackupSuffix
 	if _, err := os.Stat(backup); err == nil {
 		return "", fmt.Errorf("rollback backup %s already exists", backup)
@@ -473,7 +474,7 @@ func (workspace *Workspace) ResidualWarnings(ctx context.Context, req tool.MoveR
 	}
 
 	for _, subdir := range memoriesWorktreeSubdirs {
-		backupWarning, err := gitBackupWarning(filepath.Join(workspace.home.Dir, subdir, gitDirName+gitBackupSuffix))
+		backupWarning, err := gitBackupWarning(filepath.Join(workspace.home.Dir, subdir, codexschema.GitDirName+gitBackupSuffix))
 		if err != nil {
 			return warnings, err
 		}
@@ -643,11 +644,11 @@ func marketplaceUnparseableWarning(agentsDir string) (string, error) {
 // (pre-apply). A root the moved project never touched, in either phase, gets
 // the shorter warning.
 func memoriesGitBaselineWarning(root, oldPath, newPath string) (string, error) {
-	if _, err := os.Stat(filepath.Join(root, gitDirName)); err != nil {
+	if _, err := os.Stat(filepath.Join(root, codexschema.GitDirName)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", nil
 		}
-		return "", fmt.Errorf("stat %s: %w", filepath.Join(root, gitDirName), err)
+		return "", fmt.Errorf("stat %s: %w", filepath.Join(root, codexschema.GitDirName), err)
 	}
 	safe, err := hasNoRemoteGitBaseline(root)
 	if err != nil {

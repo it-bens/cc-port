@@ -86,8 +86,9 @@ type Surface struct {
 }
 
 // SurfaceProjectDirectory is the well-known surface name for a move that
-// relocates the project directory itself on disk. Command orchestration uses
-// it without importing a tool adapter.
+// relocates the project directory itself on disk. Command orchestration
+// names the surface through it, not through an adapter symbol (depguard rule
+// `adapter-boundary` in .golangci.yml).
 const SurfaceProjectDirectory = "project-directory"
 
 // Mover produces the ordered list of Surfaces a move touches, plus any

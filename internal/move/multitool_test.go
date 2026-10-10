@@ -9,10 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/move"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 // TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovingSource
@@ -35,16 +36,16 @@ func TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovin
 	aliasedCWD := filepath.Join(tempRoot, "link", "project")
 	newPath := filepath.Join(tempRoot, "real", "renamed-project")
 
-	claudeHome := testutil.SetupFixture(t)
+	claudeHome := claudetest.SetupFixture(t)
 	setUpClaudeProjectFixture(t, claudeHome, realProject)
 
-	codexHome := codex.SetupFixture(t)
+	codexDir := codextest.SetupFixture(t)
 	const threadID = "00000000-0000-4000-8000-0000000000ee"
-	codex.InsertThreadRow(t, codexHome, threadID, aliasedCWD)
+	codextest.InsertThreadRow(t, codexDir, threadID, aliasedCWD)
 
 	targets := []tool.Target{
 		{Tool: claude.New(), Workspace: claude.NewWorkspace(claudeHome)},
-		{Tool: codex.New(), Workspace: quietCodexWorkspace(codexHome)},
+		{Tool: codex.New(), Workspace: quietCodexWorkspace(&codex.Home{Dir: codexDir, SQLiteDir: codexDir})},
 	}
 
 	result, err := move.Apply(t.Context(), targets, move.Options{OldPath: realProject, NewPath: newPath})
@@ -63,7 +64,7 @@ func TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovin
 		}
 	}
 	assert.Positive(t, stateDBCount, "sanity: codex's state-db surface must have counted the symlink-aliased thread")
-	assert.Equal(t, newPath, codex.ThreadCWD(t, codexHome, threadID),
+	assert.Equal(t, newPath, codextest.ThreadCWD(t, codexDir, threadID),
 		"Codex's own preflight-captured plan must still rewrite the symlink-aliased thread row after Claude removed the source")
 }
 
@@ -71,7 +72,7 @@ func TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovin
 // projectPath: an encoded project directory holding one session transcript,
 // plus a matching sessions/*.json witness, so Claude's move identity check
 // (verifyProjectMoveIdentity) corroborates a fresh move instead of refusing
-// it as uncorroborated. testutil.SetupFixture's own canned project is keyed
+// it as uncorroborated. claudetest.SetupFixture's own canned project is keyed
 // to a fixed path unrelated to projectPath, so a cross-tool test needing a
 // real, symlink-aliased project directory (for Codex's canonical
 // thread-cwd matching) must build its own Claude project fixture rather
@@ -80,7 +81,7 @@ func setUpClaudeProjectFixture(t *testing.T, claudeHome *claude.Home, projectPat
 	t.Helper()
 	const sessionUUID = "eeeeeeee-0000-4000-8000-000000000010"
 	// Exceeds the real PID ceiling so processLiveness never mistakes this
-	// fixture session for a live writer, mirroring testutil.SetupFixture's
+	// fixture session for a live writer, mirroring claudetest.SetupFixture's
 	// own dead-PID sanitization of its canned sessions.
 	const deadPID = "2000000001"
 

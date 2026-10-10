@@ -23,9 +23,9 @@ import (
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func testHostname() (string, error) { return "test-host", nil }
@@ -275,7 +275,7 @@ func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 	// referenced-in-body classifier (finding FE3) still flags it as
 	// unresolved. A never-referenced Original would legitimately no longer
 	// be flagged, which is exactly the bug this classifier fixes.
-	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", testutil.FixtureProjectPath(), "host-user")
+	injectArchiveWithDeclaredPlaceholder(t, r, "k", "{{ORG}}", claudetest.FixtureProjectPath(), "host-user")
 	targets, _ := buildTestTargets(t)
 
 	source := openSourceForTest(t, r, "k", "")
@@ -492,7 +492,7 @@ func TestPullImportGateAgree(t *testing.T) {
 	}{
 		{
 			name:        "declared, referenced, unresolved: both refuse",
-			original:    testutil.FixtureProjectPath(),
+			original:    claudetest.FixtureProjectPath(),
 			wantRefused: true,
 		},
 		{

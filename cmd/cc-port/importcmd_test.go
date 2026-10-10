@@ -18,10 +18,11 @@ import (
 	"github.com/it-bens/cc-port/internal/export"
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/manifest"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 // newTestToolSet mirrors newToolSet's registration but wires Codex through
@@ -112,7 +113,7 @@ func TestImport_WithoutApplyLeavesTheDestinationUntouched(t *testing.T) {
 	claudeHome, targetPath := filepath.Join(t.TempDir(), "dotclaude"), filepath.Join(t.TempDir(), "new-project")
 	require.NoError(t, os.MkdirAll(claudeHome, 0o750))
 
-	stdout := driveImport(t, testutil.WriteFixtureArchive(t), targetPath, claudeHome)
+	stdout := driveImport(t, writeFixtureArchive(t), targetPath, claudeHome)
 
 	assert.Contains(t, stdout, "cc-port import (dry-run)")
 	entries, err := os.ReadDir(claudeHome)
@@ -127,7 +128,7 @@ func TestImport_WithApplyCommits(t *testing.T) {
 	claudeHome, targetPath := filepath.Join(t.TempDir(), "dotclaude"), filepath.Join(t.TempDir(), "new-project")
 	require.NoError(t, os.MkdirAll(claudeHome, 0o750))
 
-	stdout := driveImport(t, testutil.WriteFixtureArchive(t), targetPath, claudeHome, "--apply")
+	stdout := driveImport(t, writeFixtureArchive(t), targetPath, claudeHome, "--apply")
 
 	resolvedTarget, err := tool.ResolveProjectPath(targetPath)
 	require.NoError(t, err)
@@ -181,7 +182,8 @@ func redirectProgressSink(t *testing.T) {
 func buildCodexOnlyArchive(t *testing.T) []byte {
 	t.Helper()
 
-	sourceHome := codex.SetupFixture(t)
+	sourceDir := codextest.SetupFixture(t)
+	sourceHome := &codex.Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	workspace := codex.NewWorkspace(
 		sourceHome,
 		func(string) string { return "" },
@@ -192,12 +194,12 @@ func buildCodexOnlyArchive(t *testing.T) []byte {
 	for _, category := range codexTool.Categories() {
 		selected[category.Name] = true
 	}
-	placeholders, err := workspace.Placeholders(t.Context(), codex.FixtureProjectPath(), selected)
+	placeholders, err := workspace.Placeholders(t.Context(), codextest.FixtureProjectPath(), selected)
 	require.NoError(t, err)
 
 	var archiveBytes bytes.Buffer
 	_, err = export.Run(t.Context(), []tool.Target{{Tool: codexTool, Workspace: workspace}}, &export.Options{
-		ProjectPath:  codex.FixtureProjectPath(),
+		ProjectPath:  codextest.FixtureProjectPath(),
 		Output:       &archiveBytes,
 		Selected:     map[string]map[string]bool{codexTool.Name(): selected},
 		Placeholders: map[string][]manifest.Placeholder{codexTool.Name(): placeholders},
@@ -235,11 +237,11 @@ func buildMinimalArchive(t *testing.T) string {
 }
 
 func TestImportApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 
 	_, err := executeCmd(t,
-		"import", testutil.WriteFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
+		"import", writeFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
 		"--tool", "claude", "--claude-home", home.Dir, "--apply",
 	)
 
@@ -249,7 +251,7 @@ func TestImportApplyRefusalOnLiveSessionNamesTheOverrideFlag(t *testing.T) {
 }
 
 func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportFails(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	// The importer first reads the archive under the lock, so an archive that
 	// is not a ZIP fails after the witness ran.
@@ -266,11 +268,11 @@ func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportFails(t
 }
 
 func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportSucceeds(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	ignoredLine := writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 
 	stderr, err := executeCmd(t,
-		"import", testutil.WriteFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
+		"import", writeFixtureArchive(t), filepath.Join(t.TempDir(), "new-project"),
 		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
 	)
 
@@ -279,7 +281,7 @@ func TestImportApplyIgnoringLiveSessionsPrintsIgnoredWritersWhenTheImportSucceed
 }
 
 func TestImportApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLinesFail(t *testing.T) {
-	home := testutil.SetupFixture(t)
+	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, "/Users/test/Projects/other")
 	failingStderr := &ignoredWriterFailer{}
 	targetPath := filepath.Join(t.TempDir(), "new-project")
@@ -287,7 +289,7 @@ func TestImportApplyIgnoringLiveSessionsPrintsTheResultWhenTheIgnoredWriterLines
 	require.NoError(t, resolveErr)
 
 	stdout, err := executeCmdStreams(t, failingStderr,
-		"import", testutil.WriteFixtureArchive(t), targetPath,
+		"import", writeFixtureArchive(t), targetPath,
 		"--tool", "claude", "--claude-home", home.Dir, "--apply", "--ignore-live-sessions",
 	)
 

@@ -15,9 +15,9 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/remote"
-	"github.com/it-bens/cc-port/internal/testutil"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // newFileRemote opens a Remote against a per-test file:// directory.
@@ -35,7 +35,7 @@ func newFileRemote(t *testing.T) *remote.Remote {
 
 func buildTestHomeAndProject(t *testing.T) (home *claude.Home, projectPath string) {
 	t.Helper()
-	home = testutil.SetupFixture(t)
+	home = claudetest.SetupFixture(t)
 	return home, "/Users/test/Projects/myproject"
 }
 

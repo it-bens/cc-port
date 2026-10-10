@@ -7,7 +7,6 @@
 - Orange is load-bearing: the trolley and cable are the only orange segments and must map to the navy container-hook `┴` on the row below (README §Purpose).
 - Detection of the terminal background goes through the unexported `hasDarkBackground` and the `sync.Once` cache, never through direct `lipgloss` or OSC queries at the call site (README §Background-aware palette).
 - Treat a zero width from `term.GetSize` as unknown (fall back to 80), never as "narrow terminal"; unsized PTYs (macOS `script`, some CI) legitimately report zero (README §Side-by-side layout).
-- The package is opt-in via the `logo` build tag. Only `cmd/cc-port/banner_logo.go` imports it. Adding a new external import means changing the build-tag wiring at the composition root, not adding callers (README §Used by).
 
 ## Navigation
 

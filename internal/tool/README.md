@@ -5,10 +5,8 @@
 Defines the compile-time contract every supported coding tool implements, plus
 the shared registry and rollback primitives every command package drives that
 contract through. `internal/tool/claude` and `internal/tool/codex` implement
-it; `internal/move`, `internal/export`, `internal/importer`, and
-`internal/stats` consume it and import nothing else tool-specific. See
-`docs/architecture.md` §The tool contract for the cross-module narrative this
-package's types support.
+it. See `docs/architecture.md` §The tool contract for the cross-module
+narrative this package's types support.
 
 ## Public API
 
@@ -132,11 +130,11 @@ each an accepted deviation from spec §1.
 
 **Handled.**
 
-- The adapter-import boundary and the sweep-sentinel interpretation are
-  cross-module policies owned by `docs/architecture.md` §Adapter boundaries
-  and §Sweep semantics; `NewSet` fixes the tool list once, at process
-  construction, and every consumer of `ErrToolAbsent`/`ErrProjectAbsent`/`ErrNoWitness`
-  follows those two sections rather than a local rule.
+- The sweep-sentinel interpretation is a cross-module policy owned by
+  `docs/architecture.md` §Sweep semantics; `NewSet` fixes the tool list once,
+  at process construction, and every consumer of
+  `ErrToolAbsent`/`ErrProjectAbsent`/`ErrNoWitness` follows that section
+  rather than a local rule.
 - An adapter returning no MCP server definitions from either MCP method. A
   destination that configures none says so with an empty `MCPServers` result
   rather than a sentinel. `ArchiveMCPServers` says "not my entry" with nil

@@ -15,6 +15,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func rolloutFixturePath(home *Home, relative string) string {
@@ -54,7 +55,8 @@ const (
 )
 
 func TestDiscoverRolloutFilesFindsBothRoots(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 
 	files, err := discoverRolloutFiles(home)
 
@@ -71,7 +73,8 @@ func TestDiscoverRolloutFilesFindsBothRoots(t *testing.T) {
 // consumer must see one logical file, mirroring Codex's own walker
 // (should_skip_compressed_sibling).
 func TestDiscoverRolloutFiles_SuppressesCompressedSibling(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	plainPath := rolloutFixturePath(home, eraCPath)
 	compressedPath := plainPath + ".zst"
 	require.NoError(t, os.WriteFile(compressedPath, []byte("junk"), 0o600))
@@ -82,7 +85,8 @@ func TestDiscoverRolloutFiles_SuppressesCompressedSibling(t *testing.T) {
 }
 
 func TestDiscoverRolloutFilesRefusesCompressedOnlyRollouts(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := filepath.Join(home.Dir, sessionsSubdir, "2026", "07", "18", "rollout-refused.jsonl.zst")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
 	require.NoError(t, os.WriteFile(path, []byte("junk"), 0o600))
@@ -171,36 +175,39 @@ func TestApplyRolloutSubstitutionsPreservesLineTerminators(t *testing.T) {
 }
 
 func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraCPath)
 
-	shallow, eraA, err := planRolloutFile(path, FixtureProjectPath(), "/Users/fixture/renamed-project", false)
+	shallow, eraA, err := planRolloutFile(path, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project", false)
 	require.NoError(t, err)
 	assert.False(t, eraA)
 	assert.Equal(t, 10, shallow, "session_meta 2, thread_settings_applied 3, turn_context 5 structured fields; no free text")
 
-	deep, eraA, err := planRolloutFile(path, FixtureProjectPath(), "/Users/fixture/renamed-project", true)
+	deep, eraA, err := planRolloutFile(path, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project", true)
 	require.NoError(t, err)
 	assert.False(t, eraA)
 	assert.Equal(t, 13, deep, "structured fields, structured free text, the agent_message, and the prose response_item under --deep")
 }
 
 func TestPlanRolloutFileEraBHasNoTurnContext(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraBPath)
 
-	shallow, eraA, err := planRolloutFile(path, FixtureProjectPath(), "/Users/fixture/renamed-project", false)
+	shallow, eraA, err := planRolloutFile(path, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project", false)
 	require.NoError(t, err)
 	assert.False(t, eraA)
 	assert.Equal(t, 1, shallow, "only session_meta.cwd; era-B predates turn_context")
 }
 
 func TestPlanRolloutFileEraAIsSkippedEvenUnderDeep(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraAPath)
 
 	for _, deep := range []bool{false, true} {
-		count, eraA, err := planRolloutFile(path, FixtureProjectPath(), "/Users/fixture/renamed-project", deep)
+		count, eraA, err := planRolloutFile(path, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project", deep)
 		require.NoError(t, err)
 		assert.True(t, eraA, "no session_meta or turn_context line: era-A")
 		assert.Equal(t, 0, count)
@@ -208,11 +215,12 @@ func TestPlanRolloutFileEraAIsSkippedEvenUnderDeep(t *testing.T) {
 }
 
 func TestApplyRolloutFileRewritesStructuredFieldsAlways(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraCPath)
 	newPath := "/Users/fixture/renamed-project"
 
-	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, FixtureProjectPath(), newPath, false)
+	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, codextest.FixtureProjectPath(), newPath, false)
 
 	require.NoError(t, err)
 	assert.False(t, eraA)
@@ -238,17 +246,18 @@ func TestApplyRolloutFileRewritesStructuredFieldsAlways(t *testing.T) {
 		assert.Equal(t, newPath, gjson.GetBytes(lines[field.line], field.path).String(), "line %d %s", field.line, field.path)
 	}
 	assert.Equal(t, newPath+"/build", gjson.GetBytes(lines[2], "payload.sandbox_policy.writable_roots.0").String())
-	assert.Contains(t, string(lines[0]), `"free_text":"keep `+FixtureProjectPath(), "session_meta free text left untouched without --deep")
-	assert.Contains(t, string(lines[3]), FixtureProjectPath(), "agent_message left untouched without --deep")
-	assert.Contains(t, string(lines[4]), FixtureProjectPath(), "prose left untouched without --deep")
+	assert.Contains(t, string(lines[0]), `"free_text":"keep `+codextest.FixtureProjectPath(), "session_meta free text left untouched without --deep")
+	assert.Contains(t, string(lines[3]), codextest.FixtureProjectPath(), "agent_message left untouched without --deep")
+	assert.Contains(t, string(lines[4]), codextest.FixtureProjectPath(), "prose left untouched without --deep")
 }
 
 func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraCPath)
 	newPath := "/Users/fixture/renamed-project"
 
-	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, FixtureProjectPath(), newPath, true)
+	changed, eraA, err := applyRolloutFileViaPlan(context.Background(), path, codextest.FixtureProjectPath(), newPath, true)
 
 	require.NoError(t, err)
 	assert.False(t, eraA)
@@ -257,13 +266,13 @@ func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
 	lines, err := readRolloutLines(path)
 	require.NoError(t, err)
 	for _, line := range lines {
-		assert.NotContains(t, string(line), FixtureProjectPath())
+		assert.NotContains(t, string(line), codextest.FixtureProjectPath())
 	}
 }
 
 func TestRewriteRolloutLineScopesShallowModeToStructuredFields(t *testing.T) {
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users/fixture/codexproject","note":"keep /Users/fixture/codexproject verbatim"}}`)
-	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
 
 	shallow, shallowCount := rewriteRolloutLine(line, substitutions, false)
 	deep, deepCount := rewriteRolloutLine(line, substitutions, true)
@@ -271,7 +280,7 @@ func TestRewriteRolloutLineScopesShallowModeToStructuredFields(t *testing.T) {
 	assert.Equal(t, 1, shallowCount)
 	assert.Contains(t, string(shallow), `"note":"keep /Users/fixture/codexproject verbatim"`)
 	assert.Equal(t, 2, deepCount)
-	assert.NotContains(t, string(deep), FixtureProjectPath())
+	assert.NotContains(t, string(deep), codextest.FixtureProjectPath())
 }
 
 func TestStructuredRolloutFieldPathsNamesEveryPathCarrier(t *testing.T) {
@@ -387,7 +396,7 @@ func TestStructuredRolloutFieldPathsNamesEveryPathCarrier(t *testing.T) {
 
 func TestRewriteRolloutLineLeavesOtherEventMsgVariantsInDefaultMode(t *testing.T) {
 	line := []byte(`{"type":"event_msg","payload":{"type":"agent_message","message":"opened /Users/fixture/codexproject/src/main.py"}}`)
-	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
 
 	rewritten, count := rewriteRolloutLine(line, substitutions, false)
 
@@ -397,7 +406,7 @@ func TestRewriteRolloutLineLeavesOtherEventMsgVariantsInDefaultMode(t *testing.T
 
 func TestRewriteRolloutLineRewritesMixedEscapedFieldInEveryMode(t *testing.T) {
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users\/fixture/codexproject"}}`)
-	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
 
 	for _, deep := range []bool{false, true} {
 		t.Run("deep="+strconv.FormatBool(deep), func(t *testing.T) {
@@ -411,8 +420,8 @@ func TestRewriteRolloutLineRewritesMixedEscapedFieldInEveryMode(t *testing.T) {
 
 func TestRewriteRolloutLineDeepRewritesFieldOnceWhenNewPathContainsOldPath(t *testing.T) {
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users/fixture/codexproject"}}`)
-	newPath := "/Users/elsewhere" + FixtureProjectPath()
-	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: newPath}}
+	newPath := "/Users/elsewhere" + codextest.FixtureProjectPath()
+	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: newPath}}
 
 	rewritten, count := rewriteRolloutLine(line, substitutions, true)
 
@@ -423,7 +432,7 @@ func TestRewriteRolloutLineDeepRewritesFieldOnceWhenNewPathContainsOldPath(t *te
 func TestRewriteRolloutLineLeavesWritableRootsOutsideTheProject(t *testing.T) {
 	line := []byte(`{"type":"turn_context","payload":{"cwd":"/Users/test/Projects/elsewhere","sandbox_policy":{"type":"workspace-write",` +
 		`"writable_roots":["/Users/fixture/codexproject/build","/Users/fixture/codexproject-cache","/opt/shared-cache"]}}}`)
-	substitutions := []pathSubstitution{{old: FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
 
 	rewritten, count := rewriteRolloutLine(line, substitutions, false)
 
@@ -681,13 +690,14 @@ func TestApplyRolloutFileSingleSourceSucceedsWhenNewPathContainsOldPath(t *testi
 }
 
 func TestApplyRolloutFileLeavesEraAFileByteIdentical(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraAPath)
 	before, err := readRolloutLines(path)
 	require.NoError(t, err)
 
 	_, eraA, err := applyRolloutFileViaPlan(
-		context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project", true,
+		context.Background(), path, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project", true,
 	)
 	require.NoError(t, err)
 	require.True(t, eraA)

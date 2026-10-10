@@ -86,9 +86,7 @@ Extract now. File split when one file carries multiple concerns. New module unde
 
 ## Cross a module boundary
 
-`cmd/` owns ordering and policy. When two `internal/` modules need to compose, the composition lives in `cmd/` or in a new `internal/` shared primitive. Each `internal/<name>` stays focused on its domain and exposes a stage-shaped API that cmd assembles.
-
-**Don't** import a sibling `internal/` module to assemble a pipeline inside the current one. The result is duplicated assembly across modules and the original archive source opening multiple times.
+`cmd/` owns ordering and policy. Each `internal/<name>` stays focused on its domain.
 
 **See** `docs/architecture.md`.
 

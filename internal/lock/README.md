@@ -148,13 +148,6 @@ and run without locking or witness detection):
   dry-runs both read each destination's MCP configuration through the same
   `importer.NewMCPServers` path, without writing to it.
 
-Called by:
-
-- `internal/move/README.md §Apply contract` (`move.Apply` preflights and retains
-  one `lock.Acquire` result per selected tool).
-- `internal/importer/README.md §Import contract` (`importer.Run` nests
-  `lock.WithLock` across selected tools).
-
 #### Handled
 
 - The lock is released via `defer` on every exit path from `WithLock`,

@@ -329,11 +329,11 @@ func codexRollout(projectPath string) []byte {
 }
 
 func seedCodexMemories(codexPath, projectPath string) error {
-	memoriesPath := filepath.Join(codexPath, "memories")
+	memoriesPath := filepath.Join(codexPath, codexschema.MemoriesWorktreeSubdir)
 	if err := os.MkdirAll(filepath.Join(memoriesPath, "rollout_summaries"), 0o700); err != nil {
 		return fmt.Errorf("create Codex rollout summaries directory: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Join(memoriesPath, ".git"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(memoriesPath, codexschema.GitDirName), 0o700); err != nil {
 		return fmt.Errorf("create Codex memories git directory: %w", err)
 	}
 	rawMemory := "# Raw Memories\n\n## Thread `" + codexThreadID + "`\ncwd: " + projectPath + "\n\nFixed a bug in " + projectPath + "/src/main.py.\n"
@@ -344,7 +344,8 @@ func seedCodexMemories(codexPath, projectPath string) error {
 	if err := writeFixtureFile(filepath.Join(memoriesPath, "rollout_summaries", "2026-07-17T10-00-00-a1b2.md"), []byte(summary)); err != nil {
 		return fmt.Errorf("write Codex rollout summary: %w", err)
 	}
-	if err := writeFixtureFile(filepath.Join(memoriesPath, ".git", "config"), []byte("[core]\n\trepositoryformatversion = 0\n")); err != nil {
+	gitConfigPath := filepath.Join(memoriesPath, codexschema.GitDirName, "config")
+	if err := writeFixtureFile(gitConfigPath, []byte("[core]\n\trepositoryformatversion = 0\n")); err != nil {
 		return fmt.Errorf("write Codex memories git config: %w", err)
 	}
 	return nil

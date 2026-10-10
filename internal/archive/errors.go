@@ -1,8 +1,6 @@
 // Package archive implements the cc-port ZIP layout shared by every tool:
 // one "<tool>/" namespace per registered tool, entry decompression caps,
 // os.Root containment for staged writes, and placeholder substitution.
-// Command packages and tool adapters both depend on this package; it
-// depends on neither.
 package archive
 
 import (

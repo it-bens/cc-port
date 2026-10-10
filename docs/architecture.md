@@ -26,10 +26,11 @@ cc-port/
 │   ├── sqlrewrite/         SQL-level path rewriting on SQLite (5 s busy timeout, checkpoint discipline)
 │   ├── stats/              Generic project-footprint orchestration (read-only)
 │   ├── sync/               Push and pull orchestration: plan, execute, plan-summary rendering
-│   ├── testutil/           Test fixture helper
 │   ├── tool/               The tool contract (Tool, Workspace, Surface, Restorer) + tool.Set registry
 │   │   ├── claude/         Claude Code adapter: path encoding, locations, schemas, move/export/import/stats
+│   │   │   └── claudetest/ Claude Code test fixture helpers
 │   │   └── codex/          OpenAI Codex adapter: SQLite + TOML + rollout JSONL, move/export/import/stats
+│   │       └── codextest/  Codex test fixture helpers
 │   └── ui/                 Interactive prompts (charm.land/huh v2)
 ├── integration_test.go     End-to-end CLI tests
 └── testdata/dotclaude/     Minimal ~/.claude fixture for tests
@@ -37,7 +38,7 @@ cc-port/
 
 Each non-trivial directory has a `README.md`. Directories with hard editing rules additionally carry an `AGENTS.md` (loaded by Claude Code via a one-line `CLAUDE.md`). The `README.md` is the developer narrative. The `AGENTS.md` is a pointer-only map into it.
 
-`internal/claude` and `internal/transport` do not exist anymore. The Claude Code adapter moved to `internal/tool/claude` and absorbed `internal/transport`'s archive-layout registry into one merged `claude.Registries` slice (see §Registry source of truth). Command packages (`internal/move`, `internal/export`, `internal/importer`, `internal/stats`, `internal/sync`) import the tool contract plus shared substrate but never import an adapter package (see §Adapter boundaries). Among code linked into the shipped binary, only `cmd/cc-port` imports `internal/tool/claude` and `internal/tool/codex`, in `cmd/cc-port/tools.go`. The test-support package `internal/testutil` and demo-seed fixture `docs/videos/fixtures/cmd/encode-path` also import the Claude adapter but are not linked into the binary.
+`internal/claude` and `internal/transport` do not exist anymore. The Claude Code adapter moved to `internal/tool/claude` and absorbed `internal/transport`'s archive-layout registry into one merged `claude.Registries` slice (see §Registry source of truth).
 
 ## The tool contract
 
@@ -67,23 +68,16 @@ bug in `tools.go`, not an operational error a caller can recover from.
 order; `tool.ParseQualified` is a separate package function that parses a
 `"<tool>/<category>"` argument, with no `*Set` involved.
 
-### Adapter boundaries
+### Commands and adapters
 
 Command packages (`internal/move`, `internal/export`, `internal/importer`,
-`internal/stats`, `internal/sync`) import the tool contract plus the shared
-substrate they need (`internal/archive`, `internal/lock`, `internal/manifest`,
-`internal/pipeline`, `internal/progress`, `internal/rewrite`), never an
-adapter package.
-`internal/sync` additionally composes `internal/export` and
-`internal/importer`. They drive every tool through the `Tool` and
-`Workspace` interfaces and never branch on which tool they are talking to. Adapters
-(`internal/tool/claude`, `internal/tool/codex`) import `internal/tool` plus
-whatever shared substrate they need (`internal/rewrite`, `internal/sqlrewrite`,
-`internal/archive`). Among code linked into the shipped binary, only
-`cmd/cc-port` imports an adapter package directly.
-A new tool adds one adapter package and one line in `tools.go`; it changes no
-command package (see `internal/tool/README.md` §Extension rule for the full
-checklist a third adapter follows).
+`internal/stats`, `internal/sync`) drive every tool through the `Tool` and
+`Workspace` interfaces and never branch on which tool they are talking to.
+Adapters (`internal/tool/claude`, `internal/tool/codex`) implement that
+contract for one tool each. A new tool adds one adapter package and one line
+in `tools.go`; it changes no command package (see `internal/tool/README.md`
+§Extension rule for the full checklist a third adapter follows). The depguard
+rules in `.golangci.yml` define which packages may import which.
 
 `Tool` is the tool-level, connection-free half of the contract. `Open`
 resolves the tool's state roots under its own rules (an explicit
@@ -139,7 +133,7 @@ One invariant per row; click through to the owning module for the full `Handled 
 
 | Invariant                                               | Owner                                                                            |
 |---------------------------------------------------------|----------------------------------------------------------------------------------|
-| A compile-time registry maps `Tool` to its adapter; command packages never import an adapter | §The tool contract, [`internal/tool/README.md`](../internal/tool/README.md) §Contract surface |
+| A compile-time registry maps `Tool` to its adapter | §The tool contract, [`internal/tool/README.md`](../internal/tool/README.md) §Contract surface |
 | A multi-tool sweep skips `ErrToolAbsent`, empties on `ErrProjectAbsent`, refuses on `ErrNoWitness` | §Sweep semantics |
 | Interactive prompts require a TTY                       | [`internal/ui/README.md`](../internal/ui/README.md)                              |
 | Path substring rewrites respect component boundaries    | [`internal/rewrite/README.md`](../internal/rewrite/README.md)                    |

@@ -39,8 +39,6 @@ The Reporter observes quantities only: file counts, byte totals, phase names, du
 
 The Reporter and every renderer observe quantities: counts, byte totals, phase names, durations, error values from `Warn`/`Fail`. They never read the body of a file being copied or rewritten. `docs/architecture.md` §File-history policy (cross-cutting) frames the opacity this package inherits.
 
-Callers: every command path that holds a `Reporter` (`internal/move`, `internal/export`, `internal/importer`, `internal/sync`).
-
 #### Handled
 
 - Phase totals and advances carry integer counts and a `Unit`, never the content they count.
@@ -57,8 +55,6 @@ None at runtime. The event types structurally cannot carry a file body: no `Even
 ### Renderer selection
 
 `Pick` maps a `Selection` to a renderer and an active `Level`. Renderer choice and level are independent.
-
-Callers: `cmd/cc-port` (`runWithProgress`).
 
 #### Handled
 
@@ -78,8 +74,6 @@ None at runtime. Every `Selection` resolves to exactly one renderer and one leve
 
 The Ledger owns the only event channel, so backpressure is possible there and nowhere else. `Detail` at `LevelVerbose` or `LevelDebug` is dropped when the channel is full; phase events and terminal events block until the model reads them, because they are load-bearing for the rendered tree and final frame. The blocking send also unblocks when the program goroutine has already exited, so a dead reader never freezes the work goroutine.
 
-Callers: `cmd/cc-port` (`runWithProgress`), through `NewReporter`.
-
 #### Handled
 
 - Verbose and debug `Detail` events drop on a full Ledger channel so the work goroutine never blocks on cosmetic output.
@@ -97,8 +91,6 @@ None at runtime. A dropped verbose Detail is the intended outcome, not an error.
 ### Reporter injection
 
 A command receives its `Reporter` through its Options struct, never a package global. An unset `Reporter` field (nil) is replaced with `Noop()` by the command before use. `runWithProgress` in `cmd/cc-port` assembles a `Selection` from the verbosity flags and calls `Pick` for the renderer and level (§Renderer selection). It wraps them in a Reporter and threads that into the command.
-
-Callers: `cmd/cc-port` (`runWithProgress`); every command's Options struct (`internal/move`, `internal/export`, `internal/importer`, `internal/sync`).
 
 #### Handled
 

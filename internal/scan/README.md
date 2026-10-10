@@ -13,7 +13,7 @@ Read-only scanner for `~/.claude/rules/*.md`.
 
 ### Rules files preserved
 
-Called by `internal/tool/claude` on three surfaces: `Export`, import `Finalize`, and move `ResidualWarnings`. See `internal/tool/claude/README.md` §Anonymisation (export) for the surrounding export flow.
+The Claude adapter reports these warnings on three surfaces: `Export`, import `Finalize`, and move `ResidualWarnings`. See `internal/tool/claude/README.md` §Anonymisation (export) for the surrounding export flow.
 
 #### Handled
 

@@ -39,8 +39,7 @@ under `NO_COLOR`, and the no-op impl in the default build writes nothing.
 `Banner` is declared in `prompt.go` as a one-method interface
 (`Render(io.Writer) error`). It lives next to its sole consumer
 `showInteractiveBanner`; the implementation is supplied by `cmd/cc-port`
-(see `cmd/cc-port/README.md` §Banner DI). The package never imports
-`internal/logo`.
+(see `cmd/cc-port/README.md` §Banner DI).
 
 ### Interactive prompts require a TTY
 

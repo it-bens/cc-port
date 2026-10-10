@@ -13,6 +13,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 const queuedThreadID = "00000000-0000-4000-8000-000000000001"
@@ -94,24 +95,24 @@ func applyQueueMove(t *testing.T, home *Home, req tool.MoveRequest) (planned, ap
 
 func TestQueueDBMoveRewritesSkillPath(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
 	planCounts, applyCounts := planAndApply(t, workspace, req)
 
 	require.Equal(t, 2, planCounts["queue-db"], "the fixture's skill item and its SKILL.md mention item")
 	assert.Equal(t, planCounts["queue-db"], applyCounts["queue-db"])
-	payload := decodeQueuedPayload(t, readQueuedPayloadByID(t, home, fixtureQueuedItemID))
+	payload := decodeQueuedPayload(t, readQueuedPayloadByID(t, home, codextest.FixtureQueuedItemID))
 	require.Len(t, payload.UserInput.Content, 1)
 	assert.Equal(t, "/Users/fixture/renamed-project/.codex/skills/deploy/SKILL.md", payload.UserInput.Content[0].Path)
 }
 
 func TestQueueDBMoveRewritesSkillFileMentionPath(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
 	planAndApply(t, workspace, req)
 
-	payload := decodeQueuedPayload(t, readQueuedPayloadByID(t, home, fixtureQueuedMentionItemID))
+	payload := decodeQueuedPayload(t, readQueuedPayloadByID(t, home, codextest.FixtureQueuedMentionItemID))
 	require.Len(t, payload.UserInput.Content, 1)
 	assert.Equal(t, "/Users/fixture/renamed-project/.codex/skills/release/SKILL.md", payload.UserInput.Content[0].Path)
 }
@@ -233,8 +234,8 @@ func TestQueueDBApplyFailsWhenPlannedPayloadChangedAfterPlan(t *testing.T) {
 
 func TestQueueDBRewriteRollsBackBeforeFinalSurface(t *testing.T) {
 	_, home := fixtureWorkspace(t)
-	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
-	original := readQueuedPayloadByID(t, home, fixtureQueuedItemID)
+	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	original := readQueuedPayloadByID(t, home, codextest.FixtureQueuedItemID)
 	plans, err := queueDBRewritePlansForProject(context.Background(), home.SQLiteDir, req.OldPath, req.NewPath)
 	require.NoError(t, err)
 	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses)
@@ -245,14 +246,14 @@ func TestQueueDBRewriteRollsBackBeforeFinalSurface(t *testing.T) {
 	require.Equal(t, 2, count.Count)
 	require.NoError(t, undo.Restore())
 
-	assert.Equal(t, original, readQueuedPayloadByID(t, home, fixtureQueuedItemID))
+	assert.Equal(t, original, readQueuedPayloadByID(t, home, codextest.FixtureQueuedItemID))
 }
 
 func TestQueueDBPlanCountsZeroWhenQueueDatabaseAbsent(t *testing.T) {
 	_, home := fixtureWorkspace(t)
 	require.NoError(t, os.Remove(filepath.Join(home.SQLiteDir, codexschema.QueueDBFileName)))
 
-	plans, err := queueDBRewritePlansForProject(context.Background(), home.SQLiteDir, FixtureProjectPath(), "/Users/fixture/renamed-project")
+	plans, err := queueDBRewritePlansForProject(context.Background(), home.SQLiteDir, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project")
 
 	require.NoError(t, err)
 	assert.Zero(t, plans.valueCount())
@@ -312,7 +313,7 @@ func TestQueueDBApplyFailsWhenQueueDatabasesChangedAfterPlan(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, home := fixtureWorkspace(t)
-			req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+			req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 			plans, err := queueDBRewritePlansForProject(context.Background(), home.SQLiteDir, req.OldPath, req.NewPath)
 			require.NoError(t, err)
 			if testCase.addedFile != "" {

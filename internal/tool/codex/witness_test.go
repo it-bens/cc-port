@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/tool"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func newWitnessWorkspace(t *testing.T, listProcesses ProcessLister) *Workspace {
@@ -98,7 +99,7 @@ func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	dbPath := filepath.Join(dir, "state_5.sqlite")
-	buildFixtureStateDB(t, dbPath)
+	codextest.BuildFixtureStateDB(t, dbPath)
 
 	blocker, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
@@ -144,7 +145,7 @@ func TestActiveWritersReportsOneWriterPerBusyDatabase(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	statePath := filepath.Join(dir, "state_5.sqlite")
-	buildFixtureStateDB(t, statePath)
+	codextest.BuildFixtureStateDB(t, statePath)
 	holdWriteLock(t, statePath)
 	queuePath := filepath.Join(dir, "queue_1.sqlite")
 	holdWriteLock(t, queuePath)

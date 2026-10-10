@@ -13,11 +13,12 @@ import (
 	"github.com/it-bens/cc-port/internal/sqlrewrite"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
 	planCounts, applyCounts := planAndApply(t, workspace, req)
 
@@ -28,18 +29,19 @@ func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	var rootPath string
 	require.NoError(t, database.QueryRowContext(context.Background(),
-		`SELECT path FROM project_roots WHERE project_id = ?`, fixtureProjectID).Scan(&rootPath))
+		`SELECT path FROM project_roots WHERE project_id = ?`, codextest.FixtureProjectID).Scan(&rootPath))
 	assert.Equal(t, req.NewPath, rootPath)
 }
 
 func TestStateDBKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	const rootOnlyProject = "/Users/test/Projects/root-only"
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	_, err = database.ExecContext(context.Background(),
-		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`, fixtureProjectID, 1, rootOnlyProject)
+		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`, codextest.FixtureProjectID, 1, rootOnlyProject)
 	require.NoError(t, err)
 
 	known, err := stateDBKnowsProject(context.Background(), home.SQLiteDir, rootOnlyProject)
@@ -50,7 +52,7 @@ func TestStateDBKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
 
 func TestMove_StateDBApplyFailsWhenProjectRootChangedAfterPlan(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	require.Equal(t, "state-db", surfaces[0].Name)
@@ -58,7 +60,7 @@ func TestMove_StateDBApplyFailsWhenProjectRootChangedAfterPlan(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 	_, err = database.ExecContext(context.Background(),
-		`UPDATE project_roots SET path = ? WHERE project_id = ?`, "/Users/test/Projects/edited-root", fixtureProjectID)
+		`UPDATE project_roots SET path = ? WHERE project_id = ?`, "/Users/test/Projects/edited-root", codextest.FixtureProjectID)
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
 
@@ -66,16 +68,17 @@ func TestMove_StateDBApplyFailsWhenProjectRootChangedAfterPlan(t *testing.T) {
 	restoreErr := undo.Restore()
 
 	require.ErrorContains(t, applyErr,
-		`rewrite project_roots.path for rowid 1: state database changed after the plan: no row with that key holds "`+FixtureProjectPath()+`" any more`)
+		`rewrite project_roots.path for rowid 1: state database changed after the plan: no row with that key holds "`+
+			codextest.FixtureProjectPath()+`" any more`)
 	require.NoError(t, restoreErr)
 	var threadCWD string
 	require.NoError(t, database.QueryRowContext(context.Background(), `SELECT cwd FROM threads LIMIT 1`).Scan(&threadCWD))
-	assert.Equal(t, FixtureProjectPath(), threadCWD, "undo rolls back the threads row the same transaction already rewrote")
+	assert.Equal(t, codextest.FixtureProjectPath(), threadCWD, "undo rolls back the threads row the same transaction already rewrote")
 }
 
 func TestMove_StateDBApplyFailsWhenThreadCwdChangedAfterPlan(t *testing.T) {
 	workspace, home := fixtureWorkspace(t)
-	req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 	require.NoError(t, err)
 	require.Equal(t, "state-db", surfaces[0].Name)
@@ -92,7 +95,7 @@ func TestMove_StateDBApplyFailsWhenThreadCwdChangedAfterPlan(t *testing.T) {
 
 	require.ErrorContains(t, applyErr,
 		`rewrite threads.cwd for id `+fixtureThreadOne+`: state database changed after the plan: no row with that key holds "`+
-			FixtureProjectPath()+`" any more`)
+			codextest.FixtureProjectPath()+`" any more`)
 	require.NoError(t, restoreErr)
 	var threadCWD string
 	require.NoError(t, database.QueryRowContext(context.Background(),
@@ -110,7 +113,7 @@ func TestMove_StateDBApplyFailsWhenStateDatabasesChangedAfterPlan(t *testing.T) 
 			name: "database added",
 			change: func(t *testing.T, home *Home) {
 				t.Helper()
-				buildFixtureStateDB(t, filepath.Join(home.SQLiteDir, "state_6.sqlite"))
+				codextest.BuildFixtureStateDB(t, filepath.Join(home.SQLiteDir, "state_6.sqlite"))
 			},
 			wantErr: func(home *Home) string {
 				return "state databases changed after the plan: added [" + filepath.Join(home.SQLiteDir, "state_6.sqlite") + "], removed []"
@@ -130,7 +133,7 @@ func TestMove_StateDBApplyFailsWhenStateDatabasesChangedAfterPlan(t *testing.T) 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			workspace, home := fixtureWorkspace(t)
-			req := tool.MoveRequest{OldPath: FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
+			req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 			surfaces, err := workspace.MoveSurfaces(t.Context(), req)
 			require.NoError(t, err)
 			require.Equal(t, "state-db", surfaces[0].Name)
@@ -144,14 +147,15 @@ func TestMove_StateDBApplyFailsWhenStateDatabasesChangedAfterPlan(t *testing.T) 
 }
 
 func TestStateDBIdentityFailsForPre0049DatabaseEvenWhenAThreadMatches(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
 	_, err = database.ExecContext(context.Background(), `DROP TABLE project_roots`)
 	require.NoError(t, err)
 	require.NoError(t, database.Close())
 
-	_, err = stateDBKnowsProject(context.Background(), home.SQLiteDir, FixtureProjectPath())
+	_, err = stateDBKnowsProject(context.Background(), home.SQLiteDir, codextest.FixtureProjectPath())
 
 	require.EqualError(t, err, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)+
 		`: unexpected schema for table "project_roots": table is missing; observed no columns`)
@@ -169,7 +173,8 @@ func TestStateDBIdentityFailsForPre0049DatabaseEvenWhenAThreadMatches(t *testing
 // database before any project match, independent of whether a rewrite would
 // ever be planned.
 func TestStateDBKnowsProjectFailsWhenProjectRootsIsWithoutRowID(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	const unrelatedProject = "/Users/test/Projects/unrelated"
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
@@ -197,7 +202,8 @@ func TestStateDBKnowsProjectFailsWhenProjectRootsIsWithoutRowID(t *testing.T) {
 // queried project matches nothing, so the failure demonstrates the check
 // fires independent of any planned rewrite.
 func TestStateDBKnowsProjectFailsWhenThreadsHasACompositePrimaryKey(t *testing.T) {
-	home := SetupFixture(t)
+	fixtureDir := codextest.SetupFixture(t)
+	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	const unrelatedProject = "/Users/test/Projects/unrelated"
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)
@@ -218,10 +224,10 @@ func TestStateDBPlanMatchesByteExactValuesUnderCaseInsensitiveCollation(t *testi
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
-	require.NoError(t, createStateDBNoCaseFixture(database, FixtureProjectPath()))
+	require.NoError(t, createStateDBNoCaseFixture(database, codextest.FixtureProjectPath()))
 	const newPath = "/Users/fixture/renamed-project"
 
-	rewrites, err := matchingPathRewrites(context.Background(), path, FixtureProjectPath(), newPath)
+	rewrites, err := matchingPathRewrites(context.Background(), path, codextest.FixtureProjectPath(), newPath)
 	require.NoError(t, err)
 	rewriter, err := sqlrewrite.Open(t.Context(), path)
 	require.NoError(t, err)
@@ -249,7 +255,7 @@ func TestStateDBPlanFailsForMissingProjectRootsPathColumn(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	_, err = matchingPathRewrites(context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project")
+	_, err = matchingPathRewrites(context.Background(), path, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project")
 
 	require.EqualError(t, err, "required column project_roots.path is missing (observed columns: project_id, position)")
 }
@@ -262,13 +268,13 @@ func TestStateDBPlanFailsForMissingProjectRootsTable(t *testing.T) {
 	_, err = database.ExecContext(context.Background(), `CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT NOT NULL);`)
 	require.NoError(t, err)
 
-	_, err = matchingPathRewrites(context.Background(), path, FixtureProjectPath(), "/Users/fixture/renamed-project")
+	_, err = matchingPathRewrites(context.Background(), path, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project")
 
 	require.EqualError(t, err, "required column project_roots.path is missing (observed schema: table absent)")
 }
 
-// noCaseAliasPath is FixtureProjectPath upper-cased: byte-different, but
-// equal under COLLATE NOCASE.
+// noCaseAliasPath is codextest.FixtureProjectPath upper-cased:
+// byte-different, but equal under COLLATE NOCASE.
 const noCaseAliasPath = "/USERS/FIXTURE/CODEXPROJECT"
 
 // createStateDBNoCaseFixture declares threads.cwd and project_roots.path
@@ -279,8 +285,8 @@ const noCaseAliasPath = "/USERS/FIXTURE/CODEXPROJECT"
 // declared collation instead of forcing COLLATE BINARY would wrongly count or
 // rewrite both. threads declares its id primary key and project_roots its
 // composite (project_id, position) key, matching the real schema
-// (buildFixtureStateDB): move rewrites threads by id and project_roots by
-// rowid.
+// (codextest.BuildFixtureStateDB): move rewrites threads by id and
+// project_roots by rowid.
 func createStateDBNoCaseFixture(database *sql.DB, oldPath string) error {
 	_, err := database.ExecContext(context.Background(), `
 		CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT COLLATE NOCASE);
