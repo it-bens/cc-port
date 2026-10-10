@@ -1,7 +1,6 @@
-// Package codexschema holds the Codex on-disk names and SQLite DDL shared
-// across cc-port: the codex adapter and its codextest fixtures resolve the
-// same memory worktree layout names, and codextest and the demo seeder build
-// their databases from the same file names and DDL.
+// Package codexschema is the single definition of the Codex SQLite DDL and the
+// on-disk layout names (database file names, memory worktree directories) that
+// cc-port creates outside Codex itself.
 package codexschema
 
 // StateDBFileName, MemoriesDBFileName, and QueueDBFileName are the database

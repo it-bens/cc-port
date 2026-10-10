@@ -35,15 +35,10 @@ func writeFixtureArchive(t *testing.T) string {
 	workspace := claude.NewWorkspace(home)
 	targets := []tool.Target{{Tool: claudeTool, Workspace: workspace}}
 
-	selected := make(map[string]bool)
-	for _, category := range claudeTool.Categories() {
-		selected[category.Name] = true
-	}
-
 	options := export.Options{
 		ProjectPath: claudetest.FixtureProjectPath(),
 		Output:      file,
-		Selected:    map[string]map[string]bool{claudeTool.Name(): selected},
+		Selected:    allCategoriesCmdSelection(),
 	}
 	if _, err := export.Run(context.Background(), targets, &options); err != nil {
 		t.Fatalf("export fixture: %v", err)

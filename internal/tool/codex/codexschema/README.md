@@ -2,9 +2,7 @@
 
 ## Purpose
 
-The one copy of the Codex SQLite DDL and database file names that cc-port creates outside Codex itself. The codex adapter's test fixtures (`codextest.SetupFixture`) and the demo seeder (`docs/videos/fixtures/cmd/seed-home`) both build their databases from it. When a Codex migration changes a table these databases declare, edit it here once.
-
-It also holds the memory worktree directory names, which the codex adapter and its `codextest` fixtures both use.
+The single definition of Codex's SQLite DDL and on-disk layout names (database file names and memory worktree directory names) that cc-port creates outside Codex itself. When a Codex migration changes a table these databases declare, edit it here once.
 
 ## Public API
 

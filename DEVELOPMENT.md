@@ -4,7 +4,7 @@
 
 Required tools: Go, `golangci-lint`, and [pre-commit](https://pre-commit.com) (`pipx install pre-commit` or `brew install pre-commit`).
 
-The first `make` run of a build, test, lint, or format target installs the pre-push git hook via `make hooks`. The hook runs `make lint` before every push, and CI runs the same lint. `make hooks` fails when `pre-commit` is not installed and is skipped when `CI` is set.
+Every user-facing `make` target except `help`, `clean`, `hooks` and the `s3-*` targets first installs the pre-push git hook when the hook file is missing; later runs find the file and skip the install. That install is skipped when `CI` or `PRE_COMMIT` is non-empty (pre-commit sets `PRE_COMMIT` while it runs a hook) and stops with an error outside a git checkout. `make hooks` always runs `pre-commit install` and fails when `pre-commit` is not installed or `core.hooksPath` is set (pre-commit refuses to install then). On `git push` of new commits, the hook runs `make pre-push`. Lint checks the working tree, so `make pre-push` refuses while tracked files outside submodules have changes or untracked `.go`, `go.mod`, `go.sum` or `.golangci.yml` files exist: commit or stash them first. CI runs the same two golangci-lint passes.
 
 ## Architecture
 

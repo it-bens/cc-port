@@ -74,16 +74,20 @@ linters:
           deny:
             - pkg: github.com/it-bens/cc-port
               desc: "internal/pipeline owns the interfaces and runners that stages import, so it imports no other cc-port package"
+        # Test files only: adapter-boundary and ui-and-lock-import-only-tool-contract
+        # already cover the non-test code, but an external tool_test package can
+        # still import an adapter.
         contract-and-lock-no-adapters:
           list-mode: lax
           files:
-            - "**/internal/tool/*.go"
-            - "**/internal/lock/**"
+            - "**/internal/tool/*_test.go"
+            - "**/internal/lock/*_test.go"
+            - "**/internal/lock/**/*_test.go"
           deny:
             - pkg: github.com/it-bens/cc-port/internal/tool/claude
-              desc: "the internal/tool contract and internal/lock are tool-agnostic; callers supply the adapter-specific witnesses"
+              desc: "guards the tests of the internal/tool contract and internal/lock, which stay tool-agnostic; non-test code is covered by adapter-boundary"
             - pkg: github.com/it-bens/cc-port/internal/tool/codex
-              desc: "the internal/tool contract and internal/lock are tool-agnostic; callers supply the adapter-specific witnesses"
+              desc: "guards the tests of the internal/tool contract and internal/lock, which stay tool-agnostic; non-test code is covered by adapter-boundary"
         ui-and-lock-import-only-tool-contract:
           list-mode: lax
           files:
@@ -146,7 +150,7 @@ linters:
             - "!**/internal/tool/codex/codextest/*.go"
           deny:
             - pkg: testing$
-              desc: "production code must not import testing; it registers test flags in the shipped binary"
+              desc: "production code must not import testing; a non-test import links the testing package into the shipped binary"
             - pkg: github.com/stretchr/testify
               desc: "test dependency; import it from _test.go files and the progresstest, claudetest and codextest packages only"
             - pkg: github.com/google/go-cmp

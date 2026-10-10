@@ -6,21 +6,41 @@ GOLANGCI    ?= golangci-lint
 GORELEASER  ?= goreleaser
 CODEX       ?= codex
 PRE_COMMIT_BIN ?= pre-commit
-# The developer-facing targets depend on hooks; CI (CI is non-empty on GitHub Actions) and a running pre-commit hook (pre-commit sets PRE_COMMIT) skip the install.
-HOOKS       := $(if $(CI)$(PRE_COMMIT),,hooks)
+# git resolves the hook path through core.hooksPath and linked worktrees; it is empty outside a git checkout.
+HOOK_FILE   := $(shell git rev-parse --git-path hooks/pre-push 2>/dev/null)
+# The developer-facing targets depend on the installed hook file, so the install runs once per checkout; CI (CI is non-empty on GitHub Actions) and a running pre-commit hook (pre-commit sets PRE_COMMIT) skip it.
+# Outside a git checkout the hook cannot be installed, so a target that needs it stops at hooks-unavailable.
+HOOKS       := $(if $(CI)$(PRE_COMMIT),,$(if $(HOOK_FILE),$(HOOK_FILE),hooks-unavailable))
 
 .DEFAULT_GOAL := help
-.PHONY: help hooks build install test test-race test-integration test-large test-all \
-        vet lint fmt tidy release-check snapshot snapshot-sign ci clean \
+.PHONY: help hooks hooks-unavailable build install test test-race test-integration test-large test-all \
+        vet lint pre-push fmt tidy release-check snapshot snapshot-sign ci clean \
         s3-up s3-down s3-reset s3-wait videos
+
+define install-hook
+@command -v -- '$(PRE_COMMIT_BIN)' >/dev/null 2>&1 || { \
+  echo "make hooks: '$(PRE_COMMIT_BIN)' not found; install it with 'pipx install pre-commit' or 'brew install pre-commit'" >&2; exit 1; }
+$(PRE_COMMIT_BIN) install
+endef
+
+define lint-passes
+$(GOLANGCI) run ./...
+$(GOLANGCI) run --build-tags=integration,large,logo ./...
+endef
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-hooks: ## Install the pre-push git hook (runs make lint) via pre-commit
-	@command -v -- '$(PRE_COMMIT_BIN)' >/dev/null 2>&1 || { \
-	  echo "make hooks: '$(PRE_COMMIT_BIN)' not found; install it with 'pipx install pre-commit' or 'brew install pre-commit'" >&2; exit 1; }
-	$(PRE_COMMIT_BIN) install
+hooks: ## Install the pre-push git hook (runs make pre-push) via pre-commit
+	$(install-hook)
+
+ifneq ($(HOOK_FILE),)
+$(HOOK_FILE):
+	$(install-hook)
+endif
+
+hooks-unavailable:
+	$(error make: not a git checkout, so the pre-push hook cannot be installed; run make inside a git checkout, or set CI or PRE_COMMIT to skip the hook)
 
 build: $(HOOKS) ## Build the cc-port binary into the repo root
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) $(PKG)
@@ -47,8 +67,18 @@ vet: $(HOOKS) ## Run go vet
 	go vet ./...
 
 lint: $(HOOKS) ## Run golangci-lint, plus a pass over the logo-tagged banner
-	$(GOLANGCI) run ./...
-	$(GOLANGCI) run --build-tags=integration,large,logo ./...
+	$(lint-passes)
+
+pre-push: $(HOOKS) ## Lint the commits being pushed; refuses while uncommitted changes would be linted instead
+	@unstaged="$$(git diff --ignore-submodules --name-only)" || exit 1; \
+	  staged="$$(git diff --ignore-submodules --cached --name-only)" || exit 1; \
+	  untracked="$$(git ls-files --others --exclude-standard -- '*.go' go.mod go.sum .golangci.yml)" || exit 1; \
+	  dirty="$$(printf '%s\n%s\n%s\n' "$$unstaged" "$$staged" "$$untracked" | sed '/^$$/d' | sort -u)"; \
+	  [ -z "$$dirty" ] || { \
+	    echo "make pre-push: the working tree has changes, so lint would check them instead of the commits being pushed:" >&2; \
+	    printf '%s\n' "$$dirty" | sed 's/^/  /' >&2; \
+	    echo "  Commit or stash these files, then push again." >&2; exit 1; }
+	$(lint-passes)
 
 fmt: $(HOOKS) ## Apply gofmt + goimports via golangci-lint fmt
 	$(GOLANGCI) fmt

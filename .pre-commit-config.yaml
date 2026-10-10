@@ -1,13 +1,14 @@
-# The hook runs `make lint`, the one lint invocation, including the logo-tagged
-# second pass. golangci-lint's published hook runs `--fix`, which would edit
-# files during a push.
+# The hook runs `make pre-push`, which refuses while uncommitted changes would
+# be linted instead of the pushed commits, then runs the same lint passes as
+# `make lint`, including the logo-tagged second pass. golangci-lint's published
+# hook runs `--fix`, which would edit files during a push.
 default_install_hook_types: [pre-push]
 repos:
   - repo: local
     hooks:
       - id: lint
-        name: make lint
-        entry: make lint
+        name: make pre-push
+        entry: make pre-push
         language: system
         pass_filenames: false
         always_run: true
