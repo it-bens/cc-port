@@ -917,7 +917,9 @@ func promoteIfNeeded(ctx context.Context, source, destination string, undo *tool
 			"destination %s already exists while source %s remains; deleting the destination and re-running is always safe",
 			destination, source,
 		)
-	default:
+	case destinationPromote:
 		return rewrite.PromoteDir(ctx, source, destination, undo, fsutil.CopyDir)
+	default:
+		return fmt.Errorf("unknown destination state %d", state)
 	}
 }

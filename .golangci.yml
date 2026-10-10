@@ -14,6 +14,7 @@ linters:
     - dupl
     - errcheck
     - errorlint
+    - exhaustive
     - funlen
     - goconst
     - gocritic
@@ -398,6 +399,11 @@ linters:
               desc: "ZIP reading goes through internal/archive (caps, os.Root containment); only internal/export (writer) and internal/manifest (capped metadata.xml read) import it directly"
     dogsled:
       max-blank-identifiers: 3
+    # Every enum switch names each member and still fails hard on an out-of-range value.
+    exhaustive:
+      check: [switch, map]
+      default-signifies-exhaustive: false
+      default-case-required: true
     funlen:
       lines: 120
       statements: 60

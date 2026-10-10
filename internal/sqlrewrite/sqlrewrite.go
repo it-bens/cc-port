@@ -338,8 +338,13 @@ func isNil(value any) bool {
 	switch reflected.Kind() {
 	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Interface, reflect.Func, reflect.Chan:
 		return reflected.IsNil()
-	default:
+	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128,
+		reflect.Array, reflect.String, reflect.Struct, reflect.UnsafePointer:
 		return false
+	default:
+		panic(fmt.Sprintf("unknown reflect.Kind %v", reflected.Kind()))
 	}
 }
 

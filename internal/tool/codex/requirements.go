@@ -380,6 +380,8 @@ func readCloudConfigBundle(cachePath string, auth cloudAuth, now time.Time) (clo
 		return cloudConfigBundle{}, cloudCacheWarning(auth.undecidableReason), nil
 	case cloudConfigAppliesToAccount:
 		// Checked against the cache below.
+	default:
+		return cloudConfigBundle{}, "", fmt.Errorf("unknown cloud config gate %d", auth.gate)
 	}
 	if auth.chatgptUserID == nil || auth.accountID == nil {
 		return cloudConfigBundle{}, cloudCacheWarning(
@@ -1043,6 +1045,8 @@ func validJSONFields(fields map[string]json.RawMessage, declared map[string]json
 			if isJSONNull(raw) {
 				return false
 			}
+		default:
+			panic(fmt.Sprintf("unknown jsonKind %d", kind))
 		}
 		var valid bool
 		switch kind {
@@ -1052,6 +1056,8 @@ func validJSONFields(fields map[string]json.RawMessage, declared map[string]json
 		case jsonRequiredBool, jsonOptionalBool:
 			var value bool
 			valid = json.Unmarshal(raw, &value) == nil
+		default:
+			panic(fmt.Sprintf("unknown jsonKind %d", kind))
 		}
 		if !valid {
 			return false

@@ -313,6 +313,8 @@ func (model *ledgerModel) markActive(node *phaseNode, kind outcomeKind) {
 	case outcomeCancelled:
 		node.terminalSymbol = "⊘"
 	case outcomeRunning, outcomeDone:
+	default:
+		panic(fmt.Sprintf("unknown outcomeKind %d", kind))
 	}
 }
 
@@ -392,6 +394,8 @@ func (model *ledgerModel) writeOutcome(builder *strings.Builder) {
 			model.outcome.phase, formatCount(model.outcome.done, model.outcome.total, model.outcome.unit),
 			warningSuffix(model.warnings))
 	case outcomeRunning:
+	default:
+		panic(fmt.Sprintf("unknown outcomeKind %d", model.outcome.kind))
 	}
 }
 
