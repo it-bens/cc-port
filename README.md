@@ -42,6 +42,15 @@ cosign verify-blob \
 
 Replace `<vX.Y.Z>` with the release tag. After `checksums.txt` is verified, run `sha256sum -c checksums.txt` (or `shasum -a 256 -c checksums.txt` on macOS) against the downloaded archives.
 
+Releases after v0.8.0 also ship SLSA build provenance, `cc-port.intoto.jsonl`, covering every archive. Verify an archive with [`slsa-verifier`](https://github.com/slsa-framework/slsa-verifier):
+
+```
+slsa-verifier verify-artifact <archive> \
+  --provenance-path cc-port.intoto.jsonl \
+  --source-uri github.com/it-bens/cc-port \
+  --source-tag <vX.Y.Z>
+```
+
 ## Builds
 
 cc-port ships as two binaries built from the same source:
