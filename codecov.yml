@@ -1,0 +1,9 @@
+# Coverage is reported on pull requests but never fails them.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
