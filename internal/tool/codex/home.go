@@ -345,7 +345,7 @@ func canonicalizeExistingDir(path string) (string, error) {
 func defaultCodexHome(getenv func(string) string) (string, error) {
 	homeDir := getenv("HOME")
 	if homeDir == "" {
-		return "", fmt.Errorf("determine home directory: $HOME is unset")
+		return "", errors.New("determine home directory: $HOME is unset")
 	}
 	return filepath.Join(homeDir, ".codex"), nil
 }

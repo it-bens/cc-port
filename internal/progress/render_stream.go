@@ -3,6 +3,7 @@ package progress
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -105,7 +106,7 @@ func formatProgress(done, total int64) string {
 // (positive), or as the bare done count when it is not.
 func formatProgressCount(done, total int64) string {
 	if total <= 0 {
-		return fmt.Sprintf("%d", done)
+		return strconv.FormatInt(done, 10)
 	}
 	return fmt.Sprintf("%d/%d", done, total)
 }

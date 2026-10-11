@@ -116,7 +116,7 @@ func ReplacePathInBytes(data []byte, oldPath, newPath string) (rewritten []byte,
 // project-path substitution, failing hard on any other key change.
 func TOMLPathRewrite(data []byte, oldPath, newPath string) (rewritten []byte, count int, err error) {
 	if strings.ContainsAny(oldPath, `"\\`) || strings.ContainsAny(newPath, `"\\`) {
-		return data, 0, fmt.Errorf("TOML path rewrite refuses paths containing a quote or backslash")
+		return data, 0, errors.New("TOML path rewrite refuses paths containing a quote or backslash")
 	}
 
 	inputPaths, err := tomlKeyPaths(data)
@@ -131,7 +131,7 @@ func TOMLPathRewrite(data []byte, oldPath, newPath string) (rewritten []byte, co
 	}
 
 	if !equalKeyPathMultisets(expectedTOMLKeyPaths(inputPaths, oldPath, newPath), outputPaths) {
-		return data, 0, fmt.Errorf("validate TOML path rewrite: a key changed by something other than the project-path substitution")
+		return data, 0, errors.New("validate TOML path rewrite: a key changed by something other than the project-path substitution")
 	}
 	return rewritten, count, nil
 }

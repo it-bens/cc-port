@@ -3,6 +3,7 @@ package sqlrewrite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -626,7 +627,7 @@ func checkpoint(database *sql.DB) error {
 		return fmt.Errorf("checkpoint WAL: %w", err)
 	}
 	if busy != 0 {
-		return fmt.Errorf("checkpoint WAL: busy")
+		return errors.New("checkpoint WAL: busy")
 	}
 	return nil
 }

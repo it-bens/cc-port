@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -62,7 +63,7 @@ func newMoveCmd(toolSet *tool.Set, flags *toolFlags) *cobra.Command {
 				}
 				applyResult = result
 				if result.Failed() {
-					return fmt.Errorf("one or more tools failed to move; see the per-tool results table")
+					return errors.New("one or more tools failed to move; see the per-tool results table")
 				}
 				return nil
 			})

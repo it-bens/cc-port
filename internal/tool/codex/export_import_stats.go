@@ -241,7 +241,7 @@ func rolloutProjectIdentity(lines [][]byte, project string) (rolloutIdentity, er
 			return rolloutIdentity{}, err
 		}
 		if belongsToProject {
-			return rolloutIdentity{}, fmt.Errorf("associated rollout has no session id")
+			return rolloutIdentity{}, errors.New("associated rollout has no session id")
 		}
 	}
 	return identity, nil
@@ -621,7 +621,7 @@ func validArchiveRolloutName(relative string, archived bool) bool {
 // then applies sidecar rows only to existing threads through sqlrewrite.
 func (workspace *Workspace) Finalize(ctx context.Context, project string, _ *archive.StagedSet) ([]string, error) {
 	if project == "" {
-		return nil, fmt.Errorf("finalize Codex import: target project is empty")
+		return nil, errors.New("finalize Codex import: target project is empty")
 	}
 	// Read before any append, so an unreadable profile overlay aborts the
 	// import before Finalize changes anything.

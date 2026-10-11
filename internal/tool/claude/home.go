@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func newHome(override string, getenv func(string) string) (*Home, error) {
 
 	homeDir := getenv("HOME")
 	if homeDir == "" {
-		return nil, fmt.Errorf("determine home directory: $HOME is unset")
+		return nil, errors.New("determine home directory: $HOME is unset")
 	}
 
 	return &Home{
@@ -139,7 +140,7 @@ func (claudeHome *Home) KnownMarketplacesFile() string {
 func homeAnchor(getenv func(string) string) (string, error) {
 	homePath := getenv("HOME")
 	if homePath == "" {
-		return "", fmt.Errorf("determine home directory: $HOME is unset")
+		return "", errors.New("determine home directory: $HOME is unset")
 	}
 	if !filepath.IsAbs(homePath) {
 		return "", fmt.Errorf("invalid home directory %q: must be absolute", homePath)

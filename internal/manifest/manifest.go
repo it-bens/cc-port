@@ -183,7 +183,7 @@ func ReadManifestFromZip(src io.ReaderAt, size int64) (*Metadata, error) {
 		}
 		return readManifestEntry(file)
 	}
-	return nil, fmt.Errorf("metadata.xml not found in zip archive")
+	return nil, errors.New("metadata.xml not found in zip archive")
 }
 
 // readManifestEntry reads metadata.xml from a single zip entry, enforces the

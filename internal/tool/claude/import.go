@@ -459,7 +459,7 @@ func (workspace *Workspace) finalizeConfig(project string) error {
 // block against an unchanged destination is idempotent.
 func (workspace *Workspace) finalizeConfigGrants(project string) error {
 	if !gjson.ValidBytes(workspace.configGrantsBlock) {
-		return fmt.Errorf("invalid JSON in archive config-grants block")
+		return errors.New("invalid JSON in archive config-grants block")
 	}
 	grants := gjson.GetBytes(workspace.configGrantsBlock, allowedToolsKey)
 	if !grants.Exists() {

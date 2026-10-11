@@ -2,7 +2,7 @@ package remote
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 
 	"github.com/it-bens/cc-port/internal/pipeline"
@@ -25,10 +25,10 @@ type Source struct {
 // contributes no Meta.
 func (s *Source) Open(ctx context.Context, _ pipeline.View) (pipeline.View, pipeline.Meta, io.Closer, error) {
 	if s.Remote == nil {
-		return pipeline.View{}, pipeline.Meta{}, nil, fmt.Errorf("remote.Source: Remote is nil")
+		return pipeline.View{}, pipeline.Meta{}, nil, errors.New("remote.Source: Remote is nil")
 	}
 	if s.Key == "" {
-		return pipeline.View{}, pipeline.Meta{}, nil, fmt.Errorf("remote.Source: Key is empty")
+		return pipeline.View{}, pipeline.Meta{}, nil, errors.New("remote.Source: Key is empty")
 	}
 	rc, err := s.Remote.Open(ctx, s.Key)
 	if err != nil {
@@ -53,10 +53,10 @@ type Sink struct {
 // no archive is visible on the remote.
 func (s *Sink) Open(ctx context.Context, _ io.Writer) (io.Writer, io.Closer, error) {
 	if s.Remote == nil {
-		return nil, nil, fmt.Errorf("remote.Sink: Remote is nil")
+		return nil, nil, errors.New("remote.Sink: Remote is nil")
 	}
 	if s.Key == "" {
-		return nil, nil, fmt.Errorf("remote.Sink: Key is empty")
+		return nil, nil, errors.New("remote.Sink: Key is empty")
 	}
 	w, err := s.Remote.Create(ctx, s.Key)
 	if err != nil {

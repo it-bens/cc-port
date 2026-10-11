@@ -84,7 +84,7 @@ func selectTools(toolSet *tool.Set, names []string) ([]tool.Tool, error) {
 			return nil, fmt.Errorf("detect tools: %w", err)
 		}
 		if len(detected) == 0 {
-			return nil, fmt.Errorf("no supported tool detected on this machine; use --tool to specify one")
+			return nil, errors.New("no supported tool detected on this machine; use --tool to specify one")
 		}
 		return detected, nil
 	}
