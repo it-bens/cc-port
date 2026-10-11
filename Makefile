@@ -6,6 +6,7 @@ GOLANGCI    ?= golangci-lint
 GORELEASER  ?= goreleaser
 CODEX       ?= codex
 PRE_COMMIT_BIN ?= pre-commit
+DEADCODE_VERSION := v0.52.0
 # git resolves the hook path through core.hooksPath and linked worktrees; it is empty outside a git checkout.
 HOOK_FILE   := $(shell git rev-parse --git-path hooks/pre-push 2>/dev/null)
 # The developer-facing targets depend on the installed hook file, so the install runs once per checkout; CI (CI is non-empty on GitHub Actions) and a running pre-commit hook (pre-commit sets PRE_COMMIT) skip it.
@@ -14,7 +15,7 @@ HOOKS       := $(if $(CI)$(PRE_COMMIT),,$(if $(HOOK_FILE),$(HOOK_FILE),hooks-una
 
 .DEFAULT_GOAL := help
 .PHONY: help hooks hooks-unavailable build install test test-race test-integration test-large test-all \
-        vet lint pre-push fmt tidy release-check snapshot snapshot-sign ci clean \
+        vet deadcode lint pre-push fmt tidy release-check snapshot snapshot-sign ci clean \
         s3-up s3-down s3-reset s3-wait videos
 
 define install-hook
@@ -23,9 +24,24 @@ define install-hook
 $(PRE_COMMIT_BIN) install
 endef
 
+# deadcode exits 0 even with findings, so each pass fails on any output.
+# The logo pass reaches banner_logo.go, which the default pass excludes; the
+# seed-home pass covers the demo seeder, a separate main package.
+define deadcode-check
+@out="$$(go run golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION) $(1))" || exit 1; \
+  [ -z "$$out" ] || { printf '%s\n' "$$out" >&2; exit 1; }
+endef
+
+define deadcode-passes
+$(call deadcode-check,./cmd/cc-port)
+$(call deadcode-check,-tags logo ./cmd/cc-port)
+$(call deadcode-check,-filter '/docs/videos/fixtures' ./docs/videos/fixtures/cmd/seed-home)
+endef
+
 define lint-passes
 $(GOLANGCI) run ./...
 $(GOLANGCI) run --build-tags=integration,large,logo ./...
+$(deadcode-passes)
 endef
 
 help: ## Show available targets
@@ -66,7 +82,10 @@ test-all: $(HOOKS) ## Run unit, integration, and large-archive tests
 vet: $(HOOKS) ## Run go vet
 	go vet ./...
 
-lint: $(HOOKS) ## Run golangci-lint, plus a pass over the logo-tagged banner
+deadcode: $(HOOKS) ## Report unreachable functions from the cc-port and seed-home entry points
+	$(deadcode-passes)
+
+lint: $(HOOKS) ## Run golangci-lint, plus a pass over the logo-tagged banner and deadcode
 	$(lint-passes)
 
 pre-push: $(HOOKS) ## Lint the commits being pushed; refuses while uncommitted changes would be linted instead

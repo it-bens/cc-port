@@ -151,7 +151,7 @@ func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
 
 func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
 	claudeHome := claudetest.SetupFixture(t)
-	workspace := claude.NewWorkspace(claudeHome)
+	workspace := claudetest.NewWorkspace(claudeHome)
 	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
 	require.NotEmpty(t, locations.PluginsDataFiles)

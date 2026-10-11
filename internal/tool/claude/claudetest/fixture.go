@@ -46,6 +46,12 @@ func IsolateHome() (func(), error) {
 	}, nil
 }
 
+// NewWorkspace returns a Workspace bound to home with the adapter's default
+// environment, process-liveness, and process-start-time seams.
+func NewWorkspace(home *claude.Home) *claude.Workspace {
+	return claude.NewWorkspace(home, os.Getenv, claude.ProcessAlive, claude.ProcessStart)
+}
+
 // SetupFixture stages testdata/dotclaude under t.TempDir(), sanitizes session PIDs, and returns a Home pointing to it.
 func SetupFixture(t *testing.T) *claude.Home {
 	t.Helper()

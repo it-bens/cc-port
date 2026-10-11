@@ -1,3 +1,5 @@
+//go:build !logo
+
 package main
 
 import (

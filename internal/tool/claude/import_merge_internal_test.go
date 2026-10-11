@@ -18,7 +18,7 @@ func newMergeTestWorkspace(t *testing.T) *Workspace {
 	t.Helper()
 	dir := t.TempDir()
 	home := &Home{Dir: filepath.Join(dir, "dotclaude"), ConfigFile: filepath.Join(dir, "dotclaude.json")}
-	return NewWorkspace(home)
+	return NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
 }
 
 func TestFinalize_ReportsRulesFileReferences(t *testing.T) {

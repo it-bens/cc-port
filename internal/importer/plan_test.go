@@ -171,7 +171,7 @@ func TestDryRun_ReportsEveryPresentTool(t *testing.T) {
 	codexDestination := codexHomeWithConfig(t, "model = \"gpt-5-fixture\"\n")
 
 	plan, err := importer.DryRun(t.Context(), tool.NewSet(claudeTool, codexTool), []tool.Target{
-		{Tool: claudeTool, Workspace: claude.NewWorkspace(blankHome(t))},
+		{Tool: claudeTool, Workspace: claudetest.NewWorkspace(blankHome(t))},
 		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
 	}, &importer.Options{
 		Source:     bytes.NewReader(body),
@@ -307,7 +307,7 @@ func buildArchiveWithoutMCPServers(t *testing.T) (body []byte, projectPath strin
 
 	var buf bytes.Buffer
 	_, err := export.Run(t.Context(), []tool.Target{
-		{Tool: claudeTool, Workspace: claude.NewWorkspace(home)},
+		{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)},
 	}, &export.Options{
 		ProjectPath: claudetest.FixtureProjectPath(),
 		Output:      &buf,
@@ -468,7 +468,7 @@ func TestRenderMCPServers_WritesNothingWithoutNewDefinitions(t *testing.T) {
 func claudeToolSet() *tool.Set { return tool.NewSet(claude.New()) }
 
 func claudeTargets(home *claude.Home) []tool.Target {
-	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	return []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 }
 
 // treeSnapshot lists every path under root with a digest of its contents, so a

@@ -411,13 +411,6 @@ func NewSafeRenamePromoter() *SafeRenamePromoter {
 	return &SafeRenamePromoter{}
 }
 
-// SetRenameFunc overrides the underlying rename implementation. Package
-// tests use this to inject EXDEV-like failures; production callers leave
-// it at the zero value so os.Rename is used directly.
-func (p *SafeRenamePromoter) SetRenameFunc(fn func(oldpath, newpath string) error) {
-	p.renameFunc = fn
-}
-
 // StageFile records an intent to rename a staged file at temp onto final at
 // Promote time. If final already exists, its bytes are read and kept as a
 // backup for Rollback.

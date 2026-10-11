@@ -58,7 +58,7 @@ func TestEncodePath(t *testing.T) {
 }
 
 func TestNewHome_Default(t *testing.T) {
-	home, err := claude.NewHome("")
+	home, err := claude.NewHome("", os.Getenv)
 	require.NoError(t, err)
 
 	homeDir, err := os.UserHomeDir()
@@ -70,7 +70,7 @@ func TestNewHome_Default(t *testing.T) {
 
 func TestNewHome_Override(t *testing.T) {
 	override := "/tmp/test-claude"
-	home, err := claude.NewHome(override)
+	home, err := claude.NewHome(override, os.Getenv)
 	require.NoError(t, err)
 
 	assert.Equal(t, "/tmp/test-claude", home.Dir)
@@ -81,7 +81,7 @@ func TestNewHome_OverrideNormalisesRelative(t *testing.T) {
 	workingDir, err := os.Getwd()
 	require.NoError(t, err)
 
-	home, err := claude.NewHome("relative/subdir")
+	home, err := claude.NewHome("relative/subdir", os.Getenv)
 	require.NoError(t, err)
 
 	assert.True(t, filepath.IsAbs(home.Dir), "Dir must be absolute, got %q", home.Dir)

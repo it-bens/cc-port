@@ -107,7 +107,7 @@ var (
 func TestDryRun_MultiTargetIndependence(t *testing.T) {
 	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{
-		{Tool: claude.New(), Workspace: claude.NewWorkspace(home)},
+		{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)},
 		{Tool: &fakeTool{name: "fake"}, Workspace: &fakeWorkspace{moveErr: tool.ErrProjectAbsent, lockPath: filepath.Join(t.TempDir(), ".cc-port.lock")}},
 	}
 	oldPath := claudetest.FixtureProjectPath()
@@ -136,7 +136,7 @@ func TestDryRun_MultiTargetIndependence(t *testing.T) {
 func TestApply_MultiTargetIndependence(t *testing.T) {
 	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{
-		{Tool: claude.New(), Workspace: claude.NewWorkspace(home)},
+		{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)},
 		{Tool: &fakeTool{name: "fake"}, Workspace: &fakeWorkspace{moveErr: tool.ErrProjectAbsent, lockPath: filepath.Join(t.TempDir(), ".cc-port.lock")}},
 	}
 	oldPath := claudetest.FixtureProjectPath()

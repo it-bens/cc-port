@@ -190,13 +190,9 @@ func configTOMLProjectMatches(home *Home, project string) (map[string][]string, 
 	return matches, nil
 }
 
-// applyConfigTOMLFile rewrites path in place via rewrite.TOMLPathRewrite,
+// applyConfigTOMLKeys rewrites path in place via rewrite.TOMLPathRewrite,
 // wrapping the primitive's validation errors (which report bytes only)
 // with the file path.
-func applyConfigTOMLFile(path, oldPath, newPath string, undo *tool.Restorer) (int, error) {
-	return applyConfigTOMLKeys(path, []string{oldPath}, newPath, undo)
-}
-
 func applyConfigTOMLKeys(path string, keys []string, newPath string, undo *tool.Restorer) (int, error) {
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

@@ -119,7 +119,7 @@ func TestExport_FileHistoryFailsWhenSnapshotUnreadable(t *testing.T) {
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
 	sink := archive.NewSink(writer, "claude", nil)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 
 	_, err := workspace.Export(context.Background(), testProjectPath, map[string]bool{"file-history": true}, sink)
 
@@ -143,7 +143,7 @@ func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
 	var buf bytes.Buffer
 	writer := zip.NewWriter(&buf)
 	sink := archive.NewSink(writer, "claude", nil)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 
 	_, err := workspace.Export(context.Background(), testProjectPath, map[string]bool{"file-history": true}, sink)
 
@@ -173,7 +173,7 @@ func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
 
 	writer := zip.NewWriter(faultWriter)
 	sink := archive.NewSink(writer, "claude", nil)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 
 	_, err = workspace.Export(context.Background(), testProjectPath, map[string]bool{"file-history": true}, sink)
 
@@ -207,7 +207,7 @@ func TestExport_FileHistoryHonorsContextCancelMidWalk(t *testing.T) {
 
 	writer := zip.NewWriter(faultWriter)
 	sink := archive.NewSink(writer, "claude", nil)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 
 	_, err = workspace.Export(ctx, testProjectPath, map[string]bool{"file-history": true}, sink)
 

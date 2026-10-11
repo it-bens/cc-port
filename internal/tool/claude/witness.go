@@ -108,7 +108,9 @@ func withinOneSecond(a, b time.Time) bool {
 	return delta <= time.Second
 }
 
-func processAlive(pid int) bool {
+// ProcessAlive reports whether a process with the given pid exists. A process
+// the caller may not signal still counts as alive.
+func ProcessAlive(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return false

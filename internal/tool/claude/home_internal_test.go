@@ -87,7 +87,7 @@ func TestWithLock_SucceedsWhenSessionPIDIsDead(t *testing.T) {
 		[]byte(`{"pid":4242,"cwd":"/test/project"}`),
 		0o600,
 	))
-	workspace := NewWorkspaceForTest(home, os.Getenv, func(pid int) bool {
+	workspace := NewWorkspace(home, os.Getenv, func(pid int) bool {
 		assert.Equal(t, 4242, pid)
 		return false
 	}, func(int) (time.Time, error) {

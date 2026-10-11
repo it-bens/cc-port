@@ -15,7 +15,7 @@ import (
 func TestExportManifestCmd_HasOutputFlag(t *testing.T) {
 	toolSet := newToolSet()
 	flags := registerToolFlags(&cobra.Command{}, toolSet)
-	cmd := newExportManifestCmd(toolSet, flags, noopBanner{})
+	cmd := newExportManifestCmd(toolSet, flags, stubBanner{})
 	flag := cmd.Flags().Lookup("output")
 	require.NotNil(t, flag, "export manifest --output must be registered")
 	short := cmd.Flags().ShorthandLookup("o")
@@ -30,10 +30,10 @@ func TestExportManifestCmd_OverwriteGuard(t *testing.T) {
 	toolSet := newToolSet()
 	flags := registerToolFlags(&cobra.Command{}, toolSet)
 	*flags.homeOverrides["claude"] = t.TempDir()
-	cmd := newExportManifestCmd(toolSet, flags, noopBanner{})
+	cmd := newExportManifestCmd(toolSet, flags, stubBanner{})
 	require.NoError(t, cmd.Flags().Set("output", outPath))
 
-	err := runExportManifest(cmd, []string{"/Users/test/Projects/myproject"}, toolSet, flags, noopBanner{})
+	err := runExportManifest(cmd, []string{"/Users/test/Projects/myproject"}, toolSet, flags, stubBanner{})
 
 	require.ErrorIs(t, err, errOutputExists)
 }
@@ -43,12 +43,12 @@ func TestExportManifestCmd_ProjectAbsentWritesEmptyToolBlock(t *testing.T) {
 	flags := registerToolFlags(&cobra.Command{}, toolSet)
 	flags.selected = []string{"claude"}
 	*flags.homeOverrides["claude"] = filepath.Join(t.TempDir(), "empty-claude-home")
-	cmd := newExportManifestCmd(toolSet, flags, noopBanner{})
+	cmd := newExportManifestCmd(toolSet, flags, stubBanner{})
 	output := filepath.Join(t.TempDir(), "manifest.xml")
 	require.NoError(t, cmd.Flags().Set("output", output))
 	require.NoError(t, cmd.Flags().Set("all", "true"))
 
-	require.NoError(t, runExportManifest(cmd, []string{t.TempDir()}, toolSet, flags, noopBanner{}))
+	require.NoError(t, runExportManifest(cmd, []string{t.TempDir()}, toolSet, flags, stubBanner{}))
 
 	metadata, err := manifest.ReadManifest(output)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestExportManifestCmd_ProjectAbsentWritesEmptyToolBlock(t *testing.T) {
 func TestExportCmd_PassphraseFlagsRegistered(t *testing.T) {
 	toolSet := newToolSet()
 	flags := registerToolFlags(&cobra.Command{}, toolSet)
-	cmd := newExportCmd(toolSet, flags, noopBanner{})
+	cmd := newExportCmd(toolSet, flags, stubBanner{})
 	require.NotNil(t, cmd.Flags().Lookup("passphrase-env"),
 		"--passphrase-env should be registered on export")
 	require.NotNil(t, cmd.Flags().Lookup("passphrase-file"),

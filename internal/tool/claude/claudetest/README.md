@@ -7,6 +7,7 @@ Fixture helpers for unit tests. `SetupFixture` stages a realistic `~/.claude` tr
 ## Public API
 
 - `SetupFixture(t *testing.T) *claude.Home`: stages `testdata/dotclaude/` under `t.TempDir()`, extracts `.claude.json` to a sibling path, and rewrites every `sessions/*.json` PID to a dead sentinel. Returns `*claude.Home{Dir: .../dotclaude, ConfigFile: .../dotclaude.json}`. Pass the returned home into `move.DryRun`, `importer.Run`, etc.
+- `NewWorkspace(home *claude.Home) *claude.Workspace`: binds a workspace to `home` with the adapter's default environment, process-liveness and process-start-time seams. Tests that supply their own seams call `claude.NewWorkspace(home, getenv, processLiveness, processStartTime)`.
 - `IsolateHome() (func(), error)`: points `HOME` at a new temp directory holding only an empty `.claude` marker, so Codex is never detected; the returned cleanup restores `HOME` and removes the directory. Called from `TestMain`.
 - `FixtureProjectPath() string`: returns `/Users/test/Projects/myproject`, the project path the fixture tree is keyed on.
 

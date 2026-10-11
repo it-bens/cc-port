@@ -28,7 +28,7 @@ import (
 )
 
 func TestPull_RejectsMissingTo(t *testing.T) {
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{"pull", "myproj", "--remote", "file:///tmp/x"})
 
 	err := rootCmd.Execute()
@@ -40,7 +40,7 @@ func TestPull_RejectsMissingTo(t *testing.T) {
 }
 
 func TestPull_RejectsMissingRemote(t *testing.T) {
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{"pull", "myproj", "--to", "/tmp/x"})
 
 	err := rootCmd.Execute()
@@ -58,7 +58,7 @@ func TestPull_DryRunDoesNotImport(t *testing.T) {
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetArgs([]string{
@@ -93,7 +93,7 @@ func TestPull_DryRunWithImplicitFromManifestResolutionRefuses(t *testing.T) {
 		Placeholders: []manifest.Placeholder{{Key: "{{PROJECT_PATH}}", Resolve: projectPath}},
 	}}}))
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-home", claudeFixtureDir,
@@ -115,7 +115,7 @@ func TestPull_ApplyImportsToTarget(t *testing.T) {
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-home", claudeFixtureDir,
@@ -152,7 +152,7 @@ func TestPull_ApplyWritesNothingWhenThePlanCannotRender(t *testing.T) {
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetOut(failingWriter{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
@@ -184,7 +184,7 @@ func TestPull_ApplyRendersToolWarnings(t *testing.T) {
 		0o600,
 	))
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	var stderr bytes.Buffer
 	rootCmd.SetErr(&stderr)
 	rootCmd.SetArgs([]string{
@@ -214,7 +214,7 @@ func TestPull_ApplyWithUnresolvedPlaceholdersRefuses(t *testing.T) {
 	emptyManifestPath := filepath.Join(t.TempDir(), "empty-manifest.xml")
 	require.NoError(t, manifest.WriteManifest(emptyManifestPath, &manifest.Metadata{}))
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-home", claudeFixtureDir,
@@ -249,7 +249,7 @@ func TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts(t *testing.T) {
 	writeAtURL(t, url, "myproj", body)
 	pullTargetPath := filepath.Join(t.TempDir(), "pulled-project")
 
-	pullCmd := newRootCmd(noopBanner{})
+	pullCmd := newRootCmd(stubBanner{})
 	pullCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-home", claudeFixtureDir,
@@ -265,7 +265,7 @@ func TestPull_ApplyWithDeclaredUnusedPlaceholderAccepts(t *testing.T) {
 	importHomeDir := filepath.Join(t.TempDir(), "import-claude-home")
 	require.NoError(t, os.MkdirAll(importHomeDir, 0o750))
 
-	importCmd := newRootCmd(noopBanner{})
+	importCmd := newRootCmd(stubBanner{})
 	importCmd.SetArgs([]string{
 		"import", archivePath, importTargetPath,
 		"--claude-home", importHomeDir,
@@ -282,7 +282,7 @@ func TestPull_AcceptsValidCredentialsFile(t *testing.T) {
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 	credentialsPath := writeTestCredentialsFile(t, 0o600)
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-home", claudeFixtureDir,
@@ -303,7 +303,7 @@ func TestPull_AcceptsNoPromptFlag(t *testing.T) {
 	injectArchiveWithPusherAtURL(t, url, "myproj", "host-user")
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-home", claudeFixtureDir,
@@ -329,7 +329,7 @@ func TestPull_RejectsTooPermissiveCredentialsFile(t *testing.T) {
 	targetPath := filepath.Join(t.TempDir(), "pulled-project")
 	credentialsPath := writeTestCredentialsFile(t, 0o644)
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-home", claudeFixtureDir,
@@ -352,7 +352,7 @@ func TestPull_RejectsMalformedCredentialsFile(t *testing.T) {
 	malformedCredentialsPath := filepath.Join(t.TempDir(), "malformed.env")
 	require.NoError(t, os.WriteFile(malformedCredentialsPath, []byte("BROKEN_NO_EQUALS\n"), 0o600))
 
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetArgs([]string{
 		"pull", "myproj",
 		"--claude-home", claudeFixtureDir,

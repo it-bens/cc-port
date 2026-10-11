@@ -14,6 +14,7 @@ import (
 	"github.com/it-bens/cc-port/internal/progress/progresstest"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // topLevelPhaseNames returns the names of every top-level phase opened on the
@@ -37,7 +38,7 @@ func recordSuccessfulImport(t *testing.T) []progress.Event {
 	body, projectPath := buildArchive(t)
 	home := blankHome(t)
 	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 	recorder := progresstest.NewRecorder()
 
 	_, err := importer.Run(context.Background(), toolSet, targets, &importer.Options{

@@ -24,7 +24,7 @@ import (
 func driveStats(t *testing.T, claudeDir string, args ...string) (stdout string, err error) {
 	t.Helper()
 	var outBuffer, errBuffer bytes.Buffer
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetOut(&outBuffer)
 	rootCmd.SetErr(&errBuffer)
 	rootCmd.SetArgs(append([]string{"stats", "--claude-home", claudeDir}, args...))
@@ -148,7 +148,7 @@ func TestStatsCmd_CancelledRootContextAbortsScan(t *testing.T) {
 	cancel()
 
 	var outBuffer, errBuffer bytes.Buffer
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetOut(&outBuffer)
 	rootCmd.SetErr(&errBuffer)
 	rootCmd.SetArgs([]string{"stats", "--claude-home", home.Dir, claudetest.FixtureProjectPath()})

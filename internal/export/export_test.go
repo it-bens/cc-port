@@ -19,7 +19,7 @@ func fixtureTargets(t *testing.T) (targets []tool.Target, projectPath string) {
 	t.Helper()
 	home := claudetest.SetupFixture(t)
 	claudeTool := claude.New()
-	return []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}, claudetest.FixtureProjectPath()
+	return []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}, claudetest.FixtureProjectPath()
 }
 
 func allSelected(t tool.Tool) map[string]bool {

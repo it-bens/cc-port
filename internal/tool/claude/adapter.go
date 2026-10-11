@@ -29,7 +29,7 @@ type Adapter struct {
 }
 
 // New returns the Claude Code tool adapter.
-func New() *Adapter { return NewAdapter(os.Getenv, processAlive, processStart) }
+func New() *Adapter { return NewAdapter(os.Getenv, ProcessAlive, ProcessStart) }
 
 // NewAdapter returns a Claude Code adapter with explicit environment,
 // process-liveness, and process-start-time seams.
@@ -54,7 +54,7 @@ func (*Adapter) ImplicitAnchorKeys() []string {
 // Detect implements tool.Tool: it reports whether the default ~/.claude
 // directory exists, independent of any --claude-home override.
 func (adapter *Adapter) Detect() (bool, error) {
-	home, err := newHome("", adapter.getenv)
+	home, err := NewHome("", adapter.getenv)
 	if err != nil {
 		return false, err
 	}
@@ -71,32 +71,16 @@ func (adapter *Adapter) Detect() (bool, error) {
 // Workspace bound to a not-yet-created home is valid; mutating commands
 // create it lazily on first write, matching Claude Code's own behavior.
 func (adapter *Adapter) Open(override string) (tool.Workspace, error) {
-	home, err := newHome(override, adapter.getenv)
+	home, err := NewHome(override, adapter.getenv)
 	if err != nil {
 		return nil, err
 	}
-	return newWorkspace(home, adapter.getenv, adapter.processLiveness, adapter.processStartTime), nil
+	return NewWorkspace(home, adapter.getenv, adapter.processLiveness, adapter.processStartTime), nil
 }
 
-// NewWorkspace returns a Workspace bound to home. Exported for tests and
-// fixtures that already hold a *Home (e.g. a staged fixture directory)
-// and need a Workspace without going through Adapter.Open's flag-parsing
-// path.
-func NewWorkspace(home *Home) *Workspace {
-	return newWorkspace(home, os.Getenv, processAlive, processStart)
-}
-
-// NewWorkspaceForTest returns a workspace with caller-supplied external seams.
-func NewWorkspaceForTest(
-	home *Home,
-	getenv func(string) string,
-	processLiveness func(int) bool,
-	processStartTime func(int) (time.Time, error),
-) *Workspace {
-	return newWorkspace(home, getenv, processLiveness, processStartTime)
-}
-
-func newWorkspace(
+// NewWorkspace returns a Workspace bound to home with caller-supplied
+// environment, process-liveness, and process-start-time seams.
+func NewWorkspace(
 	home *Home,
 	getenv func(string) string,
 	processLiveness func(int) bool,

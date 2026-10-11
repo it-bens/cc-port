@@ -31,7 +31,7 @@ func TestExport_RendersRulesFileWarnings(t *testing.T) {
 		[]byte("# Rule\n\nThis rule applies to /Users/test/Projects/myproject only.\n"),
 		0o600,
 	))
-	workspace := NewWorkspace(home)
+	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
 	var output bytes.Buffer
 	writer := zip.NewWriter(&output)
 	sink := archive.NewSink(writer, "claude", nil)
@@ -52,7 +52,7 @@ func newConfigExportWorkspace(t *testing.T, projectPath, projectBlock string) *W
 	require.NoError(t, os.MkdirAll(home.ProjectDir(projectPath), 0o750))
 	config := `{"projects":{"` + projectPath + `":` + projectBlock + `}}`
 	require.NoError(t, os.WriteFile(home.ConfigFile, []byte(config), 0o600))
-	return NewWorkspace(home)
+	return NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
 }
 
 // exportToZipEntries runs Export with selected and returns the archive's

@@ -13,7 +13,7 @@
 
 ## Post-Step-2
 
-When a behavior hides behind the current exported API, match against the seams production already carries: `io.Writer` parameters wired by cobra's `cmd.OutOrStdout()`; constructor-field injection (`codex.NewAdapter(getenv, listProcesses)`, `claude.NewWorkspaceForTest` with a caller-supplied process-liveness check); exported pure helpers (`claude.RewriteSessionFile`, `claude.RewriteUserConfig`); package-level fn-vars swapped under `t.Cleanup`. Write codex-mutation tests at the importer/adapter level through `codex.NewWorkspace`, never at cmd level — the test suite itself runs as a codex process, so a cmd-level mutation test refuses on the live-writer witness and proves nothing.
+When a behavior hides behind the current exported API, match against the seams production already carries: `io.Writer` parameters wired by cobra's `cmd.OutOrStdout()`; constructor-field injection (`codex.NewAdapter(getenv, listProcesses)`, `claude.NewWorkspace` with a caller-supplied process-liveness check); exported pure helpers (`claude.RewriteSessionFile`, `claude.RewriteUserConfig`); package-level fn-vars swapped under `t.Cleanup`. Write codex-mutation tests at the importer/adapter level through `codex.NewWorkspace`, never at cmd level — the test suite itself runs as a codex process, so a cmd-level mutation test refuses on the live-writer witness and proves nothing.
 
 ## Post-Step-3
 
@@ -22,3 +22,5 @@ Use the project's descriptive-identifier shapes: project paths as `/Users/test/P
 ## Post-Step-6
 
 Run `make lint`: test files are linted too, and the `test-only-packages` depguard rule in `.golangci.yml` covers test dependencies and the test-support packages.
+
+A deadcode finding for a test-only helper is fixed by moving the helper into an `export_test.go` (same-directory caller) or the adapter's `claudetest` or `codextest` fixture package (cross-package caller), never by adding a production call to keep it alive.

@@ -54,6 +54,8 @@ jobs:
           version: v2.14.0
           args: --build-tags=integration,large,logo ./...
           skip-save-cache: true
+      - name: Dead code
+        run: make deadcode
 
   govulncheck:
     # Scan deps against vuln.go.dev on the weekly cron only. Per-PR runs

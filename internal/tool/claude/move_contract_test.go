@@ -66,7 +66,7 @@ func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			home := claudetest.SetupFixture(t)
-			workspace := claude.NewWorkspace(home)
+			workspace := claudetest.NewWorkspace(home)
 			req := tool.MoveRequest{OldPath: claudetest.FixtureProjectPath(), NewPath: claudetest.FixtureProjectPath() + "-renamed", RefsOnly: true}
 			test.arrange(t, workspace, req)
 
@@ -88,7 +88,7 @@ func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
 // and the full move completes.
 func TestMove_ResumesAfterConfigRekey(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true}
@@ -115,7 +115,7 @@ func TestMove_ResumesAfterConfigRekey(t *testing.T) {
 
 func TestMoveSurfaces_SecondApplyReportsProjectAbsent(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	req := tool.MoveRequest{OldPath: claudetest.FixtureProjectPath(), NewPath: claudetest.FixtureProjectPath() + "-renamed", RefsOnly: true}
 
 	_ = surfaceCounts(t, workspace, req, true)
@@ -131,7 +131,7 @@ func TestMoveSurfaces_SecondApplyReportsProjectAbsent(t *testing.T) {
 // a full re-run rather than hard-refusing on the flipped witness.
 func TestMove_ResumesAfterWitnessFlip(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true}
@@ -177,7 +177,7 @@ func TestMove_ResumesAfterWitnessFlip(t *testing.T) {
 // must hard refuse exactly as the single-path identity check already does.
 func TestMove_RefusesForeignWitness(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	req := tool.MoveRequest{
 		OldPath: "/Users/test/Projects/my-project",
 		NewPath: "/Users/test/Projects/my-project-renamed",
@@ -224,7 +224,7 @@ func TestMove_LeavesUnreferencedHomeWideFilesUntouched(t *testing.T) {
 		before[path] = info
 	}
 
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	undo := tool.NewRestorer()
@@ -251,7 +251,7 @@ func TestMove_LeavesUnreferencedHomeWideFilesUntouched(t *testing.T) {
 // fresh inode whatever the writers did.
 func TestMove_LeavesFilesWithoutOldPathReferenceUntouched(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
 	// The fixture project directory holds this session's transcript, so the

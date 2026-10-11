@@ -20,10 +20,10 @@ func TestCommandConstructorsAreIsolated(t *testing.T) {
 		value string // valid value for the flag's type
 	}
 	cases := []pair{
-		{"export", func() *cobra.Command { return newExportCmd(newToolSet(), newToolFlagsForTest(), noopBanner{}) }, "from-manifest", "/tmp/m.xml"},
-		{"export manifest", func() *cobra.Command { return newExportManifestCmd(newToolSet(), newToolFlagsForTest(), noopBanner{}) }, "all", "true"},
+		{"export", func() *cobra.Command { return newExportCmd(newToolSet(), newToolFlagsForTest(), stubBanner{}) }, "from-manifest", "/tmp/m.xml"},
+		{"export manifest", func() *cobra.Command { return newExportManifestCmd(newToolSet(), newToolFlagsForTest(), stubBanner{}) }, "all", "true"},
 		{"import", func() *cobra.Command { return newImportCmd(newToolSet(), newToolFlagsForTest()) }, "from-manifest", "/tmp/m.xml"},
-		{"push", func() *cobra.Command { return newPushCmd(newToolSet(), newToolFlagsForTest(), noopBanner{}) }, "from-manifest", "/tmp/m.xml"},
+		{"push", func() *cobra.Command { return newPushCmd(newToolSet(), newToolFlagsForTest(), stubBanner{}) }, "from-manifest", "/tmp/m.xml"},
 		{"pull", func() *cobra.Command { return newPullCmd(newToolSet(), newToolFlagsForTest()) }, "from-manifest", "/tmp/m.xml"},
 		{"move", func() *cobra.Command { return newMoveCmd(newToolSet(), newToolFlagsForTest()) }, "apply", "true"},
 		{"stats", newStatsCmdForTest, "json", "true"},

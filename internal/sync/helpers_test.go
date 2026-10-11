@@ -48,7 +48,7 @@ func buildTestTargets(t *testing.T) (targets []tool.Target, projectPath string) 
 }
 
 func targetsFor(home *claude.Home) []tool.Target {
-	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	return []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 }
 
 // buildTestHomeBlank returns a Home rooted under a fresh t.TempDir() with

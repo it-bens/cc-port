@@ -38,7 +38,7 @@ func TestNestedMovePrecondition(t *testing.T) {
 			name: "claude",
 			setup: func(t *testing.T) (tool.Target, string) {
 				home := claudetest.SetupFixture(t)
-				return tool.Target{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}, claudetest.FixtureProjectPath()
+				return tool.Target{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}, claudetest.FixtureProjectPath()
 			},
 		},
 		{
@@ -128,7 +128,7 @@ func TestMove_RefusesRootNestedMove(t *testing.T) {
 
 func TestApply_RejectedNestedMoveLeavesClaudeStateUnchangedAcrossRetries(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 	oldPath := claudetest.FixtureProjectPath()
 	before, err := os.ReadFile(home.HistoryFile())
 	require.NoError(t, err)

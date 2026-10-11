@@ -21,7 +21,7 @@ const witnessCwd = "/test/project"
 func TestFindActiveReportsLiveSession(t *testing.T) {
 	home := newWitnessHome(t)
 	writeWitnessSession(t, home, "live", 42)
-	workspace := NewWorkspaceForTest(home, noWitnessEnv, aliveOnly(42), noStartTimeProbe(t))
+	workspace := NewWorkspace(home, noWitnessEnv, aliveOnly(42), noStartTimeProbe(t))
 
 	active, err := workspace.ActiveWriters()
 
@@ -34,7 +34,7 @@ func TestFindActiveReportsLiveSession(t *testing.T) {
 func TestFindActiveOmitsDeadSession(t *testing.T) {
 	home := newWitnessHome(t)
 	writeWitnessSession(t, home, "stale", 42)
-	workspace := NewWorkspaceForTest(home, noWitnessEnv, func(int) bool { return false }, noStartTimeProbe(t))
+	workspace := NewWorkspace(home, noWitnessEnv, func(int) bool { return false }, noStartTimeProbe(t))
 
 	active, err := workspace.ActiveWriters()
 
@@ -46,7 +46,7 @@ func TestFindActiveRefusesUnparseableSession(t *testing.T) {
 	home := newWitnessHome(t)
 	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "torn.json"), []byte(`{"cwd":`), 0o600))
-	workspace := NewWorkspaceForTest(home, noWitnessEnv, func(int) bool { return false }, noStartTimeProbe(t))
+	workspace := NewWorkspace(home, noWitnessEnv, func(int) bool { return false }, noStartTimeProbe(t))
 
 	active, err := workspace.ActiveWriters()
 
@@ -82,7 +82,7 @@ func TestFindActiveJudgesProcStartAgreement(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			home := newWitnessHome(t)
 			writeWitnessSessionWithProcStart(t, home, "writer", 42, procStart)
-			workspace := NewWorkspaceForTest(home, noWitnessEnv, aliveOnly(42), func(int) (time.Time, error) {
+			workspace := NewWorkspace(home, noWitnessEnv, aliveOnly(42), func(int) (time.Time, error) {
 				return testCase.live, testCase.readErr
 			})
 
@@ -111,7 +111,7 @@ func TestFindActiveReportsSessionWithUnusableProcStart(t *testing.T) {
 		Pid:   42,
 		Extra: map[string]json.RawMessage{procStartKey: json.RawMessage(`"2031-01-02T03:04:05Z"`)},
 	})
-	workspace := NewWorkspaceForTest(home, noWitnessEnv, aliveOnly(42), noStartTimeProbe(t))
+	workspace := NewWorkspace(home, noWitnessEnv, aliveOnly(42), noStartTimeProbe(t))
 
 	active, err := workspace.ActiveWriters()
 

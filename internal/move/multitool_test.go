@@ -44,7 +44,7 @@ func TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovin
 	codextest.InsertThreadRow(t, codexDir, threadID, aliasedCWD)
 
 	targets := []tool.Target{
-		{Tool: claude.New(), Workspace: claude.NewWorkspace(claudeHome)},
+		{Tool: claude.New(), Workspace: claudetest.NewWorkspace(claudeHome)},
 		{Tool: codex.New(), Workspace: quietCodexWorkspace(&codex.Home{Dir: codexDir, SQLiteDir: codexDir})},
 	}
 

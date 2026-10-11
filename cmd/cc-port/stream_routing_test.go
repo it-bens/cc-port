@@ -84,7 +84,7 @@ func driveExportManifest(t *testing.T, projectPath string) (home *claude.Home, s
 	*flags.homeOverrides["claude"] = home.Dir
 
 	var out, errBuf bytes.Buffer
-	cmd := newExportManifestCmd(toolSet, flags, noopBanner{})
+	cmd := newExportManifestCmd(toolSet, flags, stubBanner{})
 	cmd.SetOut(&out)
 	cmd.SetErr(&errBuf)
 

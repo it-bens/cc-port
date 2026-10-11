@@ -59,7 +59,7 @@ func injectArchiveWithDeclaredPlaceholderAtURL(t *testing.T, url, name, key, ori
 func buildCmdArchiveBytes(t *testing.T, pusher, pass string, placeholders map[string][]manifest.Placeholder) []byte {
 	t.Helper()
 	home := claudetest.SetupFixture(t)
-	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 	var buf bytes.Buffer
 	stages := []pipeline.WriterStage{
 		&encrypt.WriterStage{Pass: pass},

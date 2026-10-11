@@ -13,6 +13,7 @@ import (
 	"github.com/it-bens/cc-port/internal/stats"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // newEmptyHome returns a Home rooted at a fresh temp directory with no
@@ -25,7 +26,7 @@ func newEmptyHome(t *testing.T) *claude.Home {
 
 func emptyHomeTargets(t *testing.T, home *claude.Home) []tool.Target {
 	t.Helper()
-	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	return []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 }
 
 // writeStatsFile writes content at path, creating parent directories. The
