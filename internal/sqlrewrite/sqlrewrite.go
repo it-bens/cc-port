@@ -4,6 +4,7 @@ package sqlrewrite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"reflect"
@@ -110,7 +111,7 @@ func (database *DB) Close() error {
 // is interrupted.
 func (database *DB) Begin(ctx context.Context) (*Tx, error) {
 	if database == nil || database.database == nil {
-		return nil, fmt.Errorf("begin SQLite rewrite transaction: database is nil")
+		return nil, errors.New("begin SQLite rewrite transaction: database is nil")
 	}
 	transaction, err := database.database.BeginTx(context.WithoutCancel(ctx), nil)
 	if err != nil {
@@ -122,7 +123,7 @@ func (database *DB) Begin(ctx context.Context) (*Tx, error) {
 // Commit commits the transaction.
 func (transaction *Tx) Commit() error {
 	if transaction == nil || transaction.transaction == nil {
-		return fmt.Errorf("commit SQLite rewrite transaction: transaction is nil")
+		return errors.New("commit SQLite rewrite transaction: transaction is nil")
 	}
 	if err := transaction.transaction.Commit(); err != nil {
 		return fmt.Errorf("commit SQLite rewrite transaction: %w", err)
@@ -133,7 +134,7 @@ func (transaction *Tx) Commit() error {
 // Rollback rolls back the transaction.
 func (transaction *Tx) Rollback() error {
 	if transaction == nil || transaction.transaction == nil {
-		return fmt.Errorf("rollback SQLite rewrite transaction: transaction is nil")
+		return errors.New("rollback SQLite rewrite transaction: transaction is nil")
 	}
 	if err := transaction.transaction.Rollback(); err != nil {
 		return fmt.Errorf("rollback SQLite rewrite transaction: %w", err)
@@ -144,7 +145,7 @@ func (transaction *Tx) Rollback() error {
 // CheckpointTruncate folds the WAL into the main database and truncates it.
 func (database *DB) CheckpointTruncate(ctx context.Context) error {
 	if database == nil || database.database == nil {
-		return fmt.Errorf("checkpoint SQLite database: database is nil")
+		return errors.New("checkpoint SQLite database: database is nil")
 	}
 	if err := checkpointTruncate(ctx, database.database); err != nil {
 		return fmt.Errorf("checkpoint SQLite database: %w", err)
@@ -159,7 +160,7 @@ func CountTextColumnRO(ctx context.Context, database *sql.DB, table, column, old
 		return 0, err
 	}
 	if database == nil {
-		return 0, fmt.Errorf("count SQLite text column: database is nil")
+		return 0, errors.New("count SQLite text column: database is nil")
 	}
 	if err := requireColumns(ctx, database, table, column); err != nil {
 		return 0, err
@@ -208,7 +209,7 @@ func (database *DB) RewriteTextColumn(
 		return 0, err
 	}
 	if transaction == nil || transaction.transaction == nil {
-		return 0, fmt.Errorf("rewrite SQLite text column: transaction is nil")
+		return 0, errors.New("rewrite SQLite text column: transaction is nil")
 	}
 	transactionCtx := context.WithoutCancel(ctx)
 	if err := requirePrimaryKeyAndColumn(transactionCtx, transaction.transaction, table, primaryKeyColumn, column); err != nil {
@@ -270,10 +271,10 @@ func (database *DB) UpdateColumnsByKey(
 	ctx context.Context, transaction *Tx, table, primaryKeyColumn string, primaryKey any, values, expected map[string]any,
 ) (int, error) {
 	if transaction == nil || transaction.transaction == nil {
-		return 0, fmt.Errorf("update SQLite columns by key: transaction is nil")
+		return 0, errors.New("update SQLite columns by key: transaction is nil")
 	}
 	if len(values) == 0 {
-		return 0, fmt.Errorf("update SQLite columns by key: no columns supplied")
+		return 0, errors.New("update SQLite columns by key: no columns supplied")
 	}
 	if err := refuseNilExpectedValues("update SQLite columns by key", expected); err != nil {
 		return 0, err
@@ -298,13 +299,13 @@ func (database *DB) UpdateColumnsByRowID(
 	ctx context.Context, transaction *Tx, table string, rowID int64, values, expected map[string]any,
 ) (int, error) {
 	if transaction == nil || transaction.transaction == nil {
-		return 0, fmt.Errorf("update SQLite columns by rowid: transaction is nil")
+		return 0, errors.New("update SQLite columns by rowid: transaction is nil")
 	}
 	if len(values) == 0 {
-		return 0, fmt.Errorf("update SQLite columns by rowid: no columns supplied")
+		return 0, errors.New("update SQLite columns by rowid: no columns supplied")
 	}
 	if len(expected) == 0 {
-		return 0, fmt.Errorf("update SQLite columns by rowid: no expected values supplied")
+		return 0, errors.New("update SQLite columns by rowid: no expected values supplied")
 	}
 	if err := refuseNilExpectedValues("update SQLite columns by rowid", expected); err != nil {
 		return 0, err
@@ -435,7 +436,7 @@ func versionMeetsFloor(bundled, floor string) bool {
 func parseSQLiteVersion(version string) ([3]int, error) {
 	parts := strings.Split(version, ".")
 	if len(parts) != 3 {
-		return [3]int{}, fmt.Errorf("expected major.minor.patch")
+		return [3]int{}, errors.New("expected major.minor.patch")
 	}
 	var parsed [3]int
 	for index, part := range parts {
@@ -450,10 +451,10 @@ func parseSQLiteVersion(version string) ([3]int, error) {
 
 func validatePathArguments(oldPath, newPath string) error {
 	if oldPath == "" {
-		return fmt.Errorf("SQLite path rewrite old path is empty")
+		return errors.New("SQLite path rewrite old path is empty")
 	}
 	if newPath == "" {
-		return fmt.Errorf("SQLite path rewrite new path is empty")
+		return errors.New("SQLite path rewrite new path is empty")
 	}
 	return nil
 }
@@ -482,7 +483,7 @@ func requireColumns(ctx context.Context, querier schemaQuerier, table string, co
 // schema its apply would refuse.
 func RequirePrimaryKeyAndColumns(ctx context.Context, database *sql.DB, table, primaryKeyColumn string, columns ...string) error {
 	if database == nil {
-		return fmt.Errorf("require SQLite schema: database is nil")
+		return errors.New("require SQLite schema: database is nil")
 	}
 	return requirePrimaryKeyAndColumns(ctx, database, table, primaryKeyColumn, columns...)
 }
@@ -494,7 +495,7 @@ func RequirePrimaryKeyAndColumns(ctx context.Context, database *sql.DB, table, p
 // calls it so a dry run refuses the schema its apply would refuse.
 func RequireRowIDTableAndColumns(ctx context.Context, database *sql.DB, table string, columns ...string) error {
 	if database == nil {
-		return fmt.Errorf("require SQLite schema: database is nil")
+		return errors.New("require SQLite schema: database is nil")
 	}
 	return requireRowIDTableAndColumns(ctx, database, table, columns...)
 }

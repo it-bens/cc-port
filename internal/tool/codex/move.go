@@ -662,18 +662,14 @@ func memoriesGitBaselineWarning(root, oldPath, newPath string) (string, error) {
 		return "", err
 	}
 	if rewritten {
-		return fmt.Sprintf(
-			"%s/.git carries a remote and was left in place; its worktree contents were rewritten", filepath.Base(root),
-		), nil
+		return filepath.Base(root) + "/.git carries a remote and was left in place; its worktree contents were rewritten", nil
 	}
 	pending, err := worktreeReferences(root, oldPath)
 	if err != nil {
 		return "", err
 	}
 	if pending {
-		return fmt.Sprintf(
-			"%s/.git carries a remote and was left in place; its worktree contents are still to be rewritten", filepath.Base(root),
-		), nil
+		return filepath.Base(root) + "/.git carries a remote and was left in place; its worktree contents are still to be rewritten", nil
 	}
-	return fmt.Sprintf("%s/.git carries a remote and was left in place", filepath.Base(root)), nil
+	return filepath.Base(root) + "/.git carries a remote and was left in place", nil
 }

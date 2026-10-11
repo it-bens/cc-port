@@ -125,7 +125,7 @@ func projectConfigPath(project string) string {
 // An existing newProject entry is replaced.
 func RewriteUserConfig(data []byte, oldProject, newProject string) (updated []byte, rekeyed bool, err error) {
 	if !gjson.ValidBytes(data) {
-		return nil, false, fmt.Errorf("invalid user config JSON")
+		return nil, false, errors.New("invalid user config JSON")
 	}
 
 	oldPath := projectConfigPath(oldProject)

@@ -38,16 +38,16 @@ func main() {
 
 func seedHome(homePath, projectPath, role string, codexStateDB bool) (returnError error) {
 	if homePath == "" {
-		return fmt.Errorf("home is required")
+		return errors.New("home is required")
 	}
 	if role != roleSource && role != roleTarget {
 		return fmt.Errorf("invalid role %q: must be source or target", role)
 	}
 	if role == roleSource && projectPath == "" {
-		return fmt.Errorf("project is required for source role")
+		return errors.New("project is required for source role")
 	}
 	if role == roleTarget && projectPath != "" {
-		return fmt.Errorf("project must not be set for target role")
+		return errors.New("project must not be set for target role")
 	}
 	if role == roleSource {
 		resolvedProjectPath, err := tool.ResolveProjectPath(projectPath)

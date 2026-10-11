@@ -120,7 +120,7 @@ func (e *LiveSessionsError) Error() string {
 // flock until the caller releases it.
 func Acquire(lockPath string, witness Witness) (*Held, error) {
 	if witness == nil {
-		return nil, fmt.Errorf("witness is required")
+		return nil, errors.New("witness is required")
 	}
 	active, err := witness()
 	if err != nil {
@@ -175,7 +175,7 @@ func RecheckActiveWriters(targets []tool.Target, ignored *IgnoredWriters) error 
 // Release unlocks the advisory lock.
 func (held *Held) Release() error {
 	if held == nil || held.fileLock == nil {
-		return fmt.Errorf("release nil cc-port lock")
+		return errors.New("release nil cc-port lock")
 	}
 	if held.released {
 		return nil

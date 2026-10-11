@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,12 +13,10 @@ import (
 // registerCategoryFlags registers --all plus the repeatable --include flag
 // on cmd. verb is woven into each flag's help text.
 func registerCategoryFlags(cmd *cobra.Command, verb string) {
-	cmd.Flags().Bool("all", false, fmt.Sprintf(
-		"%s every category for every selected tool (explicit-selection-only categories excluded)", verb,
-	))
+	cmd.Flags().Bool("all", false, verb+" every category for every selected tool (explicit-selection-only categories excluded)")
 	cmd.Flags().StringArray(
 		"include", nil,
-		fmt.Sprintf(`%s only "<tool>/<category>" (repeatable; bare category names are rejected)`, verb),
+		verb+` only "<tool>/<category>" (repeatable; bare category names are rejected)`,
 	)
 }
 
@@ -38,7 +37,7 @@ func resolveSelectionFromCmd(cmd *cobra.Command, tools []tool.Tool) (map[string]
 		return nil, fmt.Errorf("read --include flag: %w", err)
 	}
 	if all && len(includes) > 0 {
-		return nil, fmt.Errorf("--all and --include are mutually exclusive")
+		return nil, errors.New("--all and --include are mutually exclusive")
 	}
 	if all {
 		selection := make(map[string]map[string]bool, len(tools))
