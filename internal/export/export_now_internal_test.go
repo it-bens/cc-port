@@ -13,6 +13,7 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 func TestRun_UsesNowForManifestCreated(t *testing.T) {
@@ -25,7 +26,7 @@ func TestRun_UsesNowForManifestCreated(t *testing.T) {
 	home := &claude.Home{Dir: t.TempDir()}
 	require.NoError(t, os.MkdirAll(home.ProjectDir(projectPath), 0o750))
 	claudeTool := claude.New()
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
 	var output bytes.Buffer
 
 	_, err := Run(context.Background(), targets, &Options{

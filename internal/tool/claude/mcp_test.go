@@ -14,7 +14,7 @@ import (
 )
 
 func TestMCPServersReportsUserScopeDefinitions(t *testing.T) {
-	workspace := claude.NewWorkspace(claudetest.SetupFixture(t))
+	workspace := claudetest.NewWorkspace(claudetest.SetupFixture(t))
 
 	servers, err := workspace.MCPServers()
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestMCPServersReportsNoneWithoutDeclarations(t *testing.T) {
 	}
 	for name, config := range cases {
 		t.Run(name, func(t *testing.T) {
-			workspace := claude.NewWorkspace(homeWithConfig(t, config))
+			workspace := claudetest.NewWorkspace(homeWithConfig(t, config))
 
 			servers, err := workspace.MCPServers()
 			require.NoError(t, err)
@@ -42,7 +42,7 @@ func TestMCPServersReportsNoneWithoutDeclarations(t *testing.T) {
 
 	t.Run("no config file at all", func(t *testing.T) {
 		dir := t.TempDir()
-		workspace := claude.NewWorkspace(&claude.Home{
+		workspace := claudetest.NewWorkspace(&claude.Home{
 			Dir:        filepath.Join(dir, ".claude"),
 			ConfigFile: filepath.Join(dir, ".claude.json"),
 		})
@@ -56,7 +56,7 @@ func TestMCPServersReportsNoneWithoutDeclarations(t *testing.T) {
 // A command settles the transport on its own, so reporting the url alongside
 // it would describe a server Claude Code never opens.
 func TestMCPServersResolvesConflictingTransportToStdio(t *testing.T) {
-	workspace := claude.NewWorkspace(homeWithConfig(t,
+	workspace := claudetest.NewWorkspace(homeWithConfig(t,
 		`{"mcpServers":{"ambiguous":{"command":"npx","url":"https://mcp.example.invalid/docs"}}}`))
 
 	servers, err := workspace.MCPServers()
@@ -70,7 +70,7 @@ func TestMCPServersResolvesConflictingTransportToStdio(t *testing.T) {
 // The error is the same InvalidConfigJSONError the apply's finalize splice
 // raises, so a plan surfaces the failure an apply would hit after promotion.
 func TestMCPServersRefusesUnparseableConfig(t *testing.T) {
-	workspace := claude.NewWorkspace(homeWithConfig(t, `{"mcpServers":`))
+	workspace := claudetest.NewWorkspace(homeWithConfig(t, `{"mcpServers":`))
 
 	_, err := workspace.MCPServers()
 	var invalidConfig *claude.InvalidConfigJSONError

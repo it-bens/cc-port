@@ -32,7 +32,7 @@ func writeFixtureArchive(t *testing.T) string {
 	defer func() { _ = file.Close() }()
 
 	claudeTool := claude.New()
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	targets := []tool.Target{{Tool: claudeTool, Workspace: workspace}}
 
 	options := export.Options{

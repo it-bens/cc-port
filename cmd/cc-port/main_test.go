@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"testing"
 
@@ -23,14 +24,30 @@ func TestMain(m *testing.M) {
 	os.Exit(exitCode)
 }
 
-// captureRootCmd builds a fresh rootCmd via newRootCmd(noopBanner{}),
+// stubBanner is the Banner the command tests pass to newRootCmd and the
+// command constructors regardless of build tags: Render writes nothing,
+// RenderBeside writes the supplied text, and BesideString returns it unchanged.
+type stubBanner struct{}
+
+func (stubBanner) Render(io.Writer) error { return nil }
+
+func (stubBanner) RenderBeside(out io.Writer, text string) error {
+	_, err := io.WriteString(out, text)
+	return err
+}
+
+func (stubBanner) BesideString(_ io.Writer, text string) string {
+	return text
+}
+
+// captureRootCmd builds a fresh rootCmd via newRootCmd(stubBanner{}),
 // redirects its output and error streams to a shared buffer, and sets
 // the arg vector. Each test owns its rootCmd, so flag state cannot
 // leak across tests.
 func captureRootCmd(t *testing.T, args []string) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 	var buffer bytes.Buffer
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	rootCmd.SetOut(&buffer)
 	rootCmd.SetErr(&buffer)
 	rootCmd.SetArgs(args)
@@ -38,13 +55,13 @@ func captureRootCmd(t *testing.T, args []string) (*cobra.Command, *bytes.Buffer)
 }
 
 func TestRootCommand_SilenceUsageOnRuntimeError(t *testing.T) {
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	require.True(t, rootCmd.SilenceUsage, "rootCmd must silence usage on runtime errors")
 	require.True(t, rootCmd.SilenceErrors, "rootCmd must silence error print (main owns it)")
 }
 
 func TestRootCommand_VersionFlagPresent(t *testing.T) {
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	assert.NotEmpty(t, rootCmd.Version, "rootCmd.Version must be set so --version registers")
 }
 

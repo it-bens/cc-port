@@ -44,4 +44,4 @@ None. The package does not error on "logo would be unreadable" conditions; misus
 
 ## Tests
 
-`logo_test.go` guards the width invariant (every row is exactly 22 runes), the colored/plain split, the non-terminal suppression path, and `composeBeside` layout. The width test is the primary regression guard. Cobra-wiring tests in `cmd/cc-port/main_test.go` exercise the `--help`, `--version`, and `version` surfaces end-to-end via in-memory buffers; under `go test` (default tags) they run with `noopBanner{}` and cover the text-only path.
+`logo_test.go` guards the width invariant (every row is exactly 22 runes), the colored/plain split, the non-terminal suppression path, and `composeBeside` layout. The width test is the primary regression guard. Cobra-wiring tests in `cmd/cc-port/main_test.go` exercise the `--help`, `--version`, and `version` surfaces end-to-end via in-memory buffers; under `go test` they run with the test-only `stubBanner{}` and cover the text-only path.

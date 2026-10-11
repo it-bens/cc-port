@@ -17,8 +17,9 @@ drive it through the contract without knowing Claude's on-disk shape.
   - `EncodePath(absPath string) string`: mirror of Claude Code's lossy
     encoding (`/`, `.`, space collapse to `-`, with a leading `-`).
 - **Home**
-  - `NewHome(override string) (*Home, error)`: constructs a `~/.claude`
-    root, honouring the generated `--claude-home` flag override.
+  - `NewHome(override string, getenv func(string) string) (*Home, error)`:
+    constructs a `~/.claude` root, honouring the generated `--claude-home`
+    flag override; reads `$HOME` through `getenv`.
   - `Home`: struct with `Dir` and `ConfigFile` fields plus path-deriving
     methods `ProjectsDir`, `ProjectDir`, `HistoryFile`, `SessionsDir`,
     `SettingsFile`, `RulesDir`, `FileHistoryDir`, `TodosDir`,
@@ -939,7 +940,7 @@ archive when not, and an empty grants block for a grantless project),
 entry's `Category` matches a name this adapter's `Categories()` declares),
 and `witness_test.go` (`FindActive`'s liveness, `procStart` agreement, and
 fallback rules), and the platform start-time seam in
-`witness_procstart_darwin_internal_test.go` (`processStart` reading a spawned
+`witness_procstart_darwin_internal_test.go` (`ProcessStart` reading a spawned
 process's start time).
 
 The root `integration_test.go`'s `TestIntegration_ExportImportRoundTrip_AllCategories`

@@ -19,7 +19,7 @@ func newWitnessWorkspace(t *testing.T, listProcesses ProcessLister) *Workspace {
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	return newWorkspace(home, fakeGetenv(nil), listProcesses)
+	return NewWorkspace(home, fakeGetenv(nil), listProcesses)
 }
 
 func TestActiveWritersEmptyOnFreshHome(t *testing.T) {
@@ -88,7 +88,7 @@ func TestActiveWritersWrapsErrNoWitnessWhenBusyProbeCannotDiscoverDatabases(t *t
 	require.NoError(t, os.Chmod(sqliteDir, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(sqliteDir, 0o700) }) //nolint:gosec // G302: cleanup restores test directory access
 	home := &Home{Dir: dir, SQLiteDir: sqliteDir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses)
+	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses)
 
 	_, err := workspace.ActiveWriters()
 
@@ -109,7 +109,7 @@ func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
 	defer func() { _, _ = blocker.ExecContext(context.Background(), "ROLLBACK") }()
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	workspace := newWorkspace(home, fakeGetenv(nil), noProcesses)
+	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses)
 
 	active, err := workspace.ActiveWriters()
 
@@ -131,7 +131,7 @@ func TestActiveWritersDetectsBusyQueueAndThreadHistoryDatabases(t *testing.T) {
 			_, err = blocker.ExecContext(context.Background(), "BEGIN IMMEDIATE")
 			require.NoError(t, err)
 			defer func() { _, _ = blocker.ExecContext(context.Background(), "ROLLBACK") }()
-			workspace := newWorkspace(&Home{Dir: dir, SQLiteDir: dir}, fakeGetenv(nil), noProcesses)
+			workspace := NewWorkspace(&Home{Dir: dir, SQLiteDir: dir}, fakeGetenv(nil), noProcesses)
 
 			active, err := workspace.ActiveWriters()
 
@@ -149,7 +149,7 @@ func TestActiveWritersReportsOneWriterPerBusyDatabase(t *testing.T) {
 	holdWriteLock(t, statePath)
 	queuePath := filepath.Join(dir, "queue_1.sqlite")
 	holdWriteLock(t, queuePath)
-	workspace := newWorkspace(&Home{Dir: dir, SQLiteDir: dir}, fakeGetenv(nil), noProcesses)
+	workspace := NewWorkspace(&Home{Dir: dir, SQLiteDir: dir}, fakeGetenv(nil), noProcesses)
 
 	active, err := workspace.ActiveWriters()
 

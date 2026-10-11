@@ -70,3 +70,6 @@ coverage.txt
 
 # Git worktrees (local-only)
 .worktrees/
+
+# Tool binaries installed by make
+.bin/

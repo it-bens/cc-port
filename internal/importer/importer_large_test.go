@@ -17,6 +17,7 @@ import (
 	"github.com/it-bens/cc-port/internal/manifest"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
 // TestRun_RejectsEntryOverProductionCap builds an archive whose single
@@ -75,7 +76,7 @@ func TestRun_RejectsEntryOverProductionCap(t *testing.T) {
 
 	home := blankHome(t)
 	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err = importer.Run(context.Background(), toolSet, targets, &importer.Options{
 		Source:     archiveFile,
@@ -120,7 +121,7 @@ func TestRun_StagingAggregateCapCountsProductionScaleShrinkingPlaceholderInput(t
 	defer func() { _ = archiveFile.Close() }()
 	home := blankHome(t)
 	toolSet := tool.NewSet(claudeTool)
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err = importer.Run(t.Context(), toolSet, targets, &importer.Options{
 		Source: archiveFile, Size: info.Size(), TargetPath: "/Users/test/Projects/capped", Caps: archive.DefaultCaps(),

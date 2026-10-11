@@ -118,7 +118,7 @@ func newMoveCmdForTest(t *testing.T) *cobra.Command {
 
 func TestRunMoveDryRun_PrintsPerToolSurfacesAndApplyHint(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 	var stdout bytes.Buffer
 
 	err := runMoveDryRun(t.Context(), &stdout, targets, move.Options{
@@ -137,7 +137,7 @@ func TestRunMoveDryRun_PrintsPerToolSurfacesAndApplyHint(t *testing.T) {
 func TestRunMoveDryRun_WarnsAboutActiveWriter(t *testing.T) {
 	home := claudetest.SetupFixture(t)
 	writeLiveClaudeSession(t, home, claudetest.FixtureProjectPath())
-	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 	var stdout bytes.Buffer
 
 	err := runMoveDryRun(t.Context(), &stdout, targets, move.Options{

@@ -591,7 +591,7 @@ func TestExecutePull_IgnoredWritersProceedsPastALiveWriter(t *testing.T) {
 	witness := []byte(`{"cwd":"/Users/test/Projects/other","pid":4242}`)
 	require.NoError(t, os.WriteFile(filepath.Join(homeB.SessionsDir(), "4242.json"), witness, 0o600))
 	fakeUserHome := t.TempDir()
-	workspace := claude.NewWorkspaceForTest(homeB,
+	workspace := claude.NewWorkspace(homeB,
 		func(key string) string {
 			if key == "HOME" {
 				return fakeUserHome

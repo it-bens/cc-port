@@ -39,7 +39,7 @@ func buildArchive(t *testing.T) (body []byte, projectPath string) {
 	t.Helper()
 	home := claudetest.SetupFixture(t)
 	claudeTool := claude.New()
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
 	projectPath = claudetest.FixtureProjectPath()
 
 	var buf bytes.Buffer
@@ -64,7 +64,7 @@ func TestRun_RoundTripStagesSessionsIntoFreshHome(t *testing.T) {
 	body, projectPath := buildArchive(t)
 	home := blankHome(t)
 	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(context.Background(), toolSet, targets, &importer.Options{
 		Source:     bytes.NewReader(body),
@@ -88,7 +88,7 @@ func TestRun_ReRunDoesNotDuplicateHistoryLines(t *testing.T) {
 	body, projectPath := buildArchive(t)
 	home := blankHome(t)
 	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 
 	for i := range 2 {
 		_, err := importer.Run(context.Background(), toolSet, targets, &importer.Options{
@@ -130,7 +130,7 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 	registry := tool.NewSet(claudeTool, codexTool)
 	reader := bytes.NewReader(body)
 	result, err := importer.Run(t.Context(), registry, []tool.Target{
-		{Tool: claudeTool, Workspace: claude.NewWorkspace(claudeDestination)},
+		{Tool: claudeTool, Workspace: claudetest.NewWorkspace(claudeDestination)},
 		{Tool: codexTool, Workspace: quietCodexWorkspace(codexDestination)},
 	}, &importer.Options{Source: reader, Size: int64(reader.Len()), TargetPath: sharedProject, Caps: archive.DefaultCaps()})
 	require.NoError(t, err)
@@ -161,14 +161,14 @@ func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	claudeTool, codexTool := claude.New(), codex.New()
 
 	moveResult, err := move.Apply(t.Context(), []tool.Target{{
-		Tool: claudeTool, Workspace: claude.NewWorkspace(claudeSource),
+		Tool: claudeTool, Workspace: claudetest.NewWorkspace(claudeSource),
 	}}, move.Options{OldPath: claudetest.FixtureProjectPath(), NewPath: sharedProject, RefsOnly: true})
 	require.NoError(t, err)
 	require.False(t, moveResult.Failed())
 
 	claudeSelection := map[string]bool{"sessions": true, "config": true}
 	codexSelection := map[string]bool{"sessions": true}
-	claudeWorkspace := claude.NewWorkspace(claudeSource)
+	claudeWorkspace := claudetest.NewWorkspace(claudeSource)
 	codexDir := codextest.SetupFixture(t)
 	codexWorkspace := quietCodexWorkspace(&codex.Home{Dir: codexDir, SQLiteDir: codexDir})
 	claudePlaceholders, err := claudeWorkspace.Placeholders(t.Context(), sharedProject, claudeSelection)
@@ -213,7 +213,7 @@ func TestRun_RejectsIncomingHistoryLineAtScannerCapWithoutChangingTarget(t *test
 	require.NoError(t, os.WriteFile(home.HistoryFile(), existing, 0o600))
 	claudeTool := claude.New()
 	toolSet := tool.NewSet(claudeTool)
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
 		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/history-cap", Caps: archive.DefaultCaps(),
@@ -235,7 +235,7 @@ func TestRun_ImportsIncomingHistoryLineBelowScannerCap(t *testing.T) {
 	home := blankHome(t)
 	claudeTool := claude.New()
 	toolSet := tool.NewSet(claudeTool)
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
 		Source: bytes.NewReader(body), Size: int64(len(body)), TargetPath: "/Users/test/Projects/history-cap", Caps: archive.DefaultCaps(),
@@ -272,7 +272,7 @@ func TestRun_UnregisteredManifestToolFailsHard(t *testing.T) {
 
 	home := blankHome(t)
 	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(context.Background(), toolSet, targets, &importer.Options{
 		Source:     bytes.NewReader(body),
@@ -291,7 +291,7 @@ func TestRun_StagingEnforcesAggregateCapWithoutPlaceholders(t *testing.T) {
 	})
 	home := blankHome(t)
 	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
 		Source:     bytes.NewReader(body),
@@ -313,7 +313,7 @@ func TestRun_StagingAggregateCapCountsShrinkingPlaceholderInput(t *testing.T) {
 	home := blankHome(t)
 	claudeTool := claude.New()
 	toolSet := tool.NewSet(claudeTool)
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
 		Source:     bytes.NewReader(body),
@@ -336,7 +336,7 @@ func TestRun_StagingRejectsDotSegmentSessionPath(t *testing.T) {
 	home := blankHome(t)
 	claudeTool := claude.New()
 	toolSet := tool.NewSet(claudeTool)
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
 		Source:     bytes.NewReader(body),
@@ -356,7 +356,7 @@ func TestRun_ClassificationEnforcesAggregateCapForUnresolvedPlaceholder(t *testi
 	home := blankHome(t)
 	claudeTool := claude.New()
 	toolSet := tool.NewSet(claudeTool)
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
 		Source:     bytes.NewReader(body),
@@ -395,7 +395,7 @@ func assertStagingFailureRemovesAllTemporaryFiles(t *testing.T, entries map[stri
 	body := buildClaudeArchive(t, entries)
 	home := blankHome(t)
 	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
 		Source:     bytes.NewReader(body),
@@ -436,7 +436,7 @@ func TestRun_AbortsWhenWitnessTurnsLiveBetweenLockAndPromotion(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "4242.json"), witness, 0o600))
 	fakeUserHome := t.TempDir()
 	livenessCalls := 0
-	workspace := claude.NewWorkspaceForTest(home,
+	workspace := claude.NewWorkspace(home,
 		func(key string) string {
 			if key == "HOME" {
 				return fakeUserHome
@@ -495,7 +495,7 @@ func TestRun_RejectsMalformedConfigShapedEntryWithoutWriting(t *testing.T) {
 			body := buildClaudeArchive(t, map[string]string{testCase.entry: `{"setting":`})
 			home := blankHome(t)
 			toolSet := tool.NewSet(claude.New())
-			targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+			targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 
 			_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{
 				Source:     bytes.NewReader(body),

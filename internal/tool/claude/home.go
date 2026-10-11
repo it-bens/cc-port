@@ -3,7 +3,6 @@ package claude
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -29,7 +28,7 @@ type Home struct {
 }
 
 // NewHome creates a Home. If override is empty, it uses the default
-// locations derived from the user's home directory. If override is
+// locations derived from the $HOME value that getenv returns. If override is
 // provided, it is normalised to an absolute path via filepath.Abs and
 // used as the Dir; ConfigFile is derived as Dir + ".json".
 //
@@ -39,11 +38,7 @@ type Home struct {
 // fsutil.ResolveExistingAncestor, which panics on relative input.
 // Converting operational input here keeps the panic path reserved for real
 // programmer errors.
-func NewHome(override string) (*Home, error) {
-	return newHome(override, os.Getenv)
-}
-
-func newHome(override string, getenv func(string) string) (*Home, error) {
+func NewHome(override string, getenv func(string) string) (*Home, error) {
 	if override != "" {
 		absOverride, err := filepath.Abs(override)
 		if err != nil {

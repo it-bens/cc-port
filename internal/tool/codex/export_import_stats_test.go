@@ -34,7 +34,7 @@ const (
 func TestExportRolloutsAndReportsEraA(t *testing.T) {
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
-	workspace := newWorkspace(home, func(string) string { return "" }, nil)
+	workspace := NewWorkspace(home, func(string) string { return "" }, nil)
 	var archiveBytes bytes.Buffer
 	writer := zip.NewWriter(&archiveBytes)
 	sink := archive.NewSink(writer, toolName, nil)
@@ -1292,7 +1292,7 @@ func readArchiveEntry(t *testing.T, data []byte, name string) []byte {
 }
 
 func quietTestWorkspace(home *Home) *Workspace {
-	return newWorkspace(home, func(string) string { return "" }, func() ([]ProcessInfo, error) { return nil, nil })
+	return NewWorkspace(home, func(string) string { return "" }, func() ([]ProcessInfo, error) { return nil, nil })
 }
 
 func setupImportDestination(t *testing.T) (home *Home, config []byte) {

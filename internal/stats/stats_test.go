@@ -40,7 +40,7 @@ func (ctx *cancelAfterFirstCheckContext) Err() error {
 func fixtureTargets(t *testing.T) []tool.Target {
 	t.Helper()
 	home := claudetest.SetupFixture(t)
-	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	return []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 }
 
 func referenceCount(t *testing.T, toolFootprint *stats.ToolFootprint, surface string) int {
@@ -179,7 +179,7 @@ func TestComputeAllFootprints_RanksByBytesDescending(t *testing.T) {
 
 func TestComputeAllFootprints_EmptyHomeYieldsNone(t *testing.T) {
 	home := &claude.Home{Dir: t.TempDir() + "/dotclaude", ConfigFile: t.TempDir() + "/dotclaude.json"}
-	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 
 	all, err := stats.ComputeAllFootprints(t.Context(), targets)
 	require.NoError(t, err)

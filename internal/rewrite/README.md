@@ -22,7 +22,6 @@ Every path-rewriting command routes through this package so the boundary contrac
     - `StageFile`: registers a destination.
     - `Promote`: runs the rename chain.
     - `Rollback`: reverses completed renames.
-    - `SetRenameFunc`: injects a test hook.
   - `SafeWriteFile(path string, data []byte, permissions os.FileMode) error`: write-then-rename helper for single-file atomic writes.
   - `PromoteDir(ctx context.Context, source, destination string, undo undoRegistrar, copyDir func(context.Context, string, string, func()) error) error`:
     stages `source` into a sibling `.cc-port-staging.tmp` directory beside

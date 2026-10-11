@@ -25,7 +25,7 @@ import (
 func fixtureTargets(t *testing.T) []tool.Target {
 	t.Helper()
 	home := claudetest.SetupFixture(t)
-	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	return []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 }
 
 type applyTestTool struct{}
@@ -137,7 +137,7 @@ func TestDryRun_ReportsMalformedHistoryLineWarning(t *testing.T) {
 	newPath := oldPath + "-renamed"
 	records := []byte(`{"project":"` + oldPath + `"}` + "\nnot json\n" + `{"project":"` + oldPath + `"}` + "\n")
 	require.NoError(t, os.WriteFile(home.HistoryFile(), records, 0o600))
-	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 
 	plan, err := move.DryRun(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
@@ -151,7 +151,7 @@ func TestApply_ReportsMalformedHistoryLineWarning(t *testing.T) {
 	newPath := oldPath + "-renamed"
 	records := []byte(`{"project":"` + oldPath + `"}` + "\nnot json\n" + `{"project":"` + oldPath + `"}` + "\n")
 	require.NoError(t, os.WriteFile(home.HistoryFile(), records, 0o600))
-	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 
 	result, err := move.Apply(t.Context(), targets, move.Options{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 
@@ -166,7 +166,7 @@ func TestSessionsSurface_ReportsMalformedSessionFileWithoutChangingItsBytes(t *t
 	malformedPath := filepath.Join(home.SessionsDir(), "malformed-session.json")
 	original := []byte(`{"cwd":`)
 	require.NoError(t, os.WriteFile(malformedPath, original, 0o600))
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	surfaces, err := workspace.MoveSurfaces(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true})
 	require.NoError(t, err)
 	var sessions tool.Surface
@@ -311,7 +311,7 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 
 func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	req := tool.MoveRequest{
 		OldPath:  claudetest.FixtureProjectPath(),
 		NewPath:  claudetest.FixtureProjectPath() + "-renamed",

@@ -6,6 +6,10 @@ GOLANGCI    ?= golangci-lint
 GORELEASER  ?= goreleaser
 CODEX       ?= codex
 PRE_COMMIT_BIN ?= pre-commit
+DEADCODE_VERSION := v0.52.0
+# The version is part of the install path, so a bump installs a fresh binary instead of reusing a stale one.
+DEADCODE_DIR := $(CURDIR)/.bin/deadcode-$(DEADCODE_VERSION)
+DEADCODE_BIN := $(DEADCODE_DIR)/deadcode
 # git resolves the hook path through core.hooksPath and linked worktrees; it is empty outside a git checkout.
 HOOK_FILE   := $(shell git rev-parse --git-path hooks/pre-push 2>/dev/null)
 # The developer-facing targets depend on the installed hook file, so the install runs once per checkout; CI (CI is non-empty on GitHub Actions) and a running pre-commit hook (pre-commit sets PRE_COMMIT) skip it.
@@ -14,7 +18,7 @@ HOOKS       := $(if $(CI)$(PRE_COMMIT),,$(if $(HOOK_FILE),$(HOOK_FILE),hooks-una
 
 .DEFAULT_GOAL := help
 .PHONY: help hooks hooks-unavailable build install test test-race test-integration test-large test-all \
-        vet lint pre-push fmt tidy release-check snapshot snapshot-sign ci clean \
+        vet deadcode lint pre-push fmt tidy release-check snapshot snapshot-sign ci clean \
         s3-up s3-down s3-reset s3-wait videos
 
 define install-hook
@@ -23,9 +27,31 @@ define install-hook
 $(PRE_COMMIT_BIN) install
 endef
 
+# deadcode exits 0 even with findings, so each pass fails on any output. Each
+# pass runs once per GOOS, because the platform-specific files of each GOOS
+# are invisible to the other. The logo pass reaches banner_logo.go, which the
+# default pass excludes; the seed-home pass covers the demo seeder, a separate
+# main package.
+define deadcode-check
+@out="$$(GOOS=$(1) '$(DEADCODE_BIN)' $(2))" || exit 1; \
+  [ -z "$$out" ] || { printf 'deadcode (GOOS=$(1)):\n%s\n' "$$out" >&2; exit 1; }
+endef
+
+define deadcode-os
+$(call deadcode-check,$(1),./cmd/cc-port)
+$(call deadcode-check,$(1),-tags logo ./cmd/cc-port)
+$(call deadcode-check,$(1),-filter '/docs/videos/fixtures' ./docs/videos/fixtures/cmd/seed-home)
+endef
+
+define deadcode-passes
+$(call deadcode-os,darwin)
+$(call deadcode-os,linux)
+endef
+
 define lint-passes
 $(GOLANGCI) run ./...
 $(GOLANGCI) run --build-tags=integration,large,logo ./...
+$(deadcode-passes)
 endef
 
 help: ## Show available targets
@@ -66,10 +92,16 @@ test-all: $(HOOKS) ## Run unit, integration, and large-archive tests
 vet: $(HOOKS) ## Run go vet
 	go vet ./...
 
-lint: $(HOOKS) ## Run golangci-lint, plus a pass over the logo-tagged banner
+$(DEADCODE_BIN):
+	GOBIN='$(DEADCODE_DIR)' go install golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION)
+
+deadcode: $(HOOKS) $(DEADCODE_BIN) ## Report unreachable functions from the cc-port and seed-home entry points on darwin and linux
+	$(deadcode-passes)
+
+lint: $(HOOKS) $(DEADCODE_BIN) ## Run golangci-lint, plus a pass over the logo-tagged banner and deadcode
 	$(lint-passes)
 
-pre-push: $(HOOKS) ## Lint the commits being pushed; refuses while uncommitted changes would be linted instead
+pre-push: $(HOOKS) $(DEADCODE_BIN) ## Lint the commits being pushed; refuses while uncommitted changes would be linted instead
 	@unstaged="$$(git diff --ignore-submodules --name-only)" || exit 1; \
 	  staged="$$(git diff --ignore-submodules --cached --name-only)" || exit 1; \
 	  untracked="$$(git ls-files --others --exclude-standard -- '*.go' go.mod go.sum .golangci.yml)" || exit 1; \

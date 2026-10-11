@@ -53,7 +53,7 @@ func TestMain(m *testing.M) {
 // targetsFor wraps home as the single-claude-tool target slice every
 // generic command entry point (move, export, importer) now expects.
 func targetsFor(home *claude.Home) []tool.Target {
-	return []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	return []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 }
 
 // toolSetFor returns a registry containing only the claude tool, matching
@@ -95,7 +95,7 @@ func discoverPlaceholders(
 	t *testing.T, home *claude.Home, selection map[string]map[string]bool,
 ) map[string][]manifest.Placeholder {
 	t.Helper()
-	workspace := claude.NewWorkspace(home)
+	workspace := claudetest.NewWorkspace(home)
 	placeholders, err := workspace.Placeholders(t.Context(), fixtureProjectPath, selection["claude"])
 	require.NoError(t, err, "discover placeholders")
 	placeholders = append(placeholders, manifest.Placeholder{Key: "{{HOME}}", Original: fixtureHomeDir})

@@ -109,7 +109,7 @@ func (failer *ignoredWriterFailer) Write(p []byte) (int, error) {
 func executeCmdStreams(t *testing.T, stderrWriter io.Writer, args ...string) (string, error) {
 	t.Helper()
 	redirectProgressSink(t)
-	rootCmd := newRootCmd(noopBanner{})
+	rootCmd := newRootCmd(stubBanner{})
 	var stdout bytes.Buffer
 	rootCmd.SetOut(&stdout)
 	rootCmd.SetErr(stderrWriter)

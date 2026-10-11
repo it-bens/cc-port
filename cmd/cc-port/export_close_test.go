@@ -38,7 +38,7 @@ func (c *closeFailingCloser) Close() error {
 // surfaces.
 func TestRunExportWithStages_OutputCloseErrorWrapsAsCloseOutputPipeline(t *testing.T) {
 	home := claudetest.SetupFixture(t)
-	targets := []tool.Target{{Tool: claude.New(), Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 
 	_, err := runExportWithStages(
 		t.Context(), targets,

@@ -15,6 +15,7 @@ import (
 	"github.com/it-bens/cc-port/internal/lock"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
+	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 	"github.com/it-bens/cc-port/internal/tool/codex"
 )
 
@@ -34,7 +35,7 @@ func TestRun_IgnoredWriterReportedAtLockAndRecheckStillPromotes(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "4242.json"), witness, 0o600))
 	fakeUserHome := t.TempDir()
 	livenessCalls := 0
-	workspace := claude.NewWorkspaceForTest(home,
+	workspace := claude.NewWorkspace(home,
 		func(key string) string {
 			if key == "HOME" {
 				return fakeUserHome
@@ -95,7 +96,7 @@ func TestRun_IgnoredWriterOnTheSecondTargetStillPromotesBothTools(t *testing.T) 
 	ignored := &lock.IgnoredWriters{}
 
 	_, err := importer.Run(t.Context(), registry, []tool.Target{
-		{Tool: claudeTool, Workspace: claude.NewWorkspace(claudeDestination)},
+		{Tool: claudeTool, Workspace: claudetest.NewWorkspace(claudeDestination)},
 		{Tool: codexTool, Workspace: codexWorkspace},
 	}, &importer.Options{
 		Source:         bytes.NewReader(body),
@@ -130,7 +131,7 @@ func TestRun_WitnessErrorRefusesWithIgnoredWritersAndPromotesNothing(t *testing.
 	require.NoError(t, os.MkdirAll(home.SessionsDir(), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "4242.json"), []byte(`{"pid":`), 0o600))
 	toolSet := tool.NewSet(claude.New())
-	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claude.NewWorkspace(home)}}
+	targets := []tool.Target{{Tool: toolSet.All()[0], Workspace: claudetest.NewWorkspace(home)}}
 	ignored := &lock.IgnoredWriters{}
 
 	_, err := importer.Run(t.Context(), toolSet, targets, &importer.Options{

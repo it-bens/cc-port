@@ -27,7 +27,7 @@ func TestProcessStart_DarwinReadsLiveChildProcess(t *testing.T) {
 		_ = child.Wait()
 	})
 
-	start, err := processStart(child.Process.Pid)
+	start, err := ProcessStart(child.Process.Pid)
 
 	require.NoError(t, err)
 	assert.False(t, start.Before(beforeSpawn.Truncate(time.Second)),

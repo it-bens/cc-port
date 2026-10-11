@@ -100,7 +100,7 @@ func (adapter *Adapter) openAt(dir string) (tool.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newWorkspace(home, adapter.getenv, adapter.listProcesses), nil
+	return NewWorkspace(home, adapter.getenv, adapter.listProcesses), nil
 }
 
 func dirExists(dir string) (bool, error) {
@@ -117,19 +117,9 @@ func dirExists(dir string) (bool, error) {
 	return true, nil
 }
 
-// NewWorkspace returns a Workspace bound to home, carrying the same seams
-// as the Adapter that resolved it. Exported for fixtures that already hold
-// a *Home and need a Workspace without going through Adapter.Open's
-// flag-parsing path.
+// NewWorkspace returns a Workspace bound to home, carrying the getenv and
+// listProcesses seams of the Adapter that resolved it.
 func NewWorkspace(home *Home, getenv func(string) string, listProcesses ProcessLister) *Workspace {
-	return newWorkspace(home, getenv, listProcesses)
-}
-
-func newWorkspace(
-	home *Home,
-	getenv func(string) string,
-	listProcesses ProcessLister,
-) *Workspace {
 	return &Workspace{
 		home: home, getenv: getenv, listProcesses: listProcesses,
 		checkpointAfterCommit: (*sqlrewrite.DB).CheckpointTruncate,

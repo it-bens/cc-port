@@ -15,20 +15,3 @@ type Banner interface {
 	RenderBeside(out io.Writer, text string) error
 	BesideString(out io.Writer, text string) string
 }
-
-// noopBanner is the default banner used by the cc-port binary. Render
-// writes nothing; RenderBeside writes the supplied text; BesideString
-// returns the text unchanged. Satisfies both ui.Banner and the local
-// Banner interface.
-type noopBanner struct{}
-
-func (noopBanner) Render(io.Writer) error { return nil }
-
-func (noopBanner) RenderBeside(out io.Writer, text string) error {
-	_, err := io.WriteString(out, text)
-	return err
-}
-
-func (noopBanner) BesideString(_ io.Writer, text string) string {
-	return text
-}

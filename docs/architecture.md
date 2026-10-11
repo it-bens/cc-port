@@ -121,11 +121,11 @@ global mutation. Claude's `NewAdapter(getenv, processLiveness, processStartTime)
 routes default-home resolution, per-session witness liveness, and the live
 start-time probe through constructor seams; it checks the specific PIDs named
 in session files rather than scanning a process table. `New()` wires the real
-sources (`os.Getenv`, `processAlive`, and the platform `processStart`) for
-production use; `NewWorkspace` wires the same three for callers that already
-hold a `*Home`, and `NewWorkspaceForTest` takes caller-supplied seams instead.
-`Adapter.Open` threads the adapter's own seams into `newWorkspace`, which
-`Workspace.ActiveWriters` then passes to `FindActive`.
+sources (`os.Getenv`, `ProcessAlive`, and the platform `ProcessStart`) for
+production use. `NewWorkspace` takes the three seams as arguments, and
+`claudetest.NewWorkspace` wires the production defaults for tests that already
+hold a `*Home`. `Adapter.Open` threads the adapter's own seams into
+`NewWorkspace`, and `Workspace.ActiveWriters` then passes them to `FindActive`.
 
 ## Contracts
 

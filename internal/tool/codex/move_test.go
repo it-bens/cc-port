@@ -365,7 +365,7 @@ func TestApplyConfigTOMLFileRewritesProjectLocalHookStateKey(t *testing.T) {
 		"enabled = true\ntrusted_hash = \"sha256:abc\"\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 
-	count, err := applyConfigTOMLFile(path, oldPath, newPath, tool.NewRestorer())
+	count, err := applyConfigTOMLKeys(path, []string{oldPath}, newPath, tool.NewRestorer())
 
 	require.NoError(t, err)
 	assert.Equal(t, 2, count, "the projects key and the project-local hooks.state key both rewrite")
