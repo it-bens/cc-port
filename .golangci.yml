@@ -34,6 +34,7 @@ linters:
     - nolintlint
     - perfsprint
     - predeclared
+    - recvcheck
     - revive
     - rowserrcheck
     - staticcheck
@@ -429,6 +430,9 @@ linters:
       require-specific: true
     predeclared:
       qualified-name: true
+    # A pointer MarshalJSON is skipped when json.Marshal gets a value, so the Marshal* exemptions stay.
+    recvcheck:
+      disable-builtin: false
     goconst:
       ignore-tests: true
     gocritic:
