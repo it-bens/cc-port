@@ -28,6 +28,14 @@ jobs:
       - name: Unit tests
         run: go test -race -coverprofile=coverage.txt ./...
 
+      - name: Upload coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: coverage.txt
+          disable_search: true
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Large archive tests
         run: go test -tags large ./internal/importer/...
 
