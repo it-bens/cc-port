@@ -83,13 +83,14 @@ Other recommended plugins:
 
 ## Tests and lint
 
+- New functionality ships with tests in the same change. A bug fix ships with a regression test.
 - Unit tests live next to the code they cover (`*_test.go` in each `internal/*` directory).
 - `integration_test.go` at the repo root runs the full CLI end-to-end against a fixture `~/.claude`. It is gated by a `//go:build integration` tag, so it is excluded from a plain `go test ./...` run.
 - Fixtures via `internal/tool/claude/claudetest.SetupFixture`.
 - Run the full suite (unit + integration, expected before any commit): `go test -tags integration ./...`.
 - Run unit tests only (fast iteration): `go test ./...`.
 - Lint: `make lint` (two golangci-lint passes, the second with the `logo` build tag, then the deadcode passes). `make deadcode` runs only the deadcode passes: functions unreachable from `cmd/cc-port`, from `cmd/cc-port` built with the `logo` tag, and from the demo seeder `docs/videos/fixtures/cmd/seed-home`, each checked once with `GOOS=darwin` and once with `GOOS=linux`, failing on any output. The first run installs the pinned deadcode binary into `.bin/` with `go install`.
-- Fuzz targets in `internal/rewrite/rewrite_fuzz_test.go` and `internal/importer/resolve_fuzz_test.go`. Seeds replay as deterministic subtests under `go test ./...`. The unbounded mutation loop is local-only, one target per run: `go test ./internal/rewrite -run=^$ -fuzz=^FuzzReplacePathInBytes$ -fuzztime=2m`. Commit any `testdata/fuzz/FuzzXxx/<hash>` file produced by a real regression so every future run replays it.
+- Fuzz targets in `internal/rewrite/rewrite_fuzz_test.go`, `internal/archive/resolve_test.go`, and `internal/tool/claude/locations_fuzz_test.go`. Seeds replay as deterministic subtests under `go test ./...`. The unbounded mutation loop is local-only, one target per run: `go test ./internal/rewrite -run=^$ -fuzz=^FuzzReplacePathInBytes$ -fuzztime=2m`. Commit any `testdata/fuzz/FuzzXxx/<hash>` file produced by a real regression so every future run replays it.
 
 ## Local S3 backend
 
