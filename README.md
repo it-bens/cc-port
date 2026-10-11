@@ -1,7 +1,11 @@
 ![cc-port banner: two piers labeled with old and new project paths, a gantry crane carrying a container between them](docs/images/banner.png)
 
+[![CI](https://github.com/it-bens/cc-port/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/it-bens/cc-port/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/it-bens/cc-port)](https://github.com/it-bens/cc-port/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/it-bens/cc-port)](LICENSE)
 [![codecov](https://codecov.io/gh/it-bens/cc-port/graph/badge.svg)](https://codecov.io/gh/it-bens/cc-port)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/it-bens/cc-port/badge)](https://scorecard.dev/viewer/?uri=github.com/it-bens/cc-port)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15384/badge)](https://www.bestpractices.dev/projects/15384)
 
 `cc-port` ports Claude Code and OpenAI Codex project state after a rename, an export, or an import. Moving a project directory on disk or handing it to a teammate invalidates the absolute paths baked into each tool's session, history, and config files. cc-port rewrites the references safely across every installed tool: boundary-aware substring replacement, SQL-level rewriting for Codex's SQLite index, and atomic writes with rollback. Every command that mutates a tool's local state (`move --apply`, `import --apply`, `pull --apply`) locks and refuses while a live writer is present, unless `--ignore-live-sessions` is passed; `export`, `push`, and `stats` read local state without a lock and `push` writes only to the remote you configure, never to local tool state.
 
@@ -160,6 +164,8 @@ cc-port stats /Users/me/project
 ## Development
 
 Contributing or modifying cc-port? See [`DEVELOPMENT.md`](DEVELOPMENT.md) for architecture, tests, lint, and commit conventions.
+
+Report bugs and request features in [GitHub Issues](https://github.com/it-bens/cc-port/issues). Report vulnerabilities as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
