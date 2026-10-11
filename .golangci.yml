@@ -12,6 +12,7 @@ linters:
     - depguard
     - dogsled
     - dupl
+    - embeddedstructfieldcheck
     - errcheck
     - errorlint
     - exhaustive
@@ -402,6 +403,9 @@ linters:
               desc: "ZIP reading goes through internal/archive (caps, os.Root containment); only internal/export (writer) and internal/manifest (capped metadata.xml read) import it directly"
     dogsled:
       max-blank-identifiers: 3
+    embeddedstructfieldcheck:
+      empty-line: true
+      forbid-mutex: true
     # Every enum switch names each member and still fails hard on an out-of-range value.
     exhaustive:
       check: [switch, map]

@@ -22,6 +22,7 @@ import (
 // set of live writers.
 type liveWriterWorkspace struct {
 	codexOnlyWorkspace
+
 	writers []tool.ActiveWriter
 }
 

@@ -78,6 +78,7 @@ func TestWithLock_AbortsWhenSessionPIDIsAlive(t *testing.T) {
 // ActiveWriters, so the embedded interface stays nil.
 type recheckWorkspace struct {
 	tool.Workspace
+
 	writers []tool.ActiveWriter
 	err     error
 }
@@ -131,6 +132,7 @@ func TestRecheckActiveWriters_ScanFailureDoesNotHideLiveWriters(t *testing.T) {
 // embedded interface stays nil.
 type recheckTool struct {
 	tool.Tool
+
 	name string
 }
 

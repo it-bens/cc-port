@@ -156,6 +156,7 @@ func TestEnumerateProjects_MultiWitnessDisagreementPicksFirstByName(t *testing.T
 // scheduling) instead of only proving the trivial pre-canceled case.
 type countdownContext struct {
 	context.Context
+
 	cancel           context.CancelFunc
 	callsUntilCancel int
 }

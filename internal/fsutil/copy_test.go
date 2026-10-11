@@ -213,6 +213,7 @@ func TestCopyDir_OnEntryFiresPerFileAndSymlinkNotDirectory(t *testing.T) {
 // caller.
 type closeErroringCloser struct {
 	io.Writer
+
 	realFile io.Closer
 	closeErr error
 }

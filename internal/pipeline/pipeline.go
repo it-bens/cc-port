@@ -41,6 +41,7 @@ type Meta struct {
 // errors.Join, and is idempotent (second and later calls return nil).
 type Source struct {
 	View
+
 	Meta  Meta
 	Close func() error
 }
