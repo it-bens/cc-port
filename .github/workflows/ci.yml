@@ -10,6 +10,9 @@ on:
     # Weekly govulncheck canary; skipped per-PR to keep review noise low.
     - cron: "17 6 * * 1"
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -81,7 +84,8 @@ jobs:
           go-version: "1.27"
           check-latest: true
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        # renovate: datasource=go depName=golang.org/x/vuln
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
       - name: Run govulncheck
         run: govulncheck ./...
 

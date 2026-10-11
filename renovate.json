@@ -4,7 +4,17 @@
     "config:recommended",
     ":separateMultipleMajorReleases"
   ],
-  "enabledManagers": ["github-actions", "gomod"],
+  "enabledManagers": ["github-actions", "gomod", "custom.regex"],
+  "customManagers": [
+    {
+      "description": "Tool versions in workflows, each annotated by a '# renovate:' comment on the line above.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+[^\\n]*?[:@]\\s*\"?(?<currentValue>v\\d[^\\s\"]*)"
+      ]
+    }
+  ],
   "schedule": ["* * * * 6"],
   "timezone": "Europe/Berlin",
   "configMigration": true,
