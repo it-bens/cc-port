@@ -97,8 +97,9 @@ func computeToolFootprint(ctx context.Context, target tool.Target, projectPath s
 // ProjectFootprint is one project one tool knows about, for all-projects
 // enumeration.
 type ProjectFootprint struct {
-	Tool string
 	tool.ProjectInfo
+
+	Tool string
 }
 
 // AllFootprints is the all-projects ranking plus each target's

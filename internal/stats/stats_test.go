@@ -21,6 +21,7 @@ const fixtureProject = "/Users/test/Projects/myproject"
 
 type cancelAfterFirstCheckContext struct {
 	context.Context
+
 	checks int
 }
 
