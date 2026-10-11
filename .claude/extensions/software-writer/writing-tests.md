@@ -23,4 +23,4 @@ Use the project's descriptive-identifier shapes: project paths as `/Users/test/P
 
 Run `make lint`: test files are linted too, and the `test-only-packages` depguard rule in `.golangci.yml` covers test dependencies and the test-support packages.
 
-A deadcode finding for a test-only helper is fixed by moving the helper into an `export_test.go` (same-directory caller) or the adapter's `claudetest` or `codextest` fixture package (cross-package caller), never by adding a production call to keep it alive.
+A deadcode finding for a test-only helper is fixed by moving the helper into a test-only file in the helper's own package (conventionally `export_test.go`; same-directory caller) or the adapter's `claudetest` or `codextest` fixture package (cross-package caller), never by adding a production call to keep it alive.

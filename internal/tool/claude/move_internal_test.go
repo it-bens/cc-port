@@ -24,7 +24,7 @@ func TestResidualWarnings_ReportRulesFileReferences(t *testing.T) {
 		[]byte("Applies to /Users/test/Projects/myproject only.\n"),
 		0o600,
 	))
-	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(home)
 
 	warnings, err := workspace.ResidualWarnings(t.Context(), tool.MoveRequest{
 		OldPath: projectPath,
@@ -43,7 +43,7 @@ func TestConfigSurfacePlan_PropagatesUnreadableConfigFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(configFile, []byte(`{"projects":{}}`), 0o600))
 	require.NoError(t, os.Chmod(configFile, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(configFile, 0o600) })
-	workspace := NewWorkspace(&Home{Dir: t.TempDir(), ConfigFile: configFile}, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(&Home{Dir: t.TempDir(), ConfigFile: configFile})
 
 	_, err := workspace.configSurface(tool.MoveRequest{OldPath: "/old", NewPath: "/new"}).Plan(context.Background())
 
@@ -111,7 +111,7 @@ func TestCheckConfigEntryCollision_RejectsInvalidJSON(t *testing.T) {
 func TestHistorySurfaceApply_IsIdempotent(t *testing.T) {
 	home := &Home{Dir: t.TempDir()}
 	require.NoError(t, os.WriteFile(home.HistoryFile(), []byte(`{"project":"/old/project"}`+"\n"), 0o600))
-	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(home)
 	surface := workspace.historySurface(tool.MoveRequest{OldPath: "/old/project", NewPath: "/new/project"})
 
 	first, err := surface.Apply(context.Background(), tool.NewRestorer())
@@ -132,7 +132,7 @@ func TestScanHistoryFile_CountsJSONEscapedPath(t *testing.T) {
 	home := &Home{Dir: t.TempDir()}
 	line := `{"project":"/other/project","display":"see \/old\/project\/main.go"}` + "\n"
 	require.NoError(t, os.WriteFile(home.HistoryFile(), []byte(line), 0o600))
-	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(home)
 	surface := workspace.historySurface(tool.MoveRequest{OldPath: "/old/project", NewPath: "/new/project"})
 
 	planned, err := surface.Plan(context.Background())
@@ -193,7 +193,7 @@ func TestApplyProjectDirectoryMove_ReportsResidualRemovalWithoutRollback(t *test
 		}
 		return os.RemoveAll(path)
 	}
-	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(home)
 
 	err := workspace.applyProjectDirectoryMove(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath}, tool.NewRestorer())
 
@@ -240,7 +240,7 @@ func TestMoveSurfaces_RerunAfterPhysicalResidualFailureRefusesProjectAbsent(t *t
 		}
 		return os.RemoveAll(path)
 	}
-	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(home)
 	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath}
 
 	firstSurfaces, err := workspace.MoveSurfaces(t.Context(), req)
@@ -297,7 +297,7 @@ func stageWitnesslessProject(t *testing.T, transcriptName string) (workspace *Wo
 	require.NoError(t, os.MkdirAll(home.ProjectDir(oldPath), 0o750))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(home.ProjectDir(oldPath), transcriptName), []byte("{}\n"), 0o600))
-	return NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart), home, oldPath, newPath
+	return defaultWorkspace(home), home, oldPath, newPath
 }
 
 // countWarningOccurrences reports how many of warnings equal target: a
@@ -375,7 +375,7 @@ func TestResolveMoveIdentity_LocatesViaOldPathWhenWitnessesAlreadyFlipped(t *tes
 		filepath.Join(home.SessionsDir(), sessionID+".json"),
 		fmt.Appendf(nil, `{"sessionId":%q,"cwd":%q}`, sessionID, newPath), 0o600))
 
-	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(home)
 	req := tool.MoveRequest{OldPath: oldPath, NewPath: newPath, RefsOnly: true}
 
 	identity, err := workspace.resolveMoveIdentityState(t.Context(), req)
@@ -460,7 +460,7 @@ func TestResolveMoveIdentity_RefusesThirdPathWitness(t *testing.T) {
 	sessionFile := fmt.Sprintf(`{"sessionId":%q,"cwd":%q}`, sessionUUID, thirdPath)
 	require.NoError(t, os.WriteFile(filepath.Join(home.SessionsDir(), "1.json"), []byte(sessionFile), 0o600))
 
-	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(home)
 
 	_, err := workspace.resolveMoveIdentity(t.Context(), tool.MoveRequest{OldPath: oldPath, NewPath: newPath})
 

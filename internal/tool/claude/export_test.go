@@ -21,6 +21,12 @@ import (
 // LocateProject.
 var VerifyProjectIdentityForTest = verifyProjectIdentity
 
+// defaultWorkspace returns a Workspace bound to home with the production
+// environment, process-liveness, and process-start-time seams.
+func defaultWorkspace(home *Home) *Workspace {
+	return NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+}
+
 func TestExport_RendersRulesFileWarnings(t *testing.T) {
 	projectPath := "/Users/test/Projects/myproject"
 	home := &Home{Dir: t.TempDir()}
@@ -31,7 +37,7 @@ func TestExport_RendersRulesFileWarnings(t *testing.T) {
 		[]byte("# Rule\n\nThis rule applies to /Users/test/Projects/myproject only.\n"),
 		0o600,
 	))
-	workspace := NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	workspace := defaultWorkspace(home)
 	var output bytes.Buffer
 	writer := zip.NewWriter(&output)
 	sink := archive.NewSink(writer, "claude", nil)
@@ -52,7 +58,7 @@ func newConfigExportWorkspace(t *testing.T, projectPath, projectBlock string) *W
 	require.NoError(t, os.MkdirAll(home.ProjectDir(projectPath), 0o750))
 	config := `{"projects":{"` + projectPath + `":` + projectBlock + `}}`
 	require.NoError(t, os.WriteFile(home.ConfigFile, []byte(config), 0o600))
-	return NewWorkspace(home, os.Getenv, ProcessAlive, ProcessStart)
+	return defaultWorkspace(home)
 }
 
 // exportToZipEntries runs Export with selected and returns the archive's
