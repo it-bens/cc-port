@@ -1,0 +1,3 @@
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "golang.org/x/crypto/openpgp is not imported; cc-port uses golang.org/x/crypto only through filippo.io/age (chacha20poly1305). The advisory has no fixed version."
