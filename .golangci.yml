@@ -12,6 +12,7 @@ linters:
     - depguard
     - dogsled
     - dupl
+    - durationcheck
     - embeddedstructfieldcheck
     - errcheck
     - errorlint
@@ -32,6 +33,7 @@ linters:
     - noctx
     - nolintlint
     - perfsprint
+    - predeclared
     - revive
     - rowserrcheck
     - staticcheck
@@ -425,6 +427,8 @@ linters:
     nolintlint:
       require-explanation: true
       require-specific: true
+    predeclared:
+      qualified-name: true
     goconst:
       ignore-tests: true
     gocritic:
