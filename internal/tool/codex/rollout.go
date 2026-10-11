@@ -168,8 +168,8 @@ func hasStructuredCwd(lines [][]byte) bool {
 // pathSubstitution pairs a literal byte sequence a rollout rewrite searches
 // for with the value it replaces it with.
 type pathSubstitution struct {
-	old string
-	new string
+	from string
+	to   string
 }
 
 // rolloutSubstitutionSources returns oldPath plus every distinct cwd this
@@ -290,11 +290,11 @@ func guardSubstitutionOrder(line []byte, substitutions []pathSubstitution, deep 
 	for step := range substitutions {
 		after, _ := rewriteRolloutLine(line, substitutions[:step+1], deep)
 		for later := step + 1; later < len(substitutions); later++ {
-			source := substitutions[later].old
+			source := substitutions[later].from
 			if rewrite.CountPathInBytesWithJSONEscape(after, source) > rewrite.CountPathInBytesWithJSONEscape(before, source) {
 				return fmt.Errorf(
 					"%w: substituting %q for %q introduces a new match for %q that was not present before this step",
-					ErrSubstitutionWouldReintroduceSource, substitutions[step].old, substitutions[step].new, source,
+					ErrSubstitutionWouldReintroduceSource, substitutions[step].from, substitutions[step].to, source,
 				)
 			}
 		}
@@ -316,7 +316,7 @@ func rolloutSubstitutions(sources []string, oldPath, newPath string) ([]pathSubs
 	substitutions := make([]pathSubstitution, 0, len(sources))
 	for _, source := range sources {
 		if source == oldPath {
-			substitutions = append(substitutions, pathSubstitution{old: source, new: newPath})
+			substitutions = append(substitutions, pathSubstitution{from: source, to: newPath})
 			continue
 		}
 		canonicalSource, err := canonicalizePath(source)
@@ -327,7 +327,7 @@ func rolloutSubstitutions(sources []string, oldPath, newPath string) ([]pathSubs
 		if !ok {
 			return nil, fmt.Errorf("rollout substitution source %q does not canonicalize to a path-boundary descendant of %q", source, oldPath)
 		}
-		substitutions = append(substitutions, pathSubstitution{old: source, new: rewritten})
+		substitutions = append(substitutions, pathSubstitution{from: source, to: rewritten})
 	}
 	return substitutions, nil
 }
@@ -361,7 +361,7 @@ func rewriteRolloutLine(line []byte, substitutions []pathSubstitution, deep bool
 	total := 0
 	for _, substitution := range substitutions {
 		var replaced int
-		updated, replaced = rewrite.ReplacePathInBytesWithJSONEscape(updated, substitution.old, substitution.new)
+		updated, replaced = rewrite.ReplacePathInBytesWithJSONEscape(updated, substitution.from, substitution.to)
 		total += replaced
 	}
 	// The field pass covers only fields the byte pass left byte-identical: those
@@ -391,7 +391,7 @@ func rewriteStructuredRolloutFields(line []byte, fieldPaths []string, substituti
 		fieldCount := 0
 		for _, substitution := range substitutions {
 			var replaced int
-			rewritten, replaced = rewrite.ReplacePathInBytes(rewritten, substitution.old, substitution.new)
+			rewritten, replaced = rewrite.ReplacePathInBytes(rewritten, substitution.from, substitution.to)
 			fieldCount += replaced
 		}
 		if fieldCount == 0 {

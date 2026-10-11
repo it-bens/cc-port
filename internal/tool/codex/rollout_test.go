@@ -272,7 +272,7 @@ func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
 
 func TestRewriteRolloutLineScopesShallowModeToStructuredFields(t *testing.T) {
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users/fixture/codexproject","note":"keep /Users/fixture/codexproject verbatim"}}`)
-	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: "/Users/fixture/renamed-project"}}
 
 	shallow, shallowCount := rewriteRolloutLine(line, substitutions, false)
 	deep, deepCount := rewriteRolloutLine(line, substitutions, true)
@@ -396,7 +396,7 @@ func TestStructuredRolloutFieldPathsNamesEveryPathCarrier(t *testing.T) {
 
 func TestRewriteRolloutLineLeavesOtherEventMsgVariantsInDefaultMode(t *testing.T) {
 	line := []byte(`{"type":"event_msg","payload":{"type":"agent_message","message":"opened /Users/fixture/codexproject/src/main.py"}}`)
-	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: "/Users/fixture/renamed-project"}}
 
 	rewritten, count := rewriteRolloutLine(line, substitutions, false)
 
@@ -406,7 +406,7 @@ func TestRewriteRolloutLineLeavesOtherEventMsgVariantsInDefaultMode(t *testing.T
 
 func TestRewriteRolloutLineRewritesMixedEscapedFieldInEveryMode(t *testing.T) {
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users\/fixture/codexproject"}}`)
-	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: "/Users/fixture/renamed-project"}}
 
 	for _, deep := range []bool{false, true} {
 		t.Run("deep="+strconv.FormatBool(deep), func(t *testing.T) {
@@ -421,7 +421,7 @@ func TestRewriteRolloutLineRewritesMixedEscapedFieldInEveryMode(t *testing.T) {
 func TestRewriteRolloutLineDeepRewritesFieldOnceWhenNewPathContainsOldPath(t *testing.T) {
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users/fixture/codexproject"}}`)
 	newPath := "/Users/elsewhere" + codextest.FixtureProjectPath()
-	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: newPath}}
+	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: newPath}}
 
 	rewritten, count := rewriteRolloutLine(line, substitutions, true)
 
@@ -432,7 +432,7 @@ func TestRewriteRolloutLineDeepRewritesFieldOnceWhenNewPathContainsOldPath(t *te
 func TestRewriteRolloutLineLeavesWritableRootsOutsideTheProject(t *testing.T) {
 	line := []byte(`{"type":"turn_context","payload":{"cwd":"/Users/test/Projects/elsewhere","sandbox_policy":{"type":"workspace-write",` +
 		`"writable_roots":["/Users/fixture/codexproject/build","/Users/fixture/codexproject-cache","/opt/shared-cache"]}}}`)
-	substitutions := []pathSubstitution{{old: codextest.FixtureProjectPath(), new: "/Users/fixture/renamed-project"}}
+	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: "/Users/fixture/renamed-project"}}
 
 	rewritten, count := rewriteRolloutLine(line, substitutions, false)
 
