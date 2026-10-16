@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.9
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.3
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20261008172826-faa4adf95555
+	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20261012121918-43427fdbad12
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
@@ -21,7 +21,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/gjson v1.20.0
 	github.com/tidwall/sjson v1.2.5
-	gocloud.dev v0.46.0
+	gocloud.dev v0.47.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.60.1
 )
@@ -92,8 +92,8 @@ require (
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/api v0.301.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
+	google.golang.org/api v0.304.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
