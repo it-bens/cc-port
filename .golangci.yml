@@ -413,7 +413,7 @@ linters:
       forbid-mutex: true
     # Every enum switch names each member and still fails hard on an out-of-range value.
     exhaustive:
-      check: [switch, map]
+      check: [switch, mapliteral]
       default-signifies-exhaustive: false
       default-case-required: true
     funlen:
