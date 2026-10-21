@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// drainLedger runs model through teatest, feeding events over channel, and
-// returns the final accumulated output. The caller closes channel to end the
-// run (or sends a terminal event, which quits on its own).
+// runLedger runs a ledger model over events through teatest, calls feed to send
+// events, and returns the final accumulated output. feed ends the run by closing
+// events or by sending a terminal event.
 func runLedger(t *testing.T, events chan Event, feed func()) []byte {
 	t.Helper()
 	model := newLedgerModel(events)
