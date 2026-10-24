@@ -140,10 +140,8 @@ func encryptTo(passphrase string, body []byte) ([]byte, error) {
 	return cipher.Bytes(), nil
 }
 
-// encryptBytes runs body through encrypt.EncryptingWriter under passphrase
-// and returns the cipher bytes. Centralizes the encrypt-and-buffer pattern
-// so test bodies that need cipher bytes for a custom upstream View or
-// for byte-mutation cases stay focused on the behavior they exercise.
+// encryptBytes runs body through encrypt.EncryptingWriter under passphrase and
+// returns the cipher bytes, failing the test on any error.
 func encryptBytes(t *testing.T, passphrase string, body []byte) []byte {
 	t.Helper()
 	cipher, err := encryptTo(passphrase, body)
@@ -153,13 +151,17 @@ func encryptBytes(t *testing.T, passphrase string, body []byte) []byte {
 
 const dispatchPass = "dispatch-passphrase"
 
-// dispatchPlaintext is the plaintext behind dispatchCipher. Every ReaderStage
-// test that needs dispatchPass-encrypted input shares this one ciphertext, so
-// the suite pays one scrypt derivation instead of one per test.
-const dispatchPlaintext = "reader stage decrypt round trip"
+// sharedPlaintext is the plaintext behind sharedCipher;
+// TestReaderStage_EncryptedWithPassDecryptsToStreamingView compares its
+// decrypted output against it.
+var sharedPlaintext = patternBytes(256)
 
-var dispatchCipher = sync.OnceValues(func() ([]byte, error) {
-	return encryptTo(dispatchPass, []byte(dispatchPlaintext))
+// sharedCipher is the one dispatchPass ciphertext every test that only reads
+// encrypted input shares, so the suite pays one scrypt derivation instead of
+// one per test. Tests share the cached bytes read-only; a test that mutates
+// them works on a bytes.Clone copy.
+var sharedCipher = sync.OnceValues(func() ([]byte, error) {
+	return encryptTo(dispatchPass, sharedPlaintext)
 })
 
 // streamingPlaintextView wraps body as both Reader and ReaderAt + Size, mirroring
@@ -177,14 +179,14 @@ func streamingPlaintextView(t *testing.T, body []byte) pipeline.View {
 // upstream side.
 func streamingEncryptedView(t *testing.T) pipeline.View {
 	t.Helper()
-	cipher, err := dispatchCipher()
+	cipher, err := sharedCipher()
 	require.NoError(t, err)
 	return streamingPlaintextView(t, cipher)
 }
 
 func TestReaderStage_EncryptedWithPassDecryptsToStreamingView(t *testing.T) {
 	t.Parallel()
-	plaintext := []byte(dispatchPlaintext)
+	plaintext := sharedPlaintext
 	upstream := streamingEncryptedView(t)
 
 	view, meta, closer, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
@@ -316,22 +318,24 @@ func (c *streamingCountingCloser) Close() error { *c.count++; return nil }
 
 // TestReaderStage_RunReaderClosesUpstreamOnceOnError pins the runner-as-sole-
 // closer contract on a streaming source: ReaderStage returns the
-// ErrUnencryptedInput sentinel without closing upstream itself, and
+// ErrPassphraseRequired sentinel without closing upstream itself, and
 // pipeline.RunReader closes upstream exactly once.
 func TestReaderStage_RunReaderClosesUpstreamOnceOnError(t *testing.T) {
 	t.Parallel()
 	closeCount := 0
+	cipher, err := sharedCipher()
+	require.NoError(t, err)
 	source := &streamingCountingSource{
-		bytes:    []byte("plaintext"),
+		bytes:    cipher,
 		closeOut: &closeCount,
 	}
 
-	_, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
+	_, err = pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
 		source,
-		&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict},
+		&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict},
 	})
 
-	require.ErrorIs(t, err, encrypt.ErrUnencryptedInput)
+	require.ErrorIs(t, err, encrypt.ErrPassphraseRequired)
 	require.Equal(t, 1, closeCount, "runner must close upstream exactly once on stage error")
 }
 
