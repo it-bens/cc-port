@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -121,40 +120,6 @@ func (failingWriter) Write(_ []byte) (int, error) { return 0, errSyntheticHeader
 // guard against bytes.Reader/io.SectionReader interface drift.
 var _ io.ReaderAt = (*bytes.Reader)(nil)
 
-// encryptTo returns body's age ciphertext under passphrase without a
-// *testing.T, so package-scope caches can share one derivation.
-func encryptTo(passphrase string, body []byte) ([]byte, error) {
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, passphrase)
-	if err != nil {
-		return nil, err
-	}
-	if len(body) > 0 {
-		if _, err := w.Write(body); err != nil {
-			return nil, err
-		}
-	}
-	if err := w.Close(); err != nil {
-		return nil, err
-	}
-	return cipher.Bytes(), nil
-}
-
-const dispatchPass = "dispatch-passphrase"
-
-// sharedPlaintext is the plaintext behind sharedCipher;
-// TestReaderStage_EncryptedWithPassDecryptsToStreamingView compares its
-// decrypted output against it.
-var sharedPlaintext = patternBytes(256)
-
-// sharedCipher is the one dispatchPass ciphertext every test that only reads
-// encrypted input shares, so the suite pays one scrypt derivation instead of
-// one per test. Tests share the cached bytes read-only; a test that mutates
-// them works on a bytes.Clone copy.
-var sharedCipher = sync.OnceValues(func() ([]byte, error) {
-	return encryptTo(dispatchPass, sharedPlaintext)
-})
-
 // streamingPlaintextView wraps body as both Reader and ReaderAt + Size, mirroring
 // what file.Source produces. Used for plaintext branches whose contract
 // propagates upstream ReaderAt/Size through.
@@ -176,7 +141,6 @@ func streamingEncryptedView(t *testing.T) pipeline.View {
 
 func TestReaderStage_EncryptedWithPassDecryptsToStreamingView(t *testing.T) {
 	t.Parallel()
-	plaintext := sharedPlaintext
 	upstream := streamingEncryptedView(t)
 
 	view, meta, closer, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
@@ -189,7 +153,7 @@ func TestReaderStage_EncryptedWithPassDecryptsToStreamingView(t *testing.T) {
 	assert.Equal(t, int64(0), view.Size, "decrypt branch produces an unknown plaintext size; Size must be 0")
 	got, err := io.ReadAll(view.Reader)
 	require.NoError(t, err)
-	assert.Equal(t, plaintext, got)
+	assert.Equal(t, sharedPlaintext, got)
 }
 
 func TestReaderStage_StrictPlaintextEmptyPassPassthroughPropagatesRandomAccess(t *testing.T) {

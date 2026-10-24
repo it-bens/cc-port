@@ -12,10 +12,17 @@ import (
 
 func TestRoundTrip(t *testing.T) {
 	t.Parallel()
-	for _, size := range []int{0, 1, 1 << 20} {
-		t.Run("", func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int
+	}{
+		{"empty", 0},
+		{"single byte", 1},
+		{"1 MiB multi-chunk", 1 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			plaintext := patternBytes(size)
+			plaintext := patternBytes(tc.size)
 
 			cipher, err := encryptTo("correct horse battery staple", plaintext)
 			require.NoError(t, err)
@@ -57,7 +64,7 @@ func TestDecryptTruncated(t *testing.T) {
 	cipher, err := sharedCipher()
 	require.NoError(t, err)
 	require.Greater(t, len(cipher), 32, "cipher size sanity")
-	truncated := cipher[:len(cipher)-16]
+	truncated := cipher[: len(cipher)-16 : len(cipher)-16]
 
 	reader, err := encrypt.DecryptingReader(bytes.NewReader(truncated), dispatchPass)
 	require.NoError(t, err)
@@ -80,15 +87,4 @@ func TestIsEncrypted(t *testing.T) {
 		copy(short, "age-encryption.org/v")
 		require.False(t, encrypt.IsEncrypted(short))
 	})
-}
-
-// patternBytes returns size bytes filled with a deterministic byte pattern.
-// Avoids crypto/rand so the round-trip test stays reproducible while
-// covering all 256 byte values.
-func patternBytes(size int) []byte {
-	out := make([]byte, size)
-	for i := range out {
-		out[i] = byte(i)
-	}
-	return out
 }
