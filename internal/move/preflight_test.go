@@ -17,6 +17,7 @@ import (
 )
 
 func TestApply_PreflightsEveryWitnessBeforeAnySurfaceApply(t *testing.T) {
+	t.Parallel()
 	events := []string{}
 	first := newPreflightTarget(t, "first", &events, 0)
 	second := newPreflightTarget(t, "second", &events, 0)
@@ -31,6 +32,7 @@ func TestApply_PreflightsEveryWitnessBeforeAnySurfaceApply(t *testing.T) {
 }
 
 func TestApply_WriterStartedAfterPreflightPreventsAnyApply(t *testing.T) {
+	t.Parallel()
 	events := []string{}
 	first := newPreflightTarget(t, "first", &events, 2)
 	second := newPreflightTarget(t, "second", &events, 0)
@@ -47,6 +49,7 @@ func TestApply_WriterStartedAfterPreflightPreventsAnyApply(t *testing.T) {
 }
 
 func TestApply_SecondWitnessRefusalPreventsFirstMutation(t *testing.T) {
+	t.Parallel()
 	events := []string{}
 	first := newPreflightTarget(t, "first", &events, 0)
 	second := newPreflightTarget(t, "second", &events, 1)
@@ -58,6 +61,7 @@ func TestApply_SecondWitnessRefusalPreventsFirstMutation(t *testing.T) {
 }
 
 func TestApply_IgnoredWriterReportedAtPreflightAndRecheckLetsEverySurfaceApply(t *testing.T) {
+	t.Parallel()
 	events := []string{}
 	first := newPreflightTarget(t, "first", &events, 1)
 	second := newPreflightTarget(t, "second", &events, 0)
@@ -77,6 +81,7 @@ func TestApply_IgnoredWriterReportedAtPreflightAndRecheckLetsEverySurfaceApply(t
 }
 
 func TestApply_WitnessErrorRefusesBeforeAnySurfaceAppliesWithIgnoredWriters(t *testing.T) {
+	t.Parallel()
 	events := []string{}
 	first := newPreflightTarget(t, "first", &events, 0)
 	second := newPreflightTarget(t, "second", &events, 0)

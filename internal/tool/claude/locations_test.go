@@ -75,6 +75,7 @@ func TestLocateProject_NotFound(t *testing.T) {
 }
 
 func TestLocateProject_CollectsUsageData(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
@@ -94,6 +95,7 @@ func TestLocateProject_CollectsUsageData(t *testing.T) {
 }
 
 func TestLocateProject_CollectsPluginsData(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
@@ -106,6 +108,7 @@ func TestLocateProject_CollectsPluginsData(t *testing.T) {
 }
 
 func TestLocateProject_CollectsTaskFiles(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
@@ -122,6 +125,7 @@ func TestLocateProject_CollectsTaskFiles(t *testing.T) {
 }
 
 func TestLocateProject_CollectsTodos(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
@@ -135,6 +139,7 @@ func TestLocateProject_CollectsTodos(t *testing.T) {
 }
 
 func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 	memoryDir := filepath.Join(claudeHome.ProjectDir(testProjectPath), "memory")
 	artifactName := "MEMORY.md" + rewrite.RollbackSuffix
@@ -150,6 +155,7 @@ func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
 }
 
 func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 	workspace := claudetest.NewWorkspace(claudeHome)
 	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
@@ -222,6 +228,7 @@ func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
 }
 
 func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
+	t.Parallel()
 	// Fixture collision: "/Users/test/Projects/my project" (real cwd in
 	// sessions/12345.json) and "/Users/test/Projects/my-project" (the lookup
 	// path) both encode to -Users-test-Projects-my-project. The witnessing
@@ -239,6 +246,7 @@ func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
 }
 
 func TestLocateProject_PassesOnMatchingSessionCwd(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 
 	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)

@@ -29,6 +29,7 @@ import (
 // would ENOENT against the now-missing source and silently leave the row
 // stale.
 func TestMove_MultiToolSymlinkAliasedProject_CodexThreadCwdSurvivesClaudeRemovingSource(t *testing.T) {
+	t.Parallel()
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
 	require.NoError(t, os.MkdirAll(realProject, 0o750))

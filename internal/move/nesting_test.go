@@ -19,6 +19,7 @@ import (
 )
 
 func TestNestedMovePrecondition(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		newPath  func(string) string
@@ -74,6 +75,7 @@ func TestNestedMovePrecondition(t *testing.T) {
 		for _, targetCase := range targets {
 			for _, operation := range operations {
 				t.Run(test.name+"/"+targetCase.name+"/"+operation.name, func(t *testing.T) {
+					t.Parallel()
 					target, oldPath := targetCase.setup(t)
 					err := operation.run(t.Context(), []tool.Target{target}, move.Options{
 						OldPath:  oldPath,
@@ -100,6 +102,7 @@ func TestNestedMovePrecondition(t *testing.T) {
 // debris — so this precondition must refuse before any target is touched;
 // no tool.Target is needed since the check runs before target enumeration.
 func TestMove_RefusesStagingCollision(t *testing.T) {
+	t.Parallel()
 	newPath := filepath.Join(t.TempDir(), "project")
 	oldPath := newPath + rewrite.StagingSuffix
 	require.NoError(t, os.MkdirAll(oldPath, 0o750))
@@ -119,6 +122,7 @@ func TestMove_RefusesStagingCollision(t *testing.T) {
 // nested move — no tool.Target is needed since the precondition check runs
 // before target enumeration.
 func TestMove_RefusesRootNestedMove(t *testing.T) {
+	t.Parallel()
 	_, dryRunErr := move.DryRun(t.Context(), nil, move.Options{OldPath: "/", NewPath: "/.cc-port-new"})
 	require.ErrorIs(t, dryRunErr, move.ErrNestedMove)
 
@@ -127,6 +131,7 @@ func TestMove_RefusesRootNestedMove(t *testing.T) {
 }
 
 func TestApply_RejectedNestedMoveLeavesClaudeStateUnchangedAcrossRetries(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 	oldPath := claudetest.FixtureProjectPath()

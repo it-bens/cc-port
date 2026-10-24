@@ -25,6 +25,7 @@ func resolvedPathByEncodedName(enumerations []claude.ProjectEnumeration) map[str
 }
 
 func TestEnumerateProjects_ResolvesWitnessLabels(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 
 	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
@@ -42,6 +43,7 @@ func TestEnumerateProjects_ResolvesWitnessLabels(t *testing.T) {
 }
 
 func TestEnumerateProjects_PopulatesDiskLocations(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 
 	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
@@ -124,6 +126,7 @@ func TestEnumerateProjects_SkipsNonDirectoryEntries(t *testing.T) {
 // fixture encoded dir resolves exactly one witness, so this case needs its own
 // tree.
 func TestEnumerateProjects_MultiWitnessDisagreementPicksFirstByName(t *testing.T) {
+	t.Parallel()
 	claudeHome := newEmptyHome(t)
 	const (
 		uuidA = "aaaaaaaa-0000-0000-0000-000000000001"

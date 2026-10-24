@@ -23,6 +23,7 @@ import (
 // directory itself is promoted, must not desync what a re-run's dry-run
 // reports from what its apply actually does.
 func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		arrange    func(t *testing.T, workspace *claude.Workspace, req tool.MoveRequest)
@@ -65,6 +66,7 @@ func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			home := claudetest.SetupFixture(t)
 			workspace := claudetest.NewWorkspace(home)
 			req := tool.MoveRequest{OldPath: claudetest.FixtureProjectPath(), NewPath: claudetest.FixtureProjectPath() + "-renamed", RefsOnly: true}
@@ -87,6 +89,7 @@ func TestMoveSurfaces_DryRunAndApplyCountsMatch(t *testing.T) {
 // entry at NewPath and none at OldPath, so the config collision check passes
 // and the full move completes.
 func TestMove_ResumesAfterConfigRekey(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	workspace := claudetest.NewWorkspace(home)
 	oldPath := claudetest.FixtureProjectPath()
@@ -114,6 +117,7 @@ func TestMove_ResumesAfterConfigRekey(t *testing.T) {
 }
 
 func TestMoveSurfaces_SecondApplyReportsProjectAbsent(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	workspace := claudetest.NewWorkspace(home)
 	req := tool.MoveRequest{OldPath: claudetest.FixtureProjectPath(), NewPath: claudetest.FixtureProjectPath() + "-renamed", RefsOnly: true}
@@ -130,6 +134,7 @@ func TestMoveSurfaces_SecondApplyReportsProjectAbsent(t *testing.T) {
 // the encoded project directory itself was promoted — still converges on
 // a full re-run rather than hard-refusing on the flipped witness.
 func TestMove_ResumesAfterWitnessFlip(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	workspace := claudetest.NewWorkspace(home)
 	oldPath := claudetest.FixtureProjectPath()
@@ -176,6 +181,7 @@ func TestMove_ResumesAfterWitnessFlip(t *testing.T) {
 // nor its NewPath. The resume path must never treat that as a match; it
 // must hard refuse exactly as the single-path identity check already does.
 func TestMove_RefusesForeignWitness(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	workspace := claudetest.NewWorkspace(home)
 	req := tool.MoveRequest{
@@ -198,6 +204,7 @@ func TestMove_RefusesForeignWitness(t *testing.T) {
 // must leave each file's inode and mtime exactly as they were. A writer that
 // replaces the file anyway keeps its bytes but not its inode.
 func TestMove_LeavesUnreferencedHomeWideFilesUntouched(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	home := &claude.Home{
 		Dir:        filepath.Join(root, "dotclaude"),
@@ -250,6 +257,7 @@ func TestMove_LeavesUnreferencedHomeWideFilesUntouched(t *testing.T) {
 // because its directory copy gives every file below the encoded directory a
 // fresh inode whatever the writers did.
 func TestMove_LeavesFilesWithoutOldPathReferenceUntouched(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	workspace := claudetest.NewWorkspace(home)
 	oldPath := claudetest.FixtureProjectPath()

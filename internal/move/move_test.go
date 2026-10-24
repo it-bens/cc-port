@@ -111,6 +111,7 @@ func applyTestTarget(t *testing.T, workspace *applyTestWorkspace) []tool.Target 
 }
 
 func TestDryRun_ReportsSurfaceCountsPerTool(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
@@ -132,6 +133,7 @@ func TestDryRun_ReportsSurfaceCountsPerTool(t *testing.T) {
 }
 
 func TestDryRun_ReportsMalformedHistoryLineWarning(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
@@ -146,6 +148,7 @@ func TestDryRun_ReportsMalformedHistoryLineWarning(t *testing.T) {
 }
 
 func TestApply_ReportsMalformedHistoryLineWarning(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
@@ -160,6 +163,7 @@ func TestApply_ReportsMalformedHistoryLineWarning(t *testing.T) {
 }
 
 func TestSessionsSurface_ReportsMalformedSessionFileWithoutChangingItsBytes(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
@@ -188,6 +192,7 @@ func TestSessionsSurface_ReportsMalformedSessionFileWithoutChangingItsBytes(t *t
 }
 
 func TestDryRun_AbsentProjectReportsZeroSurfaces(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 
 	plan, err := move.DryRun(context.Background(), targets, move.Options{
@@ -200,6 +205,7 @@ func TestDryRun_AbsentProjectReportsZeroSurfaces(t *testing.T) {
 }
 
 func TestApply_MovesProjectAndUpdatesReferences(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	oldPath := claudetest.FixtureProjectPath()
 	newPath := oldPath + "-renamed"
@@ -231,6 +237,7 @@ func TestApply_MovesProjectAndUpdatesReferences(t *testing.T) {
 }
 
 func TestClaudeMoveSurfaces_AllowsPhysicalDestinationWhenSourceAlreadyGone(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	oldPath := claudetest.FixtureProjectPath()
@@ -241,6 +248,7 @@ func TestClaudeMoveSurfaces_AllowsPhysicalDestinationWhenSourceAlreadyGone(t *te
 }
 
 func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 
@@ -250,6 +258,7 @@ func TestClaudeMoveSurfaces_RefsOnlyIgnoresPhysicalDestination(t *testing.T) {
 }
 
 func TestClaudeMove_DryRunLeavesStrandedStagingForApply(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
@@ -274,6 +283,7 @@ func TestClaudeMove_DryRunLeavesStrandedStagingForApply(t *testing.T) {
 }
 
 func TestClaudeMoveApply_RemovesStagingDirectoryBeforePromoting(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
@@ -291,6 +301,7 @@ func TestClaudeMoveApply_RemovesStagingDirectoryBeforePromoting(t *testing.T) {
 }
 
 func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
@@ -310,6 +321,7 @@ func TestClaudeMoveApply_ResumesExistingEncodedDestination(t *testing.T) {
 }
 
 func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	workspace := claudetest.NewWorkspace(home)
 	req := tool.MoveRequest{
@@ -334,6 +346,7 @@ func TestClaudeMoveSurfaces_ExcludeFileHistory(t *testing.T) {
 }
 
 func TestClaudeMoveApply_RefusesForeignEncodedDestinationAndPreservesSource(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
@@ -358,6 +371,7 @@ func TestClaudeMoveApply_RefusesForeignEncodedDestinationAndPreservesSource(t *t
 }
 
 func TestClaudeMove_RefusesExistingConfigEntryAtNewPathAndPreservesState(t *testing.T) {
+	t.Parallel()
 	targets := fixtureTargets(t)
 	workspace := targets[0].Workspace
 	home := claudeWorkspaceHome(t, workspace)
@@ -388,6 +402,7 @@ func TestClaudeMove_RefusesExistingConfigEntryAtNewPathAndPreservesState(t *test
 }
 
 func TestApply_CancellationRestoresCompletedSurfaces(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	restored := false
@@ -420,6 +435,7 @@ func TestApply_CancellationRestoresCompletedSurfaces(t *testing.T) {
 }
 
 func TestApply_LaterSurfaceFailureRestoresFileAndSQLSurfaces(t *testing.T) {
+	t.Parallel()
 	filePath := filepath.Join(t.TempDir(), "state.txt")
 	require.NoError(t, os.WriteFile(filePath, []byte("before"), 0o600))
 	sqlState := "before"
@@ -469,6 +485,7 @@ func TestApply_LaterSurfaceFailureRestoresFileAndSQLSurfaces(t *testing.T) {
 }
 
 func TestApply_CarriesResidualWarnings(t *testing.T) {
+	t.Parallel()
 	workspace := &applyTestWorkspace{warnings: []string{"left untouched by design"}}
 
 	result, err := move.Apply(context.Background(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
@@ -479,6 +496,7 @@ func TestApply_CarriesResidualWarnings(t *testing.T) {
 }
 
 func TestApply_ReportsResidualWarningInspectionFailureNonFatally(t *testing.T) {
+	t.Parallel()
 	workspace := &applyTestWorkspace{warningErr: assert.AnError}
 
 	result, err := move.Apply(context.Background(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
@@ -489,6 +507,7 @@ func TestApply_ReportsResidualWarningInspectionFailureNonFatally(t *testing.T) {
 }
 
 func TestApply_KeepsResidualWarningsWhenInspectionAlsoFails(t *testing.T) {
+	t.Parallel()
 	workspace := &applyTestWorkspace{warnings: []string{"unrewritten snapshot"}, warningErr: assert.AnError}
 
 	result, err := move.Apply(context.Background(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
@@ -500,6 +519,7 @@ func TestApply_KeepsResidualWarningsWhenInspectionAlsoFails(t *testing.T) {
 }
 
 func TestApply_UsesOnlyPostApplyResidualWarnings(t *testing.T) {
+	t.Parallel()
 	workspace := &applyTestWorkspace{warningSequence: [][]string{{"pre-apply residual"}, {"checkpoint after apply"}}}
 
 	result, err := move.Apply(context.Background(), applyTestTarget(t, workspace), move.Options{OldPath: "/old", NewPath: "/new"})
@@ -509,6 +529,7 @@ func TestApply_UsesOnlyPostApplyResidualWarnings(t *testing.T) {
 }
 
 func TestDryRunAndApply_WarnWhenNoSelectedToolMovesProjectDirectory(t *testing.T) {
+	t.Parallel()
 	workspace := &applyTestWorkspace{}
 	targets := applyTestTarget(t, workspace)
 

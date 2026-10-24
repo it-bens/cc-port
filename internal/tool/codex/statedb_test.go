@@ -17,6 +17,7 @@ import (
 )
 
 func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
@@ -34,6 +35,7 @@ func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
 }
 
 func TestStateDBKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	const rootOnlyProject = "/Users/test/Projects/root-only"
@@ -51,6 +53,7 @@ func TestStateDBKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
 }
 
 func TestMove_StateDBApplyFailsWhenProjectRootChangedAfterPlan(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
@@ -77,6 +80,7 @@ func TestMove_StateDBApplyFailsWhenProjectRootChangedAfterPlan(t *testing.T) {
 }
 
 func TestMove_StateDBApplyFailsWhenThreadCwdChangedAfterPlan(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
@@ -104,6 +108,7 @@ func TestMove_StateDBApplyFailsWhenThreadCwdChangedAfterPlan(t *testing.T) {
 }
 
 func TestMove_StateDBApplyFailsWhenStateDatabasesChangedAfterPlan(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		change  func(t *testing.T, home *Home)
@@ -147,6 +152,7 @@ func TestMove_StateDBApplyFailsWhenStateDatabasesChangedAfterPlan(t *testing.T) 
 }
 
 func TestStateDBIdentityFailsForPre0049DatabaseEvenWhenAThreadMatches(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
@@ -173,6 +179,7 @@ func TestStateDBIdentityFailsForPre0049DatabaseEvenWhenAThreadMatches(t *testing
 // database before any project match, independent of whether a rewrite would
 // ever be planned.
 func TestStateDBKnowsProjectFailsWhenProjectRootsIsWithoutRowID(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	const unrelatedProject = "/Users/test/Projects/unrelated"
@@ -202,6 +209,7 @@ func TestStateDBKnowsProjectFailsWhenProjectRootsIsWithoutRowID(t *testing.T) {
 // queried project matches nothing, so the failure demonstrates the check
 // fires independent of any planned rewrite.
 func TestStateDBKnowsProjectFailsWhenThreadsHasACompositePrimaryKey(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	const unrelatedProject = "/Users/test/Projects/unrelated"
@@ -220,6 +228,7 @@ func TestStateDBKnowsProjectFailsWhenThreadsHasACompositePrimaryKey(t *testing.T
 }
 
 func TestStateDBPlanMatchesByteExactValuesUnderCaseInsensitiveCollation(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "state.sqlite")
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
@@ -245,6 +254,7 @@ func TestStateDBPlanMatchesByteExactValuesUnderCaseInsensitiveCollation(t *testi
 }
 
 func TestStateDBPlanFailsForMissingProjectRootsPathColumn(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "state.sqlite")
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
@@ -261,6 +271,7 @@ func TestStateDBPlanFailsForMissingProjectRootsPathColumn(t *testing.T) {
 }
 
 func TestStateDBPlanFailsForMissingProjectRootsTable(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "state.sqlite")
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)

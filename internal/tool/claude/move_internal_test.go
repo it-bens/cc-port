@@ -52,6 +52,7 @@ func TestConfigSurfacePlan_PropagatesUnreadableConfigFile(t *testing.T) {
 }
 
 func TestCheckConfigEntryCollision(t *testing.T) {
+	t.Parallel()
 	const oldPath = "/Users/test/Projects/old?"
 	const newPath = "/Users/test/Projects/new?"
 
@@ -362,6 +363,7 @@ func TestMoveSurfaces_PlansUUIDWitnessedProjectDirectoryPromotion(t *testing.T) 
 // reading the flipped witness as a foreign collision would name the sole
 // surviving copy as the intruder and invite deleting it.
 func TestResolveMoveIdentity_LocatesViaOldPathWhenWitnessesAlreadyFlipped(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	home := &Home{Dir: filepath.Join(root, "dotclaude")}
 	oldPath := filepath.Join(root, "old-project")

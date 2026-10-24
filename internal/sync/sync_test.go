@@ -35,6 +35,7 @@ func testGetenv(string) string { return "test-user" }
 func testCurrentUser() (*user.User, error) { return &user.User{Username: "test-user"}, nil }
 
 func TestSelfPusher_OnConfiguredMachineReturnsHostUser(t *testing.T) {
+	t.Parallel()
 	got, err := selfPusher(os.Hostname, os.Getenv, user.Current)
 	if err != nil {
 		t.Fatalf("selfPusher: %v", err)
@@ -48,6 +49,7 @@ func TestSelfPusher_OnConfiguredMachineReturnsHostUser(t *testing.T) {
 }
 
 func TestSelfPusher_EmptyUsernameReturnsError(t *testing.T) {
+	t.Parallel()
 	_, err := selfPusher(
 		func() (string, error) { return "test-host", nil },
 		func(string) string { return "" },
@@ -59,6 +61,7 @@ func TestSelfPusher_EmptyUsernameReturnsError(t *testing.T) {
 }
 
 func TestSelfPusher_UsesIdentitySeams(t *testing.T) {
+	t.Parallel()
 	got, err := selfPusher(
 		func() (string, error) { return "test-host", nil },
 		func(string) string { return "test-user" },
@@ -70,6 +73,7 @@ func TestSelfPusher_UsesIdentitySeams(t *testing.T) {
 }
 
 func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	targets, projectPath := buildTestTargets(t)
 
@@ -95,6 +99,7 @@ func TestPlanPush_NoPriorYieldsEmptyConflictFields(t *testing.T) {
 }
 
 func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	targets, projectPath := buildTestTargets(t)
 
@@ -138,6 +143,7 @@ func TestPlanPush_PriorSameSelfNotCrossMachine(t *testing.T) {
 }
 
 func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	injectArchiveWithPusher(t, r, "k", "different-host-different-user", time.Now().UTC().Add(-1*time.Hour))
 
@@ -158,6 +164,7 @@ func TestPlanPush_PriorDifferentSelfFlagsCrossMachine(t *testing.T) {
 }
 
 func TestPlanPush_RejectsIdentityFailureRegardlessOfForce(t *testing.T) {
+	t.Parallel()
 	for _, force := range []bool{false, true} {
 		t.Run("force="+strconv.FormatBool(force), func(t *testing.T) {
 			_, err := PlanPush(context.Background(), PushOptions{
@@ -175,6 +182,7 @@ func TestPlanPush_RejectsIdentityFailureRegardlessOfForce(t *testing.T) {
 }
 
 func TestPlanPush_ForceAllowsCrossMachinePrior(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	injectArchiveWithPusher(t, r, "k", "different-host-different-user", time.Now().UTC().Add(-time.Hour))
 	prior := openPriorForTest(t, r, "k", "")
@@ -242,6 +250,7 @@ func TestExecutePush_RoundTripWritesArchiveWithSyncFields(t *testing.T) {
 }
 
 func TestExecutePush_ReturnsExportWarnings(t *testing.T) {
+	t.Parallel()
 	home, projectPath := buildTestHomeAndProject(t)
 	require.NoError(t, os.MkdirAll(home.RulesDir(), 0o750))
 	require.NoError(t, os.WriteFile(
@@ -269,6 +278,7 @@ func TestExecutePush_ReturnsExportWarnings(t *testing.T) {
 }
 
 func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	// Original must be a path the fixture's own export bodies actually
 	// contain, so the placeholder token is embedded and the corrected
@@ -292,6 +302,7 @@ func TestPlanPull_PopulatesPlaceholdersFromManifest(t *testing.T) {
 }
 
 func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	injectArchiveWithSenderResolve(t, r, "k", "{{ORG}}", "/Users/sender", "host-user")
 	targets, _ := buildTestTargets(t)
@@ -311,6 +322,7 @@ func TestPlanPull_SenderProvidedResolveClearsUnresolved(t *testing.T) {
 // Pull renders the plan before ExecutePull writes, so the plan must carry
 // every definition that would start launching on this machine.
 func TestPlanPull_ReportsMCPServersAbsentFromTheDestination(t *testing.T) {
+	t.Parallel()
 	const archiveName = "project-with-mcp-servers"
 	r := newFileRemote(t)
 	injectArchiveWithPusher(t, r, archiveName, "host-user", time.Now().UTC())
@@ -329,6 +341,7 @@ func TestPlanPull_ReportsMCPServersAbsentFromTheDestination(t *testing.T) {
 }
 
 func TestPlanPull_OmitsMCPServersTheDestinationAlreadyDeclares(t *testing.T) {
+	t.Parallel()
 	const archiveName = "project-with-known-mcp-servers"
 	r := newFileRemote(t)
 	injectArchiveWithPusher(t, r, archiveName, "host-user", time.Now().UTC())
@@ -351,6 +364,7 @@ func TestPlanPull_OmitsMCPServersTheDestinationAlreadyDeclares(t *testing.T) {
 }
 
 func TestPullPlanApplyGateParity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		archive     func(*testing.T) []byte
@@ -483,6 +497,7 @@ func archiveWithManifest(t *testing.T, metadata *manifest.Metadata) []byte {
 // archive plain import accepts, and both must still refuse an archive that
 // genuinely has an unresolved, referenced placeholder.
 func TestPullImportGateAgree(t *testing.T) {
+	t.Parallel()
 	const key = "{{SECRET}}"
 
 	tests := []struct {
@@ -532,6 +547,7 @@ func TestPullImportGateAgree(t *testing.T) {
 }
 
 func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	targetsA, projectPathA := buildTestTargets(t)
 
@@ -584,6 +600,7 @@ func TestExecutePull_RoundTripFromFileRemote(t *testing.T) {
 }
 
 func TestExecutePull_IgnoredWritersProceedsPastALiveWriter(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	injectArchiveWithPusher(t, r, "k", "other-user@other-host", time.Now().UTC())
 	homeB := buildTestHomeBlank(t)

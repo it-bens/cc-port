@@ -32,6 +32,7 @@ const (
 )
 
 func TestExportRolloutsAndReportsEraA(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := NewWorkspace(home, func(string) string { return "" }, nil)
@@ -54,6 +55,7 @@ func TestExportRolloutsAndReportsEraA(t *testing.T) {
 }
 
 func TestExportRefusesCompressedOnlyRollout(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := filepath.Join(home.Dir, sessionsSubdir, "2026", "07", "18", "rollout-refused.jsonl.zst")
@@ -71,6 +73,7 @@ func TestExportRefusesCompressedOnlyRollout(t *testing.T) {
 }
 
 func TestExportHistoryOnlyIncludesAssociatedHistoryLines(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	expected, _ := writeRoundTripLineStores(t, home)
@@ -109,6 +112,7 @@ func TestExportHistoryOnlyIncludesAssociatedHistoryLines(t *testing.T) {
 // channel, or a divergent profile's state would be silently omitted from
 // the archive with no signal to the user.
 func TestExport_WarnsOnDivergentProfileSQLiteHome(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
@@ -168,6 +172,7 @@ func divergentProfileUnknownProjectFixture(t *testing.T) (workspace *Workspace, 
 // (move/export/stats) surface it as a hard failure rather than silently
 // skipping Codex the way a genuine absence would.
 func TestProjectAbsence_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		call func(t *testing.T, workspace *Workspace, project string) error
@@ -218,6 +223,7 @@ func TestProjectAbsence_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *test
 }
 
 func TestExportReportsMalformedSharedJSONLLines(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		file        string
@@ -271,6 +277,7 @@ func TestExportReportsMalformedSharedJSONLLines(t *testing.T) {
 }
 
 func TestStageRejectsUnknownCodexRelativeEntryWithoutStaging(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	var archiveBytes bytes.Buffer
@@ -301,6 +308,7 @@ func TestStageRejectsUnknownCodexRelativeEntryWithoutStaging(t *testing.T) {
 }
 
 func TestCodexRoundTripRestoresRolloutsHistoryAndSessionIndex(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	history, index := writeRoundTripLineStores(t, sourceHome)
@@ -327,6 +335,7 @@ func TestCodexRoundTripRestoresRolloutsHistoryAndSessionIndex(t *testing.T) {
 // so import staged the same destination path twice, the second promotion
 // failed, and the whole import rolled back across every selected tool.
 func TestCodexRoundTripSucceedsWithCompressedSiblingCrashArtifact(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	plainPath := rolloutFixturePath(sourceHome, eraCPath)
@@ -342,6 +351,7 @@ func TestCodexRoundTripSucceedsWithCompressedSiblingCrashArtifact(t *testing.T) 
 }
 
 func TestCodexImportLeavesConfigTOMLByteIdentical(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	writeRoundTripLineStores(t, sourceHome)
@@ -354,6 +364,7 @@ func TestCodexImportLeavesConfigTOMLByteIdentical(t *testing.T) {
 }
 
 func TestCodexRoundTripRekeysProjectPathsToImportTarget(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	history, index := writeRoundTripLineStores(t, sourceHome)
@@ -382,6 +393,7 @@ func TestCodexRoundTripRekeysProjectPathsToImportTarget(t *testing.T) {
 }
 
 func TestCodexImportRerunDoesNotDuplicateHistoryOrSessionIndex(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	history, index := writeRoundTripLineStores(t, sourceHome)
@@ -425,6 +437,7 @@ func (c *countdownContext) Err() error {
 // than pre-canceled, so this test actually exercises the per-line check
 // inside the loop rather than only the entry-time check before it.
 func TestScanLines_CancelsMidScan(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "history.jsonl")
 	content := bytes.Repeat([]byte(`{"session_id":"aaaaaaaa-0000-4000-8000-000000000001"}`+"\n"), 10_000)
 	require.NoError(t, os.WriteFile(path, content, 0o600))
@@ -453,6 +466,7 @@ func TestScanLines_CancelsMidScan(t *testing.T) {
 // succeeded and only the post-loop check can be responsible for the
 // error this test asserts.
 func TestScanLines_CancelsAfterFinalLine(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "history.jsonl")
 	content := bytes.Repeat([]byte(`{"session_id":"aaaaaaaa-0000-4000-8000-000000000001"}`+"\n"), 3)
 	require.NoError(t, os.WriteFile(path, content, 0o600))
@@ -477,6 +491,7 @@ func TestScanLines_CancelsAfterFinalLine(t *testing.T) {
 // returns (nil, nil) — indistinguishable from a genuinely empty,
 // uncancelled scan — instead of surfacing the cancellation (finding FE4).
 func TestScanLines_CancelledContextOnEmptyFileReturnsError(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "empty.jsonl")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 
@@ -494,6 +509,7 @@ func TestScanLines_CancelledContextOnEmptyFileReturnsError(t *testing.T) {
 // file returns (nil, nil) before the scan loop ever starts, so only the
 // entry-time ctx check (not the post-loop one) can catch cancellation here.
 func TestScanLines_CancelledContextOnMissingFileReturnsError(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -512,6 +528,7 @@ func TestScanLines_CancelledContextOnMissingFileReturnsError(t *testing.T) {
 // one on import. Keying on text too must let both survive, while a later
 // import of a byte-for-byte identical record still dedups.
 func TestAppendUniqueHistory_KeepsDistinctSameSecondEntries(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), codexHistoryFile)
 	first := []byte(`{"session_id":"` + fixtureThreadOne + `","ts":100,"text":"first prompt"}` + "\n")
 	second := []byte(`{"session_id":"` + fixtureThreadOne + `","ts":100,"text":"second prompt"}` + "\n")
@@ -529,6 +546,7 @@ func TestAppendUniqueHistory_KeepsDistinctSameSecondEntries(t *testing.T) {
 }
 
 func TestAppendLinesToFileSeparatesTornPriorRecord(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		initial string
@@ -556,6 +574,7 @@ func TestAppendLinesToFileSeparatesTornPriorRecord(t *testing.T) {
 }
 
 func TestCodexSidecarRerunAppliesThreadCreatedAfterFirstImport(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	writeRoundTripLineStores(t, sourceHome)
@@ -585,6 +604,7 @@ func TestCodexSidecarRerunAppliesThreadCreatedAfterFirstImport(t *testing.T) {
 }
 
 func TestCodexImportRearmLeavesAbsentBackfillStateRowAbsent(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	archiveBytes := exportFixtureArchive(t, sourceHome)
@@ -598,6 +618,7 @@ func TestCodexImportRearmLeavesAbsentBackfillStateRowAbsent(t *testing.T) {
 }
 
 func TestCodexImportRearmFailsWithoutBackfillStateTable(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	archiveBytes := exportFixtureArchive(t, sourceHome)
@@ -612,6 +633,7 @@ func TestCodexImportRearmFailsWithoutBackfillStateTable(t *testing.T) {
 }
 
 func TestCodexImportWithoutRolloutsDoesNotRearmBackfillState(t *testing.T) {
+	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	require.NoError(t, os.RemoveAll(filepath.Join(sourceHome.Dir, sessionsSubdir)))
@@ -636,6 +658,7 @@ func TestCodexImportWithoutRolloutsDoesNotRearmBackfillState(t *testing.T) {
 // must not read the state-DB directory and must not fail when it is absent, a
 // regular file, or unreadable.
 func TestCodexFinalizeWithoutSidecarsOrRolloutsSkipsStateDBDiscovery(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	sqliteHome := filepath.Join(dir, "sqlite-home-is-a-file")
 	require.NoError(t, os.WriteFile(sqliteHome, []byte("not a directory"), 0o600))
@@ -648,6 +671,7 @@ func TestCodexFinalizeWithoutSidecarsOrRolloutsSkipsStateDBDiscovery(t *testing.
 }
 
 func TestCodexFinalizeCheckpointFailureAfterCommitWarnsAndKeepsTheUpdates(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	firstDatabase := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
@@ -671,6 +695,7 @@ func TestCodexFinalizeCheckpointFailureAfterCommitWarnsAndKeepsTheUpdates(t *tes
 // Every Open is followed by exactly one post-commit checkpoint, so the
 // checkpoint call count is the number of times a state database was opened.
 func TestCodexFinalizeOpensEachStateDatabaseOnce(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	firstDatabase := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
@@ -697,6 +722,7 @@ func TestCodexFinalizeOpensEachStateDatabaseOnce(t *testing.T) {
 }
 
 func TestCodexFinalizeCountsSidecarMatchingNoStateDatabaseAsUnapplied(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	secondDatabase := filepath.Join(home.SQLiteDir, "state_6.sqlite")
@@ -718,6 +744,7 @@ func TestCodexFinalizeCountsSidecarMatchingNoStateDatabaseAsUnapplied(t *testing
 }
 
 func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := quietTestWorkspace(home)
@@ -733,6 +760,7 @@ func TestCodexSidecarRejectsStringArchivedAtWithLineAndField(t *testing.T) {
 }
 
 func TestCodexSidecarExportKeepsNewestStateGenerationForDuplicateThread(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	setThreadTitle(t, filepath.Join(home.SQLiteDir, codexschema.StateDBFileName), fixtureThreadOne, "older title")
@@ -748,6 +776,7 @@ func TestCodexSidecarExportKeepsNewestStateGenerationForDuplicateThread(t *testi
 }
 
 func TestCodexStageRejectsHostileRolloutNamesAndAcceptsRecorderNames(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	workspace := quietTestWorkspace(&Home{Dir: fixtureDir, SQLiteDir: fixtureDir})
 	for _, name := range []string{
@@ -784,6 +813,7 @@ func TestCodexStageRejectsHostileRolloutNamesAndAcceptsRecorderNames(t *testing.
 // projectThreadIDSet must now give ReferenceSurfaces the same union Export
 // uses.
 func TestReferenceSurfaces_CountsStateDBOnlyThread(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	const stateOnlyThread = "00000000-0000-4000-8000-000000000099"
@@ -811,6 +841,7 @@ func TestReferenceSurfaces_CountsStateDBOnlyThread(t *testing.T) {
 }
 
 func TestCodexAuditsRejectUnknownProjectsAndDoNotAttributeSharedHistoryBytes(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	secondProject := "/Users/fixture/second-project"
@@ -841,6 +872,7 @@ func TestCodexAuditsRejectUnknownProjectsAndDoNotAttributeSharedHistoryBytes(t *
 // project and then have its own DiskCategories call reject it, failing the
 // whole stats run.
 func TestKnowsProjectHonorsConfigOnlyProjects(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := quietTestWorkspace(home)
@@ -863,6 +895,7 @@ func TestKnowsProjectHonorsConfigOnlyProjects(t *testing.T) {
 }
 
 func TestReferenceSurfacesKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := quietTestWorkspace(home)
@@ -887,6 +920,7 @@ func TestReferenceSurfacesKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) 
 }
 
 func TestEnumerateProjectsListsProjectHeldOnlyAsProjectRoot(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := quietTestWorkspace(home)
@@ -909,6 +943,7 @@ func TestEnumerateProjectsListsProjectHeldOnlyAsProjectRoot(t *testing.T) {
 }
 
 func TestEnumerateProjectsListsCanonicallyEqualStateDBPathsOnceAcrossDatabases(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := quietTestWorkspace(home)
@@ -940,6 +975,7 @@ func TestEnumerateProjectsListsCanonicallyEqualStateDBPathsOnceAcrossDatabases(t
 }
 
 func TestStatsAndExportIdentityFailForPre0049DatabaseEvenWhenARolloutMatches(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := quietTestWorkspace(home)
@@ -966,6 +1002,7 @@ func TestStatsAndExportIdentityFailForPre0049DatabaseEvenWhenARolloutMatches(t *
 // ReferenceSurfaces must both succeed with zeros for it, instead of the
 // whole stats run failing with tool.ErrProjectAbsent.
 func TestEnumerateProjectsIncludesConfigOnlyProjectWithZeroFootprint(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := quietTestWorkspace(home)
@@ -1006,6 +1043,7 @@ func TestEnumerateProjectsIncludesConfigOnlyProjectWithZeroFootprint(t *testing.
 // unrelated (non-projects) value must never be mistaken for a [projects]
 // table key.
 func TestConfigCommentOrValueDoesNotConferProjectKnowledge(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	home := &Home{Dir: dir, SQLiteDir: dir}
 	const commentOnlyProject = "/Users/fixture/comment-only-project"
@@ -1030,6 +1068,7 @@ func TestConfigCommentOrValueDoesNotConferProjectKnowledge(t *testing.T) {
 // cc-port compares it against. pathMatchesProject now canonicalizes both
 // operands before applying the existing equality-or-/-boundary-prefix rule.
 func TestPathMatchesProject_Canonicalizes(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	realProject := filepath.Join(root, "real", "project")
 	require.NoError(t, os.MkdirAll(realProject, 0o750))
@@ -1086,6 +1125,7 @@ func TestPathMatchesProject_Canonicalizes(t *testing.T) {
 // than silently degrade to a lexical comparison — the lexical fallback is
 // reserved for a path that genuinely does not exist (spec §5.1).
 func TestCanonicalizePath_DegradesOnlyOnNotExist(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	loopA := filepath.Join(root, "loop-a")
 	loopB := filepath.Join(root, "loop-b")
@@ -1103,6 +1143,7 @@ func TestCanonicalizePath_DegradesOnlyOnNotExist(t *testing.T) {
 // overlay, not only the top-level config.toml, so a project trusted solely
 // through a profile is still enumerated with a zero footprint.
 func TestEnumerateProjectsIncludesProfileOnlyProject(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	home := &Home{Dir: dir, SQLiteDir: dir}
 	const profileOnlyProject = "/Users/fixture/profile-only-project"
@@ -1127,6 +1168,7 @@ func TestEnumerateProjectsIncludesProfileOnlyProject(t *testing.T) {
 }
 
 func TestEnumerateProjectsIncludesRolloutOnlyProject(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	home := &Home{Dir: dir, SQLiteDir: dir}
 	const rolloutOnlyProject = "/Users/fixture/rollout-only-project"
@@ -1159,6 +1201,7 @@ func TestEnumerateProjectsIncludesRolloutOnlyProject(t *testing.T) {
 // the assertion non-vacuous, since a parser regression that read cwd from an
 // unstructured line would surface it as a candidate and fail.
 func TestEnumerateProjectsExcludesEraARollout(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	home := &Home{Dir: dir, SQLiteDir: dir}
 	const eraAPhantom = "/Users/fixture/era-a-phantom-project"
@@ -1179,6 +1222,7 @@ func TestEnumerateProjectsExcludesEraARollout(t *testing.T) {
 }
 
 func TestCodexExportsThreadOnlyProjectState(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	require.NoError(t, os.RemoveAll(filepath.Join(home.Dir, sessionsSubdir)))

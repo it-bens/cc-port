@@ -105,6 +105,7 @@ func chmodScoped(t *testing.T, path string, mode os.FileMode) {
 }
 
 func TestExport_FileHistoryFailsWhenSnapshotUnreadable(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod-based fault injection not supported on windows")
 	}
@@ -129,6 +130,7 @@ func TestExport_FileHistoryFailsWhenSnapshotUnreadable(t *testing.T) {
 }
 
 func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod-based fault injection not supported on windows")
 	}
@@ -152,6 +154,7 @@ func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
 }
 
 func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
+	t.Parallel()
 	sentinel := errors.New("synthetic file-history write failure")
 
 	home := claudetest.SetupFixture(t)
@@ -184,6 +187,7 @@ func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
 }
 
 func TestExport_FileHistoryHonorsContextCancelMidWalk(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	_, bigSnapshotPath := firstFileHistorySnapshot(t, home)
 

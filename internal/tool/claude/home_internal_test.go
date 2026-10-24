@@ -70,6 +70,7 @@ func TestHomeAnchor_FollowsSymlink(t *testing.T) {
 }
 
 func TestScanHistoryLines_AcceptsLegalLongLine(t *testing.T) {
+	t.Parallel()
 	line := strings.Repeat("x", MaxHistoryLine-1)
 
 	lines, err := scanHistoryLines([]byte(line + "\n"))

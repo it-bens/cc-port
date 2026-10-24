@@ -8,6 +8,7 @@ import (
 )
 
 func TestParsePSOutputRejectsLineBeyondScannerCap(t *testing.T) {
+	t.Parallel()
 	_, err := parsePSOutput([]byte("1 " + strings.Repeat("x", 1024*1024) + "\n"))
 
 	assert.Error(t, err)

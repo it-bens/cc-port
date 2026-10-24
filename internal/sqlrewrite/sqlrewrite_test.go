@@ -17,6 +17,7 @@ import (
 )
 
 func TestBundledSQLiteVersionMeetsRequiredFloor(t *testing.T) {
+	t.Parallel()
 	database := openSQLite(t, filepath.Join(t.TempDir(), "version.sqlite"))
 	var version string
 	require.NoError(t, database.QueryRowContext(context.Background(), "SELECT sqlite_version()").Scan(&version))
@@ -25,6 +26,7 @@ func TestBundledSQLiteVersionMeetsRequiredFloor(t *testing.T) {
 }
 
 func TestOpenFailsBusyAfterWaitingOutItsTimeout(t *testing.T) {
+	t.Parallel()
 	path := walDatabase(t, "busy.sqlite")
 	holdWriteLock(t, path)
 
@@ -40,6 +42,7 @@ func TestOpenFailsBusyAfterWaitingOutItsTimeout(t *testing.T) {
 }
 
 func TestOpenAndBeginSucceedOnceTheWriterReleasesWithinTheTimeout(t *testing.T) {
+	t.Parallel()
 	path := walDatabase(t, "released.sqlite")
 	writerConnection := holdWriteLock(t, path)
 
@@ -61,6 +64,7 @@ func TestOpenAndBeginSucceedOnceTheWriterReleasesWithinTheTimeout(t *testing.T) 
 }
 
 func TestBeginFailsBusyWhileAnotherConnectionHoldsTheWriteLock(t *testing.T) {
+	t.Parallel()
 	path := walDatabase(t, "begin-busy.sqlite")
 	rewriter, err := open(t.Context(), path, 100*time.Millisecond)
 	require.NoError(t, err)
@@ -73,6 +77,7 @@ func TestBeginFailsBusyWhileAnotherConnectionHoldsTheWriteLock(t *testing.T) {
 }
 
 func TestBeginTakesTheWriteLockBeforeAnyStatementRuns(t *testing.T) {
+	t.Parallel()
 	path := walDatabase(t, "immediate.sqlite")
 	rewriter, err := open(t.Context(), path, 100*time.Millisecond)
 	require.NoError(t, err)
@@ -90,6 +95,7 @@ func TestBeginTakesTheWriteLockBeforeAnyStatementRuns(t *testing.T) {
 }
 
 func TestOpenFoldsWALBeforeMainDatabaseIsObserved(t *testing.T) {
+	t.Parallel()
 	temporaryDirectory := t.TempDir()
 	path := filepath.Join(temporaryDirectory, "checkpoint.sqlite")
 	writer := openSQLite(t, path)
@@ -114,6 +120,7 @@ func TestOpenFoldsWALBeforeMainDatabaseIsObserved(t *testing.T) {
 }
 
 func TestFileDSNEncodesQuestionMarkPath(t *testing.T) {
+	t.Parallel()
 	weirdDir := filepath.Join(t.TempDir(), "dir?name")
 	require.NoError(t, os.MkdirAll(weirdDir, 0o750))
 	path := filepath.Join(weirdDir, "test.sqlite")
@@ -136,6 +143,7 @@ func TestFileDSNEncodesQuestionMarkPath(t *testing.T) {
 }
 
 func TestRewriteTextColumnPreservesTextAndBlobStorage(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "text.sqlite")
 	database := openSQLite(t, path)
 	require.NoError(t, prepareWAL(database))
@@ -188,6 +196,7 @@ func TestRewriteTextColumnPreservesTextAndBlobStorage(t *testing.T) {
 }
 
 func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "update.sqlite")
 	database := openSQLite(t, path)
 	require.NoError(t, prepareWAL(database))
@@ -227,6 +236,7 @@ func TestUpdateColumnsByKeyUpdatesExistingRowWithoutInsert(t *testing.T) {
 }
 
 func TestUpdateColumnsByRowIDUpdatesCompositeKeyRowWithoutInsert(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "rowid.sqlite")
 	database := openSQLite(t, path)
 	require.NoError(t, prepareWAL(database))
@@ -267,6 +277,7 @@ func TestUpdateColumnsByRowIDUpdatesCompositeKeyRowWithoutInsert(t *testing.T) {
 }
 
 func TestUpdateColumnsByRowIDReportsZeroForAbsentRowWithoutInsert(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "rowid-absent.sqlite")
 	database := openSQLite(t, path)
 	require.NoError(t, execute(database,
@@ -294,6 +305,7 @@ func TestUpdateColumnsByRowIDReportsZeroForAbsentRowWithoutInsert(t *testing.T) 
 }
 
 func TestUpdateColumnsByRowIDWritesOnlyWhileExpectedValueHolds(t *testing.T) {
+	t.Parallel()
 	const plannedPath = "/Users/test/Projects/old-root"
 	cases := []struct {
 		name        string
@@ -337,6 +349,7 @@ func TestUpdateColumnsByRowIDWritesOnlyWhileExpectedValueHolds(t *testing.T) {
 }
 
 func TestUpdateColumnsByKeyWritesOnlyWhileExpectedValueHolds(t *testing.T) {
+	t.Parallel()
 	const plannedCWD = "/Users/test/Projects/old-project"
 	cases := []struct {
 		name        string
@@ -373,6 +386,7 @@ func TestUpdateColumnsByKeyWritesOnlyWhileExpectedValueHolds(t *testing.T) {
 }
 
 func TestUpdateColumnsByRowIDRefusesMissingExpectedValue(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		expected map[string]any
@@ -413,6 +427,7 @@ func TestUpdateColumnsByRowIDRefusesMissingExpectedValue(t *testing.T) {
 }
 
 func TestUpdateColumnsByRowIDAddressesRealRowIDBesideOidAndUnderscoreRowIDColumns(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "rowid-aliases.sqlite")
 	database := openSQLite(t, path)
 	require.NoError(t, execute(database, "CREATE TABLE project_roots (oid TEXT, _rowid_ TEXT, path TEXT NOT NULL)"))
@@ -446,6 +461,7 @@ func TestUpdateColumnsByRowIDAddressesRealRowIDBesideOidAndUnderscoreRowIDColumn
 }
 
 func TestUpdateColumnsByRowIDRefusesUnsupportedSchema(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		schema  string
@@ -500,6 +516,7 @@ func TestUpdateColumnsByRowIDRefusesUnsupportedSchema(t *testing.T) {
 }
 
 func TestTransactionCommitsAfterBeginContextIsCancelled(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "commit.sqlite")
 	database := openSQLite(t, path)
 	require.NoError(t, prepareWAL(database))
@@ -527,6 +544,7 @@ func TestTransactionCommitsAfterBeginContextIsCancelled(t *testing.T) {
 }
 
 func TestCountTextColumnROFailsOnCancelledContext(t *testing.T) {
+	t.Parallel()
 	database := openSQLite(t, filepath.Join(t.TempDir(), "count.sqlite"))
 	require.NoError(t, execute(database, "CREATE TABLE documents (id INTEGER PRIMARY KEY, text_content TEXT)"))
 	require.NoError(t, execute(database, "INSERT INTO documents (id, text_content) VALUES (?, ?)", 1, "/Users/test/Projects/my-project/notes"))
@@ -539,6 +557,7 @@ func TestCountTextColumnROFailsOnCancelledContext(t *testing.T) {
 }
 
 func TestCancelledRewriteTextColumnLeavesTransactionRollbackable(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "cancelled-rollback.sqlite")
 	const oldPath = "/Users/test/Projects/my-project"
 	database := openSQLite(t, path)
@@ -576,6 +595,7 @@ func TestCancelledRewriteTextColumnLeavesTransactionRollbackable(t *testing.T) {
 }
 
 func TestVersionMeetsFloor(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		bundled string

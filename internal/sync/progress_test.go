@@ -42,6 +42,7 @@ func phasePaths(events []progress.Event) []string {
 // "export" phase on its reporter and nests its own locate/archive sub-phases
 // under it.
 func TestExecutePush_ExportSubPhasesNest(t *testing.T) {
+	t.Parallel()
 	recorder := progresstest.NewRecorder()
 	reporter := recorder.Reporter(progress.LevelInfo)
 
@@ -86,6 +87,7 @@ func TestExecutePush_ExportSubPhasesNest(t *testing.T) {
 // (preflight, manifest, extract, promote) open nested under the top-level
 // "import" phase ExecutePull brackets.
 func TestExecutePull_ImportSubPhasesNest(t *testing.T) {
+	t.Parallel()
 	r := newFileRemote(t)
 	targetsA, projectPathA := buildTestTargets(t)
 

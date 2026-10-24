@@ -12,6 +12,7 @@ import (
 )
 
 func TestMCPServersReportsBothTransports(t *testing.T) {
+	t.Parallel()
 	workspace, _ := fixtureWorkspace(t)
 
 	servers, err := workspace.MCPServers()
@@ -24,6 +25,7 @@ func TestMCPServersReportsBothTransports(t *testing.T) {
 }
 
 func TestMCPServersReportsNoneWithoutDeclarations(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"config without an mcp_servers table": "model = \"gpt-5-fixture\"\n",
 		"config with an empty mcp_servers":    "[mcp_servers]\n",
@@ -52,6 +54,7 @@ func TestMCPServersReportsNoneWithoutDeclarations(t *testing.T) {
 // an empty set: an import plan would otherwise present every archived
 // definition as new to a destination whose real declarations it never read.
 func TestMCPServersRefusesUnparseableConfig(t *testing.T) {
+	t.Parallel()
 	workspace := workspaceWithConfig(t, "[mcp_servers.broken\n")
 
 	_, err := workspace.MCPServers()
@@ -63,6 +66,7 @@ func TestMCPServersRefusesUnparseableConfig(t *testing.T) {
 // report is faithful. cc-port reports the command, the key Codex tries first,
 // rather than failing a whole plan over one malformed table.
 func TestMCPServersResolvesConflictingTransportToStdio(t *testing.T) {
+	t.Parallel()
 	workspace := workspaceWithConfig(t, "[mcp_servers.ambiguous]\ncommand = \"node\"\nurl = \"https://mcp.example.invalid/search\"\n")
 
 	servers, err := workspace.MCPServers()
@@ -73,6 +77,7 @@ func TestMCPServersResolvesConflictingTransportToStdio(t *testing.T) {
 // A profile overlay is not read: its definitions report as new rather than
 // silently suppressing a definition the active configuration would launch.
 func TestMCPServersIgnoresProfileOverlay(t *testing.T) {
+	t.Parallel()
 	workspace := workspaceWithConfig(t, "model = \"gpt-5-fixture\"\n")
 	overlay := filepath.Join(workspace.home.Dir, "work"+configProfileSuffix)
 	require.NoError(t, os.WriteFile(overlay, []byte("[mcp_servers.overlay-only]\ncommand = \"node\"\n"), 0o600))

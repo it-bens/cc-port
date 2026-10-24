@@ -14,6 +14,7 @@ import (
 )
 
 func TestMCPServersReportsUserScopeDefinitions(t *testing.T) {
+	t.Parallel()
 	workspace := claudetest.NewWorkspace(claudetest.SetupFixture(t))
 
 	servers, err := workspace.MCPServers()
