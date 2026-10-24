@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,14 +41,50 @@ const (
 	destinationHomeDir     = "/home/newuser"
 )
 
+// ccPortBinary is the CLI executable the tests in this file run. TestMain
+// builds it once before any test starts.
+var ccPortBinary string
+
 func TestMain(m *testing.M) {
+	// Build before IsolateHome moves HOME, so the build reuses the caller's Go
+	// build cache instead of compiling from cold under the isolated HOME.
+	buildDir, err := os.MkdirTemp("", "cc-port-integration-bin-")
+	if err != nil {
+		panic(err)
+	}
+	ccPortBinary, err = buildCCPortBinary(buildDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if removeErr := os.RemoveAll(buildDir); removeErr != nil {
+			fmt.Fprintln(os.Stderr, removeErr)
+		}
+		os.Exit(1)
+	}
+
 	restore, err := claudetest.IsolateHome()
 	if err != nil {
 		panic(err)
 	}
 	exitCode := m.Run()
 	restore()
+	if err := os.RemoveAll(buildDir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exitCode = 1
+	}
 	os.Exit(exitCode)
+}
+
+// buildCCPortBinary builds the CLI into dir and returns the executable's path.
+func buildCCPortBinary(dir string) (string, error) {
+	binary := filepath.Join(dir, "cc-port")
+	// CGO_ENABLED=0 matches the configuration the release builds use.
+	//nolint:gosec // G204: binary is a path under a directory TestMain just created.
+	command := exec.CommandContext(context.Background(), "go", "build", "-o", binary, "./cmd/cc-port")
+	command.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := command.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build cc-port: %w\n%s", err, output)
+	}
+	return binary, nil
 }
 
 // targetsFor wraps home as the single-claude-tool target slice every
@@ -142,6 +179,8 @@ func runImport(t *testing.T, home *claude.Home, options *importer.Options) *impo
 
 // TestIntegration_MoveRoundTrip verifies a full dry-run + apply move cycle using real packages.
 func TestIntegration_MoveRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	sourceHome := claudetest.SetupFixture(t)
 	targets := targetsFor(sourceHome)
 
@@ -183,6 +222,8 @@ func TestIntegration_MoveRoundTrip(t *testing.T) {
 
 // TestIntegration_ExportImportRoundTrip verifies a full export + import cycle using real packages.
 func TestIntegration_ExportImportRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	sourceHome := claudetest.SetupFixture(t)
 
 	archivePath := filepath.Join(t.TempDir(), "export.zip")
@@ -207,6 +248,8 @@ func TestIntegration_ExportImportRoundTrip(t *testing.T) {
 // mutation run from this test process correctly sees the running Codex CLI in
 // its process-table witness and must refuse the operation.
 func TestIntegration_MultiToolArchiveExportsClaudeAndCodex(t *testing.T) {
+	t.Parallel()
+
 	sharedProject := codextest.FixtureProjectPath()
 	claudeSource := claudetest.SetupFixture(t)
 	moveResult, err := move.Apply(t.Context(), targetsFor(claudeSource), move.Options{
@@ -218,7 +261,7 @@ func TestIntegration_MultiToolArchiveExportsClaudeAndCodex(t *testing.T) {
 
 	archivePath := filepath.Join(t.TempDir(), "multi-tool.zip")
 	//nolint:gosec // G204: every argument is a test-controlled fixture or temporary path.
-	command := exec.CommandContext(t.Context(), "go", "run", "./cmd/cc-port",
+	command := exec.CommandContext(t.Context(), ccPortBinary,
 		"export", sharedProject,
 		"--tool", "claude",
 		"--tool", "codex",
@@ -371,6 +414,8 @@ func verifyImportedProject(t *testing.T, destinationHome *claude.Home, destinati
 // TestIntegration_MoveRefsOnly verifies that a refs-only move updates ClaudeHome data
 // without touching the actual project directory on disk.
 func TestIntegration_MoveRefsOnly(t *testing.T) {
+	t.Parallel()
+
 	sourceHome := claudetest.SetupFixture(t)
 
 	oldPath := fixtureProjectPath
@@ -406,6 +451,8 @@ func TestIntegration_MoveRefsOnly(t *testing.T) {
 // every category lands in the destination and that path rewriting worked
 // inside at least one session-keyed body (usage-data/session-meta).
 func TestIntegration_ExportImportRoundTrip_AllCategories(t *testing.T) {
+	t.Parallel()
+
 	sourceHome := claudetest.SetupFixture(t)
 	archivePath := filepath.Join(t.TempDir(), "export-all-categories.zip")
 
@@ -543,6 +590,8 @@ func assertFileHistorySnapshotsByteIdentical(t *testing.T, sourceRoots, destinat
 // idempotent, so a re-run into the same home is the documented recovery
 // path for a partially failed import.
 func TestIntegration_ImportIsRerunnable(t *testing.T) {
+	t.Parallel()
+
 	sourceHome := claudetest.SetupFixture(t)
 
 	archivePath := filepath.Join(t.TempDir(), "export-rerun.zip")
@@ -586,6 +635,8 @@ func TestIntegration_ImportIsRerunnable(t *testing.T) {
 }
 
 func TestIntegration_EncryptedExportImportRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	const passphrase = "round-trip-passphrase"
 	sourceHome := claudetest.SetupFixture(t)
 
@@ -696,6 +747,8 @@ func assertImportedMtime(t *testing.T, path string, want time.Time, label string
 // survive promotion. The merge-result files (history.jsonl, .claude.json) are
 // asserted not to carry source mtimes — their mtime reflects import time.
 func TestIntegration_ExportImportRoundTrip_PreservesMtime(t *testing.T) {
+	t.Parallel()
+
 	sourceHome := claudetest.SetupFixture(t)
 	encodedSourceProjectDir := sourceHome.ProjectDir(fixtureProjectPath)
 
@@ -840,6 +893,8 @@ func stageFixtureWorkflowTree(t *testing.T, home *claude.Home) string {
 // dedicated category: they ride the sessions category through the sessions/
 // staging path on both export and import.
 func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
+	t.Parallel()
+
 	sourceHome := claudetest.SetupFixture(t)
 
 	sid := stageFixtureWorkflowTree(t, sourceHome)
@@ -907,6 +962,8 @@ func TestIntegration_ExportImportRoundTrip_Workflows(t *testing.T) {
 // transcripts. It also rewrites the encoded storage-dir segment (e.g. a run
 // record's scriptPath) from the old encoded dir to the new one.
 func TestIntegration_MoveRewritesWorkflowTree(t *testing.T) {
+	t.Parallel()
+
 	sourceHome := claudetest.SetupFixture(t)
 
 	sid := stageFixtureWorkflowTree(t, sourceHome)
