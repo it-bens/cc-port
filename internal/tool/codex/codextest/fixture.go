@@ -9,6 +9,8 @@ package codextest
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,31 +31,77 @@ func FixtureProjectPath() string {
 	return "/Users/fixture/codexproject"
 }
 
-// SetupFixture stages internal/tool/codex/testdata/dotcodex under
-// t.TempDir() and builds fixture state_5.sqlite, memories_1.sqlite, and
-// queue_1.sqlite databases, plus a no-remote .git baseline under each memory
-// worktree root (memories/ and memories_v2/), alongside it — SQLite files
-// are binary and nested .git directories are untrackable by the outer repo,
-// so all of it is built by test code rather than committed, following the
-// claudetest.SetupFixture pattern. It returns the staged codex home directory,
-// which is also the fixture's SQLite directory: sqlite_home resolves to the
-// same directory (config.toml declares no sqlite_home key and
-// $CODEX_SQLITE_HOME is unset in the fixture environment).
-func SetupFixture(t *testing.T) string {
-	t.Helper()
+// templateDir is the staged fixture InstallTemplate installed. A package's
+// TestMain installs it before m.Run and tests only read it, so nothing guards
+// it.
+var templateDir string
 
-	codexDir := filepath.Join(t.TempDir(), "dotcodex")
-	fixtureDir := findFixtureDir(t)
-	if err := fsutil.CopyDir(context.Background(), filepath.Join(fixtureDir, "dotcodex"), codexDir, nil); err != nil {
-		t.Fatalf("copy fixture directory: %v", err)
+// InstallTemplate stages the fixture template once into a temporary
+// directory, for a package's TestMain to install before m.Run. Every later
+// SetupFixture copies that template, so the SQLite databases and git
+// baselines are built once per test binary instead of once per test. The
+// returned cleanup removes the template directory.
+func InstallTemplate() (cleanup func() error, err error) {
+	dir, err := os.MkdirTemp("", "cc-port-codex-fixture-")
+	if err != nil {
+		return nil, fmt.Errorf("create fixture template directory: %w", err)
+	}
+	if err := StageFixture(dir); err != nil {
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			return nil, errors.Join(err, removeErr)
+		}
+		return nil, err
+	}
+	templateDir = dir
+	return func() error { return os.RemoveAll(dir) }, nil
+}
+
+// StageFixture stages the fixture into dir: internal/tool/codex/testdata/dotcodex
+// is copied there and fixture state_5.sqlite, memories_1.sqlite, and
+// queue_1.sqlite databases plus a no-remote .git baseline under each memory
+// worktree root (memories/ and memories_v2/) are built alongside — SQLite
+// files are binary and nested .git directories are untrackable by the outer
+// repo, so all of it is built by test code rather than committed, following
+// the claudetest.SetupFixture pattern. dir becomes a codex home.
+func StageFixture(dir string) error {
+	fixtureDir, err := fixtureSourceDir()
+	if err != nil {
+		return err
+	}
+	if err := fsutil.CopyDir(context.Background(), filepath.Join(fixtureDir, "dotcodex"), dir, nil); err != nil {
+		return fmt.Errorf("copy fixture directory: %w", err)
 	}
 
-	BuildFixtureStateDB(t, filepath.Join(codexDir, codexschema.StateDBFileName))
-	buildFixtureMemoriesDB(t, filepath.Join(codexDir, codexschema.MemoriesDBFileName))
-	buildFixtureQueueDB(t, filepath.Join(codexDir, codexschema.QueueDBFileName))
-	BuildFixtureMemoriesGitBaseline(t, filepath.Join(codexDir, codexschema.MemoriesWorktreeSubdir), FixtureGitConfigNoRemote)
-	buildFixtureMemoriesV2Worktree(t, filepath.Join(codexDir, codexschema.MemoriesWorktreeV2Subdir))
+	if err := buildFixtureStateDB(filepath.Join(dir, codexschema.StateDBFileName)); err != nil {
+		return err
+	}
+	if err := buildFixtureMemoriesDB(filepath.Join(dir, codexschema.MemoriesDBFileName)); err != nil {
+		return err
+	}
+	if err := buildFixtureQueueDB(filepath.Join(dir, codexschema.QueueDBFileName)); err != nil {
+		return err
+	}
+	if err := buildMemoriesGitBaseline(filepath.Join(dir, codexschema.MemoriesWorktreeSubdir), FixtureGitConfigNoRemote); err != nil {
+		return err
+	}
+	return buildMemoriesV2Worktree(filepath.Join(dir, codexschema.MemoriesWorktreeV2Subdir))
+}
 
+// SetupFixture copies the fixture template installed by InstallTemplate into
+// a fresh t.TempDir() and returns the staged codex home directory, which is
+// also the fixture's SQLite directory: sqlite_home resolves to the same
+// directory (config.toml declares no sqlite_home key and $CODEX_SQLITE_HOME
+// is unset in the fixture environment).
+func SetupFixture(t testing.TB) string {
+	t.Helper()
+
+	if templateDir == "" {
+		t.Fatalf("no codextest fixture template installed: call codextest.InstallTemplate from the package's TestMain")
+	}
+	codexDir := filepath.Join(t.TempDir(), "dotcodex")
+	if err := fsutil.CopyDir(context.Background(), templateDir, codexDir, nil); err != nil {
+		t.Fatalf("copy fixture template: %v", err)
+	}
 	return codexDir
 }
 
@@ -116,22 +164,22 @@ func FixtureAgentsDir(t *testing.T) string {
 	return agentsDir
 }
 
-func findFixtureDir(t *testing.T) string {
-	t.Helper()
-
+// fixtureSourceDir walks up from the working directory to the committed
+// testdata tree every staged fixture copies from.
+func fixtureSourceDir() (string, error) {
 	currentDir, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("get working directory: %v", err)
+		return "", fmt.Errorf("get working directory: %w", err)
 	}
 
 	for {
 		candidate := filepath.Join(currentDir, "internal", "tool", "codex", "testdata")
 		if info, statErr := os.Stat(filepath.Join(candidate, "dotcodex")); statErr == nil && info.IsDir() {
-			return candidate
+			return candidate, nil
 		}
 		parentDir := filepath.Dir(currentDir)
 		if parentDir == currentDir {
-			t.Fatal("could not find testdata/dotcodex/ directory")
+			return "", errors.New("could not find testdata/dotcodex/ directory")
 		}
 		currentDir = parentDir
 	}
@@ -151,18 +199,25 @@ const FixtureGitConfigWithRemote = FixtureGitConfigNoRemote +
 // — like the SQLite fixtures below — test code builds it instead of
 // committing it. Calling it on a root that already has a baseline replaces
 // that baseline's config.
-func BuildFixtureMemoriesGitBaseline(t *testing.T, root, config string) {
+func BuildFixtureMemoriesGitBaseline(t testing.TB, root, config string) {
 	t.Helper()
-	gitDir := filepath.Join(root, codexschema.GitDirName)
-	if err := os.MkdirAll(gitDir, 0o750); err != nil {
-		t.Fatalf("create fixture memories git baseline: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0o600); err != nil {
-		t.Fatalf("write fixture memories git baseline config: %v", err)
+	if err := buildMemoriesGitBaseline(root, config); err != nil {
+		t.Fatalf("build fixture memories git baseline: %v", err)
 	}
 }
 
-// buildFixtureMemoriesV2Worktree stages a memories_v2/ worktree mirroring
+func buildMemoriesGitBaseline(root, config string) error {
+	gitDir := filepath.Join(root, codexschema.GitDirName)
+	if err := os.MkdirAll(gitDir, 0o750); err != nil {
+		return fmt.Errorf("create fixture memories git baseline: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0o600); err != nil {
+		return fmt.Errorf("write fixture memories git baseline config: %w", err)
+	}
+	return nil
+}
+
+// buildMemoriesV2Worktree stages a memories_v2/ worktree mirroring
 // Codex's real v2 layout, plus its own no-remote .git baseline, entirely at
 // runtime: like memories/'s SQLite and git fixtures above, nothing under
 // memories_v2/ is committed to testdata/dotcodex/. Unlike memories/, v2
@@ -176,18 +231,17 @@ func BuildFixtureMemoriesGitBaseline(t *testing.T, root, config string) {
 // versions (memories/write/src/workspace.rs:101-114); it is staged here too
 // since cc-port's worktree rewrite walks every file under root, not a fixed
 // filename set, and a real v2 worktree carries it.
-func buildFixtureMemoriesV2Worktree(t *testing.T, root string) {
-	t.Helper()
+func buildMemoriesV2Worktree(root string) error {
 	summariesDir := filepath.Join(root, "rollout_summaries")
 	if err := os.MkdirAll(summariesDir, 0o750); err != nil {
-		t.Fatalf("create fixture memories_v2 worktree: %v", err)
+		return fmt.Errorf("create fixture memories_v2 worktree: %w", err)
 	}
 
 	summary := "thread_id: 00000000-0000-4000-8000-000000000001\n" +
 		"cwd: " + FixtureProjectPath() + "\n\n" +
 		"Summary: fixed a bug in " + FixtureProjectPath() + "/src/main.py.\n"
 	if err := os.WriteFile(filepath.Join(summariesDir, "2026-07-17T10-00-00-a1b2.md"), []byte(summary), 0o600); err != nil {
-		t.Fatalf("write fixture memories_v2 rollout summary: %v", err)
+		return fmt.Errorf("write fixture memories_v2 rollout summary: %w", err)
 	}
 
 	// Headings match is_valid_v2_summary's required set
@@ -200,10 +254,10 @@ func buildFixtureMemoriesV2Worktree(t *testing.T, root string) {
 		"## What's in Memory\n\n" +
 		"Fixed a bug in " + FixtureProjectPath() + "/src/main.py.\n"
 	if err := os.WriteFile(filepath.Join(root, "memory_summary.md"), []byte(memorySummary), 0o600); err != nil {
-		t.Fatalf("write fixture memories_v2 memory_summary.md: %v", err)
+		return fmt.Errorf("write fixture memories_v2 memory_summary.md: %w", err)
 	}
 
-	BuildFixtureMemoriesGitBaseline(t, root, FixtureGitConfigNoRemote)
+	return buildMemoriesGitBaseline(root, FixtureGitConfigNoRemote)
 }
 
 // FixtureProjectID is the projects.id of the fixture's one Codex project,
@@ -214,16 +268,22 @@ const FixtureProjectID = "primary-project"
 // codexschema.StateDBSchema tables holding one thread whose cwd is
 // FixtureProjectPath, the FixtureProjectID project with its one root, and a
 // complete backfill_state row.
-func BuildFixtureStateDB(t *testing.T, path string) {
+func BuildFixtureStateDB(t testing.TB, path string) {
 	t.Helper()
+	if err := buildFixtureStateDB(path); err != nil {
+		t.Fatalf("build fixture state db: %v", err)
+	}
+}
+
+func buildFixtureStateDB(path string) error {
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
-		t.Fatalf("open fixture state db: %v", err)
+		return fmt.Errorf("open fixture state db: %w", err)
 	}
 	defer func() { _ = database.Close() }()
 
 	if _, err := database.ExecContext(context.Background(), codexschema.StateDBSchema); err != nil {
-		t.Fatalf("create fixture state schema: %v", err)
+		return fmt.Errorf("create fixture state schema: %w", err)
 	}
 
 	now := time.Now().Unix()
@@ -236,7 +296,7 @@ func BuildFixtureStateDB(t *testing.T, path string) {
 		now, now, "cli", "openai", FixtureProjectPath(), "fix login bug", "workspace-write", "on-request",
 	)
 	if err != nil {
-		t.Fatalf("insert fixture thread: %v", err)
+		return fmt.Errorf("insert fixture thread: %w", err)
 	}
 
 	_, err = database.ExecContext(context.Background(),
@@ -244,14 +304,14 @@ func BuildFixtureStateDB(t *testing.T, path string) {
 		FixtureProjectID, "codexproject", "{}", 0, now*1000, now*1000,
 	)
 	if err != nil {
-		t.Fatalf("insert fixture project: %v", err)
+		return fmt.Errorf("insert fixture project: %w", err)
 	}
 	_, err = database.ExecContext(context.Background(),
 		`INSERT INTO project_roots (project_id, position, path) VALUES (?, ?, ?)`,
 		FixtureProjectID, 0, FixtureProjectPath(),
 	)
 	if err != nil {
-		t.Fatalf("insert fixture project root: %v", err)
+		return fmt.Errorf("insert fixture project root: %w", err)
 	}
 
 	const backfillEpoch = 1_752_137_200
@@ -261,20 +321,20 @@ func BuildFixtureStateDB(t *testing.T, path string) {
 		1, "complete", "sessions/2026/07/17/rollout-2026-07-17T10-00-00-00000000-0000-4000-8000-000000000001.jsonl", backfillEpoch, backfillEpoch,
 	)
 	if err != nil {
-		t.Fatalf("insert fixture backfill state: %v", err)
+		return fmt.Errorf("insert fixture backfill state: %w", err)
 	}
+	return nil
 }
 
-func buildFixtureMemoriesDB(t *testing.T, path string) {
-	t.Helper()
+func buildFixtureMemoriesDB(path string) error {
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
-		t.Fatalf("open fixture memories db: %v", err)
+		return fmt.Errorf("open fixture memories db: %w", err)
 	}
 	defer func() { _ = database.Close() }()
 
 	if _, err := database.ExecContext(context.Background(), codexschema.MemoriesDBSchema); err != nil {
-		t.Fatalf("create fixture memories schema: %v", err)
+		return fmt.Errorf("create fixture memories schema: %w", err)
 	}
 
 	now := time.Now().Unix()
@@ -287,8 +347,9 @@ func buildFixtureMemoriesDB(t *testing.T, path string) {
 		"fix-login-bug", now,
 	)
 	if err != nil {
-		t.Fatalf("insert fixture stage1 output: %v", err)
+		return fmt.Errorf("insert fixture stage1 output: %w", err)
 	}
+	return nil
 }
 
 // FixtureQueuedItemID and FixtureQueuedMentionItemID are the queued_items
@@ -302,16 +363,15 @@ const (
 // serde_json shape of TurnInput::UserInput: one carrying a UserInput::Skill
 // that points into the fixture project, one carrying a UserInput::Mention of
 // a SKILL.md file in the fixture project.
-func buildFixtureQueueDB(t *testing.T, path string) {
-	t.Helper()
+func buildFixtureQueueDB(path string) error {
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
-		t.Fatalf("open fixture queue db: %v", err)
+		return fmt.Errorf("open fixture queue db: %w", err)
 	}
 	defer func() { _ = database.Close() }()
 
 	if _, err := database.ExecContext(context.Background(), codexschema.QueueDBSchema); err != nil {
-		t.Fatalf("create fixture queue schema: %v", err)
+		return fmt.Errorf("create fixture queue schema: %w", err)
 	}
 
 	payloads := []struct{ id, payload string }{
@@ -328,7 +388,8 @@ func buildFixtureQueueDB(t *testing.T, path string) {
 			item.id, "00000000-0000-4000-8000-000000000001", item.payload, order, now, now,
 		)
 		if err != nil {
-			t.Fatalf("insert fixture queued item %s: %v", item.id, err)
+			return fmt.Errorf("insert fixture queued item %s: %w", item.id, err)
 		}
 	}
+	return nil
 }

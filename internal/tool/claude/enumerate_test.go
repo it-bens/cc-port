@@ -26,7 +26,7 @@ func resolvedPathByEncodedName(enumerations []claude.ProjectEnumeration) map[str
 
 func TestEnumerateProjects_ResolvesWitnessLabels(t *testing.T) {
 	t.Parallel()
-	claudeHome := claudetest.SetupFixture(t)
+	claudeHome := claudetest.SharedFixture(t)
 
 	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestEnumerateProjects_ResolvesWitnessLabels(t *testing.T) {
 
 func TestEnumerateProjects_PopulatesDiskLocations(t *testing.T) {
 	t.Parallel()
-	claudeHome := claudetest.SetupFixture(t)
+	claudeHome := claudetest.SharedFixture(t)
 
 	enumerations, err := claude.EnumerateProjects(context.Background(), claudeHome)
 	require.NoError(t, err)

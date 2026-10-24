@@ -36,8 +36,11 @@ func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
 
 func TestStateDBKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
 	t.Parallel()
-	fixtureDir := codextest.SetupFixture(t)
-	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
+	// stateDBKnowsProject reads only state_*.sqlite, so only that database is
+	// built rather than the whole fixture home.
+	dir := t.TempDir()
+	codextest.BuildFixtureStateDB(t, filepath.Join(dir, codexschema.StateDBFileName))
+	home := &Home{Dir: dir, SQLiteDir: dir}
 	const rootOnlyProject = "/Users/test/Projects/root-only"
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))
 	require.NoError(t, err)

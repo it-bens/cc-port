@@ -1115,21 +1115,26 @@ machine; a host with a Codex MDM profile or files under `/etc/codex` would
 change those tests' results.
 
 Fixtures come from `testdata/dotcodex/`, staged by the `codextest`
-subpackage's `SetupFixture` following the `claudetest.SetupFixture` pattern.
-`codextest` does not import this package, because this package's own tests
-import it. `SetupFixture(t) string` therefore returns the staged directory,
+subpackage. `SetupFixture` copies a template that `InstallTemplate` staged
+once, so the SQLite databases and git baselines are built once per test
+binary instead of once per test. Every package that calls `SetupFixture`
+installs the template from its `TestMain`; when no template is installed,
+`SetupFixture` fails the test instead of staging on the fly. `codextest`
+does not import this package, because this package's own tests import it.
+`SetupFixture(t) string` therefore returns the copied directory,
 which is both the codex home and the SQLite directory, and callers build
 `&Home{Dir: dir, SQLiteDir: dir}` from it. `FixtureProjectPath() string` is
 the project the fixture is keyed on, `FixtureAgentsDir(t) string` stages a
 `~/.agents` marketplace, and `InsertThreadRow` and `ThreadCWD` write and
 read `threads` rows in the staged state database by SQLite directory.
 
-`SetupFixture` copies the static tree and then builds `state_5.sqlite`, `memories_1.sqlite`, `queue_1.sqlite`
+`StageFixture(dir)` copies the static tree and then builds `state_5.sqlite`, `memories_1.sqlite`, `queue_1.sqlite`
 (the verbatim upstream queue DDL plus one queued skill item and one queued
 mention of a `SKILL.md` file), a `memories/.git`
 no-remote baseline, and a `memories_v2/` worktree at test runtime, because
 SQLite files are binary and a nested `.git` directory is untrackable by the
-outer repository. The database file names, the memory worktree directory
+outer repository. `InstallTemplate` runs it once per test binary and
+`SetupFixture` copies the result. The database file names, the memory worktree directory
 names, and the DDL come from `codexschema`, shared with the demo seeder (see
 `internal/tool/codex/codexschema/README.md`). The `memories_v2/` worktree carries its own per-version
 file set, not a copy of `memories/`'s: `rollout_summaries/*.md` and

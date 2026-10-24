@@ -7,6 +7,9 @@ Fixture helpers for unit tests. `SetupFixture` stages a realistic `~/.claude` tr
 ## Public API
 
 - `SetupFixture(t *testing.T) *claude.Home`: stages `testdata/dotclaude/` under `t.TempDir()`, extracts `.claude.json` to a sibling path, and rewrites every `sessions/*.json` PID to a dead sentinel. Returns `*claude.Home{Dir: .../dotclaude, ConfigFile: .../dotclaude.json}`. Pass the returned home into `move.DryRun`, `importer.Run`, etc.
+- `StageFixture(dir string) (*claude.Home, error)`: stages the fixture under `dir` and returns a `*claude.Home` pointing at the staged copy. It takes no `testing.TB`, so a package can stage one fixture before running any test.
+- `InstallSharedFixture() (func() error, error)`: stages the fixture once into a fresh temporary directory and records it for `SharedFixture`. A package's `TestMain` calls it before `m.Run`; the returned cleanup removes the staged directory.
+- `SharedFixture(t testing.TB) *claude.Home`: returns the home `InstallSharedFixture` staged. Only tests that never write under the home may use it; a test that writes stages its own copy with `SetupFixture`. A package that did not install one fails the test with a message naming `InstallSharedFixture`.
 - `NewWorkspace(home *claude.Home) *claude.Workspace`: binds a workspace to `home` with the adapter's default environment, process-liveness and process-start-time seams. Tests that supply their own seams call `claude.NewWorkspace(home, getenv, processLiveness, processStartTime)`.
 - `IsolateHome() (func(), error)`: points `HOME` at a new temp directory holding only an empty `.claude` marker, so Codex is never detected; the returned cleanup restores `HOME` and removes the directory. Called from `TestMain`.
 - `FixtureProjectPath() string`: returns `/Users/test/Projects/myproject`, the project path the fixture tree is keyed on.

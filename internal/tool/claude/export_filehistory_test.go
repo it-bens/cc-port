@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -93,6 +94,38 @@ func firstFileHistorySnapshot(t *testing.T, home *claude.Home) (dir, path string
 	return firstDir, filepath.Join(firstDir, dirEntries[0].Name())
 }
 
+// fileHistorySessionUUID keys the minimal home's transcript, session witness
+// and file-history directory, so LocateProject attributes all three to
+// testProjectPath.
+const fileHistorySessionUUID = "aaaaaaaa-0000-4000-8000-000000000001"
+
+// newFileHistoryHome builds the smallest home the file-history export path
+// reads: one project transcript, its session witness and one snapshot.
+func newFileHistoryHome(t *testing.T) *claude.Home {
+	t.Helper()
+
+	dir := t.TempDir()
+	home := &claude.Home{
+		Dir:        filepath.Join(dir, "dotclaude"),
+		ConfigFile: filepath.Join(dir, "dotclaude.json"),
+	}
+
+	projectDir := home.ProjectDir(testProjectPath)
+	require.NoError(t, os.MkdirAll(projectDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, fileHistorySessionUUID+".jsonl"), []byte("{}\n"), 0o600))
+
+	sessionsDir := home.SessionsDir()
+	require.NoError(t, os.MkdirAll(sessionsDir, 0o750))
+	witness := fmt.Sprintf(`{"sessionId":%q,"cwd":%q}`, fileHistorySessionUUID, testProjectPath)
+	require.NoError(t, os.WriteFile(filepath.Join(sessionsDir, "99999.json"), []byte(witness), 0o600))
+
+	snapshotDir := filepath.Join(home.FileHistoryDir(), fileHistorySessionUUID)
+	require.NoError(t, os.MkdirAll(snapshotDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotDir, "edited-file"), []byte("original snapshot"), 0o600))
+
+	return home
+}
+
 // chmodScoped sets path's mode and registers a Cleanup to restore the
 // captured pre-chmod mode. Restoration runs before t.TempDir's rm-rf so
 // fixture cleanup succeeds even if chmod 000 made the entry unreadable.
@@ -113,7 +146,7 @@ func TestExport_FileHistoryFailsWhenSnapshotUnreadable(t *testing.T) {
 		t.Skip("chmod bits bypassed when running as root")
 	}
 
-	home := claudetest.SetupFixture(t)
+	home := newFileHistoryHome(t)
 	_, snapshotPath := firstFileHistorySnapshot(t, home)
 	chmodScoped(t, snapshotPath, 0)
 
@@ -138,7 +171,7 @@ func TestExport_FileHistoryFailsWhenDirUnreadable(t *testing.T) {
 		t.Skip("chmod bits bypassed when running as root")
 	}
 
-	home := claudetest.SetupFixture(t)
+	home := newFileHistoryHome(t)
 	firstDir, _ := firstFileHistorySnapshot(t, home)
 	chmodScoped(t, firstDir, 0)
 
@@ -157,7 +190,7 @@ func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("synthetic file-history write failure")
 
-	home := claudetest.SetupFixture(t)
+	home := newFileHistoryHome(t)
 	_, bigSnapshotPath := firstFileHistorySnapshot(t, home)
 
 	// zip.Writer wraps output in a 4 KiB bufio.Writer, so a small fixture
@@ -188,7 +221,7 @@ func TestExport_FileHistoryFailsOnZipWrite(t *testing.T) {
 
 func TestExport_FileHistoryHonorsContextCancelMidWalk(t *testing.T) {
 	t.Parallel()
-	home := claudetest.SetupFixture(t)
+	home := newFileHistoryHome(t)
 	_, bigSnapshotPath := firstFileHistorySnapshot(t, home)
 
 	// Same incompressible-body technique as the write-fault test above,

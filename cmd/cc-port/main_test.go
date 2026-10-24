@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -12,15 +13,25 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func TestMain(m *testing.M) {
+	templateCleanup, err := codextest.InstallTemplate()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	restore, err := claudetest.IsolateHome()
 	if err != nil {
 		panic(err)
 	}
 	exitCode := m.Run()
 	restore()
+	if err := templateCleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exitCode = 1
+	}
 	os.Exit(exitCode)
 }
 

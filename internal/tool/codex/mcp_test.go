@@ -13,7 +13,17 @@ import (
 
 func TestMCPServersReportsBothTransports(t *testing.T) {
 	t.Parallel()
-	workspace, _ := fixtureWorkspace(t)
+	// MCPServers reads only config.toml, so the fixture's two declarations are
+	// inlined rather than staged from the whole fixture home.
+	workspace := workspaceWithConfig(t, `model = "gpt-5-fixture"
+
+[mcp_servers.filesystem]
+command = "node"
+args = ["--enable-source-maps", "/opt/mcp/filesystem-server.js"]
+
+[mcp_servers.search]
+url = "https://mcp.example.invalid/search"
+`)
 
 	servers, err := workspace.MCPServers()
 	require.NoError(t, err)

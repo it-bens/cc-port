@@ -15,7 +15,9 @@ import (
 
 func TestMCPServersReportsUserScopeDefinitions(t *testing.T) {
 	t.Parallel()
-	workspace := claudetest.NewWorkspace(claudetest.SetupFixture(t))
+	workspace := claudetest.NewWorkspace(homeWithConfig(t,
+		`{"mcpServers":{"playwright":{"command":"npx","args":["-y","@playwright/mcp@latest"]},`+
+			`"docs":{"type":"http","url":"https://mcp.example.invalid/docs"}}}`))
 
 	servers, err := workspace.MCPServers()
 	require.NoError(t, err)

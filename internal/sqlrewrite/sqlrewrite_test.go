@@ -34,11 +34,14 @@ func TestOpenFailsBusyAfterWaitingOutItsTimeout(t *testing.T) {
 	// test can inject, so only a wall-clock measurement shows that open
 	// waited out its busy timeout before failing.
 	started := time.Now()
-	_, err := open(t.Context(), path, 100*time.Millisecond)
+	_, err := open(t.Context(), path, 20*time.Millisecond)
 	elapsed := time.Since(started)
 
 	require.ErrorContains(t, err, "SQLite busy")
-	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond)
+	// The floor sits below the timeout because an interrupted busy-handler
+	// sleep can end the wait early; an immediate-busy regression still
+	// elapses near zero.
+	assert.GreaterOrEqual(t, elapsed, 10*time.Millisecond)
 }
 
 func TestOpenAndBeginSucceedOnceTheWriterReleasesWithinTheTimeout(t *testing.T) {
@@ -66,7 +69,7 @@ func TestOpenAndBeginSucceedOnceTheWriterReleasesWithinTheTimeout(t *testing.T) 
 func TestBeginFailsBusyWhileAnotherConnectionHoldsTheWriteLock(t *testing.T) {
 	t.Parallel()
 	path := walDatabase(t, "begin-busy.sqlite")
-	rewriter, err := open(t.Context(), path, 100*time.Millisecond)
+	rewriter, err := open(t.Context(), path, 20*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, rewriter.Close()) })
 	holdWriteLock(t, path)

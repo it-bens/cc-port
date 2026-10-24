@@ -27,7 +27,8 @@ import (
 
 // TestMain points the machine-wide Codex locations at a scratch directory
 // before any test runs, so no test in this package reads the real
-// /etc/codex or /Library/Managed Preferences through Open.
+// /etc/codex or /Library/Managed Preferences through Open, and installs the
+// fixture template every SetupFixture call copies.
 func TestMain(m *testing.M) {
 	scratch, err := os.MkdirTemp("", "codex-machine-locations")
 	if err != nil {
@@ -36,7 +37,17 @@ func TestMain(m *testing.M) {
 	}
 	systemConfigDir = filepath.Join(scratch, "etc-codex")
 	managedPreferencesDir = filepath.Join(scratch, "Managed Preferences")
+	cleanup, err := codextest.InstallTemplate()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		_ = os.RemoveAll(scratch)
+		os.Exit(1)
+	}
 	code := m.Run()
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
 	_ = os.RemoveAll(scratch)
 	os.Exit(code)
 }

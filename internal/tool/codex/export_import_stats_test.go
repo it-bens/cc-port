@@ -6,11 +6,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -173,6 +175,7 @@ func divergentProfileUnknownProjectFixture(t *testing.T) (workspace *Workspace, 
 // skipping Codex the way a genuine absence would.
 func TestProjectAbsence_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *testing.T) {
 	t.Parallel()
+	workspace, project := divergentProfileUnknownProjectFixture(t)
 	tests := []struct {
 		name string
 		call func(t *testing.T, workspace *Workspace, project string) error
@@ -211,8 +214,6 @@ func TestProjectAbsence_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *test
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			workspace, project := divergentProfileUnknownProjectFixture(t)
-
 			err := testCase.call(t, workspace, project)
 
 			require.ErrorIs(t, err, ErrProjectAbsenceUnresolved)
@@ -312,7 +313,7 @@ func TestCodexRoundTripRestoresRolloutsHistoryAndSessionIndex(t *testing.T) {
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
 	history, index := writeRoundTripLineStores(t, sourceHome)
-	archiveBytes := exportFixtureArchive(t, sourceHome)
+	archiveBytes := fixtureExportArchive(t)
 	destinationHome, _ := setupImportDestination(t)
 
 	result := importFixtureArchive(t, archiveBytes, destinationHome)
@@ -352,10 +353,7 @@ func TestCodexRoundTripSucceedsWithCompressedSiblingCrashArtifact(t *testing.T) 
 
 func TestCodexImportLeavesConfigTOMLByteIdentical(t *testing.T) {
 	t.Parallel()
-	sourceDir := codextest.SetupFixture(t)
-	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
-	writeRoundTripLineStores(t, sourceHome)
-	archiveBytes := exportFixtureArchive(t, sourceHome)
+	archiveBytes := fixtureExportArchive(t)
 	destinationHome, config := setupImportDestination(t)
 
 	importFixtureArchive(t, archiveBytes, destinationHome)
@@ -365,10 +363,8 @@ func TestCodexImportLeavesConfigTOMLByteIdentical(t *testing.T) {
 
 func TestCodexRoundTripRekeysProjectPathsToImportTarget(t *testing.T) {
 	t.Parallel()
-	sourceDir := codextest.SetupFixture(t)
-	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
-	history, index := writeRoundTripLineStores(t, sourceHome)
-	archiveBytes := exportFixtureArchive(t, sourceHome)
+	history, index := roundTripLineStores()
+	archiveBytes := fixtureExportArchive(t)
 	destinationHome, config := setupImportDestination(t)
 	importTarget := "/Users/recipient/relocated-project"
 
@@ -394,10 +390,8 @@ func TestCodexRoundTripRekeysProjectPathsToImportTarget(t *testing.T) {
 
 func TestCodexImportRerunDoesNotDuplicateHistoryOrSessionIndex(t *testing.T) {
 	t.Parallel()
-	sourceDir := codextest.SetupFixture(t)
-	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
-	history, index := writeRoundTripLineStores(t, sourceHome)
-	archiveBytes := exportFixtureArchive(t, sourceHome)
+	history, index := roundTripLineStores()
+	archiveBytes := fixtureExportArchive(t)
 	destinationHome, _ := setupImportDestination(t)
 
 	importFixtureArchive(t, archiveBytes, destinationHome)
@@ -1242,6 +1236,24 @@ func TestCodexExportsThreadOnlyProjectState(t *testing.T) {
 
 func writeRoundTripLineStores(t *testing.T, home *Home) (history, index []byte) {
 	t.Helper()
+	require.NoError(t, writeFixtureLineStores(home))
+	return roundTripLineStores()
+}
+
+func writeFixtureLineStores(home *Home) error {
+	history, index := roundTripLineStores()
+	if err := os.WriteFile(filepath.Join(home.Dir, codexHistoryFile), history, 0o600); err != nil {
+		return fmt.Errorf("write fixture history: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(home.Dir, sessionIndexFile), index, 0o600); err != nil {
+		return fmt.Errorf("write fixture session index: %w", err)
+	}
+	return nil
+}
+
+// roundTripLineStores is the history and session-index content the round-trip
+// import tests assert a destination receives.
+func roundTripLineStores() (history, index []byte) {
 	history = []byte(
 		`{"session_id":"` + fixtureThreadOne + `","ts":100,"text":"first"}` + "\n" +
 			`{"session_id":"` + fixtureThreadTwo + `","ts":200,"text":"archived"}` + "\n",
@@ -1250,26 +1262,65 @@ func writeRoundTripLineStores(t *testing.T, home *Home) (history, index []byte) 
 		`{"id":"` + fixtureThreadOne + `","thread_name":"first","updated_at":"2026-07-17T10:00:00Z"}` + "\n" +
 			`{"id":"` + fixtureThreadTwo + `","thread_name":"archived","updated_at":"2026-07-10T09:00:00Z"}` + "\n",
 	)
-	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, codexHistoryFile), history, 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(home.Dir, sessionIndexFile), index, 0o600))
 	return history, index
+}
+
+// roundTripExportArchive builds the archive the round-trip import tests load
+// once per test binary: each of them exports the identical fixture home, and
+// rebuilding it per test costs more than the import they assert on. It stages
+// its own home because no *testing.T exists inside the once-function.
+var roundTripExportArchive = sync.OnceValues(func() (data []byte, err error) {
+	dir, err := os.MkdirTemp("", "codex-round-trip-fixture-")
+	if err != nil {
+		return nil, fmt.Errorf("create fixture home: %w", err)
+	}
+	defer func() {
+		err = errors.Join(err, os.RemoveAll(dir))
+	}()
+
+	home := &Home{Dir: dir, SQLiteDir: dir}
+	if err := codextest.StageFixture(dir); err != nil {
+		return nil, err
+	}
+	if err := writeFixtureLineStores(home); err != nil {
+		return nil, err
+	}
+	return exportArchive(home)
+})
+
+// fixtureExportArchive returns the shared round-trip export archive.
+func fixtureExportArchive(t *testing.T) []byte {
+	t.Helper()
+	data, err := roundTripExportArchive()
+	require.NoError(t, err)
+	return data
 }
 
 func exportFixtureArchive(t *testing.T, home *Home) []byte {
 	t.Helper()
+	data, err := exportArchive(home)
+	require.NoError(t, err)
+	return data
+}
+
+func exportArchive(home *Home) ([]byte, error) {
 	workspace := quietTestWorkspace(home)
 	selected := map[string]bool{categorySessions: true, categoryHistory: true}
-	placeholders, err := workspace.Placeholders(t.Context(), codextest.FixtureProjectPath(), selected)
-	require.NoError(t, err)
+	placeholders, err := workspace.Placeholders(context.Background(), codextest.FixtureProjectPath(), selected)
+	if err != nil {
+		return nil, err
+	}
 	adapter := New()
 	var output bytes.Buffer
-	_, err = portexport.Run(t.Context(), []tool.Target{{Tool: adapter, Workspace: workspace}}, &portexport.Options{
+	_, err = portexport.Run(context.Background(), []tool.Target{{Tool: adapter, Workspace: workspace}}, &portexport.Options{
 		ProjectPath: codextest.FixtureProjectPath(), Output: &output,
 		Selected:     map[string]map[string]bool{toolName: selected},
 		Placeholders: map[string][]manifest.Placeholder{toolName: placeholders},
 	})
-	require.NoError(t, err)
-	return output.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
 }
 
 func importFixtureArchive(t *testing.T, data []byte, home *Home) *importer.Result {

@@ -61,12 +61,25 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	templateCleanup, err := codextest.InstallTemplate()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if removeErr := os.RemoveAll(buildDir); removeErr != nil {
+			fmt.Fprintln(os.Stderr, removeErr)
+		}
+		os.Exit(1)
+	}
+
 	restore, err := claudetest.IsolateHome()
 	if err != nil {
 		panic(err)
 	}
 	exitCode := m.Run()
 	restore()
+	if err := templateCleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		exitCode = 1
+	}
 	if err := os.RemoveAll(buildDir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		exitCode = 1
