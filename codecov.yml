@@ -7,3 +7,9 @@ coverage:
     patch:
       default:
         informational: true
+
+# Test-fixture packages run only from other packages' tests, which per-package
+# coverage never credits to them.
+ignore:
+  - "internal/tool/claude/claudetest"
+  - "internal/tool/codex/codextest"
