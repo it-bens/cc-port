@@ -22,12 +22,6 @@ jobs:
         with:
           go-version: "1.27.3"
 
-      - name: Vet
-        run: go vet ./...
-
-      - name: Vet (darwin)
-        run: GOOS=darwin go vet ./...
-
       - name: Unit tests
         run: go test -race -coverprofile=coverage.txt ./...
 
@@ -39,14 +33,30 @@ jobs:
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
 
+      # Only the root package has integration-tagged files; ./... would
+      # re-run every unit test. Widen the pattern when another package gains one.
+      - name: Integration tests
+        run: go test -tags integration -race .
+
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.3"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Vet (darwin)
+        run: GOOS=darwin go vet ./...
+
       - name: Large archive tests
         run: go test -tags large ./internal/importer/...
 
       - name: Pure-Go build
         run: CGO_ENABLED=0 go build ./...
-
-      - name: Integration tests
-        run: go test -tags integration -race -v ./...
 
   lint:
     runs-on: ubuntu-latest
