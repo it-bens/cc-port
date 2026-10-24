@@ -67,7 +67,7 @@ homebrew_casks:
     binaries:
       - cc-port
     homepage: "https://github.com/it-bens/cc-port"
-    description: "Claude Code project portability tool"
+    description: "Claude Code and OpenAI Codex project portability tool"
     hooks:
       post:
         install_steps: |
@@ -87,7 +87,7 @@ homebrew_casks:
     binaries:
       - cc-port-with-logo
     homepage: "https://github.com/it-bens/cc-port"
-    description: "Claude Code project portability tool (with crane logo)"
+    description: "Claude Code and OpenAI Codex project portability tool (with crane logo)"
     hooks:
       post:
         install_steps: |
