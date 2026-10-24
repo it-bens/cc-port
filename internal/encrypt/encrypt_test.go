@@ -11,11 +11,14 @@ import (
 )
 
 func TestRoundTrip(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{0, 1, 1 << 20} {
 		t.Run("", func(t *testing.T) {
+			t.Parallel()
 			plaintext := patternBytes(size)
 
-			cipher := encryptBytes(t, "correct horse battery staple", plaintext)
+			cipher, err := encryptTo("correct horse battery staple", plaintext)
+			require.NoError(t, err)
 
 			reader, err := encrypt.DecryptingReader(bytes.NewReader(cipher), "correct horse battery staple")
 			require.NoError(t, err)
@@ -27,37 +30,46 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestDecryptWrongPassphrase(t *testing.T) {
-	cipher := encryptBytes(t, "alpha", []byte("plaintext"))
+	t.Parallel()
+	cipher, err := sharedCipher()
+	require.NoError(t, err)
 
-	_, err := encrypt.DecryptingReader(bytes.NewReader(cipher), "bravo")
+	_, err = encrypt.DecryptingReader(bytes.NewReader(cipher), "wrong-passphrase")
 	require.ErrorIs(t, err, encrypt.ErrPassphrase)
 }
 
 func TestDecryptTamperedBody(t *testing.T) {
-	cipher := encryptBytes(t, "passphrase", []byte("plaintext content for tampering"))
+	t.Parallel()
+	cipher, err := sharedCipher()
+	require.NoError(t, err)
+	cipher = bytes.Clone(cipher)
 	require.Greater(t, len(cipher), 200, "cipher size sanity")
 	cipher[len(cipher)-1] ^= 0xFF
 
-	reader, err := encrypt.DecryptingReader(bytes.NewReader(cipher), "passphrase")
+	reader, err := encrypt.DecryptingReader(bytes.NewReader(cipher), dispatchPass)
 	require.NoError(t, err)
 	_, err = io.ReadAll(reader)
 	require.ErrorIs(t, err, encrypt.ErrPassphrase)
 }
 
 func TestDecryptTruncated(t *testing.T) {
-	cipher := encryptBytes(t, "passphrase", []byte("plaintext content for truncation"))
+	t.Parallel()
+	cipher, err := sharedCipher()
+	require.NoError(t, err)
 	require.Greater(t, len(cipher), 32, "cipher size sanity")
 	truncated := cipher[:len(cipher)-16]
 
-	reader, err := encrypt.DecryptingReader(bytes.NewReader(truncated), "passphrase")
+	reader, err := encrypt.DecryptingReader(bytes.NewReader(truncated), dispatchPass)
 	require.NoError(t, err)
 	_, err = io.ReadAll(reader)
 	require.ErrorIs(t, err, encrypt.ErrPassphrase)
 }
 
 func TestIsEncrypted(t *testing.T) {
+	t.Parallel()
 	t.Run("matches age header", func(t *testing.T) {
-		cipher := encryptBytes(t, "passphrase", nil)
+		cipher, err := sharedCipher()
+		require.NoError(t, err)
 		require.True(t, encrypt.IsEncrypted(cipher))
 	})
 	t.Run("rejects plaintext", func(t *testing.T) {
