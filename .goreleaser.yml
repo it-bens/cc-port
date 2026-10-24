@@ -70,8 +70,10 @@ homebrew_casks:
     description: "Claude Code project portability tool"
     hooks:
       post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port"] if OS.mac?
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/cc-port"]
+          end
     zap:
       trash:
         - "~/.claude/.cc-port.lock"
@@ -88,8 +90,10 @@ homebrew_casks:
     description: "Claude Code project portability tool (with crane logo)"
     hooks:
       post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cc-port-with-logo"] if OS.mac?
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/cc-port-with-logo"]
+          end
     zap:
       trash:
         - "~/.claude/.cc-port.lock"
