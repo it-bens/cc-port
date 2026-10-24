@@ -3,6 +3,7 @@ package encrypt_test
 import (
 	"bytes"
 	"io"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,9 +11,20 @@ import (
 	"github.com/it-bens/cc-port/internal/encrypt"
 )
 
+// sharedPlaintext is the plaintext behind sharedCipher. The tamper, truncation,
+// and header tests only read or mutate ciphertext bytes, so they share one
+// scrypt derivation instead of paying one each.
+var sharedPlaintext = patternBytes(256)
+
+var sharedCipher = sync.OnceValues(func() ([]byte, error) {
+	return encryptTo("passphrase", sharedPlaintext)
+})
+
 func TestRoundTrip(t *testing.T) {
+	t.Parallel()
 	for _, size := range []int{0, 1, 1 << 20} {
 		t.Run("", func(t *testing.T) {
+			t.Parallel()
 			plaintext := patternBytes(size)
 
 			cipher := encryptBytes(t, "correct horse battery staple", plaintext)
@@ -27,6 +39,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestDecryptWrongPassphrase(t *testing.T) {
+	t.Parallel()
 	cipher := encryptBytes(t, "alpha", []byte("plaintext"))
 
 	_, err := encrypt.DecryptingReader(bytes.NewReader(cipher), "bravo")
@@ -34,7 +47,10 @@ func TestDecryptWrongPassphrase(t *testing.T) {
 }
 
 func TestDecryptTamperedBody(t *testing.T) {
-	cipher := encryptBytes(t, "passphrase", []byte("plaintext content for tampering"))
+	t.Parallel()
+	cipher, err := sharedCipher()
+	require.NoError(t, err)
+	cipher = bytes.Clone(cipher)
 	require.Greater(t, len(cipher), 200, "cipher size sanity")
 	cipher[len(cipher)-1] ^= 0xFF
 
@@ -45,7 +61,9 @@ func TestDecryptTamperedBody(t *testing.T) {
 }
 
 func TestDecryptTruncated(t *testing.T) {
-	cipher := encryptBytes(t, "passphrase", []byte("plaintext content for truncation"))
+	t.Parallel()
+	cipher, err := sharedCipher()
+	require.NoError(t, err)
 	require.Greater(t, len(cipher), 32, "cipher size sanity")
 	truncated := cipher[:len(cipher)-16]
 
@@ -56,8 +74,10 @@ func TestDecryptTruncated(t *testing.T) {
 }
 
 func TestIsEncrypted(t *testing.T) {
+	t.Parallel()
 	t.Run("matches age header", func(t *testing.T) {
-		cipher := encryptBytes(t, "passphrase", nil)
+		cipher, err := sharedCipher()
+		require.NoError(t, err)
 		require.True(t, encrypt.IsEncrypted(cipher))
 	})
 	t.Run("rejects plaintext", func(t *testing.T) {
