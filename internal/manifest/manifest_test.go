@@ -217,7 +217,9 @@ func TestReadManifestFromZip_RejectsOversizedEntry(t *testing.T) {
 	require.NoError(t, err)
 	zipWriter := zip.NewWriter(archiveFile)
 
-	entry, err := zipWriter.Create("metadata.xml")
+	// Stored rather than deflated: the guard reads the decoded entry size, so
+	// compressing this padding would only add CPU to the test.
+	entry, err := zipWriter.CreateHeader(&zip.FileHeader{Name: "metadata.xml", Method: zip.Store})
 	require.NoError(t, err)
 	// 5 MiB of XML-safe padding inside a <placeholders> block. Above the
 	// 4 MiB manifest cap, so ReadManifestFromZip must reject it.

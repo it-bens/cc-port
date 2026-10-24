@@ -16,6 +16,7 @@ import (
 )
 
 func TestWriteJSONLFile_ExportsLegalLongHistoryLine(t *testing.T) {
+	t.Parallel()
 	sourcePath := filepath.Join(t.TempDir(), "history.jsonl")
 	require.NoError(t, os.WriteFile(sourcePath, []byte(strings.Repeat("x", MaxHistoryLine-1)+"\n"), 0o600))
 	var buffer bytes.Buffer
@@ -28,6 +29,7 @@ func TestWriteJSONLFile_ExportsLegalLongHistoryLine(t *testing.T) {
 }
 
 func TestWriteJSONLFile_RejectsHistoryLineOverLimit(t *testing.T) {
+	t.Parallel()
 	sourcePath := filepath.Join(t.TempDir(), "history.jsonl")
 	require.NoError(t, os.WriteFile(sourcePath, []byte(strings.Repeat("x", MaxHistoryLine+1)), 0o600))
 	var buffer bytes.Buffer

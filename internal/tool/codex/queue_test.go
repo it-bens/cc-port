@@ -94,6 +94,7 @@ func applyQueueMove(t *testing.T, home *Home, req tool.MoveRequest) (planned, ap
 }
 
 func TestQueueDBMoveRewritesSkillPath(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
@@ -107,6 +108,7 @@ func TestQueueDBMoveRewritesSkillPath(t *testing.T) {
 }
 
 func TestQueueDBMoveRewritesSkillFileMentionPath(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
@@ -118,6 +120,7 @@ func TestQueueDBMoveRewritesSkillFileMentionPath(t *testing.T) {
 }
 
 func TestQueueDBMoveMatchesMentionFileNameLikeCodex(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name          string
 		mentionPath   string
@@ -153,6 +156,7 @@ func TestQueueDBMoveMatchesMentionFileNameLikeCodex(t *testing.T) {
 }
 
 func TestQueueDBMoveRewritesSkillPathContainingQuote(t *testing.T) {
+	t.Parallel()
 	home := newQueueHome(t, map[string]string{
 		"quoted-skill": `{"UserInput":{"content":[{"type":"skill","name":"deploy",` +
 			`"path":"/Users/test/Projects/say\"hi/.codex/skills/deploy/SKILL.md"}],"client_id":"c"}}`,
@@ -169,6 +173,7 @@ func TestQueueDBMoveRewritesSkillPathContainingQuote(t *testing.T) {
 }
 
 func TestQueueDBMoveLeavesTextItemAndByteRangeUntouched(t *testing.T) {
+	t.Parallel()
 	const text = "see /Users/test/Projects/app/main.go [image]"
 	home := newQueueHome(t, map[string]string{
 		"text-and-skill": `{"UserInput":{"content":[` +
@@ -193,6 +198,7 @@ func TestQueueDBMoveLeavesTextItemAndByteRangeUntouched(t *testing.T) {
 }
 
 func TestQueueDBMoveLeavesPrefixSharingSkillPathUntouched(t *testing.T) {
+	t.Parallel()
 	const sibling = `{"UserInput":{"content":[{"type":"skill","name":"deploy",` +
 		`"path":"/Users/test/Projects/app-extras/.codex/skills/deploy/SKILL.md"}],"client_id":"c"}}`
 	home := newQueueHome(t, map[string]string{"sibling-skill": sibling})
@@ -206,6 +212,7 @@ func TestQueueDBMoveLeavesPrefixSharingSkillPathUntouched(t *testing.T) {
 }
 
 func TestQueueDBApplyFailsWhenPlannedPayloadChangedAfterPlan(t *testing.T) {
+	t.Parallel()
 	const deploy = `{"UserInput":{"content":[{"type":"skill","name":"deploy",` +
 		`"path":"/Users/test/Projects/app/.codex/skills/deploy/SKILL.md"}],"client_id":"c"}}`
 	const release = `{"UserInput":{"content":[{"type":"skill","name":"release",` +
@@ -233,6 +240,7 @@ func TestQueueDBApplyFailsWhenPlannedPayloadChangedAfterPlan(t *testing.T) {
 }
 
 func TestQueueDBRewriteRollsBackBeforeFinalSurface(t *testing.T) {
+	t.Parallel()
 	_, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	original := readQueuedPayloadByID(t, home, codextest.FixtureQueuedItemID)
@@ -250,16 +258,19 @@ func TestQueueDBRewriteRollsBackBeforeFinalSurface(t *testing.T) {
 }
 
 func TestQueueDBPlanCountsZeroWhenQueueDatabaseAbsent(t *testing.T) {
-	_, home := fixtureWorkspace(t)
-	require.NoError(t, os.Remove(filepath.Join(home.SQLiteDir, codexschema.QueueDBFileName)))
+	t.Parallel()
+	// A neighboring state database must not be mistaken for the queue database.
+	dir := t.TempDir()
+	codextest.BuildFixtureStateDB(t, filepath.Join(dir, codexschema.StateDBFileName))
 
-	plans, err := queueDBRewritePlansForProject(context.Background(), home.SQLiteDir, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project")
+	plans, err := queueDBRewritePlansForProject(context.Background(), dir, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project")
 
 	require.NoError(t, err)
 	assert.Zero(t, plans.valueCount())
 }
 
 func TestQueueDBRefusesSchemaWithoutIDKeyOrPayload(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		schema string
@@ -301,6 +312,7 @@ func writeQueueSchema(t *testing.T, schema string) string {
 }
 
 func TestQueueDBApplyFailsWhenQueueDatabasesChangedAfterPlan(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name            string
 		addedFile       string
@@ -351,6 +363,7 @@ func writeQueueDatabase(t *testing.T, path string) {
 }
 
 func TestQueueDBRefusesPayloadWithoutContentArray(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name    string
 		payload string

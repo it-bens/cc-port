@@ -4,10 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,21 +38,55 @@ func allSelected(t tool.Tool) map[string]bool {
 	return selected
 }
 
+// buildInTempDir runs build in a fresh temporary directory and removes it
+// afterwards, for the sync.OnceValues archive caches. A builder never calls a
+// *testing.T method: a t.Fatal there exits through runtime.Goexit,
+// sync.OnceValues re-panics with nil, and the whole test binary aborts.
+func buildInTempDir(build func(dir string) ([]byte, error)) (body []byte, err error) {
+	dir, err := os.MkdirTemp("", "cc-port-importer-fixture-")
+	if err != nil {
+		return nil, fmt.Errorf("create fixture directory: %w", err)
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			body = nil
+			err = errors.Join(err, fmt.Errorf("remove fixture directory: %w", removeErr))
+		}
+	}()
+	return build(dir)
+}
+
+// fixtureArchive caches the fixture project's full-category Claude export.
+var fixtureArchive = sync.OnceValues(func() ([]byte, error) { return buildInTempDir(exportFixtureArchive) })
+
+// buildArchive returns the cached Claude export; each caller imports it into its own home.
 func buildArchive(t *testing.T) (body []byte, projectPath string) {
 	t.Helper()
-	home := claudetest.SetupFixture(t)
+	body, err := fixtureArchive()
+	require.NoError(t, err)
+	return body, claudetest.FixtureProjectPath()
+}
+
+// exportFixtureArchive exports every category of the Claude fixture staged under dir.
+func exportFixtureArchive(dir string) ([]byte, error) {
+	home, err := claudetest.StageFixture(dir)
+	if err != nil {
+		return nil, err
+	}
 	claudeTool := claude.New()
-	targets := []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}
-	projectPath = claudetest.FixtureProjectPath()
 
 	var buf bytes.Buffer
-	_, err := export.Run(context.Background(), targets, &export.Options{
-		ProjectPath: projectPath,
+	_, err = export.Run(context.Background(), []tool.Target{
+		{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)},
+	}, &export.Options{
+		ProjectPath: claudetest.FixtureProjectPath(),
 		Output:      &buf,
 		Selected:    map[string]map[string]bool{claudeTool.Name(): allSelected(claudeTool)},
 	})
-	require.NoError(t, err)
-	return buf.Bytes(), projectPath
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func blankHome(t *testing.T) *claude.Home {
@@ -149,35 +186,58 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 	assert.Contains(t, result.Warnings[codexTool.Name()][0], "threads sidecar row(s) could not be applied")
 }
 
-// buildMultiToolArchive exports one project both tools know about, so an
-// archive carries a Claude block and a Codex block. It re-keys the Claude
-// fixture onto Codex's fixture project path, which is the only project both
-// staged trees share. The Claude selection includes config, so the archive
-// carries the one entry the plan's destination-configuration read recognizes.
+// multiToolArchive caches the archive carrying both a Claude and a Codex block.
+var multiToolArchive = sync.OnceValues(func() ([]byte, error) { return buildInTempDir(exportMultiToolArchive) })
+
+// buildMultiToolArchive returns the cached two-tool archive and the project both blocks cover.
 func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	t.Helper()
-	sharedProject = codextest.FixtureProjectPath()
-	claudeSource := claudetest.SetupFixture(t)
+	body, err := multiToolArchive()
+	require.NoError(t, err)
+	return body, codextest.FixtureProjectPath()
+}
+
+// exportMultiToolArchive re-keys the Claude fixture onto Codex's fixture
+// project path, the only project both staged trees share. The Claude selection
+// includes config so the archive carries the one entry the plan's
+// destination-configuration read recognizes.
+func exportMultiToolArchive(dir string) ([]byte, error) {
+	sharedProject := codextest.FixtureProjectPath()
+	claudeSource, err := claudetest.StageFixture(filepath.Join(dir, "claude"))
+	if err != nil {
+		return nil, err
+	}
+	codexDir := filepath.Join(dir, "codex")
+	if err := codextest.StageFixture(codexDir); err != nil {
+		return nil, err
+	}
 	claudeTool, codexTool := claude.New(), codex.New()
 
-	moveResult, err := move.Apply(t.Context(), []tool.Target{{
+	moveResult, err := move.Apply(context.Background(), []tool.Target{{
 		Tool: claudeTool, Workspace: claudetest.NewWorkspace(claudeSource),
 	}}, move.Options{OldPath: claudetest.FixtureProjectPath(), NewPath: sharedProject, RefsOnly: true})
-	require.NoError(t, err)
-	require.False(t, moveResult.Failed())
+	if err != nil {
+		return nil, err
+	}
+	if moveResult.Failed() {
+		return nil, fmt.Errorf("re-key the Claude fixture onto the shared project: %w", moveResult.ByTool[0].Err)
+	}
 
 	claudeSelection := map[string]bool{"sessions": true, "config": true}
 	codexSelection := map[string]bool{"sessions": true}
 	claudeWorkspace := claudetest.NewWorkspace(claudeSource)
-	codexDir := codextest.SetupFixture(t)
 	codexWorkspace := quietCodexWorkspace(&codex.Home{Dir: codexDir, SQLiteDir: codexDir})
-	claudePlaceholders, err := claudeWorkspace.Placeholders(t.Context(), sharedProject, claudeSelection)
-	require.NoError(t, err)
-	codexPlaceholders, err := codexWorkspace.Placeholders(t.Context(), sharedProject, codexSelection)
-	require.NoError(t, err)
+	claudePlaceholders, err := claudeWorkspace.Placeholders(context.Background(), sharedProject, claudeSelection)
+	if err != nil {
+		return nil, err
+	}
+	codexPlaceholders, err := codexWorkspace.Placeholders(context.Background(), sharedProject, codexSelection)
+	if err != nil {
+		return nil, err
+	}
 
 	var archiveBytes bytes.Buffer
-	_, err = export.Run(t.Context(), []tool.Target{
+	_, err = export.Run(context.Background(), []tool.Target{
 		{Tool: claudeTool, Workspace: claudeWorkspace},
 		{Tool: codexTool, Workspace: codexWorkspace},
 	}, &export.Options{
@@ -192,8 +252,10 @@ func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 			codexTool.Name():  codexPlaceholders,
 		},
 	})
-	require.NoError(t, err)
-	return archiveBytes.Bytes(), sharedProject
+	if err != nil {
+		return nil, err
+	}
+	return archiveBytes.Bytes(), nil
 }
 
 func quietCodexWorkspace(home *codex.Home) *codex.Workspace {

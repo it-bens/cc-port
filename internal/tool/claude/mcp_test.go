@@ -14,7 +14,15 @@ import (
 )
 
 func TestMCPServersReportsUserScopeDefinitions(t *testing.T) {
-	workspace := claudetest.NewWorkspace(claudetest.SetupFixture(t))
+	t.Parallel()
+	// The project-scoped fs and fs-de must stay out of the user-scope result.
+	workspace := claudetest.NewWorkspace(homeWithConfig(t,
+		`{"mcpServers":{"playwright":{"command":"npx","args":["-y","@playwright/mcp@latest"]},`+
+			`"docs":{"type":"http","url":"https://mcp.example.invalid/docs"}},`+
+			`"projects":{"/Users/test/Projects/myproject":{"mcpServers":{"fs":{"command":"node",`+
+			`"args":["/Users/test/Projects/myproject/mcp/fs-server.js"],"env":{"FS_ROOT":"/Users/test/Projects/myproject"}}}},`+
+			`"/Users/test/Projects/my project.v2":{"mcpServers":{"fs-de":{"command":"node",`+
+			`"args":["/Users/test/Projects/my project.v2/mcp/server.js"],"env":{"WORKSPACE":"/Users/test/Projects/my project.v2"}}}}}}`))
 
 	servers, err := workspace.MCPServers()
 	require.NoError(t, err)

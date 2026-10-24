@@ -60,6 +60,7 @@ func TestFindActiveRefusesUnparseableSession(t *testing.T) {
 // of slack, so the kernel's sub-second start time and the `ps` rendering Claude
 // Code recorded both count as matches.
 func TestFindActiveJudgesProcStartAgreement(t *testing.T) {
+	t.Parallel()
 	procStart, recorded := fixtureHostProcStart(t)
 
 	cases := []struct {

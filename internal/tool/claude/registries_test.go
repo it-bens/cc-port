@@ -36,6 +36,7 @@ func TestSessionKeyedTargets_ZipPrefixesTerminatedWithSlash(t *testing.T) {
 }
 
 func TestSessionKeyedTargets_FilesRootedUnderHomeBaseDir(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 
 	locations, err := claude.LocateProject(t.Context(), claudeHome, "/Users/test/Projects/myproject")

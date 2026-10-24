@@ -14,6 +14,7 @@ import (
 )
 
 func TestSQLiteBusyCodeClassifiesPrimaryAndExtendedCodes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		code int
@@ -32,6 +33,7 @@ func TestSQLiteBusyCodeClassifiesPrimaryAndExtendedCodes(t *testing.T) {
 }
 
 func TestProbeDatabaseBusyDetectsWriterOnPathContainingQuestionMark(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "dot?codex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	dbPath := filepath.Join(dir, "state_5.sqlite")

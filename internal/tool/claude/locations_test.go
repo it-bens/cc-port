@@ -13,6 +13,7 @@ import (
 
 	"github.com/it-bens/cc-port/internal/archive"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
@@ -30,7 +31,7 @@ func containsBaseName(items []string, baseName string) bool {
 }
 
 func TestLocateProject(t *testing.T) {
-	claudeHome := claudetest.SetupFixture(t)
+	claudeHome := claudetest.SharedFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -66,16 +67,17 @@ func TestLocateProject(t *testing.T) {
 }
 
 func TestLocateProject_NotFound(t *testing.T) {
-	claudeHome := claudetest.SetupFixture(t)
+	claudeHome := &claude.Home{Dir: t.TempDir()}
 
 	absentProjectPath := filepath.Join(t.TempDir(), "absent-project")
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, absentProjectPath)
-	require.Error(t, err)
+	require.ErrorIs(t, err, tool.ErrProjectAbsent)
 	assert.Nil(t, projectLocations)
 }
 
 func TestLocateProject_CollectsUsageData(t *testing.T) {
-	claudeHome := claudetest.SetupFixture(t)
+	t.Parallel()
+	claudeHome := claudetest.SharedFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -94,7 +96,8 @@ func TestLocateProject_CollectsUsageData(t *testing.T) {
 }
 
 func TestLocateProject_CollectsPluginsData(t *testing.T) {
-	claudeHome := claudetest.SetupFixture(t)
+	t.Parallel()
+	claudeHome := claudetest.SharedFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -106,7 +109,8 @@ func TestLocateProject_CollectsPluginsData(t *testing.T) {
 }
 
 func TestLocateProject_CollectsTaskFiles(t *testing.T) {
-	claudeHome := claudetest.SetupFixture(t)
+	t.Parallel()
+	claudeHome := claudetest.SharedFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -122,7 +126,8 @@ func TestLocateProject_CollectsTaskFiles(t *testing.T) {
 }
 
 func TestLocateProject_CollectsTodos(t *testing.T) {
-	claudeHome := claudetest.SetupFixture(t)
+	t.Parallel()
+	claudeHome := claudetest.SharedFixture(t)
 
 	projectLocations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 	require.NoError(t, err)
@@ -135,6 +140,7 @@ func TestLocateProject_CollectsTodos(t *testing.T) {
 }
 
 func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 	memoryDir := filepath.Join(claudeHome.ProjectDir(testProjectPath), "memory")
 	artifactName := "MEMORY.md" + rewrite.RollbackSuffix
@@ -150,6 +156,7 @@ func TestCollectMemoryFiles_ExcludesRollbackArtifact(t *testing.T) {
 }
 
 func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
+	t.Parallel()
 	claudeHome := claudetest.SetupFixture(t)
 	workspace := claudetest.NewWorkspace(claudeHome)
 	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
@@ -222,13 +229,14 @@ func TestLocateProject_ExcludesArtifactsFromPluginsDataAndTasks(t *testing.T) {
 }
 
 func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
+	t.Parallel()
 	// Fixture collision: "/Users/test/Projects/my project" (real cwd in
 	// sessions/12345.json) and "/Users/test/Projects/my-project" (the lookup
 	// path) both encode to -Users-test-Projects-my-project. The witnessing
 	// session's sessionId e5f6a7b8-0000-0000-0000-000000000005 appears in
 	// the encoded dir as a transcript, so the identity check sees the
 	// mismatched cwd and must refuse.
-	claudeHome := claudetest.SetupFixture(t)
+	claudeHome := claudetest.SharedFixture(t)
 
 	_, err := claude.LocateProject(t.Context(), claudeHome, "/Users/test/Projects/my-project")
 
@@ -239,7 +247,8 @@ func TestLocateProject_RefusesEncodedDirWithMismatchedSessionCwd(t *testing.T) {
 }
 
 func TestLocateProject_PassesOnMatchingSessionCwd(t *testing.T) {
-	claudeHome := claudetest.SetupFixture(t)
+	t.Parallel()
+	claudeHome := claudetest.SharedFixture(t)
 
 	locations, err := claude.LocateProject(t.Context(), claudeHome, testProjectPath)
 

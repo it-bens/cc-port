@@ -4,10 +4,14 @@ package claudetest
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
 	"github.com/it-bens/cc-port/internal/tool/claude"
@@ -56,35 +60,102 @@ func NewWorkspace(home *claude.Home) *claude.Workspace {
 func SetupFixture(t *testing.T) *claude.Home {
 	t.Helper()
 
-	temporaryDir := t.TempDir()
-	claudeDir := filepath.Join(temporaryDir, "dotclaude")
-	configFilePath := filepath.Join(temporaryDir, "dotclaude.json")
+	home, err := StageFixture(t.TempDir())
+	require.NoError(t, err)
+	return home
+}
 
-	fixtureDir := findFixtureDir(t)
+// StageFixture stages testdata/dotclaude under dir, moves the tree's config
+// file beside it and sanitizes session PIDs, returning a Home pointing at the
+// staged copy. It takes no testing.TB so a package can build one read-only
+// fixture before running any test.
+func StageFixture(dir string) (*claude.Home, error) {
+	claudeDir := filepath.Join(dir, "dotclaude")
+	configFilePath := filepath.Join(dir, "dotclaude.json")
+
+	fixtureDir, err := findFixtureDir()
+	if err != nil {
+		return nil, err
+	}
 
 	if err := fsutil.CopyDir(context.Background(), filepath.Join(fixtureDir, "dotclaude"), claudeDir, nil); err != nil {
-		t.Fatalf("copy fixture directory: %v", err)
+		return nil, fmt.Errorf("copy fixture directory: %w", err)
 	}
 
 	sourceConfigPath := filepath.Join(claudeDir, ".claude.json")
-	configData, err := os.ReadFile(sourceConfigPath) //nolint:gosec // G304: path inside t.TempDir()
+	configData, err := os.ReadFile(sourceConfigPath) //nolint:gosec // G304: path inside the caller's staging directory
 	if err != nil {
-		t.Fatalf("read fixture .claude.json: %v", err)
+		return nil, fmt.Errorf("read fixture .claude.json: %w", err)
 	}
 	//nolint:gosec // G306: 0600 intentional for fixture
 	if err := os.WriteFile(configFilePath, configData, 0o600); err != nil {
-		t.Fatalf("write config file: %v", err)
+		return nil, fmt.Errorf("write config file: %w", err)
 	}
 	_ = os.Remove(sourceConfigPath)
 
 	if err := replaceSessionPIDs(filepath.Join(claudeDir, "sessions"), deadSessionPID); err != nil {
-		t.Fatalf("sanitize fixture session PIDs: %v", err)
+		return nil, fmt.Errorf("sanitize fixture session PIDs: %w", err)
 	}
 
 	return &claude.Home{
 		Dir:        claudeDir,
 		ConfigFile: configFilePath,
+	}, nil
+}
+
+// sharedHome holds the fixture InstallSharedFixture staged. TestMain sets it
+// before m.Run, so tests only read it, including when they run in parallel.
+var sharedHome *claude.Home
+
+// InstallSharedFixture stages the fixture once into a fresh temporary
+// directory and records it for SharedFixture. A package's TestMain calls it
+// before m.Run; the returned cleanup removes the staged directory.
+func InstallSharedFixture() (cleanup func() error, err error) {
+	dir, err := os.MkdirTemp("", "cc-port-claude-fixture-")
+	if err != nil {
+		return nil, fmt.Errorf("create shared fixture directory: %w", err)
 	}
+
+	home, err := StageFixture(dir)
+	if err != nil {
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			return nil, errors.Join(err, removeErr)
+		}
+		return nil, err
+	}
+	sharedHome = home
+
+	return func() error { return os.RemoveAll(dir) }, nil
+}
+
+// RunWithSharedFixture installs the shared fixture, runs m, and removes the
+// fixture, returning the exit code for TestMain to pass to os.Exit. A failed
+// install or cleanup is printed to stderr and yields exit code 1.
+func RunWithSharedFixture(m *testing.M) int {
+	cleanup, err := InstallSharedFixture()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	exitCode := m.Run()
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return exitCode
+}
+
+// SharedFixture returns the read-only fixture InstallSharedFixture staged. Only
+// tests that never write under the home may use it; a writing test stages its
+// own copy with SetupFixture. A missing installation fails the test rather
+// than handing back an empty home.
+func SharedFixture(t testing.TB) *claude.Home {
+	t.Helper()
+
+	if sharedHome == nil {
+		t.Fatalf("claudetest.SharedFixture: no shared fixture installed; call claudetest.InstallSharedFixture from TestMain")
+	}
+	return sharedHome
 }
 
 // replaceSessionPIDs rewrites "pid" in every sessions/*.json to deadPID.
@@ -103,7 +174,7 @@ func replaceSessionPIDs(sessionsDir string, deadPID int) error {
 			continue
 		}
 		sessionFilePath := filepath.Join(sessionsDir, entry.Name())
-		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // G304: path inside t.TempDir()
+		data, err := os.ReadFile(sessionFilePath) //nolint:gosec // G304: path inside the fixture staging directory
 		if err != nil {
 			return err
 		}
@@ -130,12 +201,10 @@ func FixtureProjectPath() string {
 	return "/Users/test/Projects/myproject"
 }
 
-func findFixtureDir(t *testing.T) string {
-	t.Helper()
-
+func findFixtureDir() (string, error) {
 	currentDir, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("get working directory: %v", err)
+		return "", fmt.Errorf("get working directory: %w", err)
 	}
 
 	// Walk upward looking for a testdata/ that contains our dotclaude/ fixture.
@@ -145,12 +214,11 @@ func findFixtureDir(t *testing.T) string {
 	for {
 		candidate := filepath.Join(currentDir, "testdata")
 		if info, err := os.Stat(filepath.Join(candidate, "dotclaude")); err == nil && info.IsDir() {
-			return candidate
+			return candidate, nil
 		}
 		parentDir := filepath.Dir(currentDir)
 		if parentDir == currentDir {
-			// No testdata/dotclaude means the test ran outside the repository tree; this is a programmer error.
-			t.Fatal("could not find testdata/dotclaude/ directory")
+			return "", fmt.Errorf("could not find testdata/dotclaude/ directory from %s", currentDir)
 		}
 		currentDir = parentDir
 	}

@@ -55,6 +55,7 @@ const (
 )
 
 func TestDiscoverRolloutFilesFindsBothRoots(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 
@@ -73,6 +74,7 @@ func TestDiscoverRolloutFilesFindsBothRoots(t *testing.T) {
 // consumer must see one logical file, mirroring Codex's own walker
 // (should_skip_compressed_sibling).
 func TestDiscoverRolloutFiles_SuppressesCompressedSibling(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	plainPath := rolloutFixturePath(home, eraCPath)
@@ -85,6 +87,7 @@ func TestDiscoverRolloutFiles_SuppressesCompressedSibling(t *testing.T) {
 }
 
 func TestDiscoverRolloutFilesRefusesCompressedOnlyRollouts(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := filepath.Join(home.Dir, sessionsSubdir, "2026", "07", "18", "rollout-refused.jsonl.zst")
@@ -97,6 +100,7 @@ func TestDiscoverRolloutFilesRefusesCompressedOnlyRollouts(t *testing.T) {
 }
 
 func TestRewriteRolloutLinesRewritesAtomicallyAndPreservesMtime(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	require.NoError(t, os.WriteFile(path, []byte("line one\nline two\n"), 0o600))
 	past := time.Date(2020, time.March, 1, 12, 0, 0, 0, time.UTC)
@@ -123,6 +127,7 @@ func TestRewriteRolloutLinesRewritesAtomicallyAndPreservesMtime(t *testing.T) {
 // rollout with no match, here ending in an unterminated line, is not written
 // at all: a rename over it would detach a live Codex writer.
 func TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	sessionMeta := `{"type":"session_meta","payload":{"id":"primary-session","cwd":"/Users/test/Projects/otherproject"}}`
 	unterminatedMessage := `{"type":"response_item","payload":{"type":"message","role":"user",` +
@@ -152,6 +157,7 @@ func TestApplyRolloutSubstitutionsLeavesUnmatchedRolloutUntouched(t *testing.T) 
 // reassembly: a terminated line keeps its '\n' and an unterminated final line
 // stays unterminated, so the only bytes that change are the substituted paths.
 func TestApplyRolloutSubstitutionsPreservesLineTerminators(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")
 	const (
 		sessionMeta = `{"type":"session_meta","payload":{"id":"primary-session","cwd":"%s"}}` + "\n"
@@ -175,6 +181,7 @@ func TestApplyRolloutSubstitutionsPreservesLineTerminators(t *testing.T) {
 }
 
 func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraCPath)
@@ -191,6 +198,7 @@ func TestPlanRolloutFileEraCCountsStructuredAndProseUnderDeep(t *testing.T) {
 }
 
 func TestPlanRolloutFileEraBHasNoTurnContext(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraBPath)
@@ -202,6 +210,7 @@ func TestPlanRolloutFileEraBHasNoTurnContext(t *testing.T) {
 }
 
 func TestPlanRolloutFileEraAIsSkippedEvenUnderDeep(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraAPath)
@@ -215,6 +224,7 @@ func TestPlanRolloutFileEraAIsSkippedEvenUnderDeep(t *testing.T) {
 }
 
 func TestApplyRolloutFileRewritesStructuredFieldsAlways(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraCPath)
@@ -252,6 +262,7 @@ func TestApplyRolloutFileRewritesStructuredFieldsAlways(t *testing.T) {
 }
 
 func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraCPath)
@@ -271,6 +282,7 @@ func TestApplyRolloutFileRewritesProseUnderDeep(t *testing.T) {
 }
 
 func TestRewriteRolloutLineScopesShallowModeToStructuredFields(t *testing.T) {
+	t.Parallel()
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users/fixture/codexproject","note":"keep /Users/fixture/codexproject verbatim"}}`)
 	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: "/Users/fixture/renamed-project"}}
 
@@ -284,6 +296,7 @@ func TestRewriteRolloutLineScopesShallowModeToStructuredFields(t *testing.T) {
 }
 
 func TestStructuredRolloutFieldPathsNamesEveryPathCarrier(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		rolloutType string
@@ -395,6 +408,7 @@ func TestStructuredRolloutFieldPathsNamesEveryPathCarrier(t *testing.T) {
 }
 
 func TestRewriteRolloutLineLeavesOtherEventMsgVariantsInDefaultMode(t *testing.T) {
+	t.Parallel()
 	line := []byte(`{"type":"event_msg","payload":{"type":"agent_message","message":"opened /Users/fixture/codexproject/src/main.py"}}`)
 	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: "/Users/fixture/renamed-project"}}
 
@@ -405,6 +419,7 @@ func TestRewriteRolloutLineLeavesOtherEventMsgVariantsInDefaultMode(t *testing.T
 }
 
 func TestRewriteRolloutLineRewritesMixedEscapedFieldInEveryMode(t *testing.T) {
+	t.Parallel()
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users\/fixture/codexproject"}}`)
 	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: "/Users/fixture/renamed-project"}}
 
@@ -419,6 +434,7 @@ func TestRewriteRolloutLineRewritesMixedEscapedFieldInEveryMode(t *testing.T) {
 }
 
 func TestRewriteRolloutLineDeepRewritesFieldOnceWhenNewPathContainsOldPath(t *testing.T) {
+	t.Parallel()
 	line := []byte(`{"type":"session_meta","payload":{"cwd":"/Users/fixture/codexproject"}}`)
 	newPath := "/Users/elsewhere" + codextest.FixtureProjectPath()
 	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: newPath}}
@@ -430,6 +446,7 @@ func TestRewriteRolloutLineDeepRewritesFieldOnceWhenNewPathContainsOldPath(t *te
 }
 
 func TestRewriteRolloutLineLeavesWritableRootsOutsideTheProject(t *testing.T) {
+	t.Parallel()
 	line := []byte(`{"type":"turn_context","payload":{"cwd":"/Users/test/Projects/elsewhere","sandbox_policy":{"type":"workspace-write",` +
 		`"writable_roots":["/Users/fixture/codexproject/build","/Users/fixture/codexproject-cache","/opt/shared-cache"]}}}`)
 	substitutions := []pathSubstitution{{from: codextest.FixtureProjectPath(), to: "/Users/fixture/renamed-project"}}
@@ -444,6 +461,7 @@ func TestRewriteRolloutLineLeavesWritableRootsOutsideTheProject(t *testing.T) {
 }
 
 func TestRolloutMalformedWarningsPreserveUnparseableLines(t *testing.T) {
+	t.Parallel()
 	warnings := rolloutMalformedWarnings("sessions/test.jsonl", [][]byte{[]byte(`{"type":"session_meta"}`), []byte("not json")})
 	assert.Equal(t, []string{"sessions/test.jsonl: malformed JSON line 2 preserved unchanged"}, warnings)
 }
@@ -456,6 +474,7 @@ func TestRolloutMalformedWarningsPreserveUnparseableLines(t *testing.T) {
 // must rewrite the stored value to the new path, not silently leave it
 // stale (a real move rename would leave it dangling).
 func TestApplyRolloutFileRewritesSymlinkAliasedCWD(t *testing.T) {
+	t.Parallel()
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
 	require.NoError(t, os.MkdirAll(realProject, 0o750))
@@ -498,6 +517,7 @@ func TestApplyRolloutFileRewritesSymlinkAliasedCWD(t *testing.T) {
 // more specific (longer) spelling first so the shorter source only ever
 // matches what is genuinely left over.
 func TestApplyRolloutFileRewritesOverlappingSubstitutionSourcesInOrder(t *testing.T) {
+	t.Parallel()
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
 	require.NoError(t, os.MkdirAll(realProject, 0o750))
@@ -546,6 +566,7 @@ func TestApplyRolloutFileRewritesOverlappingSubstitutionSourcesInOrder(t *testin
 // reduces to checking newPath alone, same as before the guard generalized
 // to inspect full replacement values.
 func TestPlanAndApplyRolloutFileRefuseWhenNewPathContainsASubstitutionSource(t *testing.T) {
+	t.Parallel()
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
 	require.NoError(t, os.MkdirAll(realProject, 0o750))
@@ -586,6 +607,7 @@ func TestPlanAndApplyRolloutFileRefuseWhenNewPathContainsASubstitutionSource(t *
 // (newPath+suffixB, the wrong suffix, doubling "other") instead of the
 // correct ".../other/nested" (newPath+suffixA).
 func TestPlanAndApplyRolloutFileRefuseWhenSuffixReintroducesSource(t *testing.T) {
+	t.Parallel()
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
 	require.NoError(t, os.MkdirAll(filepath.Join(realProject, "nested"), 0o750))
@@ -634,6 +656,7 @@ func TestPlanAndApplyRolloutFileRefuseWhenSuffixReintroducesSource(t *testing.T)
 // reading ".../linkY/elsewhere && ls" instead of the correct
 // ".../linkY/bar && ls".
 func TestPlanAndApplyRolloutFileRefuseWhenReplacementAndUnchangedTextStraddleASource(t *testing.T) {
+	t.Parallel()
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
 	require.NoError(t, os.MkdirAll(filepath.Join(realProject, "elsewhere"), 0o750))
@@ -665,6 +688,7 @@ func TestPlanAndApplyRolloutFileRefuseWhenReplacementAndUnchangedTextStraddleASo
 // guardSubstitutionOrder must not fire here even though the same substring
 // relationship triggers the multi-source guard above.
 func TestApplyRolloutFileSingleSourceSucceedsWhenNewPathContainsOldPath(t *testing.T) {
+	t.Parallel()
 	tempRoot := t.TempDir()
 	project := filepath.Join(tempRoot, "project")
 	newPath := project + "-renamed"
@@ -690,6 +714,7 @@ func TestApplyRolloutFileSingleSourceSucceedsWhenNewPathContainsOldPath(t *testi
 }
 
 func TestApplyRolloutFileLeavesEraAFileByteIdentical(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	path := rolloutFixturePath(home, eraAPath)

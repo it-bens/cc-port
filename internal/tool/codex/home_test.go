@@ -18,6 +18,7 @@ func fakeGetenv(values map[string]string) func(string) string {
 func noProcesses() ([]ProcessInfo, error) { return nil, nil }
 
 func TestDetectReportsAbsentWhenDefaultHomeMissing(t *testing.T) {
+	t.Parallel()
 	homeDir := t.TempDir()
 	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses)
 
@@ -28,6 +29,7 @@ func TestDetectReportsAbsentWhenDefaultHomeMissing(t *testing.T) {
 }
 
 func TestDetectReportsPresentWhenDefaultHomeExists(t *testing.T) {
+	t.Parallel()
 	homeDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o750))
 	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses)
@@ -39,6 +41,7 @@ func TestDetectReportsPresentWhenDefaultHomeExists(t *testing.T) {
 }
 
 func TestOpenDefaultLocationReportsToolAbsent(t *testing.T) {
+	t.Parallel()
 	homeDir := t.TempDir()
 	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses)
 
@@ -48,6 +51,7 @@ func TestOpenDefaultLocationReportsToolAbsent(t *testing.T) {
 }
 
 func TestOpenExplicitOverrideMustExist(t *testing.T) {
+	t.Parallel()
 	homeDir := t.TempDir()
 	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses)
 
@@ -58,6 +62,7 @@ func TestOpenExplicitOverrideMustExist(t *testing.T) {
 }
 
 func TestOpenExplicitOverrideRejectsFile(t *testing.T) {
+	t.Parallel()
 	homeDir := t.TempDir()
 	filePath := filepath.Join(homeDir, "not-a-dir")
 	require.NoError(t, os.WriteFile(filePath, []byte("x"), 0o600))
@@ -69,6 +74,7 @@ func TestOpenExplicitOverrideRejectsFile(t *testing.T) {
 }
 
 func TestOpenExplicitOverrideCanonicalizesSymlink(t *testing.T) {
+	t.Parallel()
 	homeDir := t.TempDir()
 	realDir := filepath.Join(homeDir, "real-codex")
 	require.NoError(t, os.MkdirAll(realDir, 0o750))
@@ -85,6 +91,7 @@ func TestOpenExplicitOverrideCanonicalizesSymlink(t *testing.T) {
 }
 
 func TestResolveSQLiteDirDefaultsToCodexHome(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	resolution, err := resolveSQLiteDir(dir, fakeGetenv(nil), absentManagedSources(t, dir), fixtureNow)
@@ -94,6 +101,7 @@ func TestResolveSQLiteDirDefaultsToCodexHome(t *testing.T) {
 }
 
 func TestResolveSQLiteDirUsesEnvOverCodexHome(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	sqliteHome := filepath.Join(dir, "sqlite-elsewhere")
 	getenv := fakeGetenv(map[string]string{"CODEX_SQLITE_HOME": sqliteHome})
@@ -105,6 +113,7 @@ func TestResolveSQLiteDirUsesEnvOverCodexHome(t *testing.T) {
 }
 
 func TestResolveSQLiteDirPrefersConfigTOMLOverEnv(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	configured := filepath.Join(dir, "sqlite-from-config")
 	require.NoError(t, os.WriteFile(
@@ -121,6 +130,7 @@ func TestResolveSQLiteDirPrefersConfigTOMLOverEnv(t *testing.T) {
 }
 
 func TestResolveSQLiteDirResolvesRelativeConfigValueAgainstCodexHome(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), []byte("sqlite_home = \"relative-sqlite\"\n"), 0o600))
 
@@ -131,6 +141,7 @@ func TestResolveSQLiteDirResolvesRelativeConfigValueAgainstCodexHome(t *testing.
 }
 
 func TestResolveSQLiteDirExpandsTildeConfigValueAgainstOSHome(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	osHome := filepath.Join(t.TempDir(), "os-home")
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), []byte("sqlite_home = \"~/state\"\n"), 0o600))
@@ -142,6 +153,7 @@ func TestResolveSQLiteDirExpandsTildeConfigValueAgainstOSHome(t *testing.T) {
 }
 
 func TestResolveSQLiteDirTreatsBlankEnvironmentValueAsUnset(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	getenv := fakeGetenv(map[string]string{sqliteHomeEnv: "  \t"})
 
@@ -153,6 +165,7 @@ func TestResolveSQLiteDirTreatsBlankEnvironmentValueAsUnset(t *testing.T) {
 }
 
 func TestResolveSQLiteDirTrimsEnvironmentValue(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	sqliteHome := filepath.Join(dir, "sqlite-elsewhere")
 	getenv := fakeGetenv(map[string]string{sqliteHomeEnv: " " + sqliteHome + "\n"})
@@ -164,6 +177,7 @@ func TestResolveSQLiteDirTrimsEnvironmentValue(t *testing.T) {
 }
 
 func TestResolveSQLiteDirResolvesRelativeEnvironmentValueAgainstProcessCWD(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	currentDir, err := os.Getwd()
 	require.NoError(t, err)
@@ -176,6 +190,7 @@ func TestResolveSQLiteDirResolvesRelativeEnvironmentValueAgainstProcessCWD(t *te
 }
 
 func TestResolveSQLiteDirExpandsTildeEnvironmentValueAgainstOSHome(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	osHome := filepath.Join(t.TempDir(), "os-home")
 	getenv := fakeGetenv(map[string]string{"HOME": osHome, sqliteHomeEnv: "~/state"})
@@ -187,6 +202,7 @@ func TestResolveSQLiteDirExpandsTildeEnvironmentValueAgainstOSHome(t *testing.T)
 }
 
 func TestResolveSQLiteDirResolvesEmptyConfigValueToCodexHome(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, configTOMLFileName), []byte(`sqlite_home = ""`), 0o600))
 	getenv := fakeGetenv(map[string]string{sqliteHomeEnv: filepath.Join(dir, "ignored")})
@@ -199,6 +215,7 @@ func TestResolveSQLiteDirResolvesEmptyConfigValueToCodexHome(t *testing.T) {
 }
 
 func TestProfileSQLiteHomeDivergence_EmptyWhenNoOverlayDeclaresSQLiteHome(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, "work.config.toml"),
@@ -223,6 +240,7 @@ func TestProfileSQLiteHomeDivergence_EmptyWhenNoOverlayDeclaresSQLiteHome(t *tes
 // different from that resolution, cc-port must say so rather than silently
 // trusting the base resolution.
 func TestProfileSQLiteHomeDivergence_ReportsDivergentOverlay(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	elsewhere := filepath.Join(dir, "elsewhere")
 	require.NoError(t, os.WriteFile(
@@ -240,6 +258,7 @@ func TestProfileSQLiteHomeDivergence_ReportsDivergentOverlay(t *testing.T) {
 }
 
 func TestOpenPopulatesAgentsDirFromHome(t *testing.T) {
+	t.Parallel()
 	homeDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o750))
 	adapter := NewAdapter(fakeGetenv(map[string]string{"HOME": homeDir}), noProcesses)

@@ -56,6 +56,7 @@ func planAndApply(t *testing.T, workspace *Workspace, req tool.MoveRequest) (pla
 }
 
 func TestMoveSurfacesDryRunApplyCountParity(t *testing.T) {
+	t.Parallel()
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{
 		OldPath:     codextest.FixtureProjectPath(),
@@ -80,6 +81,7 @@ func TestMoveSurfacesDryRunApplyCountParity(t *testing.T) {
 // roots carry the fixture's project reference, so both must be rewritten to
 // newPath and neither may retain oldPath.
 func TestMoveSurfacesRewritesBothMemoryWorktreeRoots(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project", DeepRewrite: true}
 
@@ -110,6 +112,7 @@ func TestMoveSurfacesRewritesBothMemoryWorktreeRoots(t *testing.T) {
 }
 
 func TestMoveSurfacesRolloutPlanApplyCountParity(t *testing.T) {
+	t.Parallel()
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project", DeepRewrite: true}
 
@@ -120,6 +123,7 @@ func TestMoveSurfacesRolloutPlanApplyCountParity(t *testing.T) {
 }
 
 func TestMoveSurfacesDefaultModeRolloutPlanPredictsApply(t *testing.T) {
+	t.Parallel()
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
@@ -136,6 +140,7 @@ const otherProjectRolloutPath = "sessions/2026/07/18/rollout-2026-07-18T11-00-00
 // would detach a live Codex writer holding the file open, and a registered
 // snapshot would replace it again on Restore.
 func TestMoveSurfacesLeavesOtherProjectRolloutUntouched(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	path := rolloutFixturePath(home, otherProjectRolloutPath)
 	original, err := os.ReadFile(path) //nolint:gosec // G304: path inside the staged fixture home
@@ -164,6 +169,7 @@ func TestMoveSurfacesLeavesOtherProjectRolloutUntouched(t *testing.T) {
 }
 
 func TestMoveSurfacesDefaultModeRewritesRuntimeRootsAndThreadSettings(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	newPath := "/Users/fixture/renamed-project"
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: newPath}
@@ -179,6 +185,7 @@ func TestMoveSurfacesDefaultModeRewritesRuntimeRootsAndThreadSettings(t *testing
 }
 
 func TestMoveSurfacesRefusesCompressedOnlyRollout(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	path := filepath.Join(home.Dir, sessionsSubdir, "2026", "07", "18", "rollout-refused.jsonl.zst")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
@@ -197,6 +204,7 @@ func TestMoveSurfacesRefusesCompressedOnlyRollout(t *testing.T) {
 // actually rewrites, since the state-db Plan counts the plan
 // matchingPathRewrites captured and Apply writes that same plan.
 func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
@@ -226,6 +234,7 @@ func TestMove_RewritesSymlinkAliasedThreadCwd(t *testing.T) {
 }
 
 func TestMoveSurfaces_UsesPreflightThreadMatchesAfterSourceRemoved(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
@@ -255,6 +264,7 @@ func TestMoveSurfaces_UsesPreflightThreadMatchesAfterSourceRemoved(t *testing.T)
 }
 
 func TestMove_ConfigSymlinkAliasRewritesStoredTrustKey(t *testing.T) {
+	t.Parallel()
 	homeDir := t.TempDir()
 	realProject := filepath.Join(homeDir, "real", "project")
 	require.NoError(t, os.MkdirAll(realProject, 0o750))
@@ -285,6 +295,7 @@ func TestMove_ConfigSymlinkAliasRewritesStoredTrustKey(t *testing.T) {
 }
 
 func TestMoveSurfacesReportsProjectAbsentForUnknownProject(t *testing.T) {
+	t.Parallel()
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: "/Users/fixture/never-seen", NewPath: "/Users/fixture/also-never-seen"}
 
@@ -300,6 +311,7 @@ func TestMoveSurfacesReportsProjectAbsentForUnknownProject(t *testing.T) {
 // checks under the base-resolved SQLiteDir when a profile overlay declares
 // a different sqlite_home this adapter cannot resolve against.
 func TestMoveSurfaces_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *testing.T) {
+	t.Parallel()
 	workspace, project := divergentProfileUnknownProjectFixture(t)
 	req := tool.MoveRequest{OldPath: project, NewPath: "/Users/fixture/renamed-elsewhere"}
 
@@ -311,6 +323,7 @@ func TestMoveSurfaces_ReturnsUnresolvedErrorWhenProfileOverlayDiverges(t *testin
 }
 
 func TestConfigSurfaceDiscoversProfileOverlay(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	files, err := discoverConfigTOMLFiles(home)
 
@@ -334,6 +347,7 @@ func TestConfigSurfaceDiscoversProfileOverlay(t *testing.T) {
 }
 
 func TestConfigSurfacePreservesCommentsAndOtherProjectsKey(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 
@@ -357,6 +371,7 @@ func TestConfigSurfacePreservesCommentsAndOtherProjectsKey(t *testing.T) {
 }
 
 func TestApplyConfigTOMLFileRewritesProjectLocalHookStateKey(t *testing.T) {
+	t.Parallel()
 	oldPath := codextest.FixtureProjectPath()
 	newPath := "/Users/fixture/renamed-project"
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -378,6 +393,7 @@ func TestApplyConfigTOMLFileRewritesProjectLocalHookStateKey(t *testing.T) {
 }
 
 func TestWorktreeFiles_ExcludesArtifacts(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	realFile := filepath.Join(root, "raw_memories.md")
 	require.NoError(t, os.WriteFile(realFile, []byte("real"), 0o600))
@@ -394,6 +410,7 @@ func TestWorktreeFiles_ExcludesArtifacts(t *testing.T) {
 }
 
 func TestMemoriesWorktreeGitBaselineDeletedWhenNoRemote(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	gitDir := filepath.Join(home.Dir, codexschema.MemoriesWorktreeSubdir, codexschema.GitDirName)
 	require.DirExists(t, gitDir)
@@ -407,6 +424,7 @@ func TestMemoriesWorktreeGitBaselineDeletedWhenNoRemote(t *testing.T) {
 }
 
 func TestMemoriesWorktreeGitBaselineRestoresAfterLaterFailure(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	root := filepath.Join(home.Dir, codexschema.MemoriesWorktreeSubdir)
 	gitDir := filepath.Join(root, codexschema.GitDirName)
@@ -429,6 +447,7 @@ func TestMemoriesWorktreeGitBaselineRestoresAfterLaterFailure(t *testing.T) {
 // memories/'s rewritten file and its invalidated baseline, and
 // memories_v2/'s own already-rewritten file, not just the root that failed.
 func TestMemoriesWorktreeSurfaceApply_V2FailureRestoresBothRoots(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	v1RawMemories := filepath.Join(home.Dir, codexschema.MemoriesWorktreeSubdir, "raw_memories.md")
 	originalV1, err := os.ReadFile(v1RawMemories) //nolint:gosec // G304: fixture path is test-controlled
@@ -466,6 +485,7 @@ func TestMemoriesWorktreeSurfaceApply_V2FailureRestoresBothRoots(t *testing.T) {
 }
 
 func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
+	t.Parallel()
 	homeDir := filepath.Join(t.TempDir(), "dotcodex")
 	root := filepath.Join(homeDir, codexschema.MemoriesWorktreeSubdir)
 	gitDir := filepath.Join(root, codexschema.GitDirName)
@@ -486,6 +506,7 @@ func TestMemoriesWorktreeGitBaselineStaysWhenNothingWasRewritten(t *testing.T) {
 // memories/ root is today: a legitimate "surface not present", never an
 // error, and never fabricated on disk.
 func TestMemoriesWorktreeSurface_AbsentV2RootTreatedLikeAbsentSurface(t *testing.T) {
+	t.Parallel()
 	homeDir := filepath.Join(t.TempDir(), "dotcodex")
 	root := filepath.Join(homeDir, codexschema.MemoriesWorktreeSubdir)
 	require.NoError(t, os.MkdirAll(root, 0o750))
@@ -514,6 +535,7 @@ func TestMemoriesWorktreeSurface_AbsentV2RootTreatedLikeAbsentSurface(t *testing
 // it still invalidates a baseline that predates newPath's appearance even
 // when this particular run touched no bytes.
 func TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline(t *testing.T) {
+	t.Parallel()
 	homeDir := filepath.Join(t.TempDir(), "dotcodex")
 	root := filepath.Join(homeDir, codexschema.MemoriesWorktreeSubdir)
 	gitDir := filepath.Join(root, codexschema.GitDirName)
@@ -538,6 +560,7 @@ func TestMemoriesWorktree_ConvergentRerunInvalidatesBaseline(t *testing.T) {
 }
 
 func TestMemoriesWorktreeGitBaselineLeftInPlaceWithRemote(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	gitDir := filepath.Join(root, codexschema.GitDirName)
 	codextest.BuildFixtureMemoriesGitBaseline(t, root, codextest.FixtureGitConfigWithRemote)
@@ -566,6 +589,7 @@ func TestMemoriesWorktreeGitBaselineLeftInPlaceWithRemote(t *testing.T) {
 // memories_v2/.git, still the fixture's default no-remote baseline, is
 // still invalidated.
 func TestMemoriesWorktreeGitBaselineRefusalIsPerRoot(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	codextest.BuildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, codexschema.MemoriesWorktreeSubdir), codextest.FixtureGitConfigWithRemote)
 
@@ -589,6 +613,7 @@ func TestMemoriesWorktreeGitBaselineRefusalIsPerRoot(t *testing.T) {
 // memories_v2/.git must be preserved and its warning must name memories_v2,
 // not memories.
 func TestMemoriesWorktreeGitBaselineWarningNamesV2Root(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	codextest.BuildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, codexschema.MemoriesWorktreeV2Subdir), codextest.FixtureGitConfigWithRemote)
 
@@ -611,6 +636,7 @@ func TestMemoriesWorktreeGitBaselineWarningNamesV2Root(t *testing.T) {
 // whose remote-carrying baseline is left in place, but whose worktree never
 // referenced the moved project at all, must get the shorter warning.
 func TestMemoriesWorktreeGitBaselineWarningOmitsRewriteClauseWithZeroOccurrences(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	v2Root := filepath.Join(home.Dir, codexschema.MemoriesWorktreeV2Subdir)
 	codextest.BuildFixtureMemoriesGitBaseline(t, v2Root, codextest.FixtureGitConfigWithRemote)
@@ -639,6 +665,7 @@ func TestMemoriesWorktreeGitBaselineWarningOmitsRewriteClauseWithZeroOccurrences
 // remote-carrying root's worktree still holds oldPath, so the warning must
 // state the rewrite is still to come rather than claim it already happened.
 func TestMemoriesWorktreeGitBaselineWarningReportsPendingRewriteBeforeApply(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	codextest.BuildFixtureMemoriesGitBaseline(t, filepath.Join(home.Dir, codexschema.MemoriesWorktreeSubdir), codextest.FixtureGitConfigWithRemote)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
@@ -652,6 +679,7 @@ func TestMemoriesWorktreeGitBaselineWarningReportsPendingRewriteBeforeApply(t *t
 }
 
 func TestMemoriesWorktreeGitBaselineWarningEmptyWhenSafeToDelete(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	codextest.BuildFixtureMemoriesGitBaseline(t, root, codextest.FixtureGitConfigNoRemote)
 
@@ -662,6 +690,7 @@ func TestMemoriesWorktreeGitBaselineWarningEmptyWhenSafeToDelete(t *testing.T) {
 }
 
 func TestResidualWarningsReportsEraAAndGitBaselineLeftInPlace(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	// Force the git baseline into the "leave in place" shape so both
 	// warning kinds are exercised by one ResidualWarnings call.
@@ -679,6 +708,7 @@ func TestResidualWarningsReportsEraAAndGitBaselineLeftInPlace(t *testing.T) {
 // roots keep independent rollback (memory_version.rs:16), so a leftover
 // backup under one must not mask a leftover backup under the other.
 func TestResidualWarningsReportsBackupWarningPerRoot(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	for _, subdir := range memoriesWorktreeSubdirs {
 		require.NoError(t, os.MkdirAll(filepath.Join(home.Dir, subdir, codexschema.GitDirName+gitBackupSuffix), 0o700))
@@ -703,6 +733,7 @@ func TestResidualWarningsReportsBackupWarningPerRoot(t *testing.T) {
 // resolved one must surface through the same ResidualWarnings call every
 // other move residual reports through.
 func TestResidualWarnings_WarnsOnDivergentProfileSQLiteHome(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
 	require.NoError(t, os.WriteFile(
@@ -725,6 +756,7 @@ func TestResidualWarnings_WarnsOnDivergentProfileSQLiteHome(t *testing.T) {
 }
 
 func TestGoalsWarningReportsOnlyPopulatedGoalsDatabases(t *testing.T) {
+	t.Parallel()
 	sqliteDir := t.TempDir()
 	path := filepath.Join(sqliteDir, "goals_1.sqlite")
 	database, err := sql.Open("sqlite", path)
@@ -745,6 +777,7 @@ func TestGoalsWarningReportsOnlyPopulatedGoalsDatabases(t *testing.T) {
 }
 
 func TestGoalsWarningIgnoresSQLxMigrationRows(t *testing.T) {
+	t.Parallel()
 	sqliteDir := t.TempDir()
 	path := filepath.Join(sqliteDir, "goals_1.sqlite")
 	database, err := sql.Open("sqlite", path)
@@ -762,6 +795,7 @@ func TestGoalsWarningIgnoresSQLxMigrationRows(t *testing.T) {
 }
 
 func TestCodexDevWarningRequiresPathReference(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "codex-dev.db")
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
@@ -794,6 +828,7 @@ func TestCodexDevWarningRequiresPathReference(t *testing.T) {
 // silently missed an aliased value, leaving a move free to proceed against
 // a database that does reference the project.
 func TestCodexDevWarningDetectsSymlinkAliasedValue(t *testing.T) {
+	t.Parallel()
 	tempRoot := t.TempDir()
 	realProject := filepath.Join(tempRoot, "real", "project")
 	require.NoError(t, os.MkdirAll(realProject, 0o750))
@@ -829,6 +864,7 @@ func TestCodexDevWarningDetectsSymlinkAliasedValue(t *testing.T) {
 // plain Go string errors instead, a hard failure on an ordinary
 // codex-dev.db that happens to carry one alongside a genuinely matching row.
 func TestCodexDevWarningToleratesNullSourceCWD(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "codex-dev.db")
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
@@ -854,6 +890,7 @@ func TestCodexDevWarningToleratesNullSourceCWD(t *testing.T) {
 // surfaces as a wrapped context.Canceled with an empty warning, not as a
 // schema-drift refusal.
 func TestCodexDevWarningFailsOnCancelledContext(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "codex-dev.db")
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
@@ -875,6 +912,7 @@ func TestCodexDevWarningFailsOnCancelledContext(t *testing.T) {
 }
 
 func TestResidualWarningsReadsCodexDevFromHomeSQLiteSubdirectory(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	home.SQLiteDir = filepath.Join(t.TempDir(), "redirected-sqlite")
 	path := filepath.Join(home.Dir, "sqlite", "codex-dev.db")
@@ -899,6 +937,7 @@ func TestResidualWarningsReadsCodexDevFromHomeSQLiteSubdirectory(t *testing.T) {
 }
 
 func TestDatabaseTransactionsRollBackBeforeFinalSurface(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	surfaces, err := workspace.MoveSurfaces(t.Context(), req)
@@ -919,6 +958,7 @@ func TestDatabaseTransactionsRollBackBeforeFinalSurface(t *testing.T) {
 }
 
 func TestFinalDatabaseSurfaceCommitsAndCheckpoints(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	planAndApply(t, workspace, req)
@@ -936,6 +976,7 @@ func TestFinalDatabaseSurfaceCommitsAndCheckpoints(t *testing.T) {
 }
 
 func TestFinalDatabaseSurfaceReportsSecondCommitPartialStateAndRerunConverges(t *testing.T) {
+	t.Parallel()
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	pending := &pendingMoveDatabases{removeAll: os.RemoveAll}
@@ -965,6 +1006,7 @@ func TestFinalDatabaseSurfaceReportsSecondCommitPartialStateAndRerunConverges(t 
 }
 
 func TestFinalDatabaseSurfaceReportsCheckpointFailureAsWarningAfterCommits(t *testing.T) {
+	t.Parallel()
 	workspace, _ := fixtureWorkspace(t)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
 	pending := &pendingMoveDatabases{removeAll: os.RemoveAll, reportWarning: workspace.addApplyWarning}
@@ -986,6 +1028,7 @@ func TestFinalDatabaseSurfaceReportsCheckpointFailureAsWarningAfterCommits(t *te
 }
 
 func TestResidualWarningsKeepsCheckpointWarningWhenLaterScanFails(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	workspace.addApplyWarning("test checkpoint warning")
 	badGoalsDB := filepath.Join(home.SQLiteDir, "goals_1.sqlite")
@@ -1000,6 +1043,7 @@ func TestResidualWarningsKeepsCheckpointWarningWhenLaterScanFails(t *testing.T) 
 }
 
 func TestMoveApplyRefusesWhenCodexDevReferencesMovedProject(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	createCodexDevDatabase(t, home, `INSERT INTO local_thread_catalog (cwd) VALUES ('/Users/fixture/codexproject')`)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
@@ -1020,6 +1064,7 @@ func TestMoveApplyRefusesWhenCodexDevReferencesMovedProject(t *testing.T) {
 }
 
 func TestMoveApplyProceedsWhenCodexDevReferencesOtherProject(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	createCodexDevDatabase(t, home, `INSERT INTO local_thread_catalog (cwd) VALUES ('/Users/fixture/other-project')`)
 	req := tool.MoveRequest{OldPath: codextest.FixtureProjectPath(), NewPath: "/Users/fixture/renamed-project"}
@@ -1033,6 +1078,7 @@ func TestMoveApplyProceedsWhenCodexDevReferencesOtherProject(t *testing.T) {
 }
 
 func TestMoveApplyRefusesWhenCodexDevSchemaDrifts(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	path := filepath.Join(home.Dir, "sqlite", "codex-dev.db")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
@@ -1072,6 +1118,7 @@ func createCodexDevDatabase(t *testing.T, home *Home, insertStatement string) {
 }
 
 func TestStateDBPlanFailsForMissingThreadsCwdColumn(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "state.sqlite")
 	database, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
@@ -1085,6 +1132,7 @@ func TestStateDBPlanFailsForMissingThreadsCwdColumn(t *testing.T) {
 }
 
 func TestFinalDatabaseSurfaceLeavesBackupAsWarningWhenCleanupFails(t *testing.T) {
+	t.Parallel()
 	backup := filepath.Join(t.TempDir(), "git.cc-port-rollback.tmp")
 	require.NoError(t, os.Mkdir(backup, 0o700))
 	pending := &pendingMoveDatabases{gitBackup: []string{backup}, removeAll: func(string) error { return assert.AnError }}
@@ -1102,6 +1150,7 @@ func TestFinalDatabaseSurfaceLeavesBackupAsWarningWhenCleanupFails(t *testing.T)
 // that a cleanup failure on one root's backup does not stop the commit
 // surface from attempting the other root's backup.
 func TestFinalDatabaseSurfaceAttemptsSecondBackupCleanupAfterFirstFails(t *testing.T) {
+	t.Parallel()
 	backupV1 := filepath.Join(t.TempDir(), "memories-git.cc-port-rollback.tmp")
 	backupV2 := filepath.Join(t.TempDir(), "memories-v2-git.cc-port-rollback.tmp")
 	var attempted []string
@@ -1121,6 +1170,7 @@ func TestFinalDatabaseSurfaceAttemptsSecondBackupCleanupAfterFirstFails(t *testi
 }
 
 func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupBeforeRewrite(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	root := filepath.Join(home.Dir, codexschema.MemoriesWorktreeSubdir)
 	backup := filepath.Join(root, codexschema.GitDirName+gitBackupSuffix)
@@ -1138,6 +1188,7 @@ func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupBeforeRewrite(t *testin
 }
 
 func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupWithoutWorktreeChanges(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	root := filepath.Join(home.Dir, codexschema.MemoriesWorktreeSubdir)
 	backup := filepath.Join(root, codexschema.GitDirName+gitBackupSuffix)
@@ -1154,6 +1205,7 @@ func TestMemoriesWorktreeSurface_ReconcilesStrandedBackupWithoutWorktreeChanges(
 }
 
 func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	undo := tool.NewRestorer()
 	plans, err := stateDBRewritePlansForProject(
@@ -1187,6 +1239,7 @@ func TestMemoriesRewriteFailureRollsBackStateAndSurfacesRollbackErrors(t *testin
 }
 
 func TestPlanningLeavesDatabaseAndWALBytesUntouched(t *testing.T) {
+	t.Parallel()
 	workspace, home := fixtureWorkspace(t)
 	path := filepath.Join(home.SQLiteDir, codexschema.StateDBFileName)
 	writer, err := sql.Open("sqlite", path)
@@ -1217,6 +1270,7 @@ func TestPlanningLeavesDatabaseAndWALBytesUntouched(t *testing.T) {
 }
 
 func TestAgentsMarketplaceSurfaceSkippedWhenAgentsDirAbsent(t *testing.T) {
+	t.Parallel()
 	fixtureDir := codextest.SetupFixture(t)
 	home := &Home{Dir: fixtureDir, SQLiteDir: fixtureDir}
 	workspace := NewWorkspace(home, fakeGetenv(nil), noProcesses)
@@ -1235,6 +1289,7 @@ func TestAgentsMarketplaceSurfaceSkippedWhenAgentsDirAbsent(t *testing.T) {
 }
 
 func TestAgentsMarketplaceRewritesStructuredSourceWithDottedKeys(t *testing.T) {
+	t.Parallel()
 	agentsDir := codextest.FixtureAgentsDir(t)
 	marketplacePath := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
 	contents := `{"plugins.with.dot":[{"source":{"source":"local","path":"` + codextest.FixtureProjectPath() + `/plugin"}}]}`
@@ -1256,6 +1311,7 @@ func TestAgentsMarketplaceRewritesStructuredSourceWithDottedKeys(t *testing.T) {
 }
 
 func TestAgentsMarketplaceLeavesFileWithoutMatchingSourceUntouched(t *testing.T) {
+	t.Parallel()
 	agentsDir := codextest.FixtureAgentsDir(t)
 	marketplacePath := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
 	contents := `{"entries":[{"name":"other-plugin","source":"/Users/test/Projects/otherproject/plugin"}]}`
@@ -1280,6 +1336,7 @@ func TestAgentsMarketplaceLeavesFileWithoutMatchingSourceUntouched(t *testing.T)
 }
 
 func TestAgentsMarketplaceLeavesTagOnlySourceUntouched(t *testing.T) {
+	t.Parallel()
 	agentsDir := codextest.FixtureAgentsDir(t)
 	marketplacePath := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
 	contents := `{"entries":[{"source":"local"}]}`
@@ -1292,6 +1349,7 @@ func TestAgentsMarketplaceLeavesTagOnlySourceUntouched(t *testing.T) {
 }
 
 func TestResidualAgentsWarningIncludesMarketplaceMisses(t *testing.T) {
+	t.Parallel()
 	agentsDir := codextest.FixtureAgentsDir(t)
 	marketplacePath := filepath.Join(agentsDir, agentsPluginsMarketplaceFile)
 	contents := `{"entries":[{"source":"local","unrecognized_path":"` + codextest.FixtureProjectPath() + `/plugin"}]}`

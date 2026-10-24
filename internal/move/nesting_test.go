@@ -18,18 +18,60 @@ import (
 	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
-func TestNestedMovePrecondition(t *testing.T) {
+// nestingOperations runs the nesting precondition through both move entry points.
+var nestingOperations = []struct {
+	name string
+	run  func(context.Context, []tool.Target, move.Options) error
+}{
+	{
+		name: "dry run",
+		run: func(ctx context.Context, targets []tool.Target, options move.Options) error {
+			_, err := move.DryRun(ctx, targets, options)
+			return err
+		},
+	},
+	{
+		name: "apply",
+		run: func(ctx context.Context, targets []tool.Target, options move.Options) error {
+			_, err := move.Apply(ctx, targets, options)
+			return err
+		},
+	},
+}
+
+// TestNestedMovePrecondition_RefusesNestedGeometries passes no targets: the
+// nesting precondition reads only the options and runs before any target is
+// enumerated, so a refused geometry needs no staged tool home.
+func TestNestedMovePrecondition_RefusesNestedGeometries(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
-		newPath  func(string) string
+		newPath  string
 		refsOnly bool
-		refused  bool
 	}{
-		{name: "equal paths", newPath: func(oldPath string) string { return oldPath }, refused: true},
-		{name: "boundary descendant", newPath: func(oldPath string) string { return oldPath + "/nested" }, refused: true},
-		{name: "safe sibling", newPath: func(oldPath string) string { return oldPath + "-backup" }},
-		{name: "refs only descendant", newPath: func(oldPath string) string { return oldPath + "/nested" }, refsOnly: true, refused: true},
+		{name: "equal paths", newPath: "/old"},
+		{name: "boundary descendant", newPath: "/old/nested"},
+		{name: "refs only descendant", newPath: "/old/nested", refsOnly: true},
 	}
+
+	for _, test := range tests {
+		for _, operation := range nestingOperations {
+			t.Run(test.name+"/"+operation.name, func(t *testing.T) {
+				t.Parallel()
+				err := operation.run(t.Context(), nil, move.Options{
+					OldPath:  "/old",
+					NewPath:  test.newPath,
+					RefsOnly: test.refsOnly,
+				})
+
+				require.ErrorIs(t, err, move.ErrNestedMove)
+			})
+		}
+	}
+}
+
+func TestNestedMovePrecondition_AllowsSafeSibling(t *testing.T) {
+	t.Parallel()
 	targets := []struct {
 		name  string
 		setup func(*testing.T) (tool.Target, string)
@@ -50,45 +92,19 @@ func TestNestedMovePrecondition(t *testing.T) {
 			},
 		},
 	}
-	operations := []struct {
-		name string
-		run  func(context.Context, []tool.Target, move.Options) error
-	}{
-		{
-			name: "dry run",
-			run: func(ctx context.Context, targets []tool.Target, options move.Options) error {
-				_, err := move.DryRun(ctx, targets, options)
-				return err
-			},
-		},
-		{
-			name: "apply",
-			run: func(ctx context.Context, targets []tool.Target, options move.Options) error {
-				_, err := move.Apply(ctx, targets, options)
-				return err
-			},
-		},
-	}
+	for _, targetCase := range targets {
+		for _, operation := range nestingOperations {
+			t.Run(targetCase.name+"/"+operation.name, func(t *testing.T) {
+				t.Parallel()
+				target, oldPath := targetCase.setup(t)
 
-	for _, test := range tests {
-		for _, targetCase := range targets {
-			for _, operation := range operations {
-				t.Run(test.name+"/"+targetCase.name+"/"+operation.name, func(t *testing.T) {
-					target, oldPath := targetCase.setup(t)
-					err := operation.run(t.Context(), []tool.Target{target}, move.Options{
-						OldPath:  oldPath,
-						NewPath:  test.newPath(oldPath),
-						RefsOnly: test.refsOnly,
-					})
-
-					if test.refused {
-						require.Error(t, err)
-						assert.ErrorIs(t, err, move.ErrNestedMove)
-						return
-					}
-					assert.NotErrorIs(t, err, move.ErrNestedMove)
+				err := operation.run(t.Context(), []tool.Target{target}, move.Options{
+					OldPath: oldPath,
+					NewPath: oldPath + "-backup",
 				})
-			}
+
+				assert.NotErrorIs(t, err, move.ErrNestedMove)
+			})
 		}
 	}
 }
@@ -100,6 +116,7 @@ func TestNestedMovePrecondition(t *testing.T) {
 // debris — so this precondition must refuse before any target is touched;
 // no tool.Target is needed since the check runs before target enumeration.
 func TestMove_RefusesStagingCollision(t *testing.T) {
+	t.Parallel()
 	newPath := filepath.Join(t.TempDir(), "project")
 	oldPath := newPath + rewrite.StagingSuffix
 	require.NoError(t, os.MkdirAll(oldPath, 0o750))
@@ -119,6 +136,7 @@ func TestMove_RefusesStagingCollision(t *testing.T) {
 // nested move — no tool.Target is needed since the precondition check runs
 // before target enumeration.
 func TestMove_RefusesRootNestedMove(t *testing.T) {
+	t.Parallel()
 	_, dryRunErr := move.DryRun(t.Context(), nil, move.Options{OldPath: "/", NewPath: "/.cc-port-new"})
 	require.ErrorIs(t, dryRunErr, move.ErrNestedMove)
 
@@ -127,6 +145,7 @@ func TestMove_RefusesRootNestedMove(t *testing.T) {
 }
 
 func TestApply_RejectedNestedMoveLeavesClaudeStateUnchangedAcrossRetries(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)}}
 	oldPath := claudetest.FixtureProjectPath()

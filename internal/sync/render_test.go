@@ -19,6 +19,7 @@ import (
 // The dry run is the summary an operator reads before deciding to apply, so
 // both run modes must carry the section.
 func TestPullPlan_RenderNamesNewMCPServers(t *testing.T) {
+	t.Parallel()
 	for name, apply := range map[string]bool{"dry run": false, "apply run": true} {
 		t.Run(name, func(t *testing.T) {
 			plan := &PullPlan{
@@ -46,6 +47,7 @@ func TestPullPlan_RenderNamesNewMCPServers(t *testing.T) {
 // The pull summary reveals those bytes as their Go escape sequences instead
 // of forwarding them to the operator's terminal.
 func TestPullPlan_RenderRevealsManifestControlBytesAsEscapes(t *testing.T) {
+	t.Parallel()
 	plan := &PullPlan{
 		Name:                   "myproj",
 		RemotePushedBy:         "laptop\x1b[2K-alice",
@@ -65,6 +67,7 @@ func TestPullPlan_RenderRevealsManifestControlBytesAsEscapes(t *testing.T) {
 }
 
 func TestPushPlan_RenderNoPriorPlaintext(t *testing.T) {
+	t.Parallel()
 	plan := &PushPlan{
 		Name:              "myproj",
 		SelfPusher:        "laptop1-alice",
@@ -93,6 +96,7 @@ func TestPushPlan_RenderNoPriorPlaintext(t *testing.T) {
 }
 
 func TestPushPlan_RenderEncryptedWithPriorAndCrossMachine(t *testing.T) {
+	t.Parallel()
 	plan := &PushPlan{
 		Name:              "myproj",
 		SelfPusher:        "laptop1-alice",
@@ -127,6 +131,7 @@ func TestPushPlan_RenderEncryptedWithPriorAndCrossMachine(t *testing.T) {
 }
 
 func TestPushPlan_RenderApplyDropsDryRunPrefix(t *testing.T) {
+	t.Parallel()
 	plan := &PushPlan{
 		Name:       "myproj",
 		SelfPusher: "laptop1-alice",
@@ -146,6 +151,7 @@ func TestPushPlan_RenderApplyDropsDryRunPrefix(t *testing.T) {
 }
 
 func TestPullPlan_RenderWithUnresolvedPlaceholders(t *testing.T) {
+	t.Parallel()
 	plan := &PullPlan{
 		Name:           "myproj",
 		RemotePushedBy: "laptop1-alice",
@@ -178,6 +184,7 @@ func TestPullPlan_RenderWithUnresolvedPlaceholders(t *testing.T) {
 }
 
 func TestPullPlan_RenderEncryptedClean(t *testing.T) {
+	t.Parallel()
 	plan := &PullPlan{
 		Name:            "x",
 		RemoteEncrypted: true,
@@ -203,6 +210,7 @@ func TestPullPlan_RenderEncryptedClean(t *testing.T) {
 }
 
 func TestPullPlan_RenderApplyDropsDryRunPrefix(t *testing.T) {
+	t.Parallel()
 	plan := &PullPlan{
 		Name:  "myproj",
 		Tools: []string{"claude"},
@@ -225,6 +233,7 @@ func TestPullPlan_RenderApplyDropsDryRunPrefix(t *testing.T) {
 // by TestPullPlan_RenderEncryptedClean and MiB by
 // TestPushPlan_RenderEncryptedWithPriorAndCrossMachine.
 func TestPullPlan_RenderHumanizesByteMagnitudes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		size int64

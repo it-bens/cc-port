@@ -105,6 +105,7 @@ var (
 // layer. A swept-out tool is never added to that slice, so no special case is
 // needed here.
 func TestDryRun_MultiTargetIndependence(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{
 		{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)},
@@ -134,6 +135,7 @@ func TestDryRun_MultiTargetIndependence(t *testing.T) {
 // not counted as a failure by Failed()) while the real target still
 // applies normally.
 func TestApply_MultiTargetIndependence(t *testing.T) {
+	t.Parallel()
 	home := claudetest.SetupFixture(t)
 	targets := []tool.Target{
 		{Tool: claude.New(), Workspace: claudetest.NewWorkspace(home)},

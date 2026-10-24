@@ -27,18 +27,28 @@ import (
 
 // TestMain points the machine-wide Codex locations at a scratch directory
 // before any test runs, so no test in this package reads the real
-// /etc/codex or /Library/Managed Preferences through Open.
+// /etc/codex or /Library/Managed Preferences through Open, and installs the
+// fixture template every SetupFixture and CopyTemplate call copies.
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+func runTests(m *testing.M) (exitCode int) {
 	scratch, err := os.MkdirTemp("", "codex-machine-locations")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create machine-location scratch directory: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	defer func() {
+		if err := os.RemoveAll(scratch); err != nil {
+			fmt.Fprintf(os.Stderr, "remove machine-location scratch directory: %v\n", err)
+			exitCode = 1
+		}
+	}()
 	systemConfigDir = filepath.Join(scratch, "etc-codex")
 	managedPreferencesDir = filepath.Join(scratch, "Managed Preferences")
-	code := m.Run()
-	_ = os.RemoveAll(scratch)
-	os.Exit(code)
+
+	return codextest.RunWithTemplate(m)
 }
 
 var fixtureNow = time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
@@ -362,6 +372,7 @@ func (layers *machineLayers) write(t *testing.T, fixture machineFixture) func(st
 }
 
 func TestResolveSQLiteDirPrecedence(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		layers   machineLayers
@@ -458,6 +469,7 @@ func TestResolveSQLiteDirPrecedence(t *testing.T) {
 }
 
 func TestResolveSQLiteDirTakesTheFirstCloudFragmentDeclaringSQLiteHome(t *testing.T) {
+	t.Parallel()
 	fixture := newMachineFixture(t)
 	signInToCloudAccount(t, fixture.codexHome)
 	writeCloudCache(t, fixture.cloudCachePath(), fixtureNow.Add(time.Hour), requirementsBundle(
@@ -473,6 +485,7 @@ func TestResolveSQLiteDirTakesTheFirstCloudFragmentDeclaringSQLiteHome(t *testin
 }
 
 func TestResolveSQLiteDirLetsUserLevelManagedPreferencesShadowComputerLevel(t *testing.T) {
+	t.Parallel()
 	fixture := newMachineFixture(t)
 	writeFixtureFile(t, fixture.userPlist,
 		xmlManagedPreferencesPlist(managedPreferencesRequirementsKey, `sqlite_home = "/Users/test/sqlite/user-managed"`))
@@ -486,6 +499,7 @@ func TestResolveSQLiteDirLetsUserLevelManagedPreferencesShadowComputerLevel(t *t
 }
 
 func TestResolveSQLiteDirUsesComputerLevelPlistWhenUserLevelLacksTheKey(t *testing.T) {
+	t.Parallel()
 	fixture := newMachineFixture(t)
 	writeFixtureFile(t, fixture.userPlist, binaryPlistFixture(t, plistEntry{key: "PayloadVersion", value: 1}))
 	writeFixtureFile(t, fixture.computerPlist,
@@ -498,6 +512,7 @@ func TestResolveSQLiteDirUsesComputerLevelPlistWhenUserLevelLacksTheKey(t *testi
 }
 
 func TestPlistTopLevelStringDecodesUTF16BinaryStrings(t *testing.T) {
+	t.Parallel()
 	data := binaryPlistFixture(t, plistEntry{key: "label", value: "Zürich Büro"})
 
 	value, found, err := plistTopLevelString(data, "label")
@@ -508,6 +523,7 @@ func TestPlistTopLevelStringDecodesUTF16BinaryStrings(t *testing.T) {
 }
 
 func TestResolveSQLiteDirResolvesRelativeMachineValues(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		arrange func(t *testing.T, fixture machineFixture)
@@ -558,6 +574,7 @@ func TestResolveSQLiteDirResolvesRelativeMachineValues(t *testing.T) {
 }
 
 func TestResolveSQLiteDirWarnsAboutExpiredCloudCacheAndIgnoresItsValue(t *testing.T) {
+	t.Parallel()
 	fixture := newMachineFixture(t)
 	writeFixtureFile(t, fixture.systemRequirementsFile(), []byte(`sqlite_home = "/Users/test/sqlite/system"`))
 	signInToCloudAccount(t, fixture.codexHome)
@@ -574,6 +591,7 @@ func TestResolveSQLiteDirWarnsAboutExpiredCloudCacheAndIgnoresItsValue(t *testin
 }
 
 func TestResolveSQLiteDirWarnsAboutMissingCloudCacheOnlyWhenCloudConfigApplies(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		signIn       func(t *testing.T, codexHome string)
@@ -608,6 +626,7 @@ func TestResolveSQLiteDirWarnsAboutMissingCloudCacheOnlyWhenCloudConfigApplies(t
 // incomplete identity makes Codex refetch, and token-backed modes cc-port
 // cannot resolve offline warn.
 func TestResolveSQLiteDirAppliesCodexCloudAuthGate(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		signIn       func(t *testing.T, codexHome string)
@@ -719,6 +738,7 @@ func writeFreshCloudRequirement(t *testing.T, path string) {
 // sign-in cc-port can reason about, so resolution warns, derives nothing, and
 // never echoes a value from the file.
 func TestResolveSQLiteDirWarnsWhenCodexCannotLoadAuthJSON(t *testing.T) {
+	t.Parallel()
 	chatgptAuth := func(t *testing.T, idToken string, extra map[string]any) []byte {
 		t.Helper()
 		auth := map[string]any{
@@ -802,6 +822,7 @@ func TestResolveSQLiteDirWarnsWhenCodexCannotLoadAuthJSON(t *testing.T) {
 }
 
 func TestResolveSQLiteDirKeepsCloudWarningWhenManagedPreferencesWin(t *testing.T) {
+	t.Parallel()
 	fixture := newMachineFixture(t)
 	signInToCloudAccount(t, fixture.codexHome)
 	writeCloudCache(t, fixture.cloudCachePath(), fixtureNow.Add(-time.Hour), requirementsBundle())
@@ -816,6 +837,7 @@ func TestResolveSQLiteDirKeepsCloudWarningWhenManagedPreferencesWin(t *testing.T
 }
 
 func TestResolveSQLiteDirRejectsCloudCacheWithABadSignature(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		tamper func(t *testing.T, cache []byte) []byte
@@ -857,6 +879,7 @@ func TestResolveSQLiteDirRejectsCloudCacheWithABadSignature(t *testing.T) {
 }
 
 func TestResolveSQLiteDirRejectsUnparsableMachineSources(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		arrange func(t *testing.T, fixture machineFixture)
@@ -1047,6 +1070,7 @@ func TestOpenRejectsExplicitSQLiteHomeThatDoesNotExist(t *testing.T) {
 }
 
 func TestOpenRejectsExplicitSQLiteHomeThatIsAFile(t *testing.T) {
+	t.Parallel()
 	codexHome := t.TempDir()
 	sqliteFile := filepath.Join(t.TempDir(), "sqlite-file")
 	writeFixtureFile(t, sqliteFile, []byte("not a directory"))
@@ -1058,6 +1082,7 @@ func TestOpenRejectsExplicitSQLiteHomeThatIsAFile(t *testing.T) {
 }
 
 func TestOpenAcceptsExplicitSQLiteHomeThatExists(t *testing.T) {
+	t.Parallel()
 	codexHome := t.TempDir()
 	sqliteHome := t.TempDir()
 	writeFixtureFile(t, filepath.Join(codexHome, configTOMLFileName), []byte(`sqlite_home = "`+sqliteHome+`"`))
@@ -1072,6 +1097,7 @@ func TestOpenAcceptsExplicitSQLiteHomeThatExists(t *testing.T) {
 }
 
 func TestDefaultSQLiteDirThatDoesNotExistReadsAsNoDatabases(t *testing.T) {
+	t.Parallel()
 	codexHome := t.TempDir()
 	workspace := quietTestWorkspace(&Home{Dir: codexHome, SQLiteDir: filepath.Join(codexHome, "never-created")})
 
@@ -1097,6 +1123,7 @@ func openFixtureWithExpiredCloudCache(t *testing.T) *Workspace {
 }
 
 func TestResidualWarningsReportUncheckedCloudRequirement(t *testing.T) {
+	t.Parallel()
 	workspace := openFixtureWithExpiredCloudCache(t)
 
 	warnings, err := workspace.ResidualWarnings(t.Context(), tool.MoveRequest{
@@ -1108,6 +1135,7 @@ func TestResidualWarningsReportUncheckedCloudRequirement(t *testing.T) {
 }
 
 func TestFinalizeReportsUncheckedCloudRequirement(t *testing.T) {
+	t.Parallel()
 	workspace := openFixtureWithExpiredCloudCache(t)
 
 	warnings, err := workspace.Finalize(context.Background(), codextest.FixtureProjectPath(), nil)
@@ -1117,6 +1145,7 @@ func TestFinalizeReportsUncheckedCloudRequirement(t *testing.T) {
 }
 
 func TestManagedSQLiteHomeSuppressesProfileOverlayDivergence(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		tier sqliteHomeTier
@@ -1142,6 +1171,7 @@ func TestManagedSQLiteHomeSuppressesProfileOverlayDivergence(t *testing.T) {
 }
 
 func TestResolveSQLiteDirResolvesEmptyMachineValueToItsBaseDirectory(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		arrange func(t *testing.T, fixture machineFixture)
@@ -1176,6 +1206,7 @@ func TestResolveSQLiteDirResolvesEmptyMachineValueToItsBaseDirectory(t *testing.
 }
 
 func TestResolveSQLiteDirWarnsWhenCodexCannotLoadTheChatGPTTokens(t *testing.T) {
+	t.Parallel()
 	idToken := syntheticIDToken(t, map[string]any{
 		"https://api.openai.com/auth": map[string]any{"chatgpt_plan_type": "enterprise", "chatgpt_user_id": "fixture-user"},
 	})
@@ -1219,6 +1250,7 @@ func TestResolveSQLiteDirWarnsWhenCodexCannotLoadTheChatGPTTokens(t *testing.T) 
 }
 
 func TestResolveSQLiteDirRefusesMalformedManagedPreferencesWithoutEchoingThem(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		plist string
@@ -1246,6 +1278,7 @@ func TestResolveSQLiteDirRefusesMalformedManagedPreferencesWithoutEchoingThem(t 
 }
 
 func TestProjectAbsenceErrorIsUnresolvedWhenTheCloudCacheCouldNotBeChecked(t *testing.T) {
+	t.Parallel()
 	workspace := openFixtureWithExpiredCloudCache(t)
 
 	err := workspace.projectAbsenceError()
@@ -1272,6 +1305,7 @@ func agentIdentityAuth(t *testing.T, plan, accountID, taskID string) []byte {
 }
 
 func TestResolveSQLiteDirGatesAgentIdentityAuth(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		auth         func(t *testing.T) []byte
@@ -1327,6 +1361,7 @@ func TestResolveSQLiteDirGatesAgentIdentityAuth(t *testing.T) {
 }
 
 func TestResolveSQLiteDirRejectsARepeatedDeclaredCacheField(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		from, repeat string
@@ -1355,6 +1390,7 @@ func TestResolveSQLiteDirRejectsARepeatedDeclaredCacheField(t *testing.T) {
 }
 
 func TestResolveSQLiteDirIgnoresARepeatedUnknownCacheField(t *testing.T) {
+	t.Parallel()
 	fixture := newMachineFixture(t)
 	signInToCloudAccount(t, fixture.codexHome)
 	writeFreshCloudRequirement(t, fixture.cloudCachePath())
@@ -1372,6 +1408,7 @@ func TestResolveSQLiteDirIgnoresARepeatedUnknownCacheField(t *testing.T) {
 }
 
 func TestResolveSQLiteDirIgnoresARepeatedUnknownAuthField(t *testing.T) {
+	t.Parallel()
 	fixture := newMachineFixture(t)
 	signInToCloudAccount(t, fixture.codexHome)
 	auth, err := os.ReadFile(filepath.Join(fixture.codexHome, codexAuthFile))

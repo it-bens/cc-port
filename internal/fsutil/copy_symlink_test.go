@@ -50,14 +50,14 @@ func TestCopyDir_HandlesSymlinkToDirectory(t *testing.T) {
 
 func TestCopyDir_StreamsLargeFile(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping 64 MiB file test in short mode")
+		t.Skip("skipping 4 MiB file test in short mode")
 	}
 	source := t.TempDir()
 	src := filepath.Join(source, "big.bin")
 	f, err := os.Create(src) //nolint:gosec // G304: test-controlled path
 	require.NoError(t, err)
 	chunk := make([]byte, 1<<20)
-	for range 64 {
+	for range 4 {
 		_, err = f.Write(chunk)
 		require.NoError(t, err)
 	}
@@ -68,5 +68,5 @@ func TestCopyDir_StreamsLargeFile(t *testing.T) {
 
 	info, err := os.Stat(filepath.Join(destination, "big.bin"))
 	require.NoError(t, err)
-	assert.Equal(t, int64(64<<20), info.Size())
+	assert.Equal(t, int64(4<<20), info.Size())
 }

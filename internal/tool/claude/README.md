@@ -908,9 +908,10 @@ Unit tests in `paths_test.go`, `locations_test.go`, `schema_test.go`,
   including the lossy-encoding case, the multi-witness disagreement tie-break,
   the witness-less label fallback, non-directory skip, and the empty projects
   directory.
-- `MCPServers` over the fixture's user-scope block, an absent `mcpServers`
-  key, an empty one, an absent config file, a config that cannot be parsed,
-  and a definition naming both a command and a url.
+- `MCPServers` over an inline config whose user-scope servers it reports and
+  whose project-scoped servers it leaves out, an absent `mcpServers` key, an
+  empty one, an absent config file, a config that cannot be parsed, and a
+  definition naming both a command and a url.
 
 Fuzz target `FuzzVerifyProjectIdentity` in `locations_fuzz_test.go` asserts
 the identity guard's three-state outcome is deterministic under arbitrary

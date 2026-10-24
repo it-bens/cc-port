@@ -15,9 +15,12 @@ import (
 	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
 )
 
+// fixtureTargets binds the shared read-only fixture home, which every export
+// test reads and none writes: the export path streams out of the home and
+// writes only the archive.
 func fixtureTargets(t *testing.T) (targets []tool.Target, projectPath string) {
 	t.Helper()
-	home := claudetest.SetupFixture(t)
+	home := claudetest.SharedFixture(t)
 	claudeTool := claude.New()
 	return []tool.Target{{Tool: claudeTool, Workspace: claudetest.NewWorkspace(home)}}, claudetest.FixtureProjectPath()
 }

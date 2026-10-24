@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -12,16 +13,36 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
+	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
 
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+// runTests defers each cleanup as soon as its resource exists, so every exit
+// path removes what setup created.
+func runTests(m *testing.M) (exitCode int) {
+	templateCleanup, err := codextest.InstallTemplate()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer func() {
+		if err := templateCleanup(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exitCode = 1
+		}
+	}()
+
 	restore, err := claudetest.IsolateHome()
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
-	exitCode := m.Run()
-	restore()
-	os.Exit(exitCode)
+	defer restore()
+
+	return m.Run()
 }
 
 // stubBanner is the Banner the command tests pass to newRootCmd and the

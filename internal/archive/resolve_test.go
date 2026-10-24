@@ -48,20 +48,21 @@ func TestResolveEntryBytes_LeavesUnresolvedKeyVerbatim(t *testing.T) {
 }
 
 // TestResolveEntryBytes_BoundsExpansion builds a tiny archive whose declared
-// entry decodes well under a 1 MiB cap, but whose resolved output — a short
-// token repeated 20,000 times, each expanding to 80 bytes — would exceed
-// 1.5 MiB if fully substituted. It asserts the cap error fires, not that the
-// process exhausts memory building the substituted body first: routing
+// entry decodes well under a 96 KiB cap, but whose resolved output — a short
+// token repeated 2,000 times, each expanding to 80 bytes — would reach
+// 160,000 bytes if fully substituted. It asserts the cap error fires, not that
+// the process exhausts memory building the substituted body first: routing
 // through ResolvePlaceholdersStream's countingWriter means the cap trips
 // as the ~64 KiB internal write buffer flushes, long before the full
-// expansion could be assembled.
+// expansion could be assembled. The cap sits above one flush, so it trips on
+// the running total, not on a single write.
 func TestResolveEntryBytes_BoundsExpansion(t *testing.T) {
-	const repeats = 20_000
+	const repeats = 2_000
 	body := buildZip(t, map[string]string{
 		"claude/note.txt": strings.Repeat("{{X}}", repeats),
 	})
 	reader, err := archive.OpenReader(bytes.NewReader(body), int64(len(body)), archive.Caps{
-		MaxEntryBytes: 1 << 20, MaxAggregateBytes: 1 << 30,
+		MaxEntryBytes: 96 << 10, MaxAggregateBytes: 1 << 30,
 	})
 	require.NoError(t, err)
 	entries, err := reader.RawEntries()

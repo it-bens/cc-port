@@ -23,6 +23,7 @@ func newWitnessWorkspace(t *testing.T, listProcesses ProcessLister) *Workspace {
 }
 
 func TestActiveWritersEmptyOnFreshHome(t *testing.T) {
+	t.Parallel()
 	workspace := newWitnessWorkspace(t, noProcesses)
 
 	active, err := workspace.ActiveWriters()
@@ -32,6 +33,7 @@ func TestActiveWritersEmptyOnFreshHome(t *testing.T) {
 }
 
 func TestActiveWritersDetectsCodexProcess(t *testing.T) {
+	t.Parallel()
 	lister := func() ([]ProcessInfo, error) {
 		return []ProcessInfo{{PID: 4242, Name: "codex"}}, nil
 	}
@@ -45,6 +47,7 @@ func TestActiveWritersDetectsCodexProcess(t *testing.T) {
 }
 
 func TestActiveWritersDetectsCodexProcessByBasenameOfFullPath(t *testing.T) {
+	t.Parallel()
 	lister := func() ([]ProcessInfo, error) {
 		return []ProcessInfo{{PID: 4242, Name: "/Users/fixture/.local/bin/codex"}}, nil
 	}
@@ -57,6 +60,7 @@ func TestActiveWritersDetectsCodexProcessByBasenameOfFullPath(t *testing.T) {
 }
 
 func TestActiveWritersIgnoresUnrelatedProcess(t *testing.T) {
+	t.Parallel()
 	lister := func() ([]ProcessInfo, error) {
 		return []ProcessInfo{{PID: 4242, Name: "vim"}}, nil
 	}
@@ -69,6 +73,7 @@ func TestActiveWritersIgnoresUnrelatedProcess(t *testing.T) {
 }
 
 func TestActiveWritersWrapsErrNoWitnessWhenProcessListFails(t *testing.T) {
+	t.Parallel()
 	lister := func() ([]ProcessInfo, error) { return nil, assert.AnError }
 	workspace := newWitnessWorkspace(t, lister)
 
@@ -79,6 +84,7 @@ func TestActiveWritersWrapsErrNoWitnessWhenProcessListFails(t *testing.T) {
 }
 
 func TestActiveWritersWrapsErrNoWitnessWhenBusyProbeCannotDiscoverDatabases(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses directory permissions")
 	}
@@ -96,6 +102,7 @@ func TestActiveWritersWrapsErrNoWitnessWhenBusyProbeCannotDiscoverDatabases(t *t
 }
 
 func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	dbPath := filepath.Join(dir, "state_5.sqlite")
@@ -118,6 +125,7 @@ func TestActiveWritersDetectsBusyDatabase(t *testing.T) {
 }
 
 func TestActiveWritersDetectsBusyQueueAndThreadHistoryDatabases(t *testing.T) {
+	t.Parallel()
 	for _, fileName := range []string{"queue_1.sqlite", "thread_history_1.sqlite"} {
 		t.Run(fileName, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "dotcodex")
@@ -142,6 +150,7 @@ func TestActiveWritersDetectsBusyQueueAndThreadHistoryDatabases(t *testing.T) {
 }
 
 func TestActiveWritersReportsOneWriterPerBusyDatabase(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "dotcodex")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
 	statePath := filepath.Join(dir, "state_5.sqlite")
