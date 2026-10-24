@@ -1118,14 +1118,21 @@ Fixtures come from `testdata/dotcodex/`, staged by the `codextest`
 subpackage. `SetupFixture` copies a template that `InstallTemplate` staged
 once, so the SQLite databases and git baselines are built once per test
 binary instead of once per test. Every package that calls `SetupFixture`
-installs the template from its `TestMain`; when no template is installed,
-`SetupFixture` fails the test instead of staging on the fly. `codextest`
+installs the template from its `TestMain`. `RunWithTemplate(m)` installs it,
+runs `m`, and removes it. The root integration suite and `cmd/cc-port`, whose
+`TestMain` also isolates HOME, call `InstallTemplate` and its cleanup directly.
+When no template is installed,
+`SetupFixture` fails the test instead of staging on the fly. `CopyTemplate(dir)`
+copies the installed template into a caller-chosen directory, so a
+once-function building a package-wide fixture can stage its home from it. `codextest`
 does not import this package, because this package's own tests import it.
 `SetupFixture(t) string` therefore returns the copied directory,
 which is both the codex home and the SQLite directory, and callers build
 `&Home{Dir: dir, SQLiteDir: dir}` from it. `FixtureProjectPath() string` is
 the project the fixture is keyed on, `FixtureAgentsDir(t) string` stages a
-`~/.agents` marketplace, and `InsertThreadRow` and `ThreadCWD` write and
+`~/.agents` marketplace, `BuildFixtureQueueDB(t, path)` builds just the
+fixture queue database at a caller-chosen path, and `InsertThreadRow` and
+`ThreadCWD` write and
 read `threads` rows in the staged state database by SQLite directory.
 
 `StageFixture(dir)` copies the static tree and then builds `state_5.sqlite`, `memories_1.sqlite`, `queue_1.sqlite`

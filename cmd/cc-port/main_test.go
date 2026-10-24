@@ -17,22 +17,32 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+// runTests defers each cleanup as soon as its resource exists, so every exit
+// path removes what setup created.
+func runTests(m *testing.M) (exitCode int) {
 	templateCleanup, err := codextest.InstallTemplate()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
+	defer func() {
+		if err := templateCleanup(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exitCode = 1
+		}
+	}()
+
 	restore, err := claudetest.IsolateHome()
 	if err != nil {
-		panic(err)
-	}
-	exitCode := m.Run()
-	restore()
-	if err := templateCleanup(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		exitCode = 1
+		return 1
 	}
-	os.Exit(exitCode)
+	defer restore()
+
+	return m.Run()
 }
 
 // stubBanner is the Banner the command tests pass to newRootCmd and the

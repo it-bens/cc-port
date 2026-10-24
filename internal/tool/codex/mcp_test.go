@@ -14,7 +14,7 @@ import (
 func TestMCPServersReportsBothTransports(t *testing.T) {
 	t.Parallel()
 	// MCPServers reads only config.toml, so the fixture's two declarations are
-	// inlined rather than staged from the whole fixture home.
+	// inlined with only the fields it parses: command, args, and url.
 	workspace := workspaceWithConfig(t, `model = "gpt-5-fixture"
 
 [mcp_servers.filesystem]

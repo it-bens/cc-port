@@ -36,11 +36,29 @@ func FixtureProjectPath() string {
 // it.
 var templateDir string
 
+// RunWithTemplate installs the fixture template, runs m, and removes the
+// template, returning the exit code for TestMain to pass to os.Exit. A failed
+// install or cleanup is printed to stderr and yields exit code 1.
+func RunWithTemplate(m *testing.M) int {
+	cleanup, err := InstallTemplate()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	exitCode := m.Run()
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return exitCode
+}
+
 // InstallTemplate stages the fixture template once into a temporary
 // directory, for a package's TestMain to install before m.Run. Every later
-// SetupFixture copies that template, so the SQLite databases and git
-// baselines are built once per test binary instead of once per test. The
-// returned cleanup removes the template directory.
+// SetupFixture and CopyTemplate copies that template, so a package that
+// installs it builds the SQLite databases and git baselines once per test
+// binary instead of once per test. The returned cleanup removes the template
+// directory.
 func InstallTemplate() (cleanup func() error, err error) {
 	dir, err := os.MkdirTemp("", "cc-port-codex-fixture-")
 	if err != nil {
@@ -95,14 +113,25 @@ func StageFixture(dir string) error {
 func SetupFixture(t testing.TB) string {
 	t.Helper()
 
-	if templateDir == "" {
-		t.Fatalf("no codextest fixture template installed: call codextest.InstallTemplate from the package's TestMain")
-	}
 	codexDir := filepath.Join(t.TempDir(), "dotcodex")
-	if err := fsutil.CopyDir(context.Background(), templateDir, codexDir, nil); err != nil {
-		t.Fatalf("copy fixture template: %v", err)
+	if err := CopyTemplate(codexDir); err != nil {
+		t.Fatal(err)
 	}
 	return codexDir
+}
+
+// CopyTemplate copies the fixture template InstallTemplate installed into
+// dir, which becomes a codex home. It takes no testing.TB, so a once-function
+// building a package-wide fixture can stage its home from the template.
+func CopyTemplate(dir string) error {
+	if templateDir == "" {
+		return errors.New("no codextest fixture template installed: call codextest.InstallTemplate " +
+			"or codextest.RunWithTemplate from the package's TestMain")
+	}
+	if err := fsutil.CopyDir(context.Background(), templateDir, dir, nil); err != nil {
+		return fmt.Errorf("copy fixture template: %w", err)
+	}
+	return nil
 }
 
 // InsertThreadRow inserts a threads row with id and cwd directly into the
@@ -358,6 +387,18 @@ const (
 	FixtureQueuedItemID        = "fixture-queued-skill-item"
 	FixtureQueuedMentionItemID = "fixture-queued-mention-item"
 )
+
+// BuildFixtureQueueDB creates the fixture queue database at path: the
+// codexschema.QueueDBSchema table holding two queued turns whose payload_json
+// is the serde_json shape of TurnInput::UserInput, one carrying a
+// UserInput::Skill and one a UserInput::Mention of a SKILL.md file in the
+// fixture project.
+func BuildFixtureQueueDB(t testing.TB, path string) {
+	t.Helper()
+	if err := buildFixtureQueueDB(path); err != nil {
+		t.Fatalf("build fixture queue db: %v", err)
+	}
+}
 
 // buildFixtureQueueDB writes two queued turns whose payload_json is the
 // serde_json shape of TurnInput::UserInput: one carrying a UserInput::Skill

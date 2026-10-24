@@ -259,9 +259,9 @@ func TestQueueDBRewriteRollsBackBeforeFinalSurface(t *testing.T) {
 
 func TestQueueDBPlanCountsZeroWhenQueueDatabaseAbsent(t *testing.T) {
 	t.Parallel()
-	// A directory holding no databases plans zero rewrites, so the fixture's
-	// other state is not staged for this case.
+	// A neighboring state database must not be mistaken for the queue database.
 	dir := t.TempDir()
+	codextest.BuildFixtureStateDB(t, filepath.Join(dir, codexschema.StateDBFileName))
 
 	plans, err := queueDBRewritePlansForProject(context.Background(), dir, codextest.FixtureProjectPath(), "/Users/fixture/renamed-project")
 

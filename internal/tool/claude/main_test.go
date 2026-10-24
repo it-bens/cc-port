@@ -1,7 +1,6 @@
 package claude_test
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
@@ -9,17 +8,5 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	cleanup, err := claudetest.InstallSharedFixture()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
-	exitCode := m.Run()
-
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		exitCode = 1
-	}
-	os.Exit(exitCode)
+	os.Exit(claudetest.RunWithSharedFixture(m))
 }

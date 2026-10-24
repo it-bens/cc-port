@@ -312,7 +312,7 @@ func TestCodexRoundTripRestoresRolloutsHistoryAndSessionIndex(t *testing.T) {
 	t.Parallel()
 	sourceDir := codextest.SetupFixture(t)
 	sourceHome := &Home{Dir: sourceDir, SQLiteDir: sourceDir}
-	history, index := writeRoundTripLineStores(t, sourceHome)
+	history, index := roundTripLineStores()
 	archiveBytes := fixtureExportArchive(t)
 	destinationHome, _ := setupImportDestination(t)
 
@@ -1267,8 +1267,9 @@ func roundTripLineStores() (history, index []byte) {
 
 // roundTripExportArchive builds the archive the round-trip import tests load
 // once per test binary: each of them exports the identical fixture home, and
-// rebuilding it per test costs more than the import they assert on. It stages
-// its own home because no *testing.T exists inside the once-function.
+// rebuilding it per test costs more than the import they assert on. It copies
+// the template into a home of its own because no *testing.T exists inside the
+// once-function.
 var roundTripExportArchive = sync.OnceValues(func() (data []byte, err error) {
 	dir, err := os.MkdirTemp("", "codex-round-trip-fixture-")
 	if err != nil {
@@ -1279,7 +1280,7 @@ var roundTripExportArchive = sync.OnceValues(func() (data []byte, err error) {
 	}()
 
 	home := &Home{Dir: dir, SQLiteDir: dir}
-	if err := codextest.StageFixture(dir); err != nil {
+	if err := codextest.CopyTemplate(dir); err != nil {
 		return nil, err
 	}
 	if err := writeFixtureLineStores(home); err != nil {

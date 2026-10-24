@@ -38,25 +38,11 @@ func allSelected(t tool.Tool) map[string]bool {
 	return selected
 }
 
-// fixtureArchive builds the fixture project's full-category Claude export on
-// first use and caches it for the rest of the package run. The builder takes
-// no *testing.T: a t.Fatal inside a once marks the cache built with a nil
-// error, and every later caller would import an empty archive.
-var fixtureArchive = sync.OnceValues(exportFixtureArchive)
-
-// buildArchive returns the fixture project's full-category Claude export. The
-// cached bytes are read-only: each caller imports them into its own fresh home.
-func buildArchive(t *testing.T) (body []byte, projectPath string) {
-	t.Helper()
-	body, err := fixtureArchive()
-	require.NoError(t, err)
-	return body, claudetest.FixtureProjectPath()
-}
-
-// exportFixtureArchive stages the Claude fixture in a temporary directory of
-// its own, exports the project's every category into an in-memory archive, and
-// removes the directory before returning.
-func exportFixtureArchive() (body []byte, err error) {
+// buildInTempDir runs build in a fresh temporary directory and removes it
+// afterwards, for the sync.OnceValues archive caches. A builder never calls a
+// *testing.T method: a t.Fatal there exits through runtime.Goexit,
+// sync.OnceValues re-panics with nil, and the whole test binary aborts.
+func buildInTempDir(build func(dir string) ([]byte, error)) (body []byte, err error) {
 	dir, err := os.MkdirTemp("", "cc-port-importer-fixture-")
 	if err != nil {
 		return nil, fmt.Errorf("create fixture directory: %w", err)
@@ -67,7 +53,22 @@ func exportFixtureArchive() (body []byte, err error) {
 			err = errors.Join(err, fmt.Errorf("remove fixture directory: %w", removeErr))
 		}
 	}()
+	return build(dir)
+}
 
+// fixtureArchive caches the fixture project's full-category Claude export.
+var fixtureArchive = sync.OnceValues(func() ([]byte, error) { return buildInTempDir(exportFixtureArchive) })
+
+// buildArchive returns the cached Claude export; each caller imports it into its own home.
+func buildArchive(t *testing.T) (body []byte, projectPath string) {
+	t.Helper()
+	body, err := fixtureArchive()
+	require.NoError(t, err)
+	return body, claudetest.FixtureProjectPath()
+}
+
+// exportFixtureArchive exports every category of the Claude fixture staged under dir.
+func exportFixtureArchive(dir string) ([]byte, error) {
 	home, err := claudetest.StageFixture(dir)
 	if err != nil {
 		return nil, err
@@ -185,15 +186,10 @@ func TestRun_MultiToolArchiveImportsClaudeAndCodex(t *testing.T) {
 	assert.Contains(t, result.Warnings[codexTool.Name()][0], "threads sidecar row(s) could not be applied")
 }
 
-// multiToolArchive builds the two-tool archive on first use and caches it for
-// the rest of the package run. Like fixtureArchive it runs outside any
-// *testing.T, so a failed build reaches every caller instead of marking the
-// cache built.
-var multiToolArchive = sync.OnceValues(exportMultiToolArchive)
+// multiToolArchive caches the archive carrying both a Claude and a Codex block.
+var multiToolArchive = sync.OnceValues(func() ([]byte, error) { return buildInTempDir(exportMultiToolArchive) })
 
-// buildMultiToolArchive returns the archive carrying both a Claude block and a
-// Codex block for the one project both fixture trees share. The cached bytes
-// are read-only: each caller runs its own import or dry run.
+// buildMultiToolArchive returns the cached two-tool archive and the project both blocks cover.
 func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	t.Helper()
 	body, err := multiToolArchive()
@@ -201,24 +197,11 @@ func buildMultiToolArchive(t *testing.T) (body []byte, sharedProject string) {
 	return body, codextest.FixtureProjectPath()
 }
 
-// exportMultiToolArchive stages both fixtures in a temporary tree of its own
-// and exports the shared project into an in-memory archive, removing the tree
-// before returning. It re-keys the Claude fixture onto Codex's fixture project
-// path, which is the only project both staged trees share. The Claude
-// selection includes config, so the archive carries the one entry the plan's
+// exportMultiToolArchive re-keys the Claude fixture onto Codex's fixture
+// project path, the only project both staged trees share. The Claude selection
+// includes config so the archive carries the one entry the plan's
 // destination-configuration read recognizes.
-func exportMultiToolArchive() (body []byte, err error) {
-	dir, err := os.MkdirTemp("", "cc-port-importer-multitool-")
-	if err != nil {
-		return nil, fmt.Errorf("create fixture directory: %w", err)
-	}
-	defer func() {
-		if removeErr := os.RemoveAll(dir); removeErr != nil {
-			body = nil
-			err = errors.Join(err, fmt.Errorf("remove fixture directory: %w", removeErr))
-		}
-	}()
-
+func exportMultiToolArchive(dir string) ([]byte, error) {
 	sharedProject := codextest.FixtureProjectPath()
 	claudeSource, err := claudetest.StageFixture(filepath.Join(dir, "claude"))
 	if err != nil {

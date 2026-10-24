@@ -38,10 +38,8 @@ func TestOpenFailsBusyAfterWaitingOutItsTimeout(t *testing.T) {
 	elapsed := time.Since(started)
 
 	require.ErrorContains(t, err, "SQLite busy")
-	// The floor sits below the timeout because an interrupted busy-handler
-	// sleep can end the wait early; an immediate-busy regression still
-	// elapses near zero.
-	assert.GreaterOrEqual(t, elapsed, 10*time.Millisecond)
+	// The driver's busy handler gives up only once its sleeps add up to the full timeout.
+	assert.GreaterOrEqual(t, elapsed, 20*time.Millisecond)
 }
 
 func TestOpenAndBeginSucceedOnceTheWriterReleasesWithinTheTimeout(t *testing.T) {

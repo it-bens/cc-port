@@ -4,6 +4,7 @@ package claudetest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -117,12 +118,31 @@ func InstallSharedFixture() (cleanup func() error, err error) {
 
 	home, err := StageFixture(dir)
 	if err != nil {
-		_ = os.RemoveAll(dir)
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			return nil, errors.Join(err, removeErr)
+		}
 		return nil, err
 	}
 	sharedHome = home
 
 	return func() error { return os.RemoveAll(dir) }, nil
+}
+
+// RunWithSharedFixture installs the shared fixture, runs m, and removes the
+// fixture, returning the exit code for TestMain to pass to os.Exit. A failed
+// install or cleanup is printed to stderr and yields exit code 1.
+func RunWithSharedFixture(m *testing.M) int {
+	cleanup, err := InstallSharedFixture()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	exitCode := m.Run()
+	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return exitCode
 }
 
 // SharedFixture returns the read-only fixture InstallSharedFixture staged. Only

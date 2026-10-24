@@ -36,10 +36,12 @@ func TestMove_RewritesProjectRootsPathAlongsideThreadCwd(t *testing.T) {
 
 func TestStateDBKnowsProjectReferencedOnlyByProjectRoot(t *testing.T) {
 	t.Parallel()
-	// stateDBKnowsProject reads only state_*.sqlite, so only that database is
-	// built rather than the whole fixture home.
+	// stateDBKnowsProject reads only state_*.sqlite, so the fixture home is not
+	// staged. The queue database sits beside the state database to prove the
+	// state-database glob does not pick up a neighboring database.
 	dir := t.TempDir()
 	codextest.BuildFixtureStateDB(t, filepath.Join(dir, codexschema.StateDBFileName))
+	codextest.BuildFixtureQueueDB(t, filepath.Join(dir, codexschema.QueueDBFileName))
 	home := &Home{Dir: dir, SQLiteDir: dir}
 	const rootOnlyProject = "/Users/test/Projects/root-only"
 	database, err := sql.Open("sqlite", filepath.Join(home.SQLiteDir, codexschema.StateDBFileName))

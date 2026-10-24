@@ -41,50 +41,57 @@ const (
 	destinationHomeDir     = "/home/newuser"
 )
 
-// ccPortBinary is the CLI executable the tests in this file run. TestMain
-// builds it once before any test starts.
+// ccPortBinary is the CLI executable that
+// TestIntegration_MultiToolArchiveExportsClaudeAndCodex runs; TestMain builds
+// it once before any test starts.
 var ccPortBinary string
 
 func TestMain(m *testing.M) {
-	// Build before IsolateHome moves HOME, so the build reuses the caller's Go
-	// build cache instead of compiling from cold under the isolated HOME.
+	os.Exit(runTests(m))
+}
+
+// runTests builds the CLI before IsolateHome moves HOME, so the build reuses
+// the caller's Go build cache instead of compiling from cold under the
+// isolated HOME. Each cleanup is deferred as soon as its resource exists, so
+// every exit path removes what setup created.
+func runTests(m *testing.M) (exitCode int) {
 	buildDir, err := os.MkdirTemp("", "cc-port-integration-bin-")
 	if err != nil {
-		panic(err)
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
+	defer func() {
+		if err := os.RemoveAll(buildDir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exitCode = 1
+		}
+	}()
 	ccPortBinary, err = buildCCPortBinary(buildDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		if removeErr := os.RemoveAll(buildDir); removeErr != nil {
-			fmt.Fprintln(os.Stderr, removeErr)
-		}
-		os.Exit(1)
+		return 1
 	}
 
 	templateCleanup, err := codextest.InstallTemplate()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		if removeErr := os.RemoveAll(buildDir); removeErr != nil {
-			fmt.Fprintln(os.Stderr, removeErr)
-		}
-		os.Exit(1)
+		return 1
 	}
+	defer func() {
+		if err := templateCleanup(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exitCode = 1
+		}
+	}()
 
 	restore, err := claudetest.IsolateHome()
 	if err != nil {
-		panic(err)
-	}
-	exitCode := m.Run()
-	restore()
-	if err := templateCleanup(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		exitCode = 1
+		return 1
 	}
-	if err := os.RemoveAll(buildDir); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		exitCode = 1
-	}
-	os.Exit(exitCode)
+	defer restore()
+
+	return m.Run()
 }
 
 // buildCCPortBinary builds the CLI into dir and returns the executable's path.

@@ -28,28 +28,27 @@ import (
 // TestMain points the machine-wide Codex locations at a scratch directory
 // before any test runs, so no test in this package reads the real
 // /etc/codex or /Library/Managed Preferences through Open, and installs the
-// fixture template every SetupFixture call copies.
+// fixture template every SetupFixture and CopyTemplate call copies.
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+func runTests(m *testing.M) (exitCode int) {
 	scratch, err := os.MkdirTemp("", "codex-machine-locations")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create machine-location scratch directory: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	defer func() {
+		if err := os.RemoveAll(scratch); err != nil {
+			fmt.Fprintf(os.Stderr, "remove machine-location scratch directory: %v\n", err)
+			exitCode = 1
+		}
+	}()
 	systemConfigDir = filepath.Join(scratch, "etc-codex")
 	managedPreferencesDir = filepath.Join(scratch, "Managed Preferences")
-	cleanup, err := codextest.InstallTemplate()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		_ = os.RemoveAll(scratch)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	_ = os.RemoveAll(scratch)
-	os.Exit(code)
+
+	return codextest.RunWithTemplate(m)
 }
 
 var fixtureNow = time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
