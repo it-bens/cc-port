@@ -17,6 +17,7 @@ import (
 const stagePass = "stage-passphrase"
 
 func TestWriterStage_RoundTripViaRunWriter(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	sink := &bufferSinkStage{buf: &buf}
 	w, err := pipeline.RunWriter(context.Background(), []pipeline.WriterStage{
@@ -41,6 +42,7 @@ func TestWriterStage_RoundTripViaRunWriter(t *testing.T) {
 }
 
 func TestWriterStage_PassthroughWhenPassEmpty(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	sink := &bufferSinkStage{buf: &buf}
 	w, err := pipeline.RunWriter(context.Background(), []pipeline.WriterStage{
@@ -60,25 +62,30 @@ func TestWriterStage_PassthroughWhenPassEmpty(t *testing.T) {
 }
 
 func TestWriterStage_Name(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, "encrypt", (&encrypt.WriterStage{Pass: "x"}).Name())
 }
 
 func TestWriterStage_RejectsNilDownstream(t *testing.T) {
+	t.Parallel()
 	_, _, err := (&encrypt.WriterStage{Pass: stagePass}).Open(context.Background(), nil)
 	require.Error(t, err)
 }
 
 func TestWriterStage_EncryptOpenSurfacesAgeEncryptError(t *testing.T) {
+	t.Parallel()
 	_, _, err := (&encrypt.WriterStage{Pass: stagePass}).Open(context.Background(), failingWriter{})
 	require.Error(t, err)
 }
 
 func TestEncryptingWriter_RejectsEmptyPassphrase(t *testing.T) {
+	t.Parallel()
 	_, err := encrypt.EncryptingWriter(&bytes.Buffer{}, "")
 	require.Error(t, err)
 }
 
 func TestDecryptingReader_RejectsEmptyPassphrase(t *testing.T) {
+	t.Parallel()
 	_, err := encrypt.DecryptingReader(&bytes.Buffer{}, "")
 	require.Error(t, err)
 }
@@ -113,25 +120,6 @@ func (failingWriter) Write(_ []byte) (int, error) { return 0, errSyntheticHeader
 // guard against bytes.Reader/io.SectionReader interface drift.
 var _ io.ReaderAt = (*bytes.Reader)(nil)
 
-// encryptBytes runs body through encrypt.EncryptingWriter under passphrase
-// and returns the cipher bytes. Centralizes the encrypt-and-buffer pattern
-// so test bodies that need cipher bytes for a custom upstream View or
-// for byte-mutation cases stay focused on the behavior they exercise.
-func encryptBytes(t *testing.T, passphrase string, body []byte) []byte {
-	t.Helper()
-	var cipher bytes.Buffer
-	w, err := encrypt.EncryptingWriter(&cipher, passphrase)
-	require.NoError(t, err)
-	if len(body) > 0 {
-		_, err = w.Write(body)
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
-	return cipher.Bytes()
-}
-
-const dispatchPass = "dispatch-passphrase"
-
 // streamingPlaintextView wraps body as both Reader and ReaderAt + Size, mirroring
 // what file.Source produces. Used for plaintext branches whose contract
 // propagates upstream ReaderAt/Size through.
@@ -141,17 +129,19 @@ func streamingPlaintextView(t *testing.T, body []byte) pipeline.View {
 	return pipeline.View{Reader: r, ReaderAt: r, Size: int64(len(body))}
 }
 
-// streamingEncryptedView wraps cipher bytes as Reader-only + ReaderAt for parity
-// with file.Source. The encrypted+pass branch drops ReaderAt and Size from the
-// returned View; this helper still populates them on the upstream side.
-func streamingEncryptedView(t *testing.T, body []byte) pipeline.View {
+// streamingEncryptedView wraps the shared dispatchPass ciphertext as Reader,
+// ReaderAt and Size, like file.Source. The encrypted+pass branch drops ReaderAt
+// and Size from the View it returns.
+func streamingEncryptedView(t *testing.T) pipeline.View {
 	t.Helper()
-	return streamingPlaintextView(t, encryptBytes(t, dispatchPass, body))
+	cipher, err := sharedCipher()
+	require.NoError(t, err)
+	return streamingPlaintextView(t, cipher)
 }
 
 func TestReaderStage_EncryptedWithPassDecryptsToStreamingView(t *testing.T) {
-	plaintext := []byte("reader stage decrypt round trip")
-	upstream := streamingEncryptedView(t, plaintext)
+	t.Parallel()
+	upstream := streamingEncryptedView(t)
 
 	view, meta, closer, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
 
@@ -163,10 +153,11 @@ func TestReaderStage_EncryptedWithPassDecryptsToStreamingView(t *testing.T) {
 	assert.Equal(t, int64(0), view.Size, "decrypt branch produces an unknown plaintext size; Size must be 0")
 	got, err := io.ReadAll(view.Reader)
 	require.NoError(t, err)
-	assert.Equal(t, plaintext, got)
+	assert.Equal(t, sharedPlaintext, got)
 }
 
 func TestReaderStage_StrictPlaintextEmptyPassPassthroughPropagatesRandomAccess(t *testing.T) {
+	t.Parallel()
 	body := []byte("plaintext archive bytes")
 	upstream := streamingPlaintextView(t, body)
 
@@ -181,6 +172,7 @@ func TestReaderStage_StrictPlaintextEmptyPassPassthroughPropagatesRandomAccess(t
 }
 
 func TestReaderStage_StrictPlaintextWithPassReturnsErrUnencryptedInput(t *testing.T) {
+	t.Parallel()
 	upstream := streamingPlaintextView(t, []byte("plaintext bytes"))
 
 	_, _, _, err := (&encrypt.ReaderStage{Pass: dispatchPass, Mode: encrypt.Strict}).Open(context.Background(), upstream)
@@ -189,7 +181,8 @@ func TestReaderStage_StrictPlaintextWithPassReturnsErrUnencryptedInput(t *testin
 }
 
 func TestReaderStage_StrictEncryptedEmptyPassReturnsErrPassphraseRequired(t *testing.T) {
-	upstream := streamingEncryptedView(t, []byte("body"))
+	t.Parallel()
+	upstream := streamingEncryptedView(t)
 
 	_, _, _, err := (&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict}).Open(context.Background(), upstream)
 
@@ -197,10 +190,11 @@ func TestReaderStage_StrictEncryptedEmptyPassReturnsErrPassphraseRequired(t *tes
 }
 
 func TestReaderStage_StrictEncryptedWrongPassReturnsErrPassphraseOnOpen(t *testing.T) {
+	t.Parallel()
 	// age scrypt MAC-verifies the file-key envelope during age.Decrypt.
 	// A wrong passphrase therefore fails on Open, before any Read.
 	// DecryptingReader wraps the failure with ErrPassphrase via errors.Join.
-	upstream := streamingEncryptedView(t, []byte("body"))
+	upstream := streamingEncryptedView(t)
 
 	_, _, _, err := (&encrypt.ReaderStage{Pass: "wrong-passphrase", Mode: encrypt.Strict}).Open(context.Background(), upstream)
 
@@ -209,6 +203,7 @@ func TestReaderStage_StrictEncryptedWrongPassReturnsErrPassphraseOnOpen(t *testi
 }
 
 func TestReaderStage_PermissivePlaintextWithPassPassthroughPropagatesRandomAccess(t *testing.T) {
+	t.Parallel()
 	body := []byte("permissive plain")
 	upstream := streamingPlaintextView(t, body)
 
@@ -222,7 +217,8 @@ func TestReaderStage_PermissivePlaintextWithPassPassthroughPropagatesRandomAcces
 }
 
 func TestReaderStage_PermissiveEncryptedEmptyPassReturnsErrPassphraseRequired(t *testing.T) {
-	upstream := streamingEncryptedView(t, []byte("body"))
+	t.Parallel()
+	upstream := streamingEncryptedView(t)
 
 	_, _, _, err := (&encrypt.ReaderStage{Pass: "", Mode: encrypt.Permissive}).Open(context.Background(), upstream)
 
@@ -230,12 +226,14 @@ func TestReaderStage_PermissiveEncryptedEmptyPassReturnsErrPassphraseRequired(t 
 }
 
 func TestReaderStage_RejectsEmptyUpstream(t *testing.T) {
+	t.Parallel()
 	_, _, _, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.View{})
 
 	require.Error(t, err)
 }
 
 func TestReaderStage_PeekErrorSurfaces(t *testing.T) {
+	t.Parallel()
 	_, _, _, err := (&encrypt.ReaderStage{Pass: stagePass}).Open(context.Background(), pipeline.View{
 		Reader: failingReader{},
 	})
@@ -277,13 +275,16 @@ func (c *streamingCountingCloser) Close() error { *c.count++; return nil }
 // ErrPassphraseRequired sentinel without closing upstream itself, and
 // pipeline.RunReader closes upstream exactly once.
 func TestReaderStage_RunReaderClosesUpstreamOnceOnError(t *testing.T) {
+	t.Parallel()
 	closeCount := 0
+	cipher, err := sharedCipher()
+	require.NoError(t, err)
 	source := &streamingCountingSource{
-		bytes:    encryptBytes(t, dispatchPass, nil),
+		bytes:    cipher,
 		closeOut: &closeCount,
 	}
 
-	_, err := pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
+	_, err = pipeline.RunReader(context.Background(), []pipeline.ReaderStage{
 		source,
 		&encrypt.ReaderStage{Pass: "", Mode: encrypt.Strict},
 	})
@@ -293,5 +294,6 @@ func TestReaderStage_RunReaderClosesUpstreamOnceOnError(t *testing.T) {
 }
 
 func TestReaderStage_Name(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, "decrypt", (&encrypt.ReaderStage{Pass: "x"}).Name())
 }
