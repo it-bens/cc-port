@@ -140,15 +140,6 @@ func encryptTo(passphrase string, body []byte) ([]byte, error) {
 	return cipher.Bytes(), nil
 }
 
-// encryptBytes runs body through encrypt.EncryptingWriter under passphrase and
-// returns the cipher bytes, failing the test on any error.
-func encryptBytes(t *testing.T, passphrase string, body []byte) []byte {
-	t.Helper()
-	cipher, err := encryptTo(passphrase, body)
-	require.NoError(t, err)
-	return cipher
-}
-
 const dispatchPass = "dispatch-passphrase"
 
 // sharedPlaintext is the plaintext behind sharedCipher;
@@ -173,10 +164,9 @@ func streamingPlaintextView(t *testing.T, body []byte) pipeline.View {
 	return pipeline.View{Reader: r, ReaderAt: r, Size: int64(len(body))}
 }
 
-// streamingEncryptedView wraps the shared dispatchPass ciphertext as Reader-only
-// + ReaderAt for parity with file.Source. The encrypted+pass branch drops ReaderAt
-// and Size from the returned View; this helper still populates them on the
-// upstream side.
+// streamingEncryptedView wraps the shared dispatchPass ciphertext as Reader,
+// ReaderAt and Size, like file.Source. The encrypted+pass branch drops ReaderAt
+// and Size from the View it returns.
 func streamingEncryptedView(t *testing.T) pipeline.View {
 	t.Helper()
 	cipher, err := sharedCipher()

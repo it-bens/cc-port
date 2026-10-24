@@ -17,7 +17,8 @@ func TestRoundTrip(t *testing.T) {
 			t.Parallel()
 			plaintext := patternBytes(size)
 
-			cipher := encryptBytes(t, "correct horse battery staple", plaintext)
+			cipher, err := encryptTo("correct horse battery staple", plaintext)
+			require.NoError(t, err)
 
 			reader, err := encrypt.DecryptingReader(bytes.NewReader(cipher), "correct horse battery staple")
 			require.NoError(t, err)
