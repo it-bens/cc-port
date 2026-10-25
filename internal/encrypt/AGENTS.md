@@ -12,6 +12,6 @@
 
 ## Navigation
 
-- Primitives: `encrypt.go` (`EncryptingWriter`, `DecryptingReader`, `IsEncrypted`, `MinPeekLen`, `ErrPassphrase`).
+- Primitives: `encrypt.go` (`EncryptingWriter`, `DecryptingReader`, `IsEncrypted`, `ErrPassphrase`).
 - Stages: `stages.go` (`WriterStage`, `ReaderStage`, `Mode`, `ErrPassphraseRequired`, `ErrUnencryptedInput`).
 - Tests: `encrypt_test.go`, `stages_test.go`, `helpers_test.go`.

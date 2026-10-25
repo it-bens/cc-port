@@ -25,7 +25,7 @@ var ErrUnencryptedInput = errors.New(
 )
 
 // peekBufLen is the inspection window ReaderStage hands to bufio.Peek to
-// decide encrypted vs plaintext. Must be at least MinPeekLen.
+// decide encrypted vs plaintext. Must cover len(magicPrefix).
 const peekBufLen = 32
 
 // readBufLen is the bufio buffer size. Sized larger than peekBufLen so
