@@ -14,31 +14,31 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
+	"github.com/it-bens/cc-port/internal/testmain"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 )
 
 // deadSessionPID exceeds the Linux/macOS PID ceiling but stays below int32 max, so Kill(pid, 0) returns ESRCH.
 const deadSessionPID = 2_000_000_001
 
-// IsolateHome redirects HOME to a newly created directory with only an empty
+// isolateHome redirects HOME to a newly created directory with only an empty
 // .claude marker. The marker keeps legacy Claude-only command tests selected
 // while ensuring Codex is never detected; fixture homes are still passed by
 // explicit flags. The returned restore sets HOME back to its previous value,
 // or unsets it when it had none, removes the directory, and returns any error
-// from either step; a TestMain checks that error rather than deferring restore
-// bare.
-func IsolateHome() (restore func() error, err error) {
+// from either step.
+func isolateHome() (restore func() error, err error) {
 	dir, err := os.MkdirTemp("", "cc-port-test-home-")
 	if err != nil {
 		return nil, fmt.Errorf("create isolated home: %w", err)
 	}
 	if err := os.Mkdir(filepath.Join(dir, ".claude"), 0o700); err != nil {
-		return nil, removeAfterFailure(dir, fmt.Errorf("create .claude marker: %w", err))
+		return nil, testmain.RemoveAfterFailure(dir, fmt.Errorf("create .claude marker: %w", err))
 	}
 
 	previous, hadPrevious := os.LookupEnv("HOME")
 	if err := os.Setenv("HOME", dir); err != nil {
-		return nil, removeAfterFailure(dir, fmt.Errorf("point HOME at isolated home: %w", err))
+		return nil, testmain.RemoveAfterFailure(dir, fmt.Errorf("point HOME at isolated home: %w", err))
 	}
 
 	return func() error {
@@ -56,15 +56,6 @@ func IsolateHome() (restore func() error, err error) {
 		}
 		return envErr
 	}, nil
-}
-
-// removeAfterFailure removes dir after a failed setup step and returns err,
-// joined with the removal error when the removal fails too.
-func removeAfterFailure(dir string, err error) error {
-	if removeErr := os.RemoveAll(dir); removeErr != nil {
-		return errors.Join(err, removeErr)
-	}
-	return err
 }
 
 // NewWorkspace returns a Workspace bound to home with the adapter's default
@@ -122,46 +113,39 @@ func StageFixture(dir string) (*claude.Home, error) {
 	}, nil
 }
 
-// sharedHome holds the fixture InstallSharedFixture staged. TestMain sets it
-// before m.Run, so tests only read it, including when they run in parallel.
+// sharedHome holds the fixture installSharedFixture staged. A package's
+// TestMain installs it before its tests start, so tests only read it,
+// including when they run in parallel.
 var sharedHome *claude.Home
 
-// InstallSharedFixture stages the fixture once into a fresh temporary
-// directory and records it for SharedFixture. A package's TestMain calls it
-// before m.Run; the returned cleanup removes the staged directory.
-func InstallSharedFixture() (cleanup func() error, err error) {
-	dir, err := os.MkdirTemp("", "cc-port-claude-fixture-")
-	if err != nil {
-		return nil, fmt.Errorf("create shared fixture directory: %w", err)
-	}
-
-	home, err := StageFixture(dir)
-	if err != nil {
-		return nil, removeAfterFailure(dir, err)
-	}
-	sharedHome = home
-
-	return func() error { return os.RemoveAll(dir) }, nil
+// installSharedFixture stages the fixture once into a fresh temporary
+// directory and records it for SharedFixture. RunWithSharedFixture calls it
+// before the tests start; the returned cleanup removes the staged directory.
+func installSharedFixture() (cleanup func() error, err error) {
+	return testmain.StageTempDir("cc-port-claude-fixture-", func(dir string) error {
+		home, err := StageFixture(dir)
+		if err != nil {
+			return err
+		}
+		sharedHome = home
+		return nil
+	})
 }
 
-// RunWithSharedFixture installs the shared fixture, runs m, and removes the
-// fixture, returning the exit code for TestMain to pass to os.Exit. A failed
-// install or cleanup is printed to stderr and yields exit code 1.
-func RunWithSharedFixture(m *testing.M) int {
-	cleanup, err := InstallSharedFixture()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	exitCode := m.Run()
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	return exitCode
+// RunWithSharedFixture installs the shared fixture, runs run, and removes the
+// fixture, returning the exit code for TestMain to pass to os.Exit.
+func RunWithSharedFixture(run func() int) int {
+	return testmain.Run(installSharedFixture, run)
 }
 
-// SharedFixture returns the read-only fixture InstallSharedFixture staged. Only
+// RunWithIsolatedHome points HOME at an isolated directory for the duration of
+// run and restores it afterwards, returning run's exit code for TestMain to
+// pass to os.Exit.
+func RunWithIsolatedHome(run func() int) int {
+	return testmain.Run(isolateHome, run)
+}
+
+// SharedFixture returns the read-only fixture installSharedFixture staged. Only
 // tests that never write under the home may use it; a writing test stages its
 // own copy with SetupFixture. A missing installation fails the test rather
 // than handing back an empty home.
@@ -169,7 +153,7 @@ func SharedFixture(t testing.TB) *claude.Home {
 	t.Helper()
 
 	if sharedHome == nil {
-		t.Fatalf("claudetest.SharedFixture: no shared fixture installed; call claudetest.InstallSharedFixture from TestMain")
+		t.Fatalf("claudetest.SharedFixture: no shared fixture installed; call claudetest.RunWithSharedFixture from TestMain")
 	}
 	return sharedHome
 }

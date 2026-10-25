@@ -27,6 +27,7 @@ import (
 	"github.com/it-bens/cc-port/internal/move"
 	"github.com/it-bens/cc-port/internal/pipeline"
 	"github.com/it-bens/cc-port/internal/rewrite"
+	"github.com/it-bens/cc-port/internal/testmain"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/claude"
 	"github.com/it-bens/cc-port/internal/tool/claude/claudetest"
@@ -47,56 +48,25 @@ const (
 var ccPortBinary string
 
 func TestMain(m *testing.M) {
-	os.Exit(runTests(m))
+	os.Exit(testmain.Run(buildCLI, func() int {
+		return codextest.RunWithTemplate(func() int {
+			return claudetest.RunWithIsolatedHome(m.Run)
+		})
+	}))
 }
 
-// runTests builds the CLI before IsolateHome moves HOME, so the build reuses
-// the caller's Go build cache instead of compiling from cold under the
-// isolated HOME. Each cleanup is deferred as soon as its resource exists, so
-// every exit path removes what setup created.
-func runTests(m *testing.M) (exitCode int) {
-	buildDir, err := os.MkdirTemp("", "cc-port-integration-bin-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	defer func() {
-		if err := os.RemoveAll(buildDir); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			exitCode = 1
+// buildCLI builds the CLI before claudetest.RunWithIsolatedHome moves HOME, so
+// the build reuses the caller's Go build cache instead of compiling from cold
+// under the isolated HOME. The returned cleanup removes the build directory.
+func buildCLI() (cleanup func() error, err error) {
+	return testmain.StageTempDir("cc-port-integration-bin-", func(buildDir string) error {
+		binary, err := buildCCPortBinary(buildDir)
+		if err != nil {
+			return err
 		}
-	}()
-	ccPortBinary, err = buildCCPortBinary(buildDir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
-	templateCleanup, err := codextest.InstallTemplate()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	defer func() {
-		if err := templateCleanup(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			exitCode = 1
-		}
-	}()
-
-	restore, err := claudetest.IsolateHome()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	defer func() {
-		if err := restore(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			exitCode = 1
-		}
-	}()
-
-	return m.Run()
+		ccPortBinary = binary
+		return nil
+	})
 }
 
 // buildCCPortBinary builds the CLI into dir and returns the executable's path.

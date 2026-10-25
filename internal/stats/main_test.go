@@ -8,5 +8,5 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(codextest.RunWithTemplate(m))
+	os.Exit(codextest.RunWithTemplate(m.Run))
 }
