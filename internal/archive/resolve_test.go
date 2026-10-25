@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -172,6 +173,56 @@ func TestResolvePlaceholdersStream_HandlesTokenStraddlingReadBoundary(t *testing
 
 	assert.Equal(t, "abcRESOLVEDxyz and tail RESOLVED end", streamed.String(),
 		"streaming output must equal whole-body substitution output")
+}
+
+// TestResolvePlaceholdersStream_ResolvesTokenAfterFullReadBuffer places the
+// token right after a full 64 KiB read buffer: ReadSlice reports ErrBufferFull
+// for the plain text and finds the token's '{' in the next slice.
+func TestResolvePlaceholdersStream_ResolvesTokenAfterFullReadBuffer(t *testing.T) {
+	var dst bytes.Buffer
+
+	require.NoError(t, archive.ResolvePlaceholdersStream(
+		strings.NewReader(strings.Repeat("a", 64<<10)+"{{KEY}}"),
+		&dst,
+		map[string]string{"{{KEY}}": "RESOLVED"},
+	))
+
+	assert.Equal(t, strings.Repeat("a", 64<<10)+"RESOLVED", dst.String())
+}
+
+// errReadFailure is the read error the sources below report after their bytes.
+var errReadFailure = errors.New("source: read failed")
+
+// TestResolvePlaceholdersStream_ReturnsWriterErrorOverReaderError: the first
+// 64 KiB fill the writer's internal buffer, so writing the next chunk is what
+// flushes it to the failing destination. That write error is returned rather
+// than the read error the source reports with the same chunk.
+func TestResolvePlaceholdersStream_ReturnsWriterErrorOverReaderError(t *testing.T) {
+	src := io.MultiReader(
+		bytes.NewReader(append(bytes.Repeat([]byte("a"), 64<<10), "tail"...)),
+		iotest.ErrReader(errReadFailure),
+	)
+
+	err := archive.ResolvePlaceholdersStream(
+		src,
+		&capCheckWriter{inner: &bytes.Buffer{}, limit: 0},
+		map[string]string{"{{KEY}}": "/resolved"},
+	)
+
+	require.ErrorIs(t, err, errCapCheckWriterFull)
+	require.NotErrorIs(t, err, errReadFailure)
+}
+
+func TestResolvePlaceholdersStream_ReturnsReadErrorAfterPlainText(t *testing.T) {
+	src := io.MultiReader(
+		bytes.NewReader([]byte("plain text")),
+		iotest.ErrReader(errReadFailure),
+	)
+	var dst bytes.Buffer
+
+	err := archive.ResolvePlaceholdersStream(src, &dst, map[string]string{"{{KEY}}": "/resolved"})
+
+	require.ErrorIs(t, err, errReadFailure)
 }
 
 // errCapCheckWriterFull is capCheckWriter's write-over-limit error.

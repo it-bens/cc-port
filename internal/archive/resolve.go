@@ -8,13 +8,14 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // ResolvePlaceholdersStream reads from src and writes to dst, replacing
 // each declared placeholder key with its resolution value. Peak memory is
 // bounded by the longest placeholder key, not by the source size. Tokens
 // never span a read boundary because the reader peeks ahead up to the
-// longest declared key before consuming the byte.
+// longest declared key before consuming the rest of a token.
 //
 // Match order is deterministic: resolutions are visited in descending key
 // length so a key that is a prefix of another still resolves to the
@@ -24,54 +25,55 @@ import (
 //
 // An unmatched `{` is emitted as-is. No byte is silently dropped.
 func ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[string]string) error {
-	if len(resolutions) == 0 {
+	type resolution struct {
+		tail  []byte
+		value string
+	}
+	entries := make([]resolution, 0, len(resolutions))
+	for key, value := range resolutions {
+		if tail, isToken := strings.CutPrefix(key, "{"); isToken {
+			entries = append(entries, resolution{tail: []byte(tail), value: value})
+		}
+	}
+	if len(entries) == 0 {
 		_, err := io.Copy(dst, src)
 		return err
 	}
-
-	orderedKeys := make([]string, 0, len(resolutions))
-	longestKey := 0
-	for key := range resolutions {
-		orderedKeys = append(orderedKeys, key)
-		if len(key) > longestKey {
-			longestKey = len(key)
-		}
-	}
-	sort.Slice(orderedKeys, func(i, j int) bool {
-		return len(orderedKeys[i]) > len(orderedKeys[j])
+	sort.Slice(entries, func(i, j int) bool {
+		return len(entries[i].tail) > len(entries[j].tail)
 	})
 
 	reader := bufio.NewReaderSize(src, 64<<10)
 	writer := bufio.NewWriterSize(dst, 64<<10)
 	for {
-		nextByte, err := reader.ReadByte()
-		if errors.Is(err, io.EOF) {
-			return writer.Flush()
+		chunk, err := reader.ReadSlice('{')
+		text := chunk
+		if err == nil {
+			text = chunk[:len(chunk)-1]
 		}
-		if err != nil {
+		// ReadSlice's slice is invalidated by the next reader call, so it is
+		// written before the Peek.
+		if _, writeErr := writer.Write(text); writeErr != nil {
+			return writeErr
+		}
+		switch {
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF):
+			return writer.Flush()
+		case err != nil:
 			return err
 		}
-		if nextByte != '{' {
-			if writeErr := writer.WriteByte(nextByte); writeErr != nil {
-				return writeErr
-			}
-			continue
-		}
-		// Potential `{{KEY}}` start. Peek enough to cover the longest key
-		// minus the byte we already consumed. Peek may return fewer bytes
-		// than requested at EOF; that's fine, the prefix check handles it.
-		peek, _ := reader.Peek(longestKey - 1)
-		candidate := make([]byte, 0, longestKey)
-		candidate = append(candidate, nextByte)
-		candidate = append(candidate, peek...)
-
+		// Ignoring Peek's error is safe: a short peek at EOF falls through to
+		// the prefix check, and a read error returns from a later ReadSlice.
+		peek, _ := reader.Peek(len(entries[0].tail))
 		matched := false
-		for _, key := range orderedKeys {
-			if bytes.HasPrefix(candidate, []byte(key)) {
-				if _, writeErr := writer.WriteString(resolutions[key]); writeErr != nil {
+		for _, entry := range entries {
+			if bytes.HasPrefix(peek, entry.tail) {
+				if _, writeErr := writer.WriteString(entry.value); writeErr != nil {
 					return writeErr
 				}
-				if _, discardErr := reader.Discard(len(key) - 1); discardErr != nil {
+				if _, discardErr := reader.Discard(len(entry.tail)); discardErr != nil {
 					return discardErr
 				}
 				matched = true
@@ -79,7 +81,7 @@ func ResolvePlaceholdersStream(src io.Reader, dst io.Writer, resolutions map[str
 			}
 		}
 		if !matched {
-			if writeErr := writer.WriteByte(nextByte); writeErr != nil {
+			if writeErr := writer.WriteByte('{'); writeErr != nil {
 				return writeErr
 			}
 		}
