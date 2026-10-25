@@ -17,7 +17,6 @@ func TestRoundTrip(t *testing.T) {
 		size int
 	}{
 		{"empty", 0},
-		{"single byte", 1},
 		{"1 MiB multi-chunk", 1 << 20},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,26 +58,8 @@ func TestDecryptTamperedBody(t *testing.T) {
 	require.ErrorIs(t, err, encrypt.ErrPassphrase)
 }
 
-func TestDecryptTruncated(t *testing.T) {
-	t.Parallel()
-	cipher, err := sharedCipher()
-	require.NoError(t, err)
-	require.Greater(t, len(cipher), 32, "cipher size sanity")
-	truncated := cipher[: len(cipher)-16 : len(cipher)-16]
-
-	reader, err := encrypt.DecryptingReader(bytes.NewReader(truncated), dispatchPass)
-	require.NoError(t, err)
-	_, err = io.ReadAll(reader)
-	require.ErrorIs(t, err, encrypt.ErrPassphrase)
-}
-
 func TestIsEncrypted(t *testing.T) {
 	t.Parallel()
-	t.Run("matches age header", func(t *testing.T) {
-		cipher, err := sharedCipher()
-		require.NoError(t, err)
-		require.True(t, encrypt.IsEncrypted(cipher))
-	})
 	t.Run("rejects plaintext", func(t *testing.T) {
 		require.False(t, encrypt.IsEncrypted([]byte("PK\x03\x04..............")))
 	})

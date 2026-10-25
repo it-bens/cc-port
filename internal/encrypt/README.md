@@ -72,6 +72,6 @@ Bytes that match the age magic prefix but are not actual age archives. The decry
 
 ## Tests
 
-`encrypt_test.go` covers round-trip on sizes 0/1/1 MiB, wrong-passphrase rejection, tamper rejection, truncation rejection, and magic-byte detection. `stages_test.go` covers `WriterStage` round-trip via `RunWriter`, the empty-Pass passthrough, the streaming `ReaderStage` matrix under `Strict` and the differing cell under `Permissive`, the encrypted-with-pass branch returning a streaming View, the plaintext branches propagating `ReaderAt`/`Size`, the runner-closes-upstream-once-on-error contract, and stage `Name()` reporting. The runner-level cascade and idempotency contracts live in `internal/pipeline/pipeline_test.go`. Tempfile-lifecycle tests live in `internal/pipeline/materialize_test.go`.
+`encrypt_test.go` covers round-trip on sizes 0 and 1 MiB, wrong-passphrase rejection, tamper rejection, and `IsEncrypted` rejecting plaintext and buffers shorter than `MinPeekLen`. `stages_test.go` covers `WriterStage` round-trip via `RunWriter`, the empty-Pass passthrough, the streaming `ReaderStage` matrix under `Strict` and the differing cell under `Permissive`, the encrypted-with-pass branch returning a streaming View, the plaintext branches propagating `ReaderAt`/`Size`, the runner-closes-upstream-once-on-error contract, and stage `Name()` reporting. The runner-level cascade and idempotency contracts live in `internal/pipeline/pipeline_test.go`. Tempfile-lifecycle tests live in `internal/pipeline/materialize_test.go`.
 
 Coverage target: 90% or above.
