@@ -340,6 +340,7 @@ func TestOpenPriorRead_NoObjectReturnsNil(t *testing.T) {
 }
 
 func TestOpenPriorRead_EncryptedNoPassphraseNoForceReturnsErrPassphraseRequired(t *testing.T) {
+	t.Parallel()
 	url := "file://" + t.TempDir()
 	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
 	r, err := remote.New(context.Background(), url, remote.Deps{})
@@ -354,6 +355,7 @@ func TestOpenPriorRead_EncryptedNoPassphraseNoForceReturnsErrPassphraseRequired(
 }
 
 func TestOpenPriorRead_EncryptedNoPassphraseWithForceReturnsNil(t *testing.T) {
+	t.Parallel()
 	url := "file://" + t.TempDir()
 	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
 	r, err := remote.New(context.Background(), url, remote.Deps{})

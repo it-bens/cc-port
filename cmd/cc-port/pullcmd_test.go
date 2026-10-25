@@ -382,6 +382,7 @@ func TestOpenArchiveSource_MissingObjectReturnsErrRemoteNotFound(t *testing.T) {
 }
 
 func TestOpenArchiveSource_EncryptedNoPassphraseReturnsErrPassphraseRequired(t *testing.T) {
+	t.Parallel()
 	url := "file://" + t.TempDir()
 	injectEncryptedArchiveAtURL(t, url, "k", "correct horse battery staple", "host-user")
 	r, err := remote.New(context.Background(), url, remote.Deps{})
