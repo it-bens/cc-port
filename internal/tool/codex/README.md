@@ -1118,9 +1118,9 @@ Fixtures come from `testdata/dotcodex/`, staged by the `codextest`
 subpackage. `SetupFixture` copies a template that `InstallTemplate` staged
 once, so the SQLite databases and git baselines are built once per test
 binary instead of once per test. Every package that calls `SetupFixture`
-installs the template from its `TestMain`. `RunWithTemplate(m)` installs it,
-runs `m`, and removes it. The root integration suite and `cmd/cc-port`, whose
-`TestMain` also isolates HOME, call `InstallTemplate` and its cleanup directly.
+installs the template from its `TestMain`. `RunWithTemplate(run func() int)`
+installs it, runs `run`, and removes it; a `TestMain` that also isolates HOME
+nests the two wrappers, so the template is installed first and removed last.
 When no template is installed,
 `SetupFixture` fails the test instead of staging on the fly. `CopyTemplate(dir)`
 copies the installed template into a caller-chosen directory, so a

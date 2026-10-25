@@ -33,30 +33,59 @@ func TestSetupFixture(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestIsolateHome_RestoreResetsHomeAndRemovesIsolatedHome(t *testing.T) {
-	t.Setenv("HOME", "/Users/test/original-home")
-	restore, err := claudetest.IsolateHome()
-	require.NoError(t, err)
-	isolatedHome := os.Getenv("HOME")
-	require.DirExists(t, filepath.Join(isolatedHome, ".claude"))
-
-	err = restore()
-
-	require.NoError(t, err)
-	assert.Equal(t, "/Users/test/original-home", os.Getenv("HOME"))
-	assert.NoDirExists(t, isolatedHome)
+// dirExists reports whether path names an existing directory.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
-func TestIsolateHome_RestoreUnsetsHomeThatWasUnset(t *testing.T) {
-	// t.Setenv registers the cleanup that brings the caller's HOME back after the unset.
+func TestRunWithIsolatedHome_RestoreResetsHome(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("HOME", "/Users/test/original-home")
+
+	var markerDuringRun bool
+	claudetest.RunWithIsolatedHome(func() int {
+		markerDuringRun = dirExists(filepath.Join(os.Getenv("HOME"), ".claude"))
+		return 0
+	})
+
+	require.True(t, markerDuringRun, "HOME must point at an isolated home holding .claude while run executes")
+	assert.Equal(t, "/Users/test/original-home", os.Getenv("HOME"))
+}
+
+func TestRunWithIsolatedHome_RemovesIsolatedHome(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("HOME", "/Users/test/original-home")
+
+	var isolatedHome string
+	var existedDuringRun bool
+	claudetest.RunWithIsolatedHome(func() int {
+		isolatedHome = os.Getenv("HOME")
+		existedDuringRun = dirExists(isolatedHome)
+		return 0
+	})
+
+	require.True(t, existedDuringRun, "the isolated home must exist while run executes")
+	assert.False(t, dirExists(isolatedHome), "the isolated home must be removed after run returns")
+}
+
+func TestRunWithIsolatedHome_ReturnsRunExitCode(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+
+	exitCode := claudetest.RunWithIsolatedHome(func() int { return 3 })
+
+	assert.Equal(t, 3, exitCode)
+}
+
+func TestRunWithIsolatedHome_LeavesUnsetHomeUnset(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	// t.Setenv registers the cleanup that brings the caller's HOME back after
+	// the unset.
 	t.Setenv("HOME", "")
 	require.NoError(t, os.Unsetenv("HOME"))
-	restore, err := claudetest.IsolateHome()
-	require.NoError(t, err)
 
-	err = restore()
+	claudetest.RunWithIsolatedHome(func() int { return 0 })
 
-	require.NoError(t, err)
 	_, isSet := os.LookupEnv("HOME")
 	assert.False(t, isSet)
 }

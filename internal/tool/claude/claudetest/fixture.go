@@ -20,14 +20,13 @@ import (
 // deadSessionPID exceeds the Linux/macOS PID ceiling but stays below int32 max, so Kill(pid, 0) returns ESRCH.
 const deadSessionPID = 2_000_000_001
 
-// IsolateHome redirects HOME to a newly created directory with only an empty
+// isolateHome redirects HOME to a newly created directory with only an empty
 // .claude marker. The marker keeps legacy Claude-only command tests selected
 // while ensuring Codex is never detected; fixture homes are still passed by
 // explicit flags. The returned restore sets HOME back to its previous value,
 // or unsets it when it had none, removes the directory, and returns any error
-// from either step; a TestMain checks that error rather than deferring restore
-// bare.
-func IsolateHome() (restore func() error, err error) {
+// from either step.
+func isolateHome() (restore func() error, err error) {
 	dir, err := os.MkdirTemp("", "cc-port-test-home-")
 	if err != nil {
 		return nil, fmt.Errorf("create isolated home: %w", err)
@@ -62,7 +61,7 @@ func IsolateHome() (restore func() error, err error) {
 // joined with the removal error when the removal fails too.
 func removeAfterFailure(dir string, err error) error {
 	if removeErr := os.RemoveAll(dir); removeErr != nil {
-		return errors.Join(err, removeErr)
+		return errors.Join(err, fmt.Errorf("remove temporary directory after failed setup: %w", removeErr))
 	}
 	return err
 }
@@ -144,17 +143,35 @@ func InstallSharedFixture() (cleanup func() error, err error) {
 	return func() error { return os.RemoveAll(dir) }, nil
 }
 
-// RunWithSharedFixture installs the shared fixture, runs m, and removes the
+// RunWithSharedFixture installs the shared fixture, runs run, and removes the
 // fixture, returning the exit code for TestMain to pass to os.Exit. A failed
 // install or cleanup is printed to stderr and yields exit code 1.
-func RunWithSharedFixture(m *testing.M) int {
+func RunWithSharedFixture(run func() int) int {
 	cleanup, err := InstallSharedFixture()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	exitCode := m.Run()
+	exitCode := run()
 	if err := cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return exitCode
+}
+
+// RunWithIsolatedHome points HOME at an isolated directory for the duration of
+// run and restores it afterwards, returning run's exit code for TestMain to
+// pass to os.Exit. A failed isolate or restore is printed to stderr and yields
+// exit code 1.
+func RunWithIsolatedHome(run func() int) int {
+	restore, err := isolateHome()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	exitCode := run()
+	if err := restore(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

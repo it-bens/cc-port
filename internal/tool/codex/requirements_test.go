@@ -48,7 +48,7 @@ func runTests(m *testing.M) (exitCode int) {
 	systemConfigDir = filepath.Join(scratch, "etc-codex")
 	managedPreferencesDir = filepath.Join(scratch, "Managed Preferences")
 
-	return codextest.RunWithTemplate(m)
+	return codextest.RunWithTemplate(m.Run)
 }
 
 var fixtureNow = time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)

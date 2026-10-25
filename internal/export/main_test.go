@@ -8,5 +8,5 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(claudetest.RunWithSharedFixture(m))
+	os.Exit(claudetest.RunWithSharedFixture(m.Run))
 }

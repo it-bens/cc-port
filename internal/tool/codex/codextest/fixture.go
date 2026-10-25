@@ -36,16 +36,16 @@ func FixtureProjectPath() string {
 // it.
 var templateDir string
 
-// RunWithTemplate installs the fixture template, runs m, and removes the
+// RunWithTemplate installs the fixture template, runs run, and removes the
 // template, returning the exit code for TestMain to pass to os.Exit. A failed
 // install or cleanup is printed to stderr and yields exit code 1.
-func RunWithTemplate(m *testing.M) int {
+func RunWithTemplate(run func() int) int {
 	cleanup, err := InstallTemplate()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	exitCode := m.Run()
+	exitCode := run()
 	if err := cleanup(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
