@@ -24,29 +24,28 @@ const deadSessionPID = 2_000_000_001
 // .claude marker. The marker keeps legacy Claude-only command tests selected
 // while ensuring Codex is never detected; fixture homes are still passed by
 // explicit flags. The returned cleanup restores HOME and removes the directory.
-func IsolateHome() (func(), error) {
+func IsolateHome() (restore func() error, err error) {
 	dir, err := os.MkdirTemp("", "cc-port-test-home-")
 	if err != nil {
 		return nil, err
 	}
 	if err := os.Mkdir(filepath.Join(dir, ".claude"), 0o700); err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, err
+		return nil, errors.Join(err, os.RemoveAll(dir))
 	}
 
 	previous, hadPrevious := os.LookupEnv("HOME")
 	if err := os.Setenv("HOME", dir); err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, err
+		return nil, errors.Join(err, os.RemoveAll(dir))
 	}
 
-	return func() {
+	return func() error {
+		var envErr error
 		if hadPrevious {
-			_ = os.Setenv("HOME", previous)
+			envErr = os.Setenv("HOME", previous)
 		} else {
-			_ = os.Unsetenv("HOME")
+			envErr = os.Unsetenv("HOME")
 		}
-		_ = os.RemoveAll(dir)
+		return errors.Join(envErr, os.RemoveAll(dir))
 	}, nil
 }
 
