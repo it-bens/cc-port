@@ -26,6 +26,7 @@ cc-port/
 │   ├── sqlrewrite/         SQL-level path rewriting on SQLite (5 s busy timeout, checkpoint discipline)
 │   ├── stats/              Generic project-footprint orchestration (read-only)
 │   ├── sync/               Push and pull orchestration: plan, execute, plan-summary rendering
+│   ├── testmain/           Test-only TestMain runner: setup, run, cleanup, exit code
 │   ├── tool/               The tool contract (Tool, Workspace, Surface, Restorer) + tool.Set registry
 │   │   ├── claude/         Claude Code adapter: path encoding, locations, schemas, move/export/import/stats
 │   │   │   └── claudetest/ Claude Code test fixture helpers

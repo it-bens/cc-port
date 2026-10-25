@@ -20,6 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/it-bens/cc-port/internal/fsutil"
+	"github.com/it-bens/cc-port/internal/testmain"
 	"github.com/it-bens/cc-port/internal/tool/codex/codexschema"
 )
 
@@ -31,44 +32,30 @@ func FixtureProjectPath() string {
 	return "/Users/fixture/codexproject"
 }
 
-// templateDir is the staged fixture InstallTemplate installed. A package's
-// TestMain installs it before m.Run and tests only read it, so nothing guards
-// it.
+// templateDir is the staged fixture installTemplate installed. A package's
+// TestMain installs it before its tests start and tests only read it, so
+// nothing guards it.
 var templateDir string
 
 // RunWithTemplate installs the fixture template, runs run, and removes the
-// template, returning the exit code for TestMain to pass to os.Exit. A failed
-// install or cleanup is printed to stderr and yields exit code 1.
+// template, returning the exit code for TestMain to pass to os.Exit.
 func RunWithTemplate(run func() int) int {
-	cleanup, err := InstallTemplate()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	exitCode := run()
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	return exitCode
+	return testmain.Run(installTemplate, run)
 }
 
-// InstallTemplate stages the fixture template once into a temporary
-// directory, for a package's TestMain to install before m.Run. Every later
+// installTemplate stages the fixture template once into a temporary directory,
+// for RunWithTemplate to install before the tests start. Every later
 // SetupFixture and CopyTemplate copies that template, so a package that
 // installs it builds the SQLite databases and git baselines once per test
 // binary instead of once per test. The returned cleanup removes the template
 // directory.
-func InstallTemplate() (cleanup func() error, err error) {
+func installTemplate() (cleanup func() error, err error) {
 	dir, err := os.MkdirTemp("", "cc-port-codex-fixture-")
 	if err != nil {
 		return nil, fmt.Errorf("create fixture template directory: %w", err)
 	}
 	if err := StageFixture(dir); err != nil {
-		if removeErr := os.RemoveAll(dir); removeErr != nil {
-			return nil, errors.Join(err, removeErr)
-		}
-		return nil, err
+		return nil, testmain.RemoveAfterFailure(dir, err)
 	}
 	templateDir = dir
 	return func() error { return os.RemoveAll(dir) }, nil
@@ -105,8 +92,8 @@ func StageFixture(dir string) error {
 	return buildMemoriesV2Worktree(filepath.Join(dir, codexschema.MemoriesWorktreeV2Subdir))
 }
 
-// SetupFixture copies the fixture template installed by InstallTemplate into
-// a fresh t.TempDir() and returns the staged codex home directory, which is
+// SetupFixture copies the fixture template RunWithTemplate installed into a
+// fresh t.TempDir() and returns the staged codex home directory, which is
 // also the fixture's SQLite directory: sqlite_home resolves to the same
 // directory (config.toml declares no sqlite_home key and $CODEX_SQLITE_HOME
 // is unset in the fixture environment).
@@ -120,13 +107,13 @@ func SetupFixture(t testing.TB) string {
 	return codexDir
 }
 
-// CopyTemplate copies the fixture template InstallTemplate installed into
-// dir, which becomes a codex home. It takes no testing.TB, so a once-function
+// CopyTemplate copies the fixture template RunWithTemplate installed into dir,
+// which becomes a codex home. It takes no testing.TB, so a once-function
 // building a package-wide fixture can stage its home from the template.
 func CopyTemplate(dir string) error {
 	if templateDir == "" {
-		return errors.New("no codextest fixture template installed: call codextest.InstallTemplate " +
-			"or codextest.RunWithTemplate from the package's TestMain")
+		return errors.New("no codextest fixture template installed: call codextest.RunWithTemplate " +
+			"from the package's TestMain")
 	}
 	if err := fsutil.CopyDir(context.Background(), templateDir, dir, nil); err != nil {
 		return fmt.Errorf("copy fixture template: %w", err)

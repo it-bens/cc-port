@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/it-bens/cc-port/internal/testmain"
 	"github.com/it-bens/cc-port/internal/tool"
 	"github.com/it-bens/cc-port/internal/tool/codex/codextest"
 )
@@ -30,25 +31,25 @@ import (
 // /etc/codex or /Library/Managed Preferences through Open, and installs the
 // fixture template every SetupFixture and CopyTemplate call copies.
 func TestMain(m *testing.M) {
-	os.Exit(runTests(m))
+	os.Exit(testmain.Run(setupMachineLocations, func() int { return codextest.RunWithTemplate(m.Run) }))
 }
 
-func runTests(m *testing.M) (exitCode int) {
+// setupMachineLocations points systemConfigDir and managedPreferencesDir at a
+// fresh scratch directory and returns its removal as the cleanup.
+func setupMachineLocations() (cleanup func() error, err error) {
 	scratch, err := os.MkdirTemp("", "codex-machine-locations")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "create machine-location scratch directory: %v\n", err)
-		return 1
+		return nil, fmt.Errorf("create machine-location scratch directory: %w", err)
 	}
-	defer func() {
-		if err := os.RemoveAll(scratch); err != nil {
-			fmt.Fprintf(os.Stderr, "remove machine-location scratch directory: %v\n", err)
-			exitCode = 1
-		}
-	}()
 	systemConfigDir = filepath.Join(scratch, "etc-codex")
 	managedPreferencesDir = filepath.Join(scratch, "Managed Preferences")
 
-	return codextest.RunWithTemplate(m.Run)
+	return func() error {
+		if err := os.RemoveAll(scratch); err != nil {
+			return fmt.Errorf("remove machine-location scratch directory: %w", err)
+		}
+		return nil
+	}, nil
 }
 
 var fixtureNow = time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)

@@ -177,6 +177,18 @@ linters:
               desc: "internal/tool/claude/claudetest holds Claude fixtures for tests; import it from _test.go files only"
             - pkg: github.com/it-bens/cc-port/internal/tool/codex/codextest
               desc: "internal/tool/codex/codextest holds Codex fixtures for tests; import it from _test.go files only"
+        # internal/testmain is a test-only package that sits outside the adapter
+        # directories, so it cannot ride the exemptions of test-only-packages.
+        testmain-importers:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/tool/claude/claudetest/*.go"
+            - "!**/internal/tool/codex/codextest/*.go"
+          deny:
+            - pkg: github.com/it-bens/cc-port/internal/testmain
+              desc: "internal/testmain holds TestMain helpers for tests; import it from _test.go files and the claudetest and codextest packages only"
         # Adapter boundary: among binary-linked code only cmd/cc-port imports an
         # adapter. Each test-support package sits inside its own adapter
         # directory, which is exempt.
