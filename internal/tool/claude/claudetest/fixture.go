@@ -23,19 +23,22 @@ const deadSessionPID = 2_000_000_001
 // IsolateHome redirects HOME to a newly created directory with only an empty
 // .claude marker. The marker keeps legacy Claude-only command tests selected
 // while ensuring Codex is never detected; fixture homes are still passed by
-// explicit flags. The returned cleanup restores HOME and removes the directory.
+// explicit flags. The returned restore sets HOME back to its previous value,
+// or unsets it when it had none, removes the directory, and returns any error
+// from either step; a TestMain checks that error rather than deferring restore
+// bare.
 func IsolateHome() (restore func() error, err error) {
 	dir, err := os.MkdirTemp("", "cc-port-test-home-")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create isolated home: %w", err)
 	}
 	if err := os.Mkdir(filepath.Join(dir, ".claude"), 0o700); err != nil {
-		return nil, errors.Join(err, os.RemoveAll(dir))
+		return nil, removeAfterFailure(dir, fmt.Errorf("create .claude marker: %w", err))
 	}
 
 	previous, hadPrevious := os.LookupEnv("HOME")
 	if err := os.Setenv("HOME", dir); err != nil {
-		return nil, errors.Join(err, os.RemoveAll(dir))
+		return nil, removeAfterFailure(dir, fmt.Errorf("point HOME at isolated home: %w", err))
 	}
 
 	return func() error {
@@ -45,8 +48,23 @@ func IsolateHome() (restore func() error, err error) {
 		} else {
 			envErr = os.Unsetenv("HOME")
 		}
-		return errors.Join(envErr, os.RemoveAll(dir))
+		if envErr != nil {
+			envErr = fmt.Errorf("restore HOME: %w", envErr)
+		}
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			return errors.Join(envErr, fmt.Errorf("remove isolated home: %w", removeErr))
+		}
+		return envErr
 	}, nil
+}
+
+// removeAfterFailure removes dir after a failed setup step and returns err,
+// joined with the removal error when the removal fails too.
+func removeAfterFailure(dir string, err error) error {
+	if removeErr := os.RemoveAll(dir); removeErr != nil {
+		return errors.Join(err, removeErr)
+	}
+	return err
 }
 
 // NewWorkspace returns a Workspace bound to home with the adapter's default
@@ -90,7 +108,9 @@ func StageFixture(dir string) (*claude.Home, error) {
 	if err := os.WriteFile(configFilePath, configData, 0o600); err != nil {
 		return nil, fmt.Errorf("write config file: %w", err)
 	}
-	_ = os.Remove(sourceConfigPath)
+	if err := os.Remove(sourceConfigPath); err != nil {
+		return nil, fmt.Errorf("remove staged .claude.json: %w", err)
+	}
 
 	if err := replaceSessionPIDs(filepath.Join(claudeDir, "sessions"), deadSessionPID); err != nil {
 		return nil, fmt.Errorf("sanitize fixture session PIDs: %w", err)
@@ -117,10 +137,7 @@ func InstallSharedFixture() (cleanup func() error, err error) {
 
 	home, err := StageFixture(dir)
 	if err != nil {
-		if removeErr := os.RemoveAll(dir); removeErr != nil {
-			return nil, errors.Join(err, removeErr)
-		}
-		return nil, err
+		return nil, removeAfterFailure(dir, err)
 	}
 	sharedHome = home
 
@@ -179,7 +196,7 @@ func replaceSessionPIDs(sessionsDir string, deadPID int) error {
 		}
 		var sessionFile claude.SessionFile
 		if err := json.Unmarshal(data, &sessionFile); err != nil {
-			continue
+			return fmt.Errorf("parse fixture session file %s: %w", entry.Name(), err)
 		}
 		sessionFile.Pid = deadPID
 		updated, err := json.Marshal(sessionFile)

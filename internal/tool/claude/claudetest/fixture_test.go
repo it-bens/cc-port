@@ -33,6 +33,34 @@ func TestSetupFixture(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIsolateHome_RestoreResetsHomeAndRemovesIsolatedHome(t *testing.T) {
+	t.Setenv("HOME", "/Users/test/original-home")
+	restore, err := claudetest.IsolateHome()
+	require.NoError(t, err)
+	isolatedHome := os.Getenv("HOME")
+	require.DirExists(t, filepath.Join(isolatedHome, ".claude"))
+
+	err = restore()
+
+	require.NoError(t, err)
+	assert.Equal(t, "/Users/test/original-home", os.Getenv("HOME"))
+	assert.NoDirExists(t, isolatedHome)
+}
+
+func TestIsolateHome_RestoreUnsetsHomeThatWasUnset(t *testing.T) {
+	// t.Setenv registers the cleanup that brings the caller's HOME back after the unset.
+	t.Setenv("HOME", "")
+	require.NoError(t, os.Unsetenv("HOME"))
+	restore, err := claudetest.IsolateHome()
+	require.NoError(t, err)
+
+	err = restore()
+
+	require.NoError(t, err)
+	_, isSet := os.LookupEnv("HOME")
+	assert.False(t, isSet)
+}
+
 func TestFixtureProjectPath_StableValue(t *testing.T) {
 	assert.Equal(t, "/Users/test/Projects/myproject", claudetest.FixtureProjectPath())
 }
