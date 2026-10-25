@@ -11,4 +11,4 @@ Helpers for a package's `TestMain`. A test binary sets up process-wide state, ru
 
 ## Tests
 
-`testmain_test.go` injects the setup, run and cleanup functions: `Run` returns `run`'s exit code, returns 1 without running after a setup error, returns 1 after a cleanup error, and calls cleanup after `run`. The two error tests capture `os.Stderr` through a pipe and assert each error reaches it. `RemoveAfterFailure` returns the setup error and removes the directory.
+`testmain_test.go` injects the setup, run and cleanup functions: `Run` returns `run`'s exit code, returns 1 without running after a setup error, returns 1 after a cleanup error, and calls cleanup after `run`. The two error tests capture `os.Stderr` through a pipe and assert each error reaches it. `RemoveAfterFailure` returns the setup error and removes the directory. If removal fails, it returns the setup error joined with the removal error.

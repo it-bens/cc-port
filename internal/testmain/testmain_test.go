@@ -3,6 +3,7 @@ package testmain_test
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -108,4 +109,25 @@ func TestRemoveAfterFailure_RemovesDirectoryAndReturnsError(t *testing.T) {
 	require.ErrorIs(t, returnedErr, setupErr)
 	_, statErr := os.Stat(dir)
 	assert.True(t, os.IsNotExist(statErr), "the staged directory must be removed after a failed setup")
+}
+
+func TestRemoveAfterFailure_ReturnsSetupErrorAndRemovalErrorWhenRemovalFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permission bits, so removal cannot be made to fail")
+	}
+	parent := filepath.Join(t.TempDir(), "staged-parent")
+	dir := filepath.Join(parent, "staged-fixture")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "fixture.txt"), []byte("fixture"), 0o600))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chmod(parent, 0o700)) //nolint:gosec // G302: directory under t.TempDir().
+	})
+	require.NoError(t, os.Chmod(parent, 0o500)) //nolint:gosec // G302: read-only directory makes removal fail.
+	setupErr := errors.New("stage fixture")
+
+	returnedErr := testmain.RemoveAfterFailure(dir, setupErr)
+
+	require.ErrorIs(t, returnedErr, setupErr)
+	require.ErrorIs(t, returnedErr, fs.ErrPermission)
+	assert.Contains(t, returnedErr.Error(), "remove temporary directory after failed setup")
 }
