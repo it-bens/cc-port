@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/it-bens/cc-port/internal/encrypt"
@@ -61,11 +62,9 @@ func TestDecryptTamperedBody(t *testing.T) {
 func TestIsEncrypted(t *testing.T) {
 	t.Parallel()
 	t.Run("rejects plaintext", func(t *testing.T) {
-		require.False(t, encrypt.IsEncrypted([]byte("PK\x03\x04..............")))
+		assert.False(t, encrypt.IsEncrypted([]byte("PK\x03\x04..............")))
 	})
-	t.Run("rejects buffer shorter than MinPeekLen", func(t *testing.T) {
-		short := make([]byte, encrypt.MinPeekLen-1)
-		copy(short, "age-encryption.org/v")
-		require.False(t, encrypt.IsEncrypted(short))
+	t.Run("rejects a truncated magic prefix", func(t *testing.T) {
+		assert.False(t, encrypt.IsEncrypted([]byte("age-encryption.org/v1")))
 	})
 }

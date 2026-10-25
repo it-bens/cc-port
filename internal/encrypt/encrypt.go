@@ -22,10 +22,6 @@ var ErrPassphrase = errors.New("encrypt: bad passphrase or corrupt archive")
 // with this exact byte sequence.
 var magicPrefix = []byte("age-encryption.org/v1\n")
 
-// MinPeekLen is the minimum buffer length IsEncrypted needs to make a
-// determination. Buffers shorter than this return false.
-const MinPeekLen = len("age-encryption.org/v1\n")
-
 // EncryptingWriter returns an io.WriteCloser that encrypts plaintext
 // bytes written to it and forwards the ciphertext to dst. The caller
 // must Close the returned writer to flush age's authentication trailer.
@@ -75,10 +71,7 @@ func (r *authMappingReader) Read(p []byte) (int, error) {
 }
 
 // IsEncrypted reports whether header begins with the age v1 binary-format
-// magic-byte prefix. Buffers shorter than MinPeekLen return false.
+// magic-byte prefix.
 func IsEncrypted(header []byte) bool {
-	if len(header) < MinPeekLen {
-		return false
-	}
 	return bytes.HasPrefix(header, magicPrefix)
 }
