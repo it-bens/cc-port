@@ -49,7 +49,7 @@ func TestRunWithIsolatedHome_RestoreResetsHome(t *testing.T) {
 		return 0
 	})
 
-	require.True(t, markerDuringRun, "HOME must point at an isolated home holding .claude while run executes")
+	assert.True(t, markerDuringRun, "HOME must point at an isolated home holding .claude while run executes")
 	assert.Equal(t, 0, exitCode)
 	assert.Equal(t, "/Users/test/original-home", os.Getenv("HOME"))
 }

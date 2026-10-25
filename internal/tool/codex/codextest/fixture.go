@@ -50,15 +50,13 @@ func RunWithTemplate(run func() int) int {
 // binary instead of once per test. The returned cleanup removes the template
 // directory.
 func installTemplate() (cleanup func() error, err error) {
-	dir, err := os.MkdirTemp("", "cc-port-codex-fixture-")
-	if err != nil {
-		return nil, fmt.Errorf("create fixture template directory: %w", err)
-	}
-	if err := StageFixture(dir); err != nil {
-		return nil, testmain.RemoveAfterFailure(dir, err)
-	}
-	templateDir = dir
-	return func() error { return os.RemoveAll(dir) }, nil
+	return testmain.StageTempDir("cc-port-codex-fixture-", func(dir string) error {
+		if err := StageFixture(dir); err != nil {
+			return err
+		}
+		templateDir = dir
+		return nil
+	})
 }
 
 // StageFixture stages the fixture into dir: internal/tool/codex/testdata/dotcodex

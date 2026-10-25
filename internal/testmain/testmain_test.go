@@ -99,6 +99,79 @@ func TestRun_CleansUpAfterRun(t *testing.T) {
 	assert.Equal(t, []string{"setup", "run", "cleanup"}, steps)
 }
 
+func TestStageTempDir_StagesIntoDirectoryAndCleanupRemovesIt(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	var stagedDir string
+
+	cleanup, err := testmain.StageTempDir("cc-port-stage-", func(dir string) error {
+		stagedDir = dir
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, stagedDir)
+	info, statErr := os.Stat(stagedDir)
+	require.NoError(t, statErr, "the directory stage received must exist after the call")
+	require.True(t, info.IsDir())
+
+	require.NoError(t, cleanup())
+	_, statErr = os.Stat(stagedDir)
+	assert.True(t, os.IsNotExist(statErr), "the staged directory must be removed after cleanup")
+}
+
+func TestStageTempDir_StageErrorReturnsItAndRemovesDirectory(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	stageErr := errors.New("stage fixture")
+	var stagedDir string
+
+	cleanup, err := testmain.StageTempDir("cc-port-stage-", func(dir string) error {
+		stagedDir = dir
+		return stageErr
+	})
+
+	require.ErrorIs(t, err, stageErr)
+	assert.Nil(t, cleanup)
+	require.NotEmpty(t, stagedDir)
+	_, statErr := os.Stat(stagedDir)
+	assert.True(t, os.IsNotExist(statErr), "the staged directory must be removed after a stage error")
+}
+
+func TestStageTempDir_CreateErrorReturnsItWithoutStaging(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	stageCalled := false
+
+	cleanup, err := testmain.StageTempDir("cc-port-stage-", func(_ string) error {
+		stageCalled = true
+		return nil
+	})
+
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	assert.Contains(t, err.Error(), "create temporary directory")
+	assert.Nil(t, cleanup)
+	assert.False(t, stageCalled, "stage must not be called when the directory cannot be created")
+}
+
+func TestStageTempDir_CleanupReturnsRemovalError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permission bits, so removal cannot be made to fail")
+	}
+	parentDir := t.TempDir()
+	t.Setenv("TMPDIR", parentDir)
+
+	cleanup, err := testmain.StageTempDir("cc-port-stage-", func(dir string) error {
+		return os.WriteFile(filepath.Join(dir, "fixture.txt"), []byte("fixture"), 0o600)
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.Chmod(parentDir, 0o700)) //nolint:gosec // G302: directory under t.TempDir().
+	})
+	require.NoError(t, os.Chmod(parentDir, 0o500)) //nolint:gosec // G302: read-only directory makes removal fail.
+
+	returnedErr := cleanup()
+
+	require.ErrorIs(t, returnedErr, fs.ErrPermission)
+	assert.Contains(t, returnedErr.Error(), "remove temporary directory")
+}
+
 func TestRemoveAfterFailure_RemovesDirectoryAndReturnsError(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "staged-fixture")
 	require.NoError(t, os.MkdirAll(dir, 0o750))

@@ -24,4 +24,4 @@ Session PIDs are rewritten to a dead sentinel before the home is returned. The C
 
 ## Tests
 
-`fixture_test.go`: smoke test that `SetupFixture` returns a usable home whose project directory exists, whose `history.jsonl` is present, and whose `.claude.json` parses as JSON; and three tests of `RunWithIsolatedHome` that it points `HOME` at an isolated home holding `.claude`, removes that directory afterwards, and leaves an unset `HOME` unset.
+`fixture_test.go`: smoke test that `SetupFixture` returns a usable home whose project directory exists, whose `history.jsonl` is present, and whose `.claude.json` parses as JSON. Three tests check that `RunWithIsolatedHome` sets `HOME` to an isolated home containing `.claude` during the run, restores a previously set `HOME` afterwards, removes the isolated directory afterwards, and leaves `HOME` unset if it was unset before the run.

@@ -122,18 +122,14 @@ var sharedHome *claude.Home
 // directory and records it for SharedFixture. RunWithSharedFixture calls it
 // before the tests start; the returned cleanup removes the staged directory.
 func installSharedFixture() (cleanup func() error, err error) {
-	dir, err := os.MkdirTemp("", "cc-port-claude-fixture-")
-	if err != nil {
-		return nil, fmt.Errorf("create shared fixture directory: %w", err)
-	}
-
-	home, err := StageFixture(dir)
-	if err != nil {
-		return nil, testmain.RemoveAfterFailure(dir, err)
-	}
-	sharedHome = home
-
-	return func() error { return os.RemoveAll(dir) }, nil
+	return testmain.StageTempDir("cc-port-claude-fixture-", func(dir string) error {
+		home, err := StageFixture(dir)
+		if err != nil {
+			return err
+		}
+		sharedHome = home
+		return nil
+	})
 }
 
 // RunWithSharedFixture installs the shared fixture, runs run, and removes the

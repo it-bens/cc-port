@@ -59,17 +59,14 @@ func TestMain(m *testing.M) {
 // the build reuses the caller's Go build cache instead of compiling from cold
 // under the isolated HOME. The returned cleanup removes the build directory.
 func buildCLI() (cleanup func() error, err error) {
-	buildDir, err := os.MkdirTemp("", "cc-port-integration-bin-")
-	if err != nil {
-		return nil, err
-	}
-	binary, err := buildCCPortBinary(buildDir)
-	if err != nil {
-		return nil, testmain.RemoveAfterFailure(buildDir, err)
-	}
-	ccPortBinary = binary
-
-	return func() error { return os.RemoveAll(buildDir) }, nil
+	return testmain.StageTempDir("cc-port-integration-bin-", func(buildDir string) error {
+		binary, err := buildCCPortBinary(buildDir)
+		if err != nil {
+			return err
+		}
+		ccPortBinary = binary
+		return nil
+	})
 }
 
 // buildCCPortBinary builds the CLI into dir and returns the executable's path.
