@@ -89,7 +89,12 @@ func runTests(m *testing.M) (exitCode int) {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	defer restore()
+	defer func() {
+		if err := restore(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			exitCode = 1
+		}
+	}()
 
 	return m.Run()
 }

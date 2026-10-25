@@ -12,7 +12,7 @@ Fixture helpers for unit tests. `SetupFixture` stages a realistic `~/.claude` tr
 - `RunWithSharedFixture(m *testing.M) int`: installs the shared fixture, runs `m`, and removes the fixture, returning the exit code for `TestMain` to pass to `os.Exit`. A failed install or cleanup prints to stderr and yields exit code 1.
 - `SharedFixture(t testing.TB) *claude.Home`: returns the home `InstallSharedFixture` staged. Only tests that never write under the home may use it; a test that writes stages its own copy with `SetupFixture`. A package that did not install one fails the test with a message naming `InstallSharedFixture`.
 - `NewWorkspace(home *claude.Home) *claude.Workspace`: binds a workspace to `home` with the adapter's default environment, process-liveness and process-start-time seams. Tests that supply their own seams call `claude.NewWorkspace(home, getenv, processLiveness, processStartTime)`.
-- `IsolateHome() (func(), error)`: points `HOME` at a new temp directory holding only an empty `.claude` marker, so Codex is never detected; the returned cleanup restores `HOME` and removes the directory. Called from `TestMain`.
+- `IsolateHome() (func() error, error)`: points `HOME` at a new temp directory holding only an empty `.claude` marker, so Codex is never detected; the returned cleanup restores `HOME`, removes the directory, and returns any error from either step. Called from `TestMain`.
 - `FixtureProjectPath() string`: returns `/Users/test/Projects/myproject`, the project path the fixture tree is keyed on.
 
 ## Fixture shape
@@ -25,4 +25,4 @@ Session PIDs are rewritten to a dead sentinel before the home is returned. `inte
 
 ## Tests
 
-`fixture_test.go`: smoke test that `SetupFixture` returns a usable home whose project directory exists, whose `history.jsonl` is present, and whose `.claude.json` parses as JSON.
+`fixture_test.go`: smoke test that `SetupFixture` returns a usable home whose project directory exists, whose `history.jsonl` is present, and whose `.claude.json` parses as JSON; and two tests that `IsolateHome`'s restore puts back a previous `HOME` or unsets one that was unset, and removes the isolated directory.
