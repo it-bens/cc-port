@@ -35,6 +35,7 @@
       "description": "Indirect updates are off by default; the govulncheck canary scans the linked binary, so a stale indirect module turns it red.",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["indirect"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
       "enabled": true
     },
     {
