@@ -18,7 +18,7 @@ HOOKS       := $(if $(CI)$(PRE_COMMIT),,$(if $(HOOK_FILE),$(HOOK_FILE),hooks-una
 
 .DEFAULT_GOAL := help
 .PHONY: help hooks hooks-unavailable build install test test-race test-integration test-large test-all \
-        vet deadcode lint pre-push fmt tidy release-check snapshot snapshot-sign ci clean \
+        vet deadcode lint pre-push fmt tidy tidy-check release-check snapshot snapshot-sign ci clean \
         s3-up s3-down s3-reset s3-wait videos
 
 define install-hook
@@ -118,6 +118,9 @@ fmt: $(HOOKS) ## Apply gofmt + goimports via golangci-lint fmt
 tidy: $(HOOKS) ## Tidy go.mod and go.sum
 	go mod tidy
 
+tidy-check: $(HOOKS) ## Fail when go.mod or go.sum is not tidy; prints the diff tidy would apply
+	go mod tidy -diff
+
 release-check: $(HOOKS) ## Validate .goreleaser.yml schema
 	$(GORELEASER) check
 
@@ -127,7 +130,7 @@ snapshot: $(HOOKS) ## Run the full release pipeline locally (no publish, no brew
 snapshot-sign: $(HOOKS) ## Same as snapshot but exercises cosign sign-blob (opens browser for OIDC)
 	$(GORELEASER) release --snapshot --clean --skip=publish,homebrew
 
-ci: vet test-race test-large test-integration lint release-check snapshot ## Run the same checks CI runs
+ci: tidy-check vet test-race test-large test-integration lint release-check snapshot ## Run the same checks CI runs
 
 clean: ## Remove the binary and build artifacts
 	rm -f $(BINARY) coverage.txt

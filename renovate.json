@@ -18,6 +18,7 @@
   "schedule": ["* * * * 6"],
   "timezone": "Europe/Berlin",
   "configMigration": true,
+  "postUpdateOptions": ["gomodTidy"],
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
   "packageRules": [
